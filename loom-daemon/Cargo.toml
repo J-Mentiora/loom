@@ -1,0 +1,37 @@
+[package]
+name = "loom-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+loom-shared = { workspace = true }
+loom-core = { workspace = true }
+loom-host = { workspace = true }
+loom-rpc = { workspace = true }
+# AC-SAFEPROF-01..03: daemon-layer evaluate gate reads
+# `loom_surfaces::safety::EVALUATE_DENYLIST`. The gate runs BEFORE
+# host.dispatch so `EvaluateVerb::execute` (dead code in production
+# today) is bypassed entirely.
+loom-surfaces = { workspace = true }
+
+ciborium = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dirs = { workspace = true }
+anyhow = { workspace = true }
+
+[[bin]]
+name = "loom-daemon"
+path = "src/main.rs"

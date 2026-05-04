@@ -1,0 +1,63 @@
+[package]
+name = "loom-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+loom-shared = { workspace = true }
+loom-keychain = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }
+walkdir = { workspace = true }
+tracing = { workspace = true }
+ulid = { workspace = true }
+
+# Vault crypto
+ring = { workspace = true }
+zeroize = { workspace = true }
+
+# Determinism harness: seeded ChaCha20 RNG
+rand_chacha = "0.3"
+rand_core = "0.6"
+
+# Export formats
+tar = { workspace = true }
+flate2 = { workspace = true }
+hex = { workspace = true }
+
+# Import formats
+zip = { workspace = true }
+
+[dev-dependencies]
+filetime = { workspace = true }
+tar = { workspace = true }
+flate2 = { workspace = true }
+zip = { workspace = true }
+# AC-HAREXPORT-04: validate exporter output against vendored HAR 1.2
+# JSON Schema in tests/. The workspace dep is runtime-typed (used by
+# loom-rpc + loom-cli for request validation); declaring it here as a
+# dev-dep scopes its inclusion in loom-core to test code only.
+jsonschema = { workspace = true }
+
+[features]
+default = []
+mock = []
+
+[lib]
+path = "src/lib.rs"

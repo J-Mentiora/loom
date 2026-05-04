@@ -1,0 +1,163 @@
+# Loom default network blocklist — AC-DET-05.1
+# Format: one domain pattern per line. Prefix with '*.' for subdomain wildcard.
+# Comment lines start with '#'. Empty lines are ignored.
+# Minimum 100 entries required (AC-DET-05.1).
+#
+# Section headers (`# --- Section ---`) become the `reason` field on
+# manifest AuditEntry::BlockedUrl entries (lowercased verbatim, e.g.
+# `Analytics` → `analytics`). Don't reorganize sections without
+# updating the test pins in `loom-shims/tests/network_interceptor_behavior.rs`.
+#
+# SCOPE: enforcement gates SUB-RESOURCE requests only (AC-BLOCKLIST-01).
+# The operator's primary navigate URL (the one passed to `loom action
+# web.navigate --url ...`) is NOT filtered against this list — the
+# operator can opt into navigating to a blocklisted page directly.
+# Sub-resources loaded by that page (analytics beacons, ad pixels, etc.)
+# ARE gated. Use `--no-blocklist` to disable enforcement entirely.
+
+# --- Analytics ---
+*.google-analytics.com
+*.googletagmanager.com
+*.googletagservices.com
+*.googlesyndication.com
+analytics.google.com
+ssl.google-analytics.com
+www.google-analytics.com
+*.hotjar.com
+*.segment.com
+*.segment.io
+*.mixpanel.com
+*.amplitude.com
+api.amplitude.com
+*.heap.io
+*.heapanalytics.com
+*.kissmetrics.com
+*.intercom.io
+*.intercomcdn.com
+*.fullstory.com
+*.logrocket.com
+*.mouseflow.com
+*.crazyegg.com
+*.clicktale.net
+*.smartlook.com
+*.inspectlet.com
+*.luckyorange.com
+*.woopra.com
+*.chartbeat.com
+*.parsely.com
+*.gosquared.com
+*.statcounter.com
+*.clicky.com
+*.piwik.pro
+*.matomo.cloud
+*.quantserve.com
+*.scorecardresearch.com
+*.comscore.com
+*.adsymptotic.com
+*.adobe.com/b/ss
+
+# --- Advertising / Ad Networks ---
+*.doubleclick.net
+*.adsrvr.org
+*.adnxs.com
+*.criteo.com
+*.criteo.net
+*.pubmatic.com
+*.rubiconproject.com
+*.openx.net
+*.appnexus.com
+*.bidswitch.net
+*.liveintent.com
+*.outbrain.com
+*.taboola.com
+*.sharethrough.com
+*.33across.com
+*.lijit.com
+*.sovrn.com
+*.contextweb.com
+*.casalemedia.com
+*.indexwww.com
+*.eyeota.com
+*.bluekai.com
+*.lotame.com
+*.adsymptotic.com
+*.amazon-adsystem.com
+*.a9.com
+*.advertising.com
+*.adroll.com
+*.aolcloud.net
+*.nexac.com
+*.demdex.net
+*.rlcdn.com
+*.agkn.com
+*.eqads.com
+*.eyereturn.com
+*.flashtalking.com
+*.sizmek.com
+*.tribalfusion.com
+*.zedo.com
+*.mathtag.com
+*.exelator.com
+*.tapad.com
+
+# --- Social tracking pixels ---
+*.facebook.com/tr
+connect.facebook.net
+*.twitter.com/i/jot
+*.linkedin.com/px
+snap.licdn.com
+*.pinterest.com/v3/
+ads.pinterest.com
+*.tiktok.com/api/v1/pixel
+*.snapchat.com/tr
+
+# --- Tag managers / CDN analytics ---
+*.tealiumiq.com
+*.ensighten.com
+*.dtm.adobe.com
+*.launch.adobe.com
+*.data.adobedc.net
+*.omtrdc.net
+*.2o7.net
+*.yandex.ru/metrica
+*.yandex.com/metrica
+mc.yandex.ru
+
+# --- A/B testing / personalization ---
+*.optimizely.com
+*.vwo.com
+*.kameleoon.com
+*.ab-tasty.com
+*.conductrics.com
+*.sitegainer.com
+
+# --- Support / Chat widgets (non-critical) ---
+*.zendesk.com/widget
+widget.freshdesk.com
+*.drift.com
+*.driftt.com
+*.olark.com
+*.tidio.com
+*.tawk.to
+
+# --- Error reporting / performance monitoring ---
+*.sentry.io
+*.bugsnag.com
+*.rollbar.com
+*.newrelic.com
+*.nr-data.net
+*.appdynamics.com
+*.dynatrace.com
+*.instana.com
+
+# --- Miscellaneous trackers ---
+*.addthis.com
+*.sharethis.com
+*.disqus.com
+*.disquscdn.com
+*.moatads.com
+*.adsafeprotected.com
+*.wt-safetag.com
+*.cedexis.com
+*.detectadblock.com
+*.bounce-exchange.com

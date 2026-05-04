@@ -1,0 +1,112 @@
+//! `error_translator` — see `systems/loom-rpc/modules/error_translator/interfaces.rs`
+//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! `include!`, keeping `systems/` the single source of truth.
+pub mod error_translator;
+pub use error_translator::*;
+
+#[cfg(test)]
+mod interface_tests;
+
+use std::any::Any;
+
+impl ErrorTranslator {
+    pub fn from_loom_error(err: &LoomErrorRef<'_>) -> JsonRpcError {
+        JsonRpcError {
+            code: err.0.code(),
+            message: Self::truncate_message(&err.0.message()),
+            data: err.0.data(),
+        }
+    }
+
+    pub fn from_schema_violation(detail: SchemaViolationDetail) -> JsonRpcError {
+        let message = Self::truncate_message(&format!(
+            "schema violation: field '{}' expected {} got {}",
+            detail.field, detail.expected, detail.actual
+        ));
+        JsonRpcError {
+            code: LoomErrorCode::SchemaViolation,
+            message,
+            data: Some(serde_json::to_value(&detail).unwrap_or(serde_json::Value::Null)),
+        }
+    }
+
+    pub fn catch_panic_into_envelope(payload: Box<dyn Any + Send>) -> JsonRpcError {
+        let msg = if let Some(s) = payload.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "internal panic".to_string()
+        };
+        JsonRpcError {
+            code: LoomErrorCode::InternalError,
+            message: Self::truncate_message(&msg),
+            data: None,
+        }
+    }
+
+    /// Construct an `unknown_profile` envelope (AC-PROFVAL-01).
+    /// `data` carries the provided value plus the canonical allowlist.
+    pub fn from_unknown_profile(provided: &str, available: &[&str]) -> JsonRpcError {
+        let message = Self::truncate_message(&format!("unknown profile: {provided}"));
+        JsonRpcError {
+            code: LoomErrorCode::UnknownProfile,
+            message,
+            data: Some(serde_json::json!({
+                "provided": provided,
+                "available": available,
+            })),
+        }
+    }
+
+    /// Construct an `invalid_network_mode` envelope (AC-PROFVAL-02).
+    pub fn from_invalid_network_mode(provided: &str, available: &[&str]) -> JsonRpcError {
+        let message =
+            Self::truncate_message(&format!("invalid network mode: {provided}"));
+        JsonRpcError {
+            code: LoomErrorCode::InvalidNetworkMode,
+            message,
+            data: Some(serde_json::json!({
+                "provided": provided,
+                "available": available,
+            })),
+        }
+    }
+
+    /// Construct an `invalid_budget_key` envelope (AC-PROFVAL-03).
+    pub fn from_invalid_budget_key(provided: &str, available: &[&str]) -> JsonRpcError {
+        let message =
+            Self::truncate_message(&format!("invalid budget key: {provided}"));
+        JsonRpcError {
+            code: LoomErrorCode::InvalidBudgetKey,
+            message,
+            data: Some(serde_json::json!({
+                "provided": provided,
+                "available": available,
+            })),
+        }
+    }
+
+    /// Construct an `invalid_capture_policy` envelope (AC-CAPPOL-04).
+    pub fn from_invalid_capture_policy(provided: &str, available: &[&str]) -> JsonRpcError {
+        let message =
+            Self::truncate_message(&format!("invalid capture policy: {provided}"));
+        JsonRpcError {
+            code: LoomErrorCode::InvalidCapturePolicy,
+            message,
+            data: Some(serde_json::json!({
+                "provided": provided,
+                "available": available,
+            })),
+        }
+    }
+
+    pub fn truncate_message(s: &str) -> String {
+        if s.len() <= MAX_MESSAGE_LEN {
+            s.to_string()
+        } else {
+            let truncated = &s[..MAX_MESSAGE_LEN.saturating_sub(3)];
+            format!("{}...", truncated)
+        }
+    }
+}

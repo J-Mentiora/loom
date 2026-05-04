@@ -1,0 +1,192 @@
+// Phase 5.4 placeholder copied from
+// architecture/contracts/loom-surfaces_contract.md §"WIT Interface".
+// Phase 6 wires wit-bindgen invocations against this file in
+// loom-host (host bindings) + loom-surfaces (guest bindings).
+
+package loom:surface@1.0.0;
+
+interface types {
+    record action {
+        kind: string,
+        payload: list<u8>,
+        deadline-ms: u64,
+    }
+
+    record receipt {
+        action-hash: string,
+        outcome-hash: string,
+        emitted-at-ms: u64,
+        // Navigate tier-2 optional fields (AC-NAVRECEIPT-01)
+        url: option<string>,
+        final-url: option<string>,
+        title: option<string>,
+        status-code: option<u32>,
+        dom-snapshot-hash: option<string>,
+        screenshot-after-hash: option<string>,
+        console-count: option<u64>,
+        network-count: option<u64>,
+        // JSON-serialized Vec<LoomNetworkEvent> (AC-NAVRECEIPT-03)
+        side-effects-json: option<list<u8>>,
+        // AC-NAVRECEIPT2-01 brief extension: JSON-serialized Vec<ShimConsoleLine>
+        // {level, message}; brief lists `console_lines` on the wire receipt.
+        console-lines-json: option<list<u8>>,
+        // AC-NAVRECEIPT2-01 brief extension: JSON-serialized NetworkSummary
+        // {total_count, total_bytes, error_count}.
+        network-summary-json: option<list<u8>>,
+        // Evaluate tier optional fields (AC-EVALRESULT-01..04).
+        // Truncation discriminator: return-value-blob-ref.is_some()
+        // ↔ value > 64KB and offloaded to content store.
+        return-value-json: option<string>,
+        return-value-blob-ref: option<content-ref>,
+    }
+
+    /// Result returned by the navigate-execute host function.
+    record navigate-result {
+        url: string,
+        final-url: string,
+        title: string,
+        status-code: u32,
+        /// SHA-256 hex of the DOM snapshot blob stored in ContentStore.
+        dom-snapshot-hash: string,
+        /// SHA-256 hex of the screenshot blob stored in ContentStore.
+        screenshot-after-hash: string,
+        /// Phase 6 stub: always 0.
+        console-count: u64,
+        network-count: u64,
+        /// UTF-8 JSON bytes of Vec<LoomNetworkEvent> (AC-NAVRECEIPT-03).
+        side-effects-json: list<u8>,
+        /// Session-monotonic ms timestamp (DeterminismHarness; AC-NAVRECEIPT-02).
+        emitted-at-ms: u64,
+        /// UTF-8 JSON bytes of Vec<ShimConsoleLine> (brief AC-NAVRECEIPT2-01
+        /// extension). Empty list today (Phase 6 shim console-capture stub).
+        console-lines-json: list<u8>,
+        /// UTF-8 JSON bytes of loom_core NetworkSummary {total_count,
+        /// total_bytes, error_count} (brief AC-NAVRECEIPT2-01 extension).
+        network-summary-json: list<u8>,
+    }
+
+    /// Result returned by the evaluate-execute host function (AC-EVALRESULT-01..04).
+    /// Exactly one of return-value-json / return-value-blob-ref is Some on success.
+    /// Exception path returns Err(host-error::shim-failure(detail-json)) — see
+    /// host_impl.rs::evaluate_execute for the detail-json shape (AC-EVALRESULT-03).
+    record evaluate-result {
+        /// Canonical-JSON of the evaluated value. None when value > 64KB
+        /// (offloaded to content store; see return-value-blob-ref).
+        return-value-json: option<string>,
+        /// ContentRef to canonical-JSON bytes when value > 64KB. None when
+        /// the value fits inline. Truncation discriminator = is_some().
+        return-value-blob-ref: option<content-ref>,
+        /// Session-monotonic ms timestamp (DeterminismHarness).
+        emitted-at-ms: u64,
+    }
+
+    record content-ref {
+        sha256: string,
+        size: u64,
+    }
+
+    record instant {
+        epoch-ms: u64,
+    }
+
+    variant host-error {
+        budget-exceeded(string),
+        vault-rejection(string),
+        shim-failure(string),
+        store-integrity-failed(string),
+        internal(string),
+    }
+
+    record net-req {
+        method: string,
+        url: string,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    record net-resp {
+        status: u16,
+        headers: list<tuple<string, string>>,
+        body: list<u8>,
+    }
+
+    enum log-level { trace, debug, info, warn, error }
+}
+
+interface host {
+    use types.{action, receipt, content-ref, instant, host-error,
+               net-req, net-resp, log-level, navigate-result, evaluate-result};
+
+    // Determinism sources
+    clock-now: func() -> instant;
+    rng-next-u64: func() -> u64;
+
+    // Content store (records side-effect tape)
+    blob-put: func(bytes: list<u8>) -> result<content-ref, host-error>;
+    blob-get: func(ref: content-ref) -> result<list<u8>, host-error>;
+
+    // Network (vault-mediated; secrets never enter WASM linear memory)
+    net-request: func(req: net-req) -> result<net-resp, host-error>;
+
+    // Bridge to out-of-process shim
+    shim-call: func(shim-id: string, msg: list<u8>) -> result<list<u8>, host-error>;
+
+    // Navigate-execute: typed replacement for shim-call on the navigate path.
+    // Host handles ShimManager::send_navigate + ContentStore.put; returns
+    // a typed navigate-result (AC-NAVRECEIPT-01..05).
+    // action-id propagates the WASM-guest-computed action_hash (= sha256 of
+    // action.payload) for receipt correlation in the host.
+    navigate-execute: func(action-id: string, url: string, budget-ms: u64) -> result<navigate-result, host-error>;
+
+    // Evaluate-execute: typed replacement for shim-call on the web.evaluate
+    // path. Host handles ShimManager::send_evaluate, CDP Runtime.evaluate
+    // dispatch, exceptionDetails handling (→ shim-failure), CBOR→canonical-JSON
+    // conversion, and 64KB content-store offload (AC-EVALRESULT-01..04).
+    evaluate-execute: func(action-id: string, expression: string, budget-ms: u64) -> result<evaluate-result, host-error>;
+
+    // Logging + receipt emission
+    log-emit: func(level: log-level, msg: string,
+                   fields: list<tuple<string, string>>);
+    receipt-emit: func(r: receipt);
+}
+
+interface web-surface {
+    use types.{action, receipt, host-error};
+    navigate:   func(a: action) -> result<receipt, host-error>;
+    click:      func(a: action) -> result<receipt, host-error>;
+    type-text:  func(a: action) -> result<receipt, host-error>;
+    select:     func(a: action) -> result<receipt, host-error>;
+    hover:      func(a: action) -> result<receipt, host-error>;
+    scroll:     func(a: action) -> result<receipt, host-error>;
+    wait:       func(a: action) -> result<receipt, host-error>;
+    evaluate:   func(a: action) -> result<receipt, host-error>;
+    screenshot: func(a: action) -> result<receipt, host-error>;
+    snapshot:   func(a: action) -> result<receipt, host-error>;
+}
+
+// v1.5 surfaces — WIT defined, WASM not built at v1
+interface shell-surface {
+    use types.{action, receipt, host-error};
+    exec: func(a: action) -> result<receipt, host-error>;
+}
+
+interface fs-surface {
+    use types.{action, receipt, host-error};
+    snapshot: func(a: action) -> result<receipt, host-error>;
+}
+
+interface api-surface {
+    use types.{action, receipt, host-error};
+    request: func(a: action) -> result<receipt, host-error>;
+}
+
+interface native-surface {
+    use types.{action, receipt, host-error};
+    ax-query: func(a: action) -> result<receipt, host-error>;
+}
+
+world surface {
+    import host;
+    export web-surface;
+    // v1.5: also export shell-surface, fs-surface, api-surface, native-surface
+}

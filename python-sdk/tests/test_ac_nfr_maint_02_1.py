@@ -1,0 +1,123 @@
+"""
+Tests for AC-NFR-MAINT-02.1 — Schema-driven SDK generation.
+
+Given a schema registry change at schemas/v1.json,
+When the build runs,
+Then the Python and TypeScript SDK surfaces are regenerated and
+the diff against the prior SDK is non-empty (or empty if no schema
+change). No hand-drift permitted.
+"""
+from __future__ import annotations
+
+import importlib
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
+
+import pytest
+
+from tests.conftest import MockDaemon, SCHEMA_REGISTRY
+
+
+SDK_ROOT = Path(__file__).parent.parent
+LOOM_PKG = SDK_ROOT / "loom"
+CODEGEN_MODULE = "loom._codegen"
+
+
+def test_codegen_produces_types_from_daemon_schema(daemon: MockDaemon, tmp_path: Path):
+    """Codegen script connects to daemon, calls rpc.schemas(), writes types.py."""
+    output = tmp_path / "types.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            CODEGEN_MODULE,
+            "--socket",
+            str(daemon.socket_path),
+            "--token",
+            daemon.token,
+            "--output",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(SDK_ROOT),
+    )
+    assert result.returncode == 0, f"codegen failed:\nstdout: {result.stdout}\nstderr: {result.stderr}"
+    assert output.exists(), "codegen did not write output file"
+    content = output.read_text()
+    assert "SessionCreate" in content or "session_create" in content or "session.create" in content or "SessionInfo" in content, (
+        "generated types.py does not reference any expected type"
+    )
+
+
+def test_codegen_types_match_committed_snapshot(daemon: MockDaemon, tmp_path: Path):
+    """
+    Generated types.py is consistent when schema unchanged.
+    Running codegen twice produces the same output.
+    """
+    out1 = tmp_path / "types1.py"
+    out2 = tmp_path / "types2.py"
+
+    for output in (out1, out2):
+        result = subprocess.run(
+            [
+                sys.executable, "-m", CODEGEN_MODULE,
+                "--socket", str(daemon.socket_path),
+                "--token", daemon.token,
+                "--output", str(output),
+            ],
+            capture_output=True,
+            text=True,
+            cwd=str(SDK_ROOT),
+        )
+        assert result.returncode == 0
+
+    assert out1.read_text() == out2.read_text(), (
+        "codegen is non-deterministic: two runs with same schema produced different output"
+    )
+
+
+def test_codegen_detects_schema_change(daemon: MockDaemon, tmp_path: Path):
+    """When daemon returns an updated schema, codegen produces different types.py."""
+    out_before = tmp_path / "before.py"
+    out_after = tmp_path / "after.py"
+
+    # First codegen against default schema
+    result = subprocess.run(
+        [
+            sys.executable, "-m", CODEGEN_MODULE,
+            "--socket", str(daemon.socket_path),
+            "--token", daemon.token,
+            "--output", str(out_before),
+        ],
+        capture_output=True, text=True, cwd=str(SDK_ROOT),
+    )
+    assert result.returncode == 0
+
+    # Modify daemon schema to add a new method
+    import copy
+    new_registry = copy.deepcopy(SCHEMA_REGISTRY)
+    new_registry["methods"].append({
+        "method": "session.newmethod",
+        "request": {"type": "object", "properties": {"x": {"type": "string"}}},
+        "response": {"type": "object", "properties": {"y": {"type": "string"}}},
+    })
+    new_registry["source_wit_sha256"] = "00112233" * 8
+    daemon.register_handler("rpc.schemas", lambda _: new_registry)
+
+    result = subprocess.run(
+        [
+            sys.executable, "-m", CODEGEN_MODULE,
+            "--socket", str(daemon.socket_path),
+            "--token", daemon.token,
+            "--output", str(out_after),
+        ],
+        capture_output=True, text=True, cwd=str(SDK_ROOT),
+    )
+    assert result.returncode == 0
+
+    assert out_before.read_text() != out_after.read_text(), (
+        "codegen produced identical output despite schema change — hand-drift risk"
+    )

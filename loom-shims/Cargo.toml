@@ -1,0 +1,73 @@
+[package]
+name = "loom-shims"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+loom-shared = { workspace = true }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ciborium = { workspace = true }
+sha2 = "0.10"
+async-trait = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures = { workspace = true }
+
+# Subprocess + FD inheritance (binary main, L8)
+libc = { workspace = true }
+
+# Chromium DevTools Protocol — ONLY allowed inside loom-shims (cargo-deny enforces).
+# Kept as a transitive backbone (URL parsing + WS upgrade helpers) but the
+# CDP wire-level traffic is hand-rolled over tokio-tungstenite below to avoid
+# fighting chromiumoxide 0.6's typed-method system for arbitrary CDP methods.
+chromiumoxide = { workspace = true }
+
+# WebSocket transport for raw CDP method dispatch. Production (L4 cdp_connection)
+# AND the test-only fake-chromium binary both use this.
+tokio-tungstenite = { workspace = true }
+
+# Async stream helpers for the WS sink/stream split.
+tokio-stream = "0.1"
+
+# URL parsing for the blocklist gate (AC-DET-05.1) — host-only matching
+# avoids false positives from `str::contains` on path/query strings.
+# Already in workspace lockfile via chromiumoxide; declared here as a
+# direct dep so the network_interceptor module can import `url::Url`.
+url = "2.5"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[features]
+default = []
+mock = []
+# fake-chromium binary used only by integration tests (StubCdpServer harness).
+fake-chromium-bin = []
+
+[lib]
+name = "loom_shims"
+path = "src/lib.rs"
+
+[[bin]]
+name = "loom-shim-chromium"
+path = "src/bin/loom-shim-chromium.rs"
+
+[[bin]]
+name = "fake-chromium"
+path = "src/bin/fake-chromium.rs"
+required-features = ["fake-chromium-bin"]

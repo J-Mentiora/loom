@@ -1,0 +1,11 @@
+target/
+.DS_Store
+*.swp
+.idea/
+.vscode/
+.envrc
+.env
+.env.local
+
+# cargo-dist intermediates
+dist-manifest.json

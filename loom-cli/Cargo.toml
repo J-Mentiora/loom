@@ -1,0 +1,66 @@
+[package]
+name = "loom-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+loom-shared = { workspace = true }
+loom-core = { workspace = true }
+loom-host = { workspace = true, optional = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+ulid = { workspace = true }
+jsonschema = { workspace = true }
+dirs = { workspace = true }
+walkdir = { workspace = true }
+hex = { workspace = true }
+toml = { workspace = true }
+sha2 = { workspace = true }
+zip = { workspace = true }
+humantime = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }
+# wasmparser: validate the embedded loom_surface_web.wasm is a real wasm
+# component (not the dev stub) in the non-ignored embedded_wasm_sha test.
+# Version pinned to 0.246 to share the transitive lock-entry from wasmtime 44.
+wasmparser = "0.246"
+
+[features]
+# AC-PICOMP-01: postinstall enabled by default so `cargo build --release --bin loom`
+# produces a binary with a fully-functional `loom postinstall` command.
+# BC-CLI-01 is preserved by code structure: compile_module is only reachable from
+# Command::Postinstall → postinstall_runner::compile_step, never from the action
+# dispatch path.
+default = ["postinstall"]
+mock = []
+postinstall = ["dep:loom-host"]
+
+# Binary crate but exposes a library facade for integration tests
+# (per `main` interfaces.rs comment: "exports `fn main()` and a
+# library-style `run` helper for integration tests").
+[lib]
+name = "loom_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "loom"
+path = "src/bin/loom.rs"

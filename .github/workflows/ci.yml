@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: cargo test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+      # `--test-threads=1` is load-bearing — see CONTRIBUTING.md.
+      - run: cargo test --workspace --release -- --test-threads=1
+
+  build:
+    name: cargo build --release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+      - run: cargo build --workspace --release
+      - name: Verify binaries are present
+        run: |
+          for bin in loom loom-daemon loom-shim-chromium loom-mcp; do
+            test -f "target/release/$bin" || (echo "missing: $bin"; exit 1)
+            file "target/release/$bin"
+          done
+
+  smoke:
+    name: end-to-end smoke (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev jq
+      - name: Build release binaries
+        run: cargo build --release
+      # Don't `loom postinstall` (would download Chromium ~150 MB).
+      # Smoke verifies the daemon comes up + the offline RPC surface
+      # (session lifecycle, doctor) works without a real browser.
+      - name: Daemon comes up + accepts RPC
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN=./target/release
+          $BIN/loom serve > /tmp/loom-daemon.log 2>&1 &
+          sleep 5
+          # doctor passes for socket+daemon, fails for chromium
+          $BIN/loom doctor || echo "expected: chromium check fails (no postinstall)"
+          # session lifecycle WITHOUT actions (offline)
+          S=$($BIN/loom session create --profile standard | jq -r .session_id)
+          echo "session=$S"
+          test -n "$S" -a "$S" != "null"
+          $BIN/loom session list | jq 'length' | grep -E '^[1-9]'
+          $BIN/loom session inspect "$S" | jq -r '.session_id' | grep -q "$S"
+          $BIN/loom session validate "$S" | grep -q "PASS"
+          $BIN/loom session close "$S" | jq -r '.status' | grep -q closed
+          # gc smoke (no blobs to collect on a freshly-created session)
+          $BIN/loom gc --ttl 0 | jq -r '.blobs_collected'
+          # Cleanup
+          pkill -9 -f loom-daemon || true
+      - name: Print daemon log on failure
+        if: failure()
+        run: cat /tmp/loom-daemon.log || true
+
+  # cargo-deny — license + advisory checks on the workspace.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories bans sources

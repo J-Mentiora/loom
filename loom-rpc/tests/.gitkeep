@@ -1,0 +1,1 @@
+# integration tests live next to their module via #[cfg(test)] mod interface_tests

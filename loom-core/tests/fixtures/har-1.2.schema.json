@@ -1,0 +1,250 @@
+{
+    "$schema": "http://json-schema.org/draft-04/schema#",
+    "$comment": "HAR 1.2 JSON Schema — vendored fixture for AC-HAREXPORT-04. Source: HTTP Archive 1.2 spec (http://www.softwareishard.com/blog/har-12-spec/) and the canonical npm `har-schema` package (ISC license; the loom project is internal — license-compatible). This schema is consulted by tests only; runtime exports are unaffected. Pinned to JSON Schema draft-04 to match the upstream `har-schema` declarations. Update procedure: when bumping `jsonschema = '0.46'` in workspace deps, re-run `cargo test -p loom-core ac_harexport_04_fixture_is_valid_json_schema` to confirm draft-04 still parses; the meta-schema check defends against drift.",
+    "title": "HAR 1.2",
+    "type": "object",
+    "required": ["log"],
+    "properties": {
+        "log": { "$ref": "#/definitions/log" }
+    },
+    "additionalProperties": false,
+    "definitions": {
+        "log": {
+            "type": "object",
+            "required": ["version", "creator", "entries"],
+            "properties": {
+                "version": { "type": "string" },
+                "creator": { "$ref": "#/definitions/creator" },
+                "browser": { "$ref": "#/definitions/creator" },
+                "pages": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/page" }
+                },
+                "entries": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/entry" }
+                },
+                "comment": { "type": "string" }
+            }
+        },
+        "creator": {
+            "type": "object",
+            "required": ["name", "version"],
+            "properties": {
+                "name": { "type": "string" },
+                "version": { "type": "string" },
+                "comment": { "type": "string" }
+            }
+        },
+        "page": {
+            "type": "object",
+            "required": ["startedDateTime", "id", "title", "pageTimings"],
+            "properties": {
+                "startedDateTime": { "type": "string" },
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "pageTimings": { "$ref": "#/definitions/pageTimings" },
+                "comment": { "type": "string" }
+            }
+        },
+        "pageTimings": {
+            "type": "object",
+            "properties": {
+                "onContentLoad": { "type": "number" },
+                "onLoad": { "type": "number" },
+                "comment": { "type": "string" }
+            }
+        },
+        "entry": {
+            "type": "object",
+            "required": [
+                "startedDateTime",
+                "time",
+                "request",
+                "response",
+                "cache",
+                "timings"
+            ],
+            "properties": {
+                "pageref": { "type": "string" },
+                "startedDateTime": { "type": "string" },
+                "time": { "type": "number", "minimum": 0 },
+                "request": { "$ref": "#/definitions/request" },
+                "response": { "$ref": "#/definitions/response" },
+                "cache": { "$ref": "#/definitions/cache" },
+                "timings": { "$ref": "#/definitions/timings" },
+                "serverIPAddress": { "type": "string" },
+                "connection": { "type": "string" },
+                "comment": { "type": "string" }
+            }
+        },
+        "request": {
+            "type": "object",
+            "required": [
+                "method",
+                "url",
+                "httpVersion",
+                "cookies",
+                "headers",
+                "queryString",
+                "headersSize",
+                "bodySize"
+            ],
+            "properties": {
+                "method": { "type": "string" },
+                "url": { "type": "string" },
+                "httpVersion": { "type": "string" },
+                "cookies": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/cookie" }
+                },
+                "headers": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/record" }
+                },
+                "queryString": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/record" }
+                },
+                "postData": { "$ref": "#/definitions/postData" },
+                "headersSize": { "type": "integer" },
+                "bodySize": { "type": "integer" },
+                "comment": { "type": "string" }
+            }
+        },
+        "response": {
+            "type": "object",
+            "required": [
+                "status",
+                "statusText",
+                "httpVersion",
+                "cookies",
+                "headers",
+                "content",
+                "redirectURL",
+                "headersSize",
+                "bodySize"
+            ],
+            "properties": {
+                "status": { "type": "integer" },
+                "statusText": { "type": "string" },
+                "httpVersion": { "type": "string" },
+                "cookies": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/cookie" }
+                },
+                "headers": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/record" }
+                },
+                "content": { "$ref": "#/definitions/content" },
+                "redirectURL": { "type": "string" },
+                "headersSize": { "type": "integer" },
+                "bodySize": { "type": "integer" },
+                "comment": { "type": "string" }
+            }
+        },
+        "cookie": {
+            "type": "object",
+            "required": ["name", "value"],
+            "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" },
+                "path": { "type": "string" },
+                "domain": { "type": "string" },
+                "expires": { "type": "string" },
+                "httpOnly": { "type": "boolean" },
+                "secure": { "type": "boolean" },
+                "comment": { "type": "string" }
+            }
+        },
+        "record": {
+            "type": "object",
+            "required": ["name", "value"],
+            "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" },
+                "comment": { "type": "string" }
+            }
+        },
+        "postData": {
+            "type": "object",
+            "required": ["mimeType"],
+            "properties": {
+                "mimeType": { "type": "string" },
+                "text": { "type": "string" },
+                "params": {
+                    "type": "array",
+                    "items": { "$ref": "#/definitions/param" }
+                },
+                "comment": { "type": "string" }
+            }
+        },
+        "param": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" },
+                "fileName": { "type": "string" },
+                "contentType": { "type": "string" },
+                "comment": { "type": "string" }
+            }
+        },
+        "content": {
+            "type": "object",
+            "required": ["size", "mimeType"],
+            "properties": {
+                "size": { "type": "integer" },
+                "compression": { "type": "integer" },
+                "mimeType": { "type": "string" },
+                "text": { "type": "string" },
+                "encoding": { "type": "string" },
+                "comment": { "type": "string" }
+            }
+        },
+        "cache": {
+            "type": "object",
+            "properties": {
+                "beforeRequest": {
+                    "anyOf": [
+                        { "type": "null" },
+                        { "$ref": "#/definitions/cacheState" }
+                    ]
+                },
+                "afterRequest": {
+                    "anyOf": [
+                        { "type": "null" },
+                        { "$ref": "#/definitions/cacheState" }
+                    ]
+                },
+                "comment": { "type": "string" }
+            }
+        },
+        "cacheState": {
+            "type": "object",
+            "required": ["lastAccess", "eTag", "hitCount"],
+            "properties": {
+                "expires": { "type": "string" },
+                "lastAccess": { "type": "string" },
+                "eTag": { "type": "string" },
+                "hitCount": { "type": "integer" },
+                "comment": { "type": "string" }
+            }
+        },
+        "timings": {
+            "type": "object",
+            "required": ["send", "wait", "receive"],
+            "properties": {
+                "dns": { "type": "number" },
+                "connect": { "type": "number" },
+                "blocked": { "type": "number" },
+                "send": { "type": "number" },
+                "wait": { "type": "number" },
+                "receive": { "type": "number" },
+                "ssl": { "type": "number" },
+                "comment": { "type": "string" }
+            }
+        }
+    }
+}

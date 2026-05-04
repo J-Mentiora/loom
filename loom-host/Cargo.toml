@@ -1,0 +1,62 @@
+[package]
+name = "loom-host"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+loom-shared = { workspace = true }
+loom-core = { workspace = true }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+ulid = { workspace = true }
+futures = { workspace = true }
+
+# WASM runtime
+wasmtime = { workspace = true }
+wasmtime-wasi = { workspace = true }
+wit-bindgen = { workspace = true }
+dashmap = { workspace = true }
+reqwest = { workspace = true }
+gimli = { workspace = true }
+addr2line = { workspace = true }
+ciborium = { workspace = true }
+
+# Subprocess + FD inheritance (ShimManager spawn path, L10)
+rustix = { workspace = true }
+libc = { workspace = true }
+
+[build-dependencies]
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio-tungstenite = { workspace = true }
+loom-core = { workspace = true, features = ["mock"] }
+# AC-HAREXPORT-04: integration_har_export.rs validates the
+# end-to-end-produced HAR against the vendored HAR 1.2 schema
+# (tests/integration_har_export.rs). Same workspace dep loom-core
+# uses; scoped to dev-deps here so loom-host's runtime closure
+# stays unchanged.
+jsonschema = { workspace = true }
+
+[features]
+default = []
+mock = []
+
+[lib]
+path = "src/lib.rs"

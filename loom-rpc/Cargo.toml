@@ -1,0 +1,48 @@
+[package]
+name = "loom-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+loom-shared = { workspace = true }
+loom-core = { workspace = true }
+
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+jsonrpsee = { workspace = true }
+
+rand = { workspace = true }
+jsonschema = { workspace = true }
+subtle = { workspace = true }
+hex = { workspace = true }
+dirs = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+libc = "0.2"
+
+[features]
+default = []
+mock = []
+
+[lib]
+path = "src/lib.rs"

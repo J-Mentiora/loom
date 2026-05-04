@@ -1,0 +1,656 @@
+// ActionExecutor — verb library + `cdp_send` worker.
+//
+// # Contract semantics
+// - **R3 pre-condition (IC-SHIM-05).** Before dispatching any
+//   `Page.navigate`, `ActionExecutor` calls
+//   `TargetManager::determinism_ready(target_id)` and returns
+//   `ShimErrorCode::ShimInternalError` (with detail
+//   `"R3OrderingViolation"`) if the flag is still false.
+// - **R1 pre-condition (IC-SHIM-04).** Before `Page.navigate`,
+//   subscribes `NetworkInterceptor` for the target so the
+//   `Network.responseReceived` events arrive before the response body
+//   is evicted from Chromium's cache.
+// - **`cdp_send` async (IC-SHIM-12).** Each `cdp_send` is its own
+//   tokio task; multiple in-flight roundtrips do not serialise.
+// - **No CDP payload escape (IC-SHIM-06).** `ActionExecutor`
+//   translates CDP responses into typed `ActionResult` shapes.
+//   `cdp_send` is the one path that round-trips opaque CBOR — the
+//   daemon already routed that bytes-only via `loom-host::shim_call`,
+//   never to a WASM caller.
+// - **Per-target ordering for stateful actions.** Click → focus →
+//   type sequence is enforced by serialising actions targeting the
+//   same `target_id`; cross-target actions remain parallel.
+
+use crate::cdp_connection::cdp_connection::{CdpConnection, CdpError, EventFilter, EventHandler};
+use crate::dispatcher::dispatcher::make_error_response;
+use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, ShimResponse, TargetId};
+use crate::network_interceptor::network_interceptor::{
+    classify_chromium_nav_error, BlockedEvent, LoomNetworkEvent, NetworkInterceptor,
+};
+use crate::target_manager::target_manager::TargetManager;
+use async_trait::async_trait;
+use ciborium::value::Value as CborValue;
+use loom_shared::navigate_outcome::ShimConsoleLine;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::oneshot;
+
+/// Default per-action budget. Daemon may override per-call.
+pub const DEFAULT_ACTION_BUDGET: Duration = Duration::from_secs(30);
+
+/// Default budget specifically for `page_navigate`. Tighter than
+/// `DEFAULT_ACTION_BUDGET` so an unreachable host (DNS failure,
+/// connection refused, slow-TLS handshake) surfaces a typed-error
+/// receipt within the AC-NETERR-01..04 window. CDP itself fast-
+/// fails DNS / connection-refused sub-second; this constant bounds
+/// the slow-TLS / unresponsive-host worst case.
+pub const DEFAULT_NAVIGATE_BUDGET: Duration = Duration::from_secs(10);
+
+/// Translated, typed result of an action. Never carries raw CDP bytes
+/// outside `cdp_send`'s explicit pass-through path.
+// Navigated carries dom_bytes + screenshot_bytes (heap Vec<u8>) alongside
+// multiple Strings for the tier-2 receipt payload. All large fields are
+// heap-allocated; the stack-frame size difference is pointer-width only.
+// Boxing Navigated would add an extra allocation per navigate for no gain.
+#[allow(clippy::large_enum_variant)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActionResult {
+    /// `page_navigate` completed.
+    Navigated {
+        target_id: TargetId,
+        frame_id: String,
+        loader_id: String,
+        network_events: Vec<LoomNetworkEvent>,
+        /// SHA-256 of the captured DOM snapshot (post-load). Hex.
+        dom_after_sha256: String,
+        /// SHA-256 of the captured screenshot (post-load). Hex. NOT
+        /// part of the bit-equal replay hash chain (NFR-DET-01).
+        screenshot_sha256: String,
+        // --- Tier-2 payload fields (AC-NAVRECEIPT-01..05) ---
+        /// Requested URL (from PageNavigate.url).
+        url: String,
+        /// Final URL after redirects. Phase 6 stub: same as url.
+        final_url: String,
+        /// Page title. Phase 6 stub: empty string.
+        page_title: String,
+        /// HTTP status of main document. Derived from network_events[0].status,
+        /// falls back to 0 when network_events is empty.
+        status_code: u16,
+        /// Raw CBOR bytes of the DOM.getDocument response (dom_after_sha256 = sha256 of these).
+        dom_bytes: Vec<u8>,
+        /// Raw CBOR bytes of the Page.captureScreenshot response (screenshot_sha256 = sha256 of these).
+        screenshot_bytes: Vec<u8>,
+        /// Console lines captured by shim. Phase 6: always empty.
+        console_lines: Vec<ShimConsoleLine>,
+        /// Sub-resource requests blocked by the default blocklist
+        /// (AC-DET-05.1, AC-BLOCKLIST-02). Drained from
+        /// `NetworkInterceptor::drain_blocked` after `Page.loadEventFired`;
+        /// the host writes one `AuditEntry { kind: BlockedUrl }` per
+        /// event into the manifest hash chain. `serde(default)` so a
+        /// pre-feature CBOR payload (no field) decodes as empty.
+        #[serde(default)]
+        blocked_events: Vec<BlockedEvent>,
+    },
+    /// `cdp_send` round-trip; opaque pass-through to the daemon.
+    CdpResult { result: CborValue },
+    /// `page_close` completed.
+    PageClosed { target_id: TargetId },
+}
+
+/// Concrete ActionExecutor.
+pub struct ChromiumActionExecutor {
+    pub(crate) cdp: Arc<dyn CdpConnection>,
+    pub(crate) network: Arc<dyn NetworkInterceptor>,
+    pub(crate) targets: Arc<dyn TargetManager>,
+    pub(crate) default_budget: Duration,
+}
+
+impl ChromiumActionExecutor {
+    pub fn new(
+        cdp: Arc<dyn CdpConnection>,
+        network: Arc<dyn NetworkInterceptor>,
+        targets: Arc<dyn TargetManager>,
+    ) -> Self {
+        Self {
+            cdp,
+            network,
+            targets,
+            default_budget: DEFAULT_ACTION_BUDGET,
+        }
+    }
+}
+
+/// Public ActionExecutor trait surface. All methods are async so the
+/// dispatcher can drive multiple in-flight CDP roundtrips concurrently
+/// (IC-SHIM-12) and so that L4's `chromiumoxide::Browser` calls — which
+/// are inherently async — fit cleanly into the call chain.
+#[async_trait]
+pub trait ActionExecutor: Send + Sync {
+    /// Pass-through CDP command. p99 ≤ 50ms (IC-SHIM-12).
+    /// Errors: `CdpTimeout`, `CdpProtocolError`, `TargetUnknown`.
+    async fn cdp_send(
+        &self,
+        target_id: TargetId,
+        msg: CdpMessage,
+        budget: Option<Duration>,
+    ) -> Result<ActionResult, ShimResponse>;
+
+    /// Navigate target to URL. R3 pre-check + R1 subscription before
+    /// `Page.navigate`. Drains `LoomNetworkEvent`s from `NetworkInterceptor`
+    /// after `Page.loadEventFired`.
+    ///
+    /// `blocklist_enabled` (AC-DET-05.1, AC-BLOCKLIST-04) — when true,
+    /// also issues `Fetch.enable` before navigate so sub-resources are
+    /// gated against the default blocklist; drained `BlockedEvent`s
+    /// land in the receipt's `blocked_events` field and become
+    /// manifest `AuditEntry { kind: BlockedUrl }` on the host side.
+    /// When false, no `Fetch.enable` is sent and `blocked_events` is
+    /// empty.
+    ///
+    /// Errors: `R3OrderingViolation` if `determinism_injected == false`;
+    /// `CdpTimeout` if budget exceeded.
+    async fn page_navigate(
+        &self,
+        target_id: TargetId,
+        url: String,
+        budget: Option<Duration>,
+        blocklist_enabled: bool,
+    ) -> Result<ActionResult, ShimResponse>;
+
+    /// Close the target.
+    async fn page_close(&self, target_id: TargetId) -> Result<ActionResult, ShimResponse>;
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ActionError {
+    #[error("R3 ordering violation: navigate before determinism inject on target {0}")]
+    R3OrderingViolation(TargetId),
+    #[error("CDP failure: {0}")]
+    Cdp(#[from] CdpError),
+    #[error("target {0} unknown")]
+    TargetUnknown(TargetId),
+}
+
+impl From<ActionError> for ShimErrorCode {
+    fn from(e: ActionError) -> Self {
+        match e {
+            ActionError::R3OrderingViolation(_) => ShimErrorCode::ShimInternalError,
+            ActionError::Cdp(c) => c.into(),
+            ActionError::TargetUnknown(_) => ShimErrorCode::TargetUnknown,
+        }
+    }
+}
+
+#[async_trait]
+impl ActionExecutor for ChromiumActionExecutor {
+    async fn cdp_send(
+        &self,
+        target_id: TargetId,
+        msg: CdpMessage,
+        budget: Option<Duration>,
+    ) -> Result<ActionResult, ShimResponse> {
+        match self.cdp.command(target_id, msg, budget).await {
+            Ok(result) => Ok(ActionResult::CdpResult { result }),
+            Err(e) => Err(action_error_to_response(ActionError::Cdp(e), 0, None)),
+        }
+    }
+
+    async fn page_navigate(
+        &self,
+        target_id: TargetId,
+        url: String,
+        budget: Option<Duration>,
+        blocklist_enabled: bool,
+    ) -> Result<ActionResult, ShimResponse> {
+        // R3 PRECONDITION (IC-SHIM-05). Refuse to navigate before the
+        // determinism script has been installed for this target. Today
+        // the flag flips true ONLY on Ok(()) from `inject` (per
+        // target_manager); a false flag here would mean a regression
+        // re-introduced the silent-success path. Defense-in-depth.
+        if !self.targets.determinism_ready(target_id) {
+            tracing::error!(target_id, "R3OrderingViolation: navigate before inject");
+            return Err(make_error_response(
+                0,
+                None,
+                ShimErrorCode::ShimInternalError,
+                "R3OrderingViolation",
+            ));
+        }
+
+        // Tighter default for navigate so unreachable hosts surface a
+        // typed-error receipt within the AC-NETERR window. Callers
+        // passing an explicit `budget` keep their value.
+        let timeout = budget.unwrap_or(DEFAULT_NAVIGATE_BUDGET);
+
+        // STEP 1: subscribe to Page.loadEventFired BEFORE issuing navigate
+        // (per practitioner bug magnet #1: cached / data: URLs fire fast,
+        // and post-navigate subscription will miss the event).
+        let load_signal: Arc<parking_lot::Mutex<Option<oneshot::Sender<()>>>> =
+            Arc::new(parking_lot::Mutex::new(None));
+        let (load_tx, load_rx) = oneshot::channel::<()>();
+        *load_signal.lock() = Some(load_tx);
+        let signal_for_handler = load_signal.clone();
+        let load_handler: EventHandler = Arc::new(move |_target_id, msg: CdpMessage| {
+            if msg.method == "Page.loadEventFired" {
+                if let Some(tx) = signal_for_handler.lock().take() {
+                    let _ = tx.send(());
+                }
+            }
+        });
+        let _load_reg = self
+            .cdp
+            .register_event_handler(EventFilter::new("Page.loadEventFired"), load_handler);
+
+        // STEP 1b: subscribe to Runtime.consoleAPICalled to accumulate
+        // console output during the navigate. AC-NAVTIER2SHIM-03. The
+        // collector is dropped at the end of this fn so each navigate
+        // gets a fresh log; cross-action persistence is not part of the
+        // brief.
+        let console_collector: Arc<parking_lot::Mutex<Vec<ShimConsoleLine>>> =
+            Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let console_for_handler = console_collector.clone();
+        let console_handler: EventHandler = Arc::new(move |_target_id, msg: CdpMessage| {
+            if msg.method == "Runtime.consoleAPICalled" {
+                if let Some(line) = extract_console_line(&msg.params) {
+                    console_for_handler.lock().push(line);
+                }
+            }
+        });
+        let _console_reg = self.cdp.register_event_handler(
+            EventFilter::new("Runtime.consoleAPICalled"),
+            console_handler,
+        );
+
+        // STEP 2a: subscribe to Network.responseReceived to capture network events.
+        // Stub: NetworkInterceptor handles its own event subscription at boot,
+        // so we just snapshot the events accumulated so far at navigate end.
+
+        // STEP 2b: subscribe to Fetch.requestPaused for sub-resource
+        // blocklist enforcement (AC-DET-05.1, AC-BLOCKLIST-04). Skipped
+        // when the operator passed --no-blocklist (decoded into
+        // `blocklist_enabled = false` on the wire). The interceptor's
+        // own constructor short-circuits when its blocklist is empty,
+        // so the cost of subscribing per-navigate is just one
+        // `Fetch.enable` CDP roundtrip when enabled.
+        if blocklist_enabled {
+            if let Err(e) = self.network.subscribe(target_id).await {
+                tracing::warn!(target_id, error = %e, "blocklist Fetch.enable failed; sub-resources will not be gated for this navigate");
+            }
+        }
+
+        // STEP 3: send Page.navigate.
+        let mut nav_params = vec![
+            (CborValue::Text("url".into()), CborValue::Text(url.clone())),
+            (
+                CborValue::Text("transitionType".into()),
+                CborValue::Text("typed".into()),
+            ),
+        ];
+        // Drop the borrow checker shenanigans: just construct directly.
+        let nav_msg = CdpMessage {
+            method: "Page.navigate".into(),
+            params: CborValue::Map(std::mem::take(&mut nav_params)),
+        };
+        let nav_response = self
+            .cdp
+            .command(target_id, nav_msg, Some(timeout))
+            .await
+            .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
+        let (frame_id, loader_id) = extract_frame_loader(&nav_response);
+
+        // STEP 4: await Page.loadEventFired with timeout. The fake-chromium
+        // harness emits the event right after Page.navigate response so this
+        // typically completes immediately. Real Chromium can take longer.
+        let _ = tokio::time::timeout(timeout, load_rx).await;
+
+        // STEP 5: DOM.getDocument → raw CBOR bytes + SHA-256.
+        let dom_msg = CdpMessage {
+            method: "DOM.getDocument".into(),
+            params: CborValue::Map(vec![
+                (
+                    CborValue::Text("depth".into()),
+                    CborValue::Integer((-1i64).into()),
+                ),
+                (CborValue::Text("pierce".into()), CborValue::Bool(true)),
+            ]),
+        };
+        let dom_result = self
+            .cdp
+            .command(target_id, dom_msg, Some(timeout))
+            .await
+            .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
+        let dom_after_sha256 = sha256_hex_of_cbor(&dom_result);
+        let dom_bytes = cbor_to_bytes(&dom_result);
+
+        // STEP 6: Page.captureScreenshot → raw CBOR bytes + SHA-256.
+        let shot_msg = CdpMessage {
+            method: "Page.captureScreenshot".into(),
+            params: CborValue::Map(vec![(
+                CborValue::Text("format".into()),
+                CborValue::Text("png".into()),
+            )]),
+        };
+        let shot_result = self
+            .cdp
+            .command(target_id, shot_msg, Some(timeout))
+            .await
+            .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
+        let screenshot_sha256 = sha256_hex_of_cbor(&shot_result);
+        let screenshot_bytes = cbor_to_bytes(&shot_result);
+
+        // STEP 6a: extract document.title and final_url via a single
+        // Runtime.evaluate roundtrip. This replaces the Phase 6 stubs
+        // that left both fields empty (AC-NAVTIER2SHIM-01..02). Both
+        // are best-effort: a CDP error here doesn't fail the navigate
+        // — we just leave the field empty (same as the stub it
+        // replaces). Single roundtrip keeps the cost ~constant vs
+        // separate calls.
+        let (page_title, real_final_url) = {
+            let eval_msg = CdpMessage {
+                method: "Runtime.evaluate".into(),
+                params: CborValue::Map(vec![
+                    (
+                        CborValue::Text("expression".into()),
+                        CborValue::Text(
+                            "JSON.stringify([document.title || '', \
+                              location.href || ''])"
+                                .into(),
+                        ),
+                    ),
+                    (
+                        CborValue::Text("returnByValue".into()),
+                        CborValue::Bool(true),
+                    ),
+                    (
+                        CborValue::Text("awaitPromise".into()),
+                        CborValue::Bool(false),
+                    ),
+                ]),
+            };
+            match self.cdp.command(target_id, eval_msg, Some(timeout)).await {
+                Ok(r) => extract_title_and_url_from_evaluate(&r)
+                    .unwrap_or_else(|| (String::new(), url.clone())),
+                Err(_) => (String::new(), url.clone()),
+            }
+        };
+
+        // STEP 7: drain network events + blocked sub-resource events
+        // accumulated by NetworkInterceptor. Blocked events become
+        // manifest `AuditEntry { kind: BlockedUrl }` on the host side.
+        // AC-BLOCKLIST-02.
+        //
+        // CDP envelope events arrive at handlers with `target_id == 0`
+        // (cdp_connection's read_loop hardcodes that — there's no
+        // multi-target routing today; one chromium subprocess per
+        // session, one CDP session). NetworkInterceptor::append stores
+        // events under `target_id == 0`, so we drain from there too.
+        // Falling back to the requested `target_id` keeps the
+        // fake-chromium harness's per-target drain working — that
+        // path uses real per-target IDs.
+        // AC-NETEVENTS-01..03.
+        let mut network_events = self.network.drain_events(0);
+        if network_events.is_empty() {
+            network_events = self.network.drain_events(target_id);
+        }
+        let mut blocked_events = self.network.drain_blocked(0);
+        if blocked_events.is_empty() {
+            blocked_events = self.network.drain_blocked(target_id);
+        }
+
+        // Derive status_code from first network event; fall back to 0.
+        // Computed BEFORE any synthetic-event push so HTTP status from a
+        // real Network.responseReceived isn't shadowed by a status=0
+        // synthetic event we appended for DNS-failure signaling.
+        let status_code = network_events.first().map(|e| e.status).unwrap_or(0);
+
+        // Surface DNS / network failures via a synthetic LoomNetworkEvent
+        // carrying `error_reason`. CDP `Page.navigate` returns a non-empty
+        // `errorText` field when navigation could not even reach a server
+        // (DNS, conn-refused, TLS, etc.). The host-side `navigate_execute`
+        // detects events with `error_reason.is_some()` and converts them
+        // into an HostError::ShimFailure carrying a structured JSON
+        // detail (kind="dns_failure"). AC-NAVERR-03.
+        if let Some(err_text) = extract_nav_error_text(&nav_response) {
+            // Classify at the boundary (D-01): the shim owns chromium-
+            // specific error mapping, the host reads the typed kind.
+            let kind = classify_chromium_nav_error(&err_text).to_string();
+            network_events.push(LoomNetworkEvent {
+                method: String::new(),
+                url: url.clone(),
+                request_hash: String::new(),
+                response_hash: String::new(),
+                status: 0,
+                content_type: String::new(),
+                duration_ms: 0,
+                response_bytes: 0,
+                error_reason: Some(err_text),
+                error_kind: Some(kind),
+            });
+        }
+
+        Ok(ActionResult::Navigated {
+            target_id,
+            frame_id,
+            loader_id,
+            network_events,
+            dom_after_sha256,
+            screenshot_sha256,
+            url: url.clone(),
+            // AC-NAVTIER2SHIM-02: real final_url from `location.href` (post-
+            // redirect; falls back to requested URL on CDP error).
+            final_url: real_final_url,
+            // AC-NAVTIER2SHIM-01: real page_title from `document.title`
+            // (empty string is a legitimate value when the page has no
+            // <title> — distinguishable from the prior unconditional stub
+            // because final_url is no longer == url for redirecting pages).
+            page_title,
+            status_code,
+            dom_bytes,
+            screenshot_bytes,
+            // AC-NAVTIER2SHIM-03: console_lines populated from the
+            // Runtime.consoleAPICalled events that arrived during this
+            // navigate. The collector was subscribed BEFORE Page.navigate
+            // so messages fired during page load (cached / data: URLs
+            // included) are captured.
+            console_lines: {
+                let mut guard = console_collector.lock();
+                std::mem::take(&mut *guard)
+            },
+            blocked_events,
+        })
+    }
+
+    async fn page_close(&self, target_id: TargetId) -> Result<ActionResult, ShimResponse> {
+        // Target.closeTarget over CDP. Best-effort — even if the CDP call
+        // fails (Chromium already shut down), the upstream caller treats
+        // the target as gone.
+        let close_msg = CdpMessage {
+            method: "Target.closeTarget".into(),
+            params: CborValue::Map(vec![(
+                CborValue::Text("targetId".into()),
+                CborValue::Text(format!("{target_id}")),
+            )]),
+        };
+        let _ = self.cdp.command(target_id, close_msg, None).await;
+        Ok(ActionResult::PageClosed { target_id })
+    }
+}
+
+/// Pull a non-empty `errorText` field from a `Page.navigate` CBOR
+/// response Map. CDP populates this when navigation fails before a
+/// server response (DNS, connection refused, TLS, etc.). Returns
+/// `None` if the field is absent or empty (success path). AC-NAVERR-03.
+pub(super) fn extract_nav_error_text(response: &CborValue) -> Option<String> {
+    if let CborValue::Map(entries) = response {
+        for (k, v) in entries {
+            if let (CborValue::Text(key), CborValue::Text(val)) = (k, v) {
+                if key == "errorText" && !val.is_empty() {
+                    return Some(val.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Pull `(title, location.href)` out of a `Runtime.evaluate` CBOR
+/// response whose `expression` was
+/// `JSON.stringify([document.title || '', location.href || ''])`.
+///
+/// The CDP response shape is:
+///   { result: { type: "string", value: "[\"title\",\"url\"]" } }
+///
+/// Returns `None` when the response doesn't match the expected shape
+/// (e.g. CDP error, page hadn't finished load yet, or guard was
+/// triggered) — caller falls back to the requested URL + empty title.
+/// AC-NAVTIER2SHIM-01..02.
+pub(super) fn extract_title_and_url_from_evaluate(
+    response: &CborValue,
+) -> Option<(String, String)> {
+    let map = match response {
+        CborValue::Map(m) => m,
+        _ => return None,
+    };
+    // Walk to result.value (string carrying the JSON-encoded [title,url] array).
+    let result_value = map.iter().find_map(|(k, v)| match k {
+        CborValue::Text(s) if s == "result" => Some(v),
+        _ => None,
+    })?;
+    let result_map = match result_value {
+        CborValue::Map(m) => m,
+        _ => return None,
+    };
+    let value = result_map.iter().find_map(|(k, v)| match k {
+        CborValue::Text(s) if s == "value" => Some(v),
+        _ => None,
+    })?;
+    let json_str = match value {
+        CborValue::Text(s) => s,
+        _ => return None,
+    };
+    let parsed: serde_json::Value = serde_json::from_str(json_str).ok()?;
+    let arr = parsed.as_array()?;
+    if arr.len() != 2 {
+        return None;
+    }
+    let title = arr[0].as_str()?.to_string();
+    let final_url = arr[1].as_str()?.to_string();
+    Some((title, final_url))
+}
+
+/// Extract a `ShimConsoleLine` from a `Runtime.consoleAPICalled` event
+/// params. CDP shape:
+///   { type: "log"|"warn"|"error"|"info"|..., args: [{type,value}, ...], ... }
+///
+/// Multi-arg console.log (e.g. `console.log("count:", 42)`) is joined with
+/// a single space — matches Chromium devtools' rendering. Non-string
+/// args are stringified via the value field as a best-effort (rich
+/// inspection is not part of the brief; receipts target agent
+/// consumption, not human debugging UX). AC-NAVTIER2SHIM-03.
+pub(super) fn extract_console_line(params: &CborValue) -> Option<ShimConsoleLine> {
+    let map = match params {
+        CborValue::Map(m) => m,
+        _ => return None,
+    };
+    let level = map
+        .iter()
+        .find_map(|(k, v)| match (k, v) {
+            (CborValue::Text(s), CborValue::Text(val)) if s == "type" => Some(val.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "log".to_string());
+    let args = map
+        .iter()
+        .find_map(|(k, v)| match k {
+            CborValue::Text(s) if s == "args" => Some(v),
+            _ => None,
+        })?;
+    let args_arr = match args {
+        CborValue::Array(a) => a,
+        _ => return None,
+    };
+    let parts: Vec<String> = args_arr
+        .iter()
+        .filter_map(|arg| match arg {
+            CborValue::Map(m) => m.iter().find_map(|(k, v)| match (k, v) {
+                (CborValue::Text(s), CborValue::Text(val)) if s == "value" => Some(val.clone()),
+                (CborValue::Text(s), CborValue::Integer(i)) if s == "value" => {
+                    Some(i128::from(*i).to_string())
+                }
+                (CborValue::Text(s), CborValue::Bool(b)) if s == "value" => Some(b.to_string()),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .collect();
+    let message = if parts.is_empty() {
+        return None;
+    } else {
+        parts.join(" ")
+    };
+    Some(ShimConsoleLine { level, message })
+}
+
+/// Pull `frameId` + `loaderId` from a `Page.navigate` CBOR response Map.
+fn extract_frame_loader(response: &CborValue) -> (String, String) {
+    let mut frame_id = String::new();
+    let mut loader_id = String::new();
+    if let CborValue::Map(entries) = response {
+        for (k, v) in entries {
+            if let (CborValue::Text(key), CborValue::Text(val)) = (k, v) {
+                match key.as_str() {
+                    "frameId" => frame_id = val.clone(),
+                    "loaderId" => loader_id = val.clone(),
+                    _ => {}
+                }
+            }
+        }
+    }
+    (frame_id, loader_id)
+}
+
+/// Serialize a CBOR value to raw bytes. Used to populate dom_bytes / screenshot_bytes.
+fn cbor_to_bytes(value: &CborValue) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    let _ = ciborium::ser::into_writer(value, &mut bytes);
+    bytes
+}
+
+/// Compute SHA-256 (lowercase hex) of the CBOR-encoded form of a value.
+/// Used for `dom_after_sha256` + `screenshot_sha256`.
+fn sha256_hex_of_cbor(value: &CborValue) -> String {
+    let mut bytes = Vec::new();
+    if ciborium::ser::into_writer(value, &mut bytes).is_err() {
+        return String::new();
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(64);
+    for b in digest.iter() {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
+/// Pure helper: convert an `ActionError` into the typed
+/// `ShimResponse::Error` envelope. Centralised so all error returns
+/// have consistent detail strings. `request_id` is supplied by the
+/// caller (typically the dispatcher echoing the originating request id).
+pub fn action_error_to_response(
+    err: ActionError,
+    request_id: u64,
+    session_id: Option<u64>,
+) -> ShimResponse {
+    let detail = err.to_string();
+    let code: ShimErrorCode = err.into();
+    ShimResponse::Error {
+        request_id,
+        session_id,
+        code,
+        detail,
+    }
+}

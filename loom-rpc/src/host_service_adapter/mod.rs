@@ -1,0 +1,19 @@
+//! `host_service_adapter` — see `systems/loom-rpc/modules/host_service_adapter/interfaces.rs`
+//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! `include!`, keeping `systems/` the single source of truth.
+pub mod host_service_adapter;
+pub use host_service_adapter::*;
+
+pub mod wire_capture;
+
+#[cfg(test)]
+mod interface_tests;
+
+#[async_trait::async_trait]
+impl HostServiceAdapterApi for HostServiceAdapter {
+    async fn dispatch_action(&self, action: Action) -> Result<Receipt, AdapterError> {
+        // `WasmHostBridge::dispatch_action_blocking` uses block_in_place internally;
+        // safe to call from an async context on a multi-thread tokio runtime.
+        tokio::task::block_in_place(|| self.host.dispatch_action_blocking(action))
+    }
+}

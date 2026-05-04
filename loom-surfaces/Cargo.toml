@@ -1,0 +1,44 @@
+[package]
+name = "loom-surfaces"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+# Phase 5.4: surfaces compile to host-side `lib` for unit tests; the
+# wasm32-wasi-preview2 target gets wired in Phase 6 with proper
+# build.rs + wit-bindgen invocations against `../wit/loom-surface.wit`.
+# v1 ships only the WEB surface; shell/fs/api/native are deferred to
+# v1.5 (interfaces declared in WIT but not built).
+
+[dependencies]
+loom-shared = { workspace = true }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_jcs = { workspace = true }
+ciborium = { workspace = true }
+thiserror = { workspace = true }
+
+# wit-bindgen guest bindings — loaded at compile time from
+# ../wit/loom-surface.wit. Phase 6 wires the build.rs + wit_bindgen!
+# macro invocation. Stub for now.
+wit-bindgen = { workspace = true }
+
+[dev-dependencies]
+sha2 = { workspace = true }
+
+[features]
+default = []
+mock = []
+
+[lib]
+path = "src/lib.rs"
+# Phase 6 will set crate-type = ["cdylib"] for the wasm32-wasi-preview2
+# build profile; left as default `lib` here so host-side tests work.
