@@ -507,9 +507,19 @@ impl ChromiumCdpConnection {
         // Network.responseReceived events, which the action_executor relies
         // on. Surface as ConnectFailed so the supervisor's start path
         // catches it.
+        //
+        // Runtime.enable is required for Runtime.consoleAPICalled events to
+        // fire. Without it the action_executor's navigate-time
+        // console-collector subscribes to a handler that never receives
+        // anything, and the receipt's console_count + console_lines come
+        // back as 0 / empty even on pages that emit substantial console
+        // output. Found via a real-app probe (mirrors-v2 round-24): page
+        // emitted React StrictMode warnings + Next.js dev hints during
+        // mount; loom's navigate captured 0 console_lines.
         for (method, params) in [
             ("Page.enable", json!({})),
             ("Network.enable", json!({})),
+            ("Runtime.enable", json!({})),
         ] {
             self.raw_command(method, params, Duration::from_secs(10))
                 .await

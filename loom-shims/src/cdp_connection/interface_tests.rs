@@ -218,6 +218,40 @@ fn ac_cdpatt_04_method_classifier_page_scope_methods() {
     }
 }
 
+/// Round-24 regression: bootstrap_page_session MUST issue Runtime.enable
+/// alongside Page.enable and Network.enable. Without Runtime.enable the
+/// CDP target never fires Runtime.consoleAPICalled events, the
+/// action_executor's navigate-time console-collector subscribes to a
+/// handler that never receives anything, and the receipt's
+/// console_count + console_lines come back as 0 / empty even on pages
+/// that emit substantial console output.
+///
+/// Source-grep test (no chromium needed): assert the literal
+/// "Runtime.enable" appears inside the bootstrap_page_session function
+/// body. Pinned at the source level so a future refactor that
+/// inadvertently drops Runtime.enable fails the test loudly.
+#[test]
+fn bootstrap_page_session_enables_runtime_for_console_capture() {
+    let src = include_str!("cdp_connection.rs");
+    // Find the function body.
+    let body_start = src
+        .find("async fn bootstrap_page_session")
+        .expect("bootstrap_page_session function must exist");
+    // Conservative slice: just look for Runtime.enable anywhere after
+    // the function declaration. The function is the only place that
+    // pattern is meaningful.
+    let body = &src[body_start..];
+    assert!(
+        body.contains("\"Runtime.enable\""),
+        "bootstrap_page_session must enable Runtime so Runtime.consoleAPICalled events fire"
+    );
+    // Also assert Page.enable and Network.enable are still there —
+    // dropping either would break navigate's load-event + network-event
+    // subscribers, which is its own AC.
+    assert!(body.contains("\"Page.enable\""));
+    assert!(body.contains("\"Network.enable\""));
+}
+
 #[test]
 fn ac_cdpatt_04_method_classifier_handles_empty_and_dotted_edge_cases() {
     // Empty or methods without a domain prefix default to page-scope —
