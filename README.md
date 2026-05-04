@@ -36,29 +36,98 @@ artifacts, and a typed error wire shape that doesn't leak generic
 
 ## Install
 
-### Pre-built binaries (recommended)
+Three install channels are supported on macOS arm64/x64 and Linux x64.
+Windows isn't yet supported.
+
+Loom drives an external Chromium subprocess, but the binary itself works
+without one — `loom --help`, `loom doctor`, and the daemon all start fine.
+Chromium is auto-discovered the first time you run `loom session create`.
+
+### Homebrew (macOS)
+
+```bash
+brew install J-Mentiora/loom/loom
+brew install --cask chromium    # optional; see "First-run UX" below
+```
+
+The umbrella `loom` formula pulls in the four binary subformulas
+(`loom-cli`, `loom-daemon`, `loom-mcp`, `loom-shims`) automatically. Each
+sub-formula is published by [cargo-dist](https://opensource.axo.dev/cargo-dist/)
+on every release; the umbrella is hand-maintained at
+[J-Mentiora/homebrew-loom](https://github.com/J-Mentiora/homebrew-loom)
+(the reference draft lives at [dist/homebrew/loom.rb](dist/homebrew/loom.rb) here).
+
+### cargo install (any supported platform)
+
+```bash
+rustup target add wasm32-wasip2   # one-time prerequisite
+
+# All four loom binaries from a single command:
+just install-loom
+
+# …or install each by hand:
+cargo install --git https://github.com/J-Mentiora/loom loom-cli
+cargo install --git https://github.com/J-Mentiora/loom loom-daemon
+cargo install --git https://github.com/J-Mentiora/loom loom-mcp
+cargo install --git https://github.com/J-Mentiora/loom loom-shims --bin loom-shim-chromium
+```
+
+`loom-cli`'s build script recursively builds the WASM surface guest, so
+the `wasm32-wasip2` rustup target is required. Without it the build
+panics with `rustup target add wasm32-wasip2` guidance.
+
+### Pre-built tarball (manual)
 
 ```bash
 curl -fsSL https://github.com/J-Mentiora/loom/releases/latest/download/loom-installer.sh | sh
 ```
 
-The installer drops `loom`, `loom-daemon`, `loom-shim-chromium`, `loom-mcp`
-into `~/.cargo/bin` (or `~/.local/bin` if Cargo isn't installed). After
-installation:
+The installer drops `loom`, `loom-daemon`, `loom-mcp`, and
+`loom-shim-chromium` into `~/.cargo/bin` (or `~/.local/bin` if Cargo
+isn't installed). Or download a tarball directly from
+[github.com/J-Mentiora/loom/releases](https://github.com/J-Mentiora/loom/releases/latest)
+and unpack into a directory on your `$PATH`. SHA-256 sums are published
+alongside each tarball.
 
-```bash
-loom postinstall    # downloads + verifies pinned Chromium, AOT-compiles WASM surfaces
-loom doctor         # confirms socket reachable, daemon responsive, chromium present
+### First-run UX
+
+`loom session create` searches for a Chromium binary in this order:
+
+1. `LOOM_CHROMIUM_PATH` env (explicit override)
+2. `~/.config/loom/chromium/Chromium.app/...` (the path `loom postinstall` writes to)
+3. `$PATH` for `chromium`, `chromium-browser`, `chrome`, `google-chrome`
+4. macOS `/Applications/Google Chrome.app/...` and `/Applications/Chromium.app/...`
+
+If none are found, you get an actionable error:
+
+```
+Error: Chromium not found. Install via 'brew install --cask chromium' (macOS)
+or 'apt install chromium-browser' / 'dnf install chromium' / 'pacman -S chromium'
+(Linux), then run 'loom doctor'.
 ```
 
-### From source
+For replay-bit-equality across machines (`loom session replay`'s primary
+guarantee), use `loom postinstall` to download a pinned Chromium build —
+the resolver picks it up automatically. System-installed Chromium works
+fine for everything else.
+
+### macOS Gatekeeper
+
+First launch may need: System Settings → Privacy & Security → "Open Anyway"
+for `loom-shim-chromium`. Code-signing is on the roadmap.
+
+### Windows
+
+Not yet supported. macOS arm64/x64 + Linux x64 only.
+
+### From source (fallback)
 
 ```bash
 git clone https://github.com/J-Mentiora/loom
 cd loom
 rustup target add wasm32-wasip2
 cargo build --release
-./target/release/loom postinstall
+./target/release/loom doctor
 ```
 
 Requires Rust 1.92+.
@@ -202,8 +271,11 @@ from). API is stable; breaking changes will bump the major version.
 Known limitations:
 
 - macOS arm64/x86 + linux x86/arm64 only. Windows isn't tested.
-- Chromium pinned at version 132 (Playwright build 1153). Newer
-  Chromium revisions may require a `chromium_pin.rs` update.
+- Chromium is auto-discovered from `$PATH` / `/Applications` (system install)
+  or downloaded pinned via `loom postinstall`. Pinned-Chromium is required
+  for cross-machine replay-bit-equality (`loom session replay`).
+- Pinned Chromium is version 132 (Playwright build 1153). Newer Chromium
+  revisions may require a `chromium_pin.rs` update.
 - `loom-mcp`'s implicit session is single-session-per-process. Power
   users who need multiple parallel browsers per MCP connection should
   use the CLI directly.

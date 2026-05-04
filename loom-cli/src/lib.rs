@@ -14,6 +14,7 @@ pub mod admin_commands;
 pub mod auth_manager;
 pub mod chromium_downloader;
 pub mod chromium_pin;
+pub mod chromium_resolver;
 pub mod cli_config;        // Phase 5.3 system dir is `ConfigResolver`; renamed for crate path consistency.
 pub mod cli_observability;
 pub mod command_router;

@@ -12,6 +12,28 @@ will bump the major version.
 
 ### Added
 
+- **One-command install (AC-DIST-01..05).** Three install channels:
+  Homebrew (`brew install J-Mentiora/loom/loom`), `cargo install --git`
+  (with a `just install-loom` recipe that runs all four cargo-installs
+  in one go), and pre-built tarballs from the GitHub release. The
+  cargo-dist–generated release workflow builds for macOS arm64/x64 and
+  Linux x64 (plus Linux arm64) on every `v*`-style tag and publishes
+  tarballs + SHA-256 sums. Homebrew formulas are auto-pushed to
+  `J-Mentiora/homebrew-loom`; the umbrella `loom` formula is
+  hand-maintained at the same tap (depends_on the four cargo-dist-managed
+  per-crate formulas) so the AC-DIST-03 user UX of a single `brew install`
+  works.
+- **System-Chromium PATH fallback (AC-DIST-05).** `loom session create`
+  now searches `LOOM_CHROMIUM_PATH` → pinned `~/.config/loom/chromium/` →
+  `$PATH` (chromium / chromium-browser / chrome / google-chrome) →
+  macOS `/Applications/...`. Pinned still wins for replay-bit-equality
+  (a `tracing::warn!` fires at boot when a non-pinned source is used).
+  When no Chromium is found anywhere, the daemon returns
+  `LoomErrorCode::BrowserNotFound` (wire `browser-not-found`); the CLI
+  renders a platform-aware install hint (`brew install --cask chromium`
+  on macOS, `apt install chromium-browser` / `dnf install chromium` /
+  `pacman -S chromium` on Linux) instead of the previous opaque
+  `shim-failure` exit-1.
 - **Determinism harness.** `Math.random()` (sfc32-seeded) and
   `Date.now()` / `performance.now()` (session-fixed epoch_ms) are
   pinned at session-create time and reproduced bit-for-bit on replay

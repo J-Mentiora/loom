@@ -16,4 +16,8 @@ impl HostServiceAdapterApi for HostServiceAdapter {
         // safe to call from an async context on a multi-thread tokio runtime.
         tokio::task::block_in_place(|| self.host.dispatch_action_blocking(action))
     }
+
+    fn has_chromium(&self) -> bool {
+        self.host.has_chromium()
+    }
 }

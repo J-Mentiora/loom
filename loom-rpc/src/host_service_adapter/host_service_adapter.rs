@@ -43,6 +43,15 @@ pub trait WasmHostBridge: Send + Sync {
         &self,
         action: Action,
     ) -> Result<Receipt, AdapterError>;
+
+    /// AC-DIST-05: true iff a chromium template was registered at host
+    /// boot. False when the chromium_resolver returned `BrowserNotFound`
+    /// at daemon boot. Default `true` keeps stub bridges (tests, mocks)
+    /// behaving as today; production impls (`WasmBridge`, `StubHostBridge`)
+    /// override.
+    fn has_chromium(&self) -> bool {
+        true
+    }
 }
 
 /// WIT-derived action type (`wit/loom-surface.wit`). In Phase 5.4 the
@@ -169,6 +178,15 @@ pub trait HostServiceAdapterApi: Send + Sync {
     /// The interval of this await is recorded as `host_dispatch_us`
     /// and excluded from the IC-RPC-08 budget (SR-RPC-05).
     async fn dispatch_action(&self, action: Action) -> Result<Receipt, AdapterError>;
+
+    /// AC-DIST-05: true iff a chromium template was registered at host
+    /// boot. False when the chromium_resolver returned `BrowserNotFound`
+    /// or `current_exe()` failed (no shim_chromium config). Consumed by
+    /// `session_create` to fail-fast with `BrowserNotFound` before any
+    /// SessionInfo is constructed.
+    fn has_chromium(&self) -> bool {
+        true
+    }
 }
 
 #[allow(dead_code)]

@@ -25,6 +25,7 @@ homepage = "https://github.com/J-Mentiora/loom"
 description = "Agent-first browser automation runtime — deterministic Chromium sessions with replay-equal hash chains, MCP-native tools, and a content-addressed action store."
 keywords = ["browser", "automation", "agent", "chromium", "mcp"]
 categories = ["command-line-utilities", "development-tools::testing", "web-programming"]
+readme = "README.md"
 
 [workspace.dependencies]
 # Async runtime

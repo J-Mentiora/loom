@@ -66,6 +66,11 @@ pub enum CliError {
     /// precedent (0 = same, non-0 = differ, 2 = error). The carried String
     /// is a one-line summary for stderr (e.g. "3 field diffs, action_count_delta=1").
     SessionsDiffer(String),
+    /// AC-DIST-05: chromium binary could not be located by the resolver.
+    /// Exit 1 with a platform-aware actionable install message. Mapped from
+    /// `LoomErrorCode::BrowserNotFound` (RPC wire code `"browser_not_found"`)
+    /// by `From<RpcError> for CliError`.
+    BrowserNotFound(String),
 }
 
 impl std::fmt::Display for CliError {
@@ -210,6 +215,38 @@ impl std::fmt::Display for CliError {
             CliError::Config(msg) => write!(f, "Error: config: {msg}"),
             CliError::Protocol(msg) => write!(f, "Error: protocol: {msg}"),
             CliError::SessionsDiffer(msg) => write!(f, "Error: sessions differ — {msg}"),
+            // AC-DIST-05: platform-aware actionable install command.
+            // The carried `_msg` is the daemon-side detail; we render a fixed
+            // user-facing message keyed off the host OS so the install hint
+            // matches the user's package manager (D9 + D18).
+            CliError::BrowserNotFound(_msg) => {
+                if cfg!(target_os = "macos") {
+                    write!(
+                        f,
+                        "Error: Chromium not found. \
+                         Install via 'brew install --cask chromium', \
+                         then run 'loom doctor'."
+                    )
+                } else if cfg!(target_os = "linux") {
+                    write!(
+                        f,
+                        "Error: Chromium not found. \
+                         Install via your distro's package manager: \
+                         'apt install chromium-browser' (Debian/Ubuntu), \
+                         'dnf install chromium' (Fedora/RHEL), or \
+                         'pacman -S chromium' (Arch). \
+                         Then run 'loom doctor'."
+                    )
+                } else {
+                    write!(
+                        f,
+                        "Error: Chromium not found. \
+                         Install via 'brew install --cask chromium' (macOS) or \
+                         your distro's package manager (Linux), \
+                         then run 'loom doctor'."
+                    )
+                }
+            }
         }
     }
 }
@@ -271,6 +308,9 @@ pub fn map_exit_code(result: &Result<(), CliError>) -> i32 {
         Err(CliError::Protocol(_)) => EXIT_PROTOCOL,
         // SessionsDiffer: `loom session diff` found structural differences. Exit 6 (AC-CLIEXIT3-01).
         Err(CliError::SessionsDiffer(_)) => EXIT_DIFFERS,
+        // AC-DIST-05: BrowserNotFound is exit 1 (consistent with other
+        // prereq-missing errors like `Connection(DaemonNotRunning)`).
+        Err(CliError::BrowserNotFound(_)) => EXIT_RECEIPT_ERROR,
     }
 }
 

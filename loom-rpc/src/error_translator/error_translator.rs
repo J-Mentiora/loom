@@ -68,6 +68,13 @@ pub enum LoomErrorCode {
     /// evaluate-denylist hits from download blocks. Wire string:
     /// `"profile_restricted"`.
     ProfileRestricted,
+    /// AC-DIST-05: chromium binary not located by any resolver search
+    /// path during session.create. Wire string: `"browser_not_found"`
+    /// (snake_case via the enum's `rename_all = "snake_case"`; matches
+    /// the canonical loom-shared enum's kebab-case `"browser-not-found"`
+    /// modulo separator. Additive variant; SemVer-compatible per
+    /// BC-RPC-03.
+    BrowserNotFound,
 }
 
 /// Structured field detail for a `schema_violation` envelope.

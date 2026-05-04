@@ -73,6 +73,7 @@ fn cli_error_variant_set_locked() {
             CliError::Config(_) => "config",
             CliError::Protocol(_) => "protocol",
             CliError::SessionsDiffer(_) => "sessions_differ",
+            CliError::BrowserNotFound(_) => "browser_not_found",
         }
     }
     let _ = _ck;

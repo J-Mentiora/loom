@@ -12,3 +12,12 @@ gen-meta:
     mkdir -p target/release
     echo '{"strategy":"downloaded"}' > target/release/meta.json
     @echo "Wrote target/release/meta.json (strategy: downloaded)"
+
+# AC-DIST-01: install all four loom binaries from git in one shot.
+# Requires `rustup target add wasm32-wasip2` first (loom-cli's build.rs
+# recursively builds the wasm32-wasip2 cdylib in release mode).
+install-loom:
+    cargo install --git https://github.com/J-Mentiora/loom loom-cli
+    cargo install --git https://github.com/J-Mentiora/loom loom-daemon
+    cargo install --git https://github.com/J-Mentiora/loom loom-mcp
+    cargo install --git https://github.com/J-Mentiora/loom loom-shims --bin loom-shim-chromium

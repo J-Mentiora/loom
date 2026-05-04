@@ -2479,6 +2479,7 @@ dependencies = [
  "anyhow",
  "ciborium",
  "dirs",
+ "loom-cli",
  "loom-core",
  "loom-host",
  "loom-rpc",

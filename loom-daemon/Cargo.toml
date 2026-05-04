@@ -16,6 +16,11 @@ loom-shared = { workspace = true }
 loom-core = { workspace = true }
 loom-host = { workspace = true }
 loom-rpc = { workspace = true }
+# AC-DIST-05: daemon delegates chromium discovery to loom-cli's resolver
+# so doctor + daemon agree on the resolved binary. Default features off
+# so we don't pull loom-cli's `postinstall` feature (which transitively
+# re-imports loom-host into a cycle-free graph but bloats build time).
+loom-cli = { path = "../loom-cli", default-features = false }
 # AC-SAFEPROF-01..03: daemon-layer evaluate gate reads
 # `loom_surfaces::safety::EVALUATE_DENYLIST`. The gate runs BEFORE
 # host.dispatch so `EvaluateVerb::execute` (dead code in production

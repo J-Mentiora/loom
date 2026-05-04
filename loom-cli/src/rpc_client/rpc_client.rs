@@ -148,6 +148,11 @@ impl From<RpcError> for CliError {
             "io" => CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning),
             // AC-AESF-04: surface_unavailable is a distinct error class (exit 5).
             "surface_unavailable" => CliError::SurfaceUnavailable(e.message.clone()),
+            // AC-DIST-05: browser_not_found is a distinct error class (exit 1)
+            // with a fixed actionable install message rendered by Display.
+            // Wire string is snake_case per loom-rpc's rename_all; the shared
+            // canonical kebab-case `"browser-not-found"` is for non-RPC sinks.
+            "browser_not_found" => CliError::BrowserNotFound(e.message.clone()),
             _ => CliError::Receipt(serde_json::json!({
                 "code": e.code,
                 "message": e.message,
