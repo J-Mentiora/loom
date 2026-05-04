@@ -27,6 +27,8 @@ fn hover_execute_returns_result_receipt_host_error() {
 fn hover_execute_returns_hash_only_receipt() {
     use crate::host_bindings::host_bindings::mock_host;
     mock_host::setup(vec![0u8; 32]);
+    // hit_test sequence: 50×50 box at (200,300)–(250,350); centre (225, 325).
+    mock_host::install_hit_test_box(200.0, 300.0, 250.0, 350.0, 1024, 768);
 
     let action = HoverAction {
         action_id: "act_hover".to_string(),

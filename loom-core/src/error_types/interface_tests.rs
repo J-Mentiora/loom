@@ -13,6 +13,7 @@ mod tests {
             (ReceiptCode::WebSelectorNotFound, "web_selector_not_found"),
             (ReceiptCode::WebEvaluateThrew, "web_evaluate_threw"),
             (ReceiptCode::WebActionTimeout, "web_action_timeout"),
+            (ReceiptCode::WebHitTestFailed, "web_hit_test_failed"),
             (ReceiptCode::VaultGrantExpired, "vault_grant_expired"),
             (ReceiptCode::VaultOriginMismatch, "vault_origin_mismatch"),
             (ReceiptCode::VaultGrantRevoked, "vault_grant_revoked"),
@@ -31,7 +32,7 @@ mod tests {
             (ReceiptCode::ManifestIntegrityFailed, "manifest_integrity_failed"),
             (ReceiptCode::RuntimeCrash, "runtime_crash"),
         ];
-        assert_eq!(pairs.len(), 22, "must cover all 22 receipt codes");
+        assert_eq!(pairs.len(), 23, "must cover all 23 receipt codes (22 → 23 with WebHitTestFailed)");
         for (code, expected_wire) in &pairs {
             assert_eq!(code.as_wire(), *expected_wire);
             let serde_out = serde_json::to_string(code).unwrap();

@@ -145,6 +145,7 @@ pub mod host {
 pub mod mock_host {
     use super::*;
     use std::cell::RefCell;
+    use std::collections::HashMap;
 
     /// Recorded host-fn invocations (in order).
     #[derive(Debug, Clone, PartialEq)]
@@ -160,18 +161,89 @@ pub mod mock_host {
         static CALLS: RefCell<Vec<HostCall>> = const { RefCell::new(Vec::new()) };
         /// Monotonic counter for clock_now ticks.
         static TICKS: RefCell<u64> = const { RefCell::new(1000) };
-        /// CBOR response bytes returned by the next shim_call.
+        /// Default CBOR response bytes returned by `shim_call` when no
+        /// method-specific override is set in `SHIM_RESP_BY_METHOD`.
         static SHIM_RESP: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        /// Per-method CBOR responses. Keyed by CDP method name decoded
+        /// from the request's `method` field. Set via
+        /// `setup_method_responses` for tests that exercise the
+        /// `hit_test::resolve_centre_for_selector` sequence (which makes
+        /// 4+ distinct shim_call invocations per click/hover/scroll).
+        static SHIM_RESP_BY_METHOD: RefCell<HashMap<String, Vec<u8>>> = RefCell::new(HashMap::new());
         /// Emitted receipt captured by receipt_emit.
         static EMITTED: RefCell<Option<Receipt>> = const { RefCell::new(None) };
     }
 
     /// Set up the mock for a test. Call at the start of each test.
+    /// `shim_response` is used as the default for any shim_call whose
+    /// method isn't in `SHIM_RESP_BY_METHOD`.
     pub fn setup(shim_response: Vec<u8>) {
         CALLS.with(|c| c.borrow_mut().clear());
         TICKS.with(|t| *t.borrow_mut() = 1000);
         SHIM_RESP.with(|r| *r.borrow_mut() = shim_response);
+        SHIM_RESP_BY_METHOD.with(|m| m.borrow_mut().clear());
         EMITTED.with(|e| *e.borrow_mut() = None);
+    }
+
+    /// Set per-method CBOR responses. Call AFTER `setup`. Each entry maps
+    /// a CDP method name (e.g. `"DOM.querySelector"`) to the CBOR bytes
+    /// that `shim_call` should return when the request carries that
+    /// method. Used by Click/Hover/Scroll verb tests to mock the new
+    /// `hit_test::resolve_centre_for_selector` 4-call sequence.
+    pub fn setup_method_responses(map: HashMap<String, Vec<u8>>) {
+        SHIM_RESP_BY_METHOD.with(|m| *m.borrow_mut() = map);
+    }
+
+    /// Convenience: register CBOR responses that satisfy the
+    /// `hit_test::resolve_centre_for_selector` sequence for an
+    /// axis-aligned box `[x1, y1, x2, y2]`. Synthetic nodeId is 100.
+    /// Also wires `Page.getLayoutMetrics` for ScrollVerb's None branch
+    /// with a viewport of (vw, vh).
+    pub fn install_hit_test_box(x1: f64, y1: f64, x2: f64, y2: f64, vw: u64, vh: u64) {
+        let mut buf_doc = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({"root": {"nodeId": 1}}),
+            &mut buf_doc,
+        )
+        .unwrap();
+        let mut buf_qs = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({"nodeId": 100}),
+            &mut buf_qs,
+        )
+        .unwrap();
+        let mut buf_siv = Vec::new();
+        ciborium::ser::into_writer(&serde_json::json!({}), &mut buf_siv).unwrap();
+        let mut buf_bm = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({
+                "model": {
+                    "content": [x1, y1, x2, y1, x2, y2, x1, y2],
+                    "width": (x2 - x1) as u64,
+                    "height": (y2 - y1) as u64,
+                }
+            }),
+            &mut buf_bm,
+        )
+        .unwrap();
+        let mut buf_lm = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({
+                "cssLayoutViewport": {
+                    "clientWidth":  vw,
+                    "clientHeight": vh,
+                }
+            }),
+            &mut buf_lm,
+        )
+        .unwrap();
+        let mut map = HashMap::new();
+        map.insert("DOM.getDocument".to_string(), buf_doc);
+        map.insert("DOM.querySelector".to_string(), buf_qs);
+        map.insert("DOM.scrollIntoViewIfNeeded".to_string(), buf_siv);
+        map.insert("DOM.getBoxModel".to_string(), buf_bm);
+        map.insert("Page.getLayoutMetrics".to_string(), buf_lm);
+        setup_method_responses(map);
     }
 
     /// Return recorded host-fn calls in order.
@@ -209,6 +281,26 @@ pub mod mock_host {
             shim_id: shim_id.to_string(),
             msg_len: msg.len(),
         }));
+        // Try per-method override: decode the CBOR envelope's "method"
+        // field and look it up. Fall back to the default SHIM_RESP if
+        // no override matches.
+        if let Ok(env) = ciborium::de::from_reader::<ciborium::value::Value, _>(msg) {
+            if let Some(method) = env.as_map().and_then(|m| {
+                m.iter().find_map(|(k, v)| {
+                    if k.as_text() == Some("method") {
+                        v.as_text().map(String::from)
+                    } else {
+                        None
+                    }
+                })
+            }) {
+                if let Some(resp) =
+                    SHIM_RESP_BY_METHOD.with(|m| m.borrow().get(&method).cloned())
+                {
+                    return Ok(resp);
+                }
+            }
+        }
         Ok(SHIM_RESP.with(|r| r.borrow().clone()))
     }
 

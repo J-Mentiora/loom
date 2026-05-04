@@ -53,6 +53,11 @@ fn scroll_execute_returns_result_receipt_host_error() {
 fn scroll_execute_returns_hash_only_receipt() {
     use crate::host_bindings::host_bindings::mock_host;
     mock_host::setup(vec![0u8; 32]);
+    // selector=None → hit_test::resolve_viewport_centre uses
+    // Page.getLayoutMetrics. Install a 1024×768 viewport so the centre
+    // is (512, 384). Box-model entries are unused on this branch but
+    // installed to keep `install_hit_test_box`'s simple signature.
+    mock_host::install_hit_test_box(0.0, 0.0, 1.0, 1.0, 1024, 768);
 
     let action = ScrollAction {
         action_id: "act_scroll".to_string(),

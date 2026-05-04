@@ -43,7 +43,13 @@ fn click_action_takes_no_capture_mode_argument() {
 #[test]
 fn click_execute_returns_hash_only_receipt() {
     use crate::host_bindings::host_bindings::mock_host;
+    // Default shim response (used for non-hit-test calls like the
+    // post-action DOM.getDocument hash and Page.captureScreenshot).
     mock_host::setup(vec![0u8; 32]);
+    // hit_test::resolve_centre_for_selector requires the 4 DOM.* + Page.*
+    // responses. Register a 100×40 box at (300,200)–(400,240) so the
+    // computed centre is (350, 220).
+    mock_host::install_hit_test_box(300.0, 200.0, 400.0, 240.0, 1024, 768);
 
     let action = ClickAction {
         action_id: "act_click".to_string(),
