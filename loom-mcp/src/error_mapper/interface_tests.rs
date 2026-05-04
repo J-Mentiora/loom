@@ -43,9 +43,7 @@ fn error_path_emits_exactly_one_content_block() {
     // Encoded as a structural assertion about the constructor.
     fn _shape(code: LoomErrorCode) {
         let r = ErrorMapper::typed_receipt(code);
-        let block = McpContent::Json {
-            json: serde_json::to_value(&r).unwrap(),
-        };
+        let block = McpContent::from_json(serde_json::to_value(&r).unwrap());
         let tr = ToolResult {
             is_error: true,
             content: vec![block],
@@ -119,10 +117,15 @@ fn from_schema_parse_returns_protocol_malformed() {
 // === Content-block discriminant ===
 
 #[test]
-fn mcp_content_json_variant_is_default_for_typed_receipts() {
-    let block = McpContent::Json { json: serde_json::json!({}) };
+fn mcp_content_from_json_serialises_as_text_tag() {
+    // Per the v1.0.1 fix: typed-receipt content blocks now use the
+    // standard MCP `text` content type (json-stringified) so strict
+    // MCP clients (e.g. Claude Code) accept them. Pre-fix, the
+    // ``json`` content type tripped Zod schema validation in the client.
+    let block = McpContent::from_json(serde_json::json!({"k": "v"}));
     let s = serde_json::to_string(&block).unwrap();
-    assert!(s.contains("\"type\":\"json\""), "got {s}");
+    assert!(s.contains("\"type\":\"text\""), "got {s}");
+    assert!(s.contains("\"k\""), "got {s}");
 }
 
 #[test]
