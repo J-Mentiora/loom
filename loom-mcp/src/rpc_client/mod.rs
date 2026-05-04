@@ -207,7 +207,7 @@ impl RpcClient {
         match self.call(method, params).await {
             Ok(v) => ToolResult {
                 is_error: false,
-                content: vec![McpContent::Json { json: v }],
+                content: vec![McpContent::from_json(v)],
             },
             Err(e) => ErrorMapper::to_tool_result(e),
         }

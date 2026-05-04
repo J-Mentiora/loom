@@ -6,11 +6,29 @@
 use serde::{Deserialize, Serialize};
 
 /// MCP content block carried inside a `ToolResult`.
+///
+/// Only the standard MCP content types (`text`, `image`, `resource`) are
+/// portable across MCP clients. v1.0.0 emitted ``{"type": "json", "json":
+/// ...}`` which trips strict MCP-client validators (e.g. Claude Code's
+/// Zod schema rejects ``content[0]`` as a discriminated-union mismatch).
+/// Json payloads are now stringified into a `text` block at construction
+/// time; consumers who want structured access parse the text back as JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum McpContent {
-    Json { json: serde_json::Value },
     Text { text: String },
+}
+
+impl McpContent {
+    /// Serialize a JSON value into a text content block.
+    ///
+    /// Used by both the success path (``rpc_client::call_as_tool_result``)
+    /// and the error path (``ErrorMapper::to_tool_result``) so that all
+    /// MCP responses use the standard `text` content type.
+    pub fn from_json(value: serde_json::Value) -> Self {
+        let text = serde_json::to_string(&value).unwrap_or_else(|_| String::from("null"));
+        McpContent::Text { text }
+    }
 }
 
 /// MCP `ToolResult` — the response shape for `tools/call`.
