@@ -8,10 +8,10 @@ hardening (security, determinism, MCP integration, crash detection,
 GC reference protection, runtime correctness) happened in 23 rounds
 of iterative testing + fix.
 
-This repository is a clean extraction at v1.0.0 — the original
-commit history is preserved in the source pipeline at
-`projects/loom/`. The code-pipeline repository now consumes loom
-as a regular Cargo dependency.
+This repository is the clean extraction — the original commit history
+is preserved in the source pipeline at `projects/loom/`. The
+code-pipeline repository now consumes loom as a regular Cargo
+dependency.
 
 ## Extraction provenance
 
