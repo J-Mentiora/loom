@@ -86,11 +86,20 @@ fn shim_error_code_has_exactly_five_variants() {
             ShimErrorCode::ShimInternalError => "shim_internal_error",
         }
     }
-    assert_eq!(_exhaustive(ShimErrorCode::ChromiumUnavailable), "chromium_unavailable");
+    assert_eq!(
+        _exhaustive(ShimErrorCode::ChromiumUnavailable),
+        "chromium_unavailable"
+    );
     assert_eq!(_exhaustive(ShimErrorCode::CdpTimeout), "cdp_timeout");
-    assert_eq!(_exhaustive(ShimErrorCode::CdpProtocolError), "cdp_protocol_error");
+    assert_eq!(
+        _exhaustive(ShimErrorCode::CdpProtocolError),
+        "cdp_protocol_error"
+    );
     assert_eq!(_exhaustive(ShimErrorCode::TargetUnknown), "target_unknown");
-    assert_eq!(_exhaustive(ShimErrorCode::ShimInternalError), "shim_internal_error");
+    assert_eq!(
+        _exhaustive(ShimErrorCode::ShimInternalError),
+        "shim_internal_error"
+    );
 }
 
 #[test]
@@ -117,7 +126,13 @@ fn cdp_send_payload_has_no_grant_id_field() {
             params: CborValue::Null,
         },
     };
-    if let ShimRequest::CdpSend { request_id, session_id, target_id, message } = req {
+    if let ShimRequest::CdpSend {
+        request_id,
+        session_id,
+        target_id,
+        message,
+    } = req
+    {
         let _ = (request_id, session_id, target_id, message);
         // No `grant_id` available to bind. If a future PR adds one,
         // this exhaustive destructure stops compiling.
@@ -201,7 +216,12 @@ fn session_id_and_target_id_are_u64_no_floats() {
         session_id: u64::MAX,
         target_id: u64::MAX,
     };
-    if let ShimRequest::PageClose { request_id, session_id, target_id } = req {
+    if let ShimRequest::PageClose {
+        request_id,
+        session_id,
+        target_id,
+    } = req
+    {
         let _ = request_id;
         assert_eq!(session_id, u64::MAX);
         assert_eq!(target_id, u64::MAX);

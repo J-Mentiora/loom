@@ -4,9 +4,7 @@
 // determinism mechanisms, IC-CORE-04 canonicalization, IC-CORE-07
 // replay-mode host-fn swap.
 
-use super::determinism_harness::{
-    DeterminismHarness, SideEffectTape, TapeFrame, TapeWriter,
-};
+use super::determinism_harness::{DeterminismHarness, SideEffectTape, TapeFrame, TapeWriter};
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter};
 use loom_core::observability::Observability;
@@ -15,9 +13,10 @@ use std::sync::Arc;
 
 fn fixture() -> DeterminismHarness {
     let obs = Observability::new(PathBuf::from("/tmp/loom-test/loom.log"), false);
-    let mw: Arc<dyn ManifestWriter> = Arc::new(
-        LocalManifestWriter::new(PathBuf::from("/tmp/loom-test/sessions"), obs)
-    );
+    let mw: Arc<dyn ManifestWriter> = Arc::new(LocalManifestWriter::new(
+        PathBuf::from("/tmp/loom-test/sessions"),
+        obs,
+    ));
     DeterminismHarness::new(42, mw)
 }
 
@@ -46,13 +45,17 @@ fn hash_canonical_returns_64_char_hex_string() {
 
 #[test]
 fn clock_now_returns_u64_nanoseconds_no_floats() {
-    fn _ck(h: &DeterminismHarness) -> u64 { h.clock_now() }
+    fn _ck(h: &DeterminismHarness) -> u64 {
+        h.clock_now()
+    }
     let _ = _ck;
 }
 
 #[test]
 fn rng_next_returns_u64_seeded_value() {
-    fn _ck(h: &DeterminismHarness) -> u64 { h.rng_next() }
+    fn _ck(h: &DeterminismHarness) -> u64 {
+        h.rng_next()
+    }
     let _ = _ck;
 }
 
@@ -61,8 +64,12 @@ fn rng_next_returns_u64_seeded_value() {
 #[test]
 fn tape_writer_records_clock_rng_net_blob_frames() {
     let mut tw = TapeWriter::new();
-    tw.record(TapeFrame::ClockRead { observed_ns: 1_000_000 });
-    tw.record(TapeFrame::RngDraw { value_u64: 0xdeadbeef });
+    tw.record(TapeFrame::ClockRead {
+        observed_ns: 1_000_000,
+    });
+    tw.record(TapeFrame::RngDraw {
+        value_u64: 0xdeadbeef,
+    });
     tw.record(TapeFrame::NetResponse {
         request_id: 1,
         status: 200,
@@ -86,7 +93,12 @@ fn tape_frame_numeric_fields_are_pure_integers() {
         body_ref_sha256: "0".repeat(64),
         body_size_bytes: u64::MAX,
     };
-    if let TapeFrame::NetResponse { status, body_size_bytes, .. } = f {
+    if let TapeFrame::NetResponse {
+        status,
+        body_size_bytes,
+        ..
+    } = f
+    {
         let _u: u16 = status;
         let _u2: u64 = body_size_bytes;
     }

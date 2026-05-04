@@ -70,7 +70,10 @@ fn action_with_estimate(walltime_ms: u64) -> Action {
 fn ac_budget_01_1_session_walltime_kill_fires_callback() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
-    let limits = BudgetLimits { session_walltime_ms: 100, ..BudgetLimits::default() };
+    let limits = BudgetLimits {
+        session_walltime_ms: 100,
+        ..BudgetLimits::default()
+    };
     register(&be, sid("A"), limits, kill);
 
     let result = be.account(sid("A"), ResourceKind::Walltime, 101);
@@ -90,7 +93,10 @@ fn ac_budget_01_1_session_walltime_kill_fires_callback() {
 fn ac_budget_01_1_kill_callback_not_double_fired_on_repeated_account() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
-    let limits = BudgetLimits { session_walltime_ms: 50, ..BudgetLimits::default() };
+    let limits = BudgetLimits {
+        session_walltime_ms: 50,
+        ..BudgetLimits::default()
+    };
     register(&be, sid("B"), limits, kill);
 
     let _ = be.account(sid("B"), ResourceKind::Walltime, 51);
@@ -111,16 +117,24 @@ fn ac_budget_01_1_error_context_has_seconds_not_ms() {
     // Observed must be in seconds (≥ 600)
     let observed = ctx["observed"].as_u64().expect("observed must be u64");
     let limit = ctx["limit"].as_u64().expect("limit must be u64");
-    assert!(observed >= 600, "observed={observed} must be >= 600 seconds");
+    assert!(
+        observed >= 600,
+        "observed={observed} must be >= 600 seconds"
+    );
     assert_eq!(limit, 600, "limit must be 600 seconds");
-    let budget_name = ctx["budget_name"].as_str().expect("budget_name must be string");
+    let budget_name = ctx["budget_name"]
+        .as_str()
+        .expect("budget_name must be string");
     assert_eq!(budget_name, "session_wall_clock_seconds");
 }
 
 #[test]
 fn ac_budget_01_1_check_rejects_if_session_already_at_limit() {
     let be = enforcer();
-    let limits = BudgetLimits { session_walltime_ms: 100, ..BudgetLimits::default() };
+    let limits = BudgetLimits {
+        session_walltime_ms: 100,
+        ..BudgetLimits::default()
+    };
     let counters = register(&be, sid("D"), limits, noop_kill());
     // Manually set the counter past the limit.
     counters.walltime_ms.store(100, Ordering::Relaxed);
@@ -146,7 +160,9 @@ fn ac_budget_01_2_check_rejects_action_exceeding_action_limit() {
     let err = result.unwrap_err();
     assert_eq!(err.code, LoomErrorCode::BudgetExceeded);
     let ctx = err.context.as_ref().expect("error must have context");
-    let budget_name = ctx["budget_name"].as_str().expect("budget_name must be string");
+    let budget_name = ctx["budget_name"]
+        .as_str()
+        .expect("budget_name must be string");
     assert_eq!(budget_name, "action_wall_clock_seconds");
     let limit = ctx["limit"].as_u64().expect("limit must be u64");
     assert_eq!(limit, 60, "action limit must be 60 seconds");
@@ -193,10 +209,17 @@ fn ac_budget_01_3_error_context_has_correct_keys() {
         .account(sid("H"), ResourceKind::Network, 52_428_801)
         .unwrap_err();
     let ctx = err.context.as_ref().expect("error must have context");
-    let observed_bytes = ctx["observed_bytes"].as_u64().expect("observed_bytes must be u64");
-    let limit_bytes = ctx["limit_bytes"].as_u64().expect("limit_bytes must be u64");
+    let observed_bytes = ctx["observed_bytes"]
+        .as_u64()
+        .expect("observed_bytes must be u64");
+    let limit_bytes = ctx["limit_bytes"]
+        .as_u64()
+        .expect("limit_bytes must be u64");
     assert!(observed_bytes >= 52_428_800);
-    assert_eq!(limit_bytes, 52_428_800, "default network limit must be 50MB");
+    assert_eq!(
+        limit_bytes, 52_428_800,
+        "default network limit must be 50MB"
+    );
 }
 
 // ============================================================
@@ -220,7 +243,9 @@ fn ac_budget_01_4_dom_nodes_error_context_correct() {
     let be = enforcer();
     register(&be, sid("J"), BudgetLimits::default(), noop_kill());
 
-    let err = be.account(sid("J"), ResourceKind::DomNodes, 50_001).unwrap_err();
+    let err = be
+        .account(sid("J"), ResourceKind::DomNodes, 50_001)
+        .unwrap_err();
     let ctx = err.context.as_ref().expect("context must be present");
     assert_eq!(ctx["observed_nodes"].as_u64().unwrap(), 50_001);
     assert_eq!(ctx["limit_nodes"].as_u64().unwrap(), 50_000);
@@ -260,7 +285,9 @@ fn ac_budget_01_5_js_heap_error_context_correct() {
     let be = enforcer();
     register(&be, sid("M"), BudgetLimits::default(), noop_kill());
 
-    let err = be.account(sid("M"), ResourceKind::JsHeap, 536_870_913).unwrap_err();
+    let err = be
+        .account(sid("M"), ResourceKind::JsHeap, 536_870_913)
+        .unwrap_err();
     let ctx = err.context.as_ref().expect("context must be present");
     assert_eq!(ctx["observed_heap_bytes"].as_u64().unwrap(), 536_870_913);
     assert_eq!(ctx["limit_heap_bytes"].as_u64().unwrap(), 536_870_912);
@@ -272,9 +299,12 @@ fn ac_budget_01_5_js_heap_is_gauge_not_cumulative() {
     // Heap fluctuates: 400MB, then 200MB. Neither exceeds 512MB.
     register(&be, sid("N"), BudgetLimits::default(), noop_kill());
 
-    assert!(be.account(sid("N"), ResourceKind::JsHeap, 400 * 1024 * 1024).is_ok());
+    assert!(be
+        .account(sid("N"), ResourceKind::JsHeap, 400 * 1024 * 1024)
+        .is_ok());
     assert!(
-        be.account(sid("N"), ResourceKind::JsHeap, 200 * 1024 * 1024).is_ok(),
+        be.account(sid("N"), ResourceKind::JsHeap, 200 * 1024 * 1024)
+            .is_ok(),
         "heap drop must not cause false breach (gauge not cumulative)"
     );
 }
@@ -291,7 +321,9 @@ fn budget_below_limit_all_resources_ok() {
     assert!(be.account(sid("O"), ResourceKind::Walltime, 1_000).is_ok());
     assert!(be.account(sid("O"), ResourceKind::Network, 1_024).is_ok());
     assert!(be.account(sid("O"), ResourceKind::DomNodes, 100).is_ok());
-    assert!(be.account(sid("O"), ResourceKind::JsHeap, 1024 * 1024).is_ok());
+    assert!(be
+        .account(sid("O"), ResourceKind::JsHeap, 1024 * 1024)
+        .is_ok());
 }
 
 // ============================================================
@@ -329,7 +361,7 @@ fn ac_budget_04_1_budget_overrides_stored_in_manifest_header() {
 
     let id = sid("BUDGET04");
     let limits = BudgetLimits {
-        session_walltime_ms: 30_000,  // wall_clock=30s
+        session_walltime_ms: 30_000, // wall_clock=30s
         action_walltime_ms: 60_000,
         network_bytes: 10 * 1024 * 1024, // network=10MB
         dom_nodes: 50_000,
@@ -344,7 +376,9 @@ fn ac_budget_04_1_budget_overrides_stored_in_manifest_header() {
     let entry: serde_json::Value = serde_json::from_str(first_line).unwrap();
 
     assert_eq!(entry["kind"], "header");
-    let budgets = entry["budgets"].as_object().expect("budgets field must be present");
+    let budgets = entry["budgets"]
+        .as_object()
+        .expect("budgets field must be present");
     assert_eq!(
         budgets["session_walltime_ms"].as_u64().unwrap(),
         30_000,

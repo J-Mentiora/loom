@@ -15,7 +15,9 @@ use loom_shims::cdp_connection::cdp_connection::{
     CdpConnection, CdpError, EventFilter, EventHandler, EventRegistration,
 };
 use loom_shims::ipc_endpoint::ipc_endpoint::{CdpMessage, TargetId};
-use loom_shims::network_interceptor::network_interceptor::{ChromiumNetworkInterceptor, NetworkInterceptor};
+use loom_shims::network_interceptor::network_interceptor::{
+    ChromiumNetworkInterceptor, NetworkInterceptor,
+};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

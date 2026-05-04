@@ -39,10 +39,7 @@ pub trait WasmHostBridge: Send + Sync {
     /// Dispatch an action to the WASM surface. Returns a typed
     /// `Receipt` (CDP-free, per IC-RPC-07). This is the one and only
     /// host-side entry point per IC-RPC-09.
-    fn dispatch_action_blocking(
-        &self,
-        action: Action,
-    ) -> Result<Receipt, AdapterError>;
+    fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, AdapterError>;
 }
 
 /// WIT-derived action type (`wit/loom-surface.wit`). In Phase 5.4 the
@@ -52,16 +49,50 @@ pub trait WasmHostBridge: Send + Sync {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {
-    WebNavigate { session_id: String, url: String },
-    WebClick { session_id: String, selector: String },
-    WebEvaluate { session_id: String, expression: String },
-    WebType { session_id: String, selector: String, text: String },
-    WebScreenshot { session_id: String, selector: Option<String> },
-    WebSelect { session_id: String, selector: String, value: String },
-    WebHover { session_id: String, selector: String },
-    WebScroll { session_id: String, selector: String, delta_x: Option<i64>, delta_y: Option<i64> },
-    WebWait { session_id: String, selector: String, timeout_ms: Option<u64> },
-    WebSnapshot { session_id: String },
+    WebNavigate {
+        session_id: String,
+        url: String,
+    },
+    WebClick {
+        session_id: String,
+        selector: String,
+    },
+    WebEvaluate {
+        session_id: String,
+        expression: String,
+    },
+    WebType {
+        session_id: String,
+        selector: String,
+        text: String,
+    },
+    WebScreenshot {
+        session_id: String,
+        selector: Option<String>,
+    },
+    WebSelect {
+        session_id: String,
+        selector: String,
+        value: String,
+    },
+    WebHover {
+        session_id: String,
+        selector: String,
+    },
+    WebScroll {
+        session_id: String,
+        selector: String,
+        delta_x: Option<i64>,
+        delta_y: Option<i64>,
+    },
+    WebWait {
+        session_id: String,
+        selector: String,
+        timeout_ms: Option<u64>,
+    },
+    WebSnapshot {
+        session_id: String,
+    },
     // Additional surface.verb pairs added as the WIT grows. The match
     // arm in `RpcHandlers` is exhaustive — adding a verb forces a
     // handler addition (compile-time evidence for IC-RPC-09).

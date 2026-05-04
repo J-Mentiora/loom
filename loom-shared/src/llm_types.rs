@@ -26,12 +26,14 @@ impl LlmCacheKey {
     /// Stable colon-delimited string for HashMap keying.
     pub fn cache_key_string(&self) -> String {
         debug_assert!(
-            self.prompt_hash.len() == 64
-                && self.prompt_hash.chars().all(|c| c.is_ascii_hexdigit()),
+            self.prompt_hash.len() == 64 && self.prompt_hash.chars().all(|c| c.is_ascii_hexdigit()),
             "prompt_hash must be 64 lowercase hex chars, got: {:?}",
             self.prompt_hash
         );
-        format!("{}:{}:{}", self.model, self.prompt_hash, self.tool_schema_version)
+        format!(
+            "{}:{}:{}",
+            self.model, self.prompt_hash, self.tool_schema_version
+        )
     }
 }
 

@@ -92,13 +92,18 @@ pub async fn grant(rpc: &RpcClient, cfg: &CliConfig, args: VaultGrantArgs) -> Re
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    let resp = rpc.call("vault.grant", serde_json::json!({
-        "session_id": args.session,
-        "origin": args.origin,
-        "scopes": scopes,
-        "ttl_seconds": args.ttl,
-        "label": args.label.unwrap_or_default(),
-    })).await?;
+    let resp = rpc
+        .call(
+            "vault.grant",
+            serde_json::json!({
+                "session_id": args.session,
+                "origin": args.origin,
+                "scopes": scopes,
+                "ttl_seconds": args.ttl,
+                "label": args.label.unwrap_or_default(),
+            }),
+        )
+        .await?;
     println!("{}", format_output(&resp, cfg.pretty)?);
     Ok(())
 }
@@ -108,18 +113,28 @@ pub async fn revoke(
     cfg: &CliConfig,
     args: VaultRevokeArgs,
 ) -> Result<(), CliError> {
-    let resp = rpc.call("vault.revoke", serde_json::json!({
-        "grant_id": args.grant,
-        "reason": args.reason,
-    })).await?;
+    let resp = rpc
+        .call(
+            "vault.revoke",
+            serde_json::json!({
+                "grant_id": args.grant,
+                "reason": args.reason,
+            }),
+        )
+        .await?;
     println!("{}", format_output(&resp, cfg.pretty)?);
     Ok(())
 }
 
 pub async fn list(rpc: &RpcClient, cfg: &CliConfig, args: VaultListArgs) -> Result<(), CliError> {
-    let resp = rpc.call("vault.list_grants", serde_json::json!({
-        "session_id": args.session,
-    })).await?;
+    let resp = rpc
+        .call(
+            "vault.list_grants",
+            serde_json::json!({
+                "session_id": args.session,
+            }),
+        )
+        .await?;
     println!("{}", format_output(&resp, cfg.pretty)?);
     Ok(())
 }
@@ -128,11 +143,16 @@ pub async fn list(rpc: &RpcClient, cfg: &CliConfig, args: VaultListArgs) -> Resu
 /// Implementation drives the OAuth device-flow; `--yes` short-circuits
 /// confirmation for non-interactive shells.
 pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result<(), CliError> {
-    let resp = rpc.call("vault.add", serde_json::json!({
-        "provider": args.provider,
-        "label": args.label,
-        "yes": args.yes,
-    })).await?;
+    let resp = rpc
+        .call(
+            "vault.add",
+            serde_json::json!({
+                "provider": args.provider,
+                "label": args.label,
+                "yes": args.yes,
+            }),
+        )
+        .await?;
     println!("{}", format_output(&resp, cfg.pretty)?);
     Ok(())
 }

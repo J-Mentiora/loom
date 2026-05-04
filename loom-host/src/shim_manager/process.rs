@@ -69,14 +69,10 @@ pub struct SpawnConfig {
 /// The pre_exec body MUST be async-signal-safe — only `libc::dup2` and
 /// `libc::close` are allowed. No allocations, no `format!`, no
 /// `eprintln!` (per practitioner gotcha #2).
-pub async fn spawn_shim(
-    config: &SpawnConfig,
-) -> Result<Arc<ShimProcess>, LoomError> {
+pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomError> {
     // STEP 1: AF_UNIX SOCK_STREAM socketpair via libc.
     let mut fds = [0i32; 2];
-    let rc = unsafe {
-        libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr())
-    };
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
     if rc != 0 {
         let errno = std::io::Error::last_os_error();
         return Err(LoomError::new(
@@ -153,12 +149,9 @@ pub async fn spawn_shim(
 
     // STEP 4: wrap parent_fd as a tokio UnixStream.
     let std_stream = unsafe { std::os::unix::net::UnixStream::from_raw_fd(parent_fd) };
-    std_stream.set_nonblocking(true).map_err(|e| {
-        LoomError::new(
-            LoomErrorCode::ShimFailure,
-            format!("set_nonblocking: {e}"),
-        )
-    })?;
+    std_stream
+        .set_nonblocking(true)
+        .map_err(|e| LoomError::new(LoomErrorCode::ShimFailure, format!("set_nonblocking: {e}")))?;
     let stream = tokio::net::UnixStream::from_std(std_stream).map_err(|e| {
         LoomError::new(
             LoomErrorCode::ShimFailure,
@@ -183,8 +176,7 @@ pub async fn spawn_shim(
     let demux = tokio::spawn(async move {
         while let Some(resp) = response_rx.recv().await {
             match &resp {
-                ShimResponse::Ok { request_id, .. }
-                | ShimResponse::Error { request_id, .. } => {
+                ShimResponse::Ok { request_id, .. } | ShimResponse::Error { request_id, .. } => {
                     if let Some((_, tx)) = pending_for_demux.remove(request_id) {
                         let _ = tx.send(resp);
                     }
@@ -192,7 +184,11 @@ pub async fn spawn_shim(
                 ShimResponse::CdpEvent { .. } => {
                     tracing::trace!("shim cdp_event");
                 }
-                ShimResponse::LogLine { level, target, message } => {
+                ShimResponse::LogLine {
+                    level,
+                    target,
+                    message,
+                } => {
                     tracing::trace!(target = target, level = level, "{message}");
                 }
             }
@@ -279,7 +275,12 @@ pub async fn spawn_shim(
         next_request_id: Arc::new(AtomicU64::new(1)),
         crashed,
         exit_status_text,
-        tasks: ShimTasks { read, write, demux, watcher },
+        tasks: ShimTasks {
+            read,
+            write,
+            demux,
+            watcher,
+        },
     }))
 }
 
@@ -357,10 +358,7 @@ pub async fn send_and_await(
     // (AC-SHCRT-05.1). Without this check we'd write to a dead socket,
     // park a oneshot, and time out at recv_timeout (~30s) — exactly the
     // hang the AC was failing on.
-    if process
-        .crashed
-        .load(std::sync::atomic::Ordering::SeqCst)
-    {
+    if process.crashed.load(std::sync::atomic::Ordering::SeqCst) {
         let detail = process
             .exit_status_text
             .lock()
@@ -437,20 +435,14 @@ pub async fn shutdown_process(process: Arc<ShimProcess>) {
     // wait briefly for the watcher to flip `crashed` before escalating
     // to SIGKILL.
     let pid = process.child_pid;
-    if !process
-        .crashed
-        .load(std::sync::atomic::Ordering::SeqCst)
-    {
+    if !process.crashed.load(std::sync::atomic::Ordering::SeqCst) {
         unsafe {
             libc::kill(pid as libc::pid_t, libc::SIGTERM);
         }
         // Wait up to 2s for the watcher to observe the exit.
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
         while tokio::time::Instant::now() < deadline {
-            if process
-                .crashed
-                .load(std::sync::atomic::Ordering::SeqCst)
-            {
+            if process.crashed.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
@@ -461,19 +453,12 @@ pub async fn shutdown_process(process: Arc<ShimProcess>) {
         }
         // Final brief wait so the watcher's exit_status_text is set
         // before any caller reads it.
-        let _ = tokio::time::timeout(
-            Duration::from_secs(1),
-            wait_for_crashed_flag(&process),
-        )
-        .await;
+        let _ = tokio::time::timeout(Duration::from_secs(1), wait_for_crashed_flag(&process)).await;
     }
 }
 
 async fn wait_for_crashed_flag(process: &ShimProcess) {
-    while !process
-        .crashed
-        .load(std::sync::atomic::Ordering::SeqCst)
-    {
+    while !process.crashed.load(std::sync::atomic::Ordering::SeqCst) {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }

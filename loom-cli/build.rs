@@ -155,8 +155,7 @@ fn main() {
 
     // Path-divergence fix (council C2): also copy to the convention path
     // so loom-host/build.rs can compute the integrity SHA (AC-WASMB-05).
-    let convention_path = workspace_root
-        .join("target/wasm32-wasip2/release/loom_surface_web.wasm");
+    let convention_path = workspace_root.join("target/wasm32-wasip2/release/loom_surface_web.wasm");
     if let Some(parent) = convention_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

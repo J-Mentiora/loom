@@ -66,25 +66,44 @@ pub async fn run(
             checks.push(DoctorCheck {
                 name: $name.to_string(),
                 status: if ok { "ok" } else { "fail" }.to_string(),
-                detail: if ok { None } else {
+                detail: if ok {
+                    None
+                } else {
                     Some(serde_json::json!(format!("{:?}", result.unwrap_err())))
                 },
             });
-            if !ok { failures.push($name.to_string()); }
+            if !ok {
+                failures.push($name.to_string());
+            }
         }};
     }
 
-    run_check!("socket_reachable", check_socket_reachable(&paths.socket_path));
+    run_check!(
+        "socket_reachable",
+        check_socket_reachable(&paths.socket_path)
+    );
     run_check!("daemon_responsive", check_daemon_responsive(rpc));
-    run_check!("aot_artifacts_present", check_aot_artifacts(&paths.surfaces_dir));
-    run_check!("chromium_present_and_verified", check_chromium(
-        chromium,
-        &paths.chromium_binary,
-        &paths.chromium_expected_sha256,
-    ));
-    run_check!("vault_keychain_accessible", check_keychain_acl(&paths.keychain_label));
+    run_check!(
+        "aot_artifacts_present",
+        check_aot_artifacts(&paths.surfaces_dir)
+    );
+    run_check!(
+        "chromium_present_and_verified",
+        check_chromium(
+            chromium,
+            &paths.chromium_binary,
+            &paths.chromium_expected_sha256,
+        )
+    );
+    run_check!(
+        "vault_keychain_accessible",
+        check_keychain_acl(&paths.keychain_label)
+    );
 
-    let report = DoctorReport { checks, failures: failures.clone() };
+    let report = DoctorReport {
+        checks,
+        failures: failures.clone(),
+    };
     if failures.is_empty() {
         Ok(report)
     } else {

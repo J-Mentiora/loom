@@ -154,14 +154,16 @@ async fn ensure_extracts_zip_and_writes_sentinel() {
     assert!(binary.exists(), "binary must exist after extraction");
     let content = std::fs::read(&binary).unwrap();
     assert_eq!(
-        content,
-        b"fake-chromium-binary-content",
+        content, b"fake-chromium-binary-content",
         "extracted content must match"
     );
 
     // AC-CHPLUMB-02: sentinel written after extraction.
     let sentinel = install_dir.path().join(".archive_sha256");
-    assert!(sentinel.exists(), "sentinel .archive_sha256 must be written");
+    assert!(
+        sentinel.exists(),
+        "sentinel .archive_sha256 must be written"
+    );
     let recorded = std::fs::read_to_string(&sentinel).unwrap();
     assert_eq!(
         recorded.trim(),
@@ -226,7 +228,10 @@ async fn verify_ok_when_sentinel_matches() {
     });
 
     let result = downloader.verify(expected_sha).await;
-    assert!(result.is_ok(), "verify must return Ok when sentinel matches: {result:?}");
+    assert!(
+        result.is_ok(),
+        "verify must return Ok when sentinel matches: {result:?}"
+    );
 }
 
 /// Binary + wrong sentinel → SupplyChainViolation.

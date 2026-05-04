@@ -1,7 +1,6 @@
 // Interface tests for `WaitVerb`. Verifies IC-SURF-02 (clock_now-driven
 // polling, no `std::thread::sleep`), IC-SURF-07 hash-only tier.
 
-
 extern crate alloc;
 
 use super::wait_verb::{WaitAction, WaitVerb};
@@ -43,8 +42,14 @@ fn wait_execute_returns_receipt_when_predicate_truthy() {
     let receipt = WaitVerb::execute(action).expect("wait must return Ok on truthy predicate");
 
     // Screenshot-only tier: screenshot present, no DOM blob
-    assert!(receipt.screenshot_after_ref.is_some(), "screenshot_after_ref must be Some");
-    assert!(receipt.dom_after_ref.is_none(), "wait must not capture DOM blob");
+    assert!(
+        receipt.screenshot_after_ref.is_some(),
+        "screenshot_after_ref must be Some"
+    );
+    assert!(
+        receipt.dom_after_ref.is_none(),
+        "wait must not capture DOM blob"
+    );
 }
 
 #[test]
@@ -62,5 +67,9 @@ fn wait_execute_returns_error_receipt_on_timeout() {
     };
 
     let receipt = WaitVerb::execute(action).expect("wait must return Ok (error receipt)");
-    assert_eq!(receipt.status, ReceiptStatus::Error, "timed-out wait must produce error receipt");
+    assert_eq!(
+        receipt.status,
+        ReceiptStatus::Error,
+        "timed-out wait must produce error receipt"
+    );
 }

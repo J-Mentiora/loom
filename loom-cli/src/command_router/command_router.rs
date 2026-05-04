@@ -14,11 +14,11 @@
 
 use clap::{Parser, Subcommand};
 
-use crate::version_command::LOOM_VERSION;
 use crate::action_commands::ActionArgs;
 use crate::admin_commands::{GcArgs, McpArgs, PostinstallArgs, ServeArgs};
 use crate::benchmark_commands::BenchmarkArgs;
 use crate::chromium_downloader::{ChromiumDownloader, ChromiumDownloaderConfig};
+use crate::chromium_pin;
 use crate::cli_config::CliConfig;
 use crate::doctor_runner::{DoctorArgs, DoctorPaths};
 use crate::import_commands::ImportPlaywrightArgs;
@@ -30,7 +30,7 @@ use crate::session_commands::{
     ValidateArgs,
 };
 use crate::vault_commands::{VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs};
-use crate::chromium_pin;
+use crate::version_command::LOOM_VERSION;
 use crate::CliError;
 
 /// Top-level CLI parser. Drives the clap derive pipeline.
@@ -141,9 +141,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 SessionCmd::Replay(a) => crate::session_commands::replay(&rpc, config, a).await,
                 SessionCmd::Diff(a) => crate::session_commands::diff(&rpc, config, a).await,
                 SessionCmd::Export(a) => crate::session_commands::export(&rpc, config, a).await,
-                SessionCmd::Validate(a) => {
-                    crate::session_commands::validate(&rpc, config, a).await
-                }
+                SessionCmd::Validate(a) => crate::session_commands::validate(&rpc, config, a).await,
             }
         }
 
@@ -214,8 +212,11 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 Err(CliError::DoctorFailed(r)) => r,
                 Err(_) => return result.map(|_| ()),
             };
-            println!("{}", serde_json::to_string(report)
-                .unwrap_or_else(|_| r#"{"error":"serialization_failed"}"#.to_string()));
+            println!(
+                "{}",
+                serde_json::to_string(report)
+                    .unwrap_or_else(|_| r#"{"error":"serialization_failed"}"#.to_string())
+            );
             result.map(|_| ())
         }
 

@@ -39,28 +39,35 @@ pub async fn serve(opts: ServeOptions) -> Result<HelloDisclosure, CliError> {
     }
     cmd.stdout(std::process::Stdio::piped());
     cmd.stderr(std::process::Stdio::inherit());
-    let mut child = cmd.spawn()
+    let mut child = cmd
+        .spawn()
         .map_err(|e| CliError::Internal(format!("spawn daemon: {e}")))?;
-    let pid = child.id()
+    let pid = child
+        .id()
         .ok_or_else(|| CliError::Internal("daemon exited immediately".to_string()))?;
-    let stdout = child.stdout.take()
+    let stdout = child
+        .stdout
+        .take()
         .ok_or_else(|| CliError::Internal("no stdout from daemon".to_string()))?;
     let mut reader = tokio::io::BufReader::new(stdout).lines();
     let token = loop {
-        let line = tokio::time::timeout(
-            std::time::Duration::from_millis(5000),
-            reader.next_line(),
-        )
-        .await
-        .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout))?
-        .map_err(|e| CliError::Internal(format!("read daemon stdout: {e}")))?
-        .ok_or_else(|| CliError::Internal("daemon closed stdout".to_string()))?;
+        let line = tokio::time::timeout(std::time::Duration::from_millis(5000), reader.next_line())
+            .await
+            .map_err(|_| {
+                CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout)
+            })?
+            .map_err(|e| CliError::Internal(format!("read daemon stdout: {e}")))?
+            .ok_or_else(|| CliError::Internal("daemon closed stdout".to_string()))?;
         if let Some(tok) = line.strip_prefix("HELLO_TOKEN=") {
             break tok.trim().to_string();
         }
     };
     println!("{}", format_hello_line(&token));
-    Ok(HelloDisclosure { token, daemon_pid: pid, socket_path: opts.socket_path })
+    Ok(HelloDisclosure {
+        token,
+        daemon_pid: pid,
+        socket_path: opts.socket_path,
+    })
 }
 
 /// Result of a successful spawn — the disclosed HELLO token plus the
@@ -81,9 +88,10 @@ pub fn format_hello_line(token: &str) -> String {
 /// Default daemon binary path resolution: same directory as the
 /// running `loom` binary, named `loom-daemon`.
 pub fn default_daemon_binary() -> Result<PathBuf, CliError> {
-    let current_exe = std::env::current_exe()
-        .map_err(|e| CliError::Internal(format!("current_exe: {e}")))?;
-    let parent = current_exe.parent()
+    let current_exe =
+        std::env::current_exe().map_err(|e| CliError::Internal(format!("current_exe: {e}")))?;
+    let parent = current_exe
+        .parent()
         .ok_or_else(|| CliError::Internal("current_exe has no parent dir".to_string()))?;
     Ok(parent.join("loom-daemon"))
 }

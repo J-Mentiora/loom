@@ -13,7 +13,6 @@
 // - **Timeout.** Elapsed >= `timeout_ticks` → emit error Receipt with
 //   `LoomErrorCode::WebActionTimeout`.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -39,9 +38,7 @@ impl WaitVerb {
         use crate::cdp_message_encoder::cdp_message_encoder::{
             CdpMessage, CdpMessageEncoder, PageCaptureScreenshot, RuntimeEvaluate,
         };
-        use crate::error_mapper::error_mapper::{
-            ErrorMapper, ShimFailureKind, SurfaceContext,
-        };
+        use crate::error_mapper::error_mapper::{ErrorMapper, ShimFailureKind, SurfaceContext};
         use crate::host_bindings::host_bindings::host;
         use crate::receipt_builder::receipt_builder::{ReceiptBuilder, ReceiptInputs, VerbKind};
         use alloc::collections::BTreeMap;

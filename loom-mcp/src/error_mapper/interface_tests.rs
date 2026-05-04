@@ -1,9 +1,7 @@
 // Interface tests for `ErrorMapper`. Verifies IC-MCP-08 envelope shape
 // and BC-MCP-03 stable-enum mapping.
 
-use super::error_mapper::{
-    ErrorMapper, McpContent, ToolResult, TypedReceipt, MAX_MESSAGE_CHARS,
-};
+use super::error_mapper::{ErrorMapper, McpContent, ToolResult, TypedReceipt, MAX_MESSAGE_CHARS};
 use loom_rpc::error::{LoomError, LoomErrorCode};
 
 // === IC-MCP-08: errors map to ToolResult { isError: true, content } ===
@@ -34,7 +32,10 @@ fn tool_result_has_is_error_flag_renamed_camel_case() {
     let s = serde_json::to_string(&tr).unwrap();
     // `isError` is the on-the-wire MCP field name. snake_case `is_error`
     // would break MCP clients.
-    assert!(s.contains("\"isError\":true"), "wire field must be isError; got {s}");
+    assert!(
+        s.contains("\"isError\":true"),
+        "wire field must be isError; got {s}"
+    );
 }
 
 #[test]
@@ -120,7 +121,9 @@ fn from_schema_parse_returns_protocol_malformed() {
 
 #[test]
 fn mcp_content_json_variant_is_default_for_typed_receipts() {
-    let block = McpContent::Json { json: serde_json::json!({}) };
+    let block = McpContent::Json {
+        json: serde_json::json!({}),
+    };
     let s = serde_json::to_string(&block).unwrap();
     assert!(s.contains("\"type\":\"json\""), "got {s}");
 }

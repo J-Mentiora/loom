@@ -50,7 +50,8 @@ fn test_manifest_hash_chain_validates_intact() {
     )
     .unwrap();
     // Intact chain must validate without error.
-    mw.validate(sid).expect("intact hash chain must validate as Ok");
+    mw.validate(sid)
+        .expect("intact hash chain must validate as Ok");
 }
 
 #[test]
@@ -123,21 +124,44 @@ fn test_manifest_json_checkpoint_has_entries_array() {
     .unwrap();
 
     let json_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.json", sid.0));
-    assert!(json_path.exists(), "manifest.json must exist after SessionTerminal append");
+    assert!(
+        json_path.exists(),
+        "manifest.json must exist after SessionTerminal append"
+    );
 
     let contents = std::fs::read_to_string(&json_path).unwrap();
     let doc: serde_json::Value =
         serde_json::from_str(&contents).expect("manifest.json must be valid JSON");
 
-    let entries = doc["entries"].as_array().expect("manifest.json must have top-level 'entries' array");
-    assert_eq!(entries.len(), 2, "entries[] must contain 2 ActionReceipt entries (Terminal excluded)");
+    let entries = doc["entries"]
+        .as_array()
+        .expect("manifest.json must have top-level 'entries' array");
+    assert_eq!(
+        entries.len(),
+        2,
+        "entries[] must contain 2 ActionReceipt entries (Terminal excluded)"
+    );
 
     for entry in entries {
-        assert!(entry.get("action_id").is_some(), "entry must have 'action_id'");
-        assert!(entry.get("action").is_some(), "entry must have 'action' field");
-        assert!(entry.get("receipt").is_some(), "entry must have 'receipt' field");
-        let content_refs = entry["content_refs"].as_array().expect("'content_refs' must be a JSON array");
-        assert!(content_refs.is_empty(), "content_refs must be [] for this feature");
+        assert!(
+            entry.get("action_id").is_some(),
+            "entry must have 'action_id'"
+        );
+        assert!(
+            entry.get("action").is_some(),
+            "entry must have 'action' field"
+        );
+        assert!(
+            entry.get("receipt").is_some(),
+            "entry must have 'receipt' field"
+        );
+        let content_refs = entry["content_refs"]
+            .as_array()
+            .expect("'content_refs' must be a JSON array");
+        assert!(
+            content_refs.is_empty(),
+            "content_refs must be [] for this feature"
+        );
     }
 }
 
@@ -171,11 +195,23 @@ fn test_validate_corrupt_error_has_structured_context() {
     assert_eq!(err.code, LoomErrorCode::ManifestCorrupt);
 
     // AC-CORE-06.2: context must carry failed_at_index, expected_hash, observed_hash.
-    let ctx = err.context.expect("ManifestCorrupt must include structured context");
-    assert!(ctx.get("failed_at_index").is_some(), "context must have 'failed_at_index'");
-    let expected = ctx["expected_hash"].as_str().expect("context must have 'expected_hash' string");
-    let observed = ctx["observed_hash"].as_str().expect("context must have 'observed_hash' string");
-    assert_ne!(expected, observed, "expected_hash must differ from observed_hash on tamper");
+    let ctx = err
+        .context
+        .expect("ManifestCorrupt must include structured context");
+    assert!(
+        ctx.get("failed_at_index").is_some(),
+        "context must have 'failed_at_index'"
+    );
+    let expected = ctx["expected_hash"]
+        .as_str()
+        .expect("context must have 'expected_hash' string");
+    let observed = ctx["observed_hash"]
+        .as_str()
+        .expect("context must have 'observed_hash' string");
+    assert_ne!(
+        expected, observed,
+        "expected_hash must differ from observed_hash on tamper"
+    );
 }
 
 // === AC-NFR-REL-01.1: manifest.json atomic write ===

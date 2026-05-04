@@ -15,8 +15,7 @@ pub const KNOWN_PROFILES: &[&str] = &["safe", "standard", "full"];
 pub const KNOWN_NETWORK_MODES: &[&str] = &["live", "recorded", "mixed"];
 
 /// Canonical budget keys. Mirrors `parse_budget_string` accepted keys.
-pub const KNOWN_BUDGET_KEYS: &[&str] =
-    &["network", "wall_clock", "dom_nodes", "js_heap"];
+pub const KNOWN_BUDGET_KEYS: &[&str] = &["network", "wall_clock", "dom_nodes", "js_heap"];
 
 /// Returns true if `s` is a canonical profile name.
 pub fn is_known_profile(s: &str) -> bool {

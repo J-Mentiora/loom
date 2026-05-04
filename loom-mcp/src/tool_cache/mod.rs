@@ -45,7 +45,9 @@ impl ToolCache {
             };
             match Self::tool_from_method(&schema) {
                 Ok(tool) => built.push(tool),
-                Err(e) => tracing::error!(error = %e, name = %schema.name, "skipping malformed rpc method"),
+                Err(e) => {
+                    tracing::error!(error = %e, name = %schema.name, "skipping malformed rpc method")
+                }
             }
         }
         *self.tools.write().await = built;

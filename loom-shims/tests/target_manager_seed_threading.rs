@@ -27,26 +27,45 @@ struct RecordingCdp {
 }
 
 impl RecordingCdp {
-    fn new() -> Arc<Self> { Arc::new(Self { calls: Mutex::new(Vec::new()) }) }
+    fn new() -> Arc<Self> {
+        Arc::new(Self {
+            calls: Mutex::new(Vec::new()),
+        })
+    }
     fn methods(&self) -> Vec<String> {
-        self.calls.lock().unwrap().iter().map(|(_, m)| m.clone()).collect()
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, m)| m.clone())
+            .collect()
     }
 }
 
 #[async_trait::async_trait]
 impl CdpConnection for RecordingCdp {
-    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> { Ok(()) }
-    async fn command(&self, t: TargetId, msg: CdpMessage, _: Option<Duration>) -> Result<Value, CdpError> {
+    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> {
+        Ok(())
+    }
+    async fn command(
+        &self,
+        t: TargetId,
+        msg: CdpMessage,
+        _: Option<Duration>,
+    ) -> Result<Value, CdpError> {
         self.calls.lock().unwrap().push((t, msg.method.clone()));
-        Ok(Value::Map(vec![
-            (Value::Text("identifier".into()), Value::Text("script-id-1".into())),
-        ]))
+        Ok(Value::Map(vec![(
+            Value::Text("identifier".into()),
+            Value::Text("script-id-1".into()),
+        )]))
     }
     fn register_event_handler(&self, _: EventFilter, _: EventHandler) -> EventRegistration {
         EventRegistration { handler_id: 0 }
     }
     fn invalidate_session(&self) {}
-    fn is_connected(&self) -> bool { true }
+    fn is_connected(&self) -> bool {
+        true
+    }
 }
 
 /// CdpConnection that always returns CdpError::Timeout — exercises the
@@ -55,15 +74,24 @@ impl CdpConnection for RecordingCdp {
 struct AlwaysFailingCdp;
 #[async_trait::async_trait]
 impl CdpConnection for AlwaysFailingCdp {
-    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> { Ok(()) }
-    async fn command(&self, _: TargetId, _: CdpMessage, _: Option<Duration>) -> Result<Value, CdpError> {
+    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> {
+        Ok(())
+    }
+    async fn command(
+        &self,
+        _: TargetId,
+        _: CdpMessage,
+        _: Option<Duration>,
+    ) -> Result<Value, CdpError> {
         Err(CdpError::Timeout { ms: 0 })
     }
     fn register_event_handler(&self, _: EventFilter, _: EventHandler) -> EventRegistration {
         EventRegistration { handler_id: 0 }
     }
     fn invalidate_session(&self) {}
-    fn is_connected(&self) -> bool { true }
+    fn is_connected(&self) -> bool {
+        true
+    }
 }
 
 fn build_response_tx() -> ResponseSender {
@@ -90,12 +118,17 @@ async fn create_new_target_actually_awaits_inject_and_sends_cdp_command() {
 
     let methods = cdp.methods();
     assert_eq!(
-        methods.iter().filter(|m| m.as_str() == ADD_SCRIPT_METHOD).count(),
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
         1,
         "exactly one addScriptToEvaluateOnNewDocument must be sent on the wire"
     );
-    assert!(mgr.determinism_ready(target_id),
-        "flag must be true after Ok(()) from awaited inject");
+    assert!(
+        mgr.determinism_ready(target_id),
+        "flag must be true after Ok(()) from awaited inject"
+    );
 }
 
 #[tokio::test]
@@ -114,11 +147,16 @@ async fn create_new_target_failed_inject_leaves_flag_false_and_no_session_bindin
     let result2 = mgr
         .create_new_target(2, "default".into(), Seed(42), EpochMs(0))
         .await;
-    assert!(result2.is_err(), "retry must reach inject again, not poisoned cache");
+    assert!(
+        result2.is_err(),
+        "retry must reach inject again, not poisoned cache"
+    );
 
     // No target should be bound to session 2 after failed creates.
-    assert!(mgr.target_for_session(2).is_none(),
-        "by_session must NOT bind a target after failed inject");
+    assert!(
+        mgr.target_for_session(2).is_none(),
+        "by_session must NOT bind a target after failed inject"
+    );
 }
 
 #[tokio::test]
@@ -129,13 +167,22 @@ async fn create_new_target_idempotent_per_session() {
     let injector = ChromiumDeterminismInjector::new(cdp.clone(), TEMPLATE.to_string());
     let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
 
-    let t1 = mgr.create_new_target(7, "default".into(), Seed(42), EpochMs(0)).await.unwrap();
-    let t2 = mgr.create_new_target(7, "default".into(), Seed(42), EpochMs(0)).await.unwrap();
+    let t1 = mgr
+        .create_new_target(7, "default".into(), Seed(42), EpochMs(0))
+        .await
+        .unwrap();
+    let t2 = mgr
+        .create_new_target(7, "default".into(), Seed(42), EpochMs(0))
+        .await
+        .unwrap();
     assert_eq!(t1, t2, "same session must yield same target_id");
 
     let methods = cdp.methods();
     assert_eq!(
-        methods.iter().filter(|m| m.as_str() == ADD_SCRIPT_METHOD).count(),
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
         1,
         "second create_new_target must NOT re-inject"
     );

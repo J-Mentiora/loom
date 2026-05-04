@@ -35,7 +35,6 @@
 // - All the usual platform-symbol bans apply; here doubly so because
 //   GuestBindings is the WASM export boundary.
 
-
 extern crate alloc;
 
 use crate::click_verb::click_verb::{ClickAction, ClickVerb};

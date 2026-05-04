@@ -2,13 +2,12 @@
 // CDP structs only — never raw JSON) and BC-SURF-05 (integer
 // coordinates, no floats).
 
-
 extern crate alloc;
 
 use super::cdp_message_encoder::{
-    CdpMessage, CdpMessageEncoder, CHROMIUM_SHIM_ID, DET_INIT_JS_NAME, DomGetDocument,
-    DomQuerySelector, InputDispatchKeyEvent, InputDispatchMouseEvent, PageAddScriptToEvaluateOnNewDocument,
-    PageCaptureScreenshot, PageNavigate, RuntimeCallFunctionOn, RuntimeEvaluate,
+    CdpMessage, CdpMessageEncoder, DomGetDocument, DomQuerySelector, InputDispatchKeyEvent,
+    InputDispatchMouseEvent, PageAddScriptToEvaluateOnNewDocument, PageCaptureScreenshot,
+    PageNavigate, RuntimeCallFunctionOn, RuntimeEvaluate, CHROMIUM_SHIM_ID, DET_INIT_JS_NAME,
 };
 use alloc::string::ToString;
 
@@ -86,7 +85,11 @@ fn method_names_match_cdp_wire_namespace() {
         "DOM.querySelector"
     );
     assert_eq!(
-        CdpMessage::DomGetDocument(DomGetDocument { depth: -1, pierce: false }).method_name(),
+        CdpMessage::DomGetDocument(DomGetDocument {
+            depth: -1,
+            pierce: false
+        })
+        .method_name(),
         "DOM.getDocument"
     );
     assert_eq!(

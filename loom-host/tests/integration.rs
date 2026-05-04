@@ -6,11 +6,11 @@
 //! runtime construction, module library empty-dir behaviour, graceful
 //! surface-unavailability, and HostConfig defaults.
 
+use loom_core::error::LoomErrorCode;
 use loom_host::module_library::{ModuleLibrary, SurfaceName};
 use loom_host::wasm_host::HostConfig;
 use loom_host::wasm_runtime::{WasmRuntime, WasmRuntimeConfig};
 use loom_host::wit_type_marshaller::Mode;
-use loom_core::error::LoomErrorCode;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -26,7 +26,10 @@ fn test_wasm_runtime_new_default_succeeds() {
     let elapsed = t0.elapsed();
 
     // Sanity: Arc is valid (access the inner via `Arc::strong_count`)
-    assert!(Arc::strong_count(&runtime) >= 1, "runtime Arc must have at least 1 ref");
+    assert!(
+        Arc::strong_count(&runtime) >= 1,
+        "runtime Arc must have at least 1 ref"
+    );
 
     // SLA: wasmtime engine construction ≤ 2000ms (cold JIT)
     assert!(
@@ -43,11 +46,12 @@ fn test_wasm_runtime_new_default_succeeds() {
 #[test]
 fn test_module_library_load_all_empty_dir_returns_no_failures() {
     let dir = TempDir::new().unwrap();
-    let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
-        .expect("WasmRuntime must succeed");
+    let runtime = WasmRuntime::new(WasmRuntimeConfig::default()).expect("WasmRuntime must succeed");
 
     let library = ModuleLibrary::new(runtime, dir.path().to_path_buf());
-    let failures = library.load_all().expect("load_all on empty dir must return Ok");
+    let failures = library
+        .load_all()
+        .expect("load_all on empty dir must return Ok");
 
     assert!(
         failures.is_empty(),
@@ -62,14 +66,14 @@ fn test_module_library_load_all_empty_dir_returns_no_failures() {
 /// A missing dir means "postinstall not run yet" — not an error.
 #[test]
 fn test_module_library_load_all_nonexistent_dir_returns_empty() {
-    let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
-        .expect("WasmRuntime must succeed");
+    let runtime = WasmRuntime::new(WasmRuntimeConfig::default()).expect("WasmRuntime must succeed");
 
     let library = ModuleLibrary::new(
         runtime,
         std::path::PathBuf::from("/nonexistent/dir/loom/surfaces"),
     );
-    let failures = library.load_all()
+    let failures = library
+        .load_all()
         .expect("load_all on nonexistent dir must return Ok([]) not Err");
 
     assert!(
@@ -86,8 +90,7 @@ fn test_module_library_load_all_nonexistent_dir_returns_empty() {
 #[test]
 fn test_module_library_get_unloaded_surface_returns_unsupported() {
     let dir = TempDir::new().unwrap();
-    let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
-        .expect("WasmRuntime must succeed");
+    let runtime = WasmRuntime::new(WasmRuntimeConfig::default()).expect("WasmRuntime must succeed");
 
     let library = ModuleLibrary::new(runtime, dir.path().to_path_buf());
     library.load_all().unwrap();

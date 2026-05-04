@@ -56,10 +56,13 @@ fn ac_core_02_1_put_idempotent_single_blob_on_disk() {
     let (cs, tmp) = fixture();
     let r = cs.put(b"hello loom").unwrap();
     cs.put(b"hello loom").unwrap(); // second write
-    // Count files under cas/
+                                    // Count files under cas/
     let cas_root = tmp.path().join("store").join("cas");
     let count = walkdir_files(&cas_root);
-    assert_eq!(count, 1, "expected exactly one blob on disk after two identical puts");
+    assert_eq!(
+        count, 1,
+        "expected exactly one blob on disk after two identical puts"
+    );
     // sha256 must be the actual SHA-256 of the bytes
     let expected = sha256_hex(b"hello loom");
     assert_eq!(r.sha256, expected);
@@ -99,11 +102,7 @@ fn ac_core_02_2_get_corrupted_blob_returns_store_integrity_failed() {
     let (cs, tmp) = fixture();
     let r = cs.put(b"original content").unwrap();
     // Corrupt the blob on disk.
-    let blob_path = loom_core::content_store::shard_path(
-        &tmp.path().join("store"),
-        &r.sha256,
-        2,
-    );
+    let blob_path = loom_core::content_store::shard_path(&tmp.path().join("store"), &r.sha256, 2);
     fs::write(&blob_path, b"corrupted!").unwrap();
     let err = cs.get(&r).unwrap_err();
     assert_eq!(err.code, LoomErrorCode::StoreIntegrityFailed);
@@ -113,15 +112,14 @@ fn ac_core_02_2_get_corrupted_blob_returns_store_integrity_failed() {
 fn ac_core_02_2_integrity_error_context_has_expected_and_actual_hash() {
     let (cs, tmp) = fixture();
     let r = cs.put(b"integrity test").unwrap();
-    let blob_path = loom_core::content_store::shard_path(
-        &tmp.path().join("store"),
-        &r.sha256,
-        2,
-    );
+    let blob_path = loom_core::content_store::shard_path(&tmp.path().join("store"), &r.sha256, 2);
     fs::write(&blob_path, b"tampered bytes here").unwrap();
     let err = cs.get(&r).unwrap_err();
     assert_eq!(err.code, LoomErrorCode::StoreIntegrityFailed);
-    let ctx = err.context.as_ref().expect("integrity error must carry context");
+    let ctx = err
+        .context
+        .as_ref()
+        .expect("integrity error must carry context");
     assert_eq!(ctx["expected_hash"], r.sha256.as_str());
     let actual = ctx["actual_hash"].as_str().unwrap();
     assert_ne!(actual, r.sha256, "actual_hash must differ from expected");
@@ -151,11 +149,19 @@ fn ac_store_01_1_gc_removes_unreferenced_old_blobs() {
         .map(|i| cs.put(format!("blob-{i}").as_bytes()).unwrap())
         .collect();
     // Reference the first 2 in a fake manifest.
-    let sessions = tmp.path().join("sessions").join("01AAAAAAAAAAAAAAAAAAAAAAAAA");
+    let sessions = tmp
+        .path()
+        .join("sessions")
+        .join("01AAAAAAAAAAAAAAAAAAAAAAAAA");
     fs::create_dir_all(&sessions).unwrap();
     let manifest_content = refs[..2]
         .iter()
-        .map(|r| format!("{{\"kind\":\"action_receipt\",\"receipt_canonical_bytes\":\"{}\"}}", r.sha256))
+        .map(|r| {
+            format!(
+                "{{\"kind\":\"action_receipt\",\"receipt_canonical_bytes\":\"{}\"}}",
+                r.sha256
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     fs::write(sessions.join("manifest.jsonl"), manifest_content).unwrap();
@@ -170,7 +176,10 @@ fn ac_store_01_1_gc_removes_unreferenced_old_blobs() {
     }
 
     let report = cs.gc(ttl).unwrap();
-    assert_eq!(report.blobs_collected, 3, "3 unreferenced old blobs should be collected");
+    assert_eq!(
+        report.blobs_collected, 3,
+        "3 unreferenced old blobs should be collected"
+    );
     assert_eq!(report.blobs_scanned, 5);
     assert!(report.bytes_freed > 0);
 
@@ -192,7 +201,10 @@ fn ac_store_01_1_gc_retains_blobs_within_ttl() {
     let r = cs.put(b"fresh blob").unwrap();
     // Use a very long TTL so the just-written blob is within it.
     let report = cs.gc(Duration::from_secs(86400 * 365)).unwrap();
-    assert_eq!(report.blobs_collected, 0, "fresh blob must not be collected");
+    assert_eq!(
+        report.blobs_collected, 0,
+        "fresh blob must not be collected"
+    );
     assert!(cs.get(&r).is_ok());
 }
 
@@ -231,7 +243,10 @@ fn gc_protects_blobs_referenced_inside_receipt_canonical_bytes() {
         "prev_hash": "0".repeat(64),
         "receipt_canonical_bytes": receipt_bytes,
     });
-    let sessions = tmp.path().join("sessions").join("01TESTSESSION00000000000001");
+    let sessions = tmp
+        .path()
+        .join("sessions")
+        .join("01TESTSESSION00000000000001");
     fs::create_dir_all(&sessions).unwrap();
     fs::write(
         sessions.join("manifest.wal"),
@@ -310,7 +325,10 @@ fn ac_store_01_2_put_at_limit_triggers_gc_and_succeeds() {
     );
     // Writing a NEW blob should trigger auto-GC (evicts r1) then succeed.
     let result = cs.put(b"new blob after gc");
-    assert!(result.is_ok(), "put after auto-GC should succeed; got: {result:?}");
+    assert!(
+        result.is_ok(),
+        "put after auto-GC should succeed; got: {result:?}"
+    );
 }
 
 #[test]
@@ -325,15 +343,21 @@ fn ac_store_01_2_put_at_limit_with_no_evictable_returns_store_full() {
     let cs_prep = LocalContentStore::new(store_root.clone(), obs.clone());
     let r1 = cs_prep.put(b"referenced blob stays").unwrap();
     let blob_size = loom_core::content_store::shard_path(&store_root, &r1.sha256, 2)
-        .metadata().unwrap().len();
+        .metadata()
+        .unwrap()
+        .len();
 
     // Reference the blob in a manifest so it won't be collected.
-    let sessions = tmp.path().join("sessions").join("01BBBBBBBBBBBBBBBBBBBBBBBBB");
+    let sessions = tmp
+        .path()
+        .join("sessions")
+        .join("01BBBBBBBBBBBBBBBBBBBBBBBBB");
     fs::create_dir_all(&sessions).unwrap();
     fs::write(
         sessions.join("manifest.jsonl"),
         format!("{{\"sha256\":\"{}\"}}", r1.sha256),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Re-open with max_bytes exactly at existing size, TTL very long.
     let cs = LocalContentStore::new_with_config(

@@ -25,16 +25,12 @@ fn fixture() -> (StartupManager, TempDir) {
 
     let obs = Observability::new(tmp.path().join("loom.log"), false);
     let cs: Arc<LocalContentStore> = Arc::new(LocalContentStore::new(store_root, Arc::clone(&obs)));
-    let mw: Arc<LocalManifestWriter> =
-        Arc::new(LocalManifestWriter::new(sessions_root.clone(), Arc::clone(&obs)));
-
-    let sm = StartupManager::new(
-        sessions_root,
-        cas_root,
-        cs,
-        mw,
+    let mw: Arc<LocalManifestWriter> = Arc::new(LocalManifestWriter::new(
+        sessions_root.clone(),
         Arc::clone(&obs),
-    );
+    ));
+
+    let sm = StartupManager::new(sessions_root, cas_root, cs, mw, Arc::clone(&obs));
     (sm, tmp)
 }
 
@@ -47,9 +43,7 @@ fn now_ms() -> u64 {
 
 #[allow(dead_code)]
 fn make_session(mw: &LocalManifestWriter, _tmp: &TempDir) -> SessionId {
-    let id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let id = loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(id.clone(), None).unwrap();
     id
 }
@@ -69,7 +63,10 @@ fn ac_nfr_rel_02_1_orphaned_tmpfile_removed_on_sweep() {
     let count = sm.sweep_orphan_tmpfiles().unwrap();
 
     assert_eq!(count, 1, "one orphan should be removed");
-    assert!(!shard.join(".tmpXXXXXX").exists(), "orphan file must be deleted");
+    assert!(
+        !shard.join(".tmpXXXXXX").exists(),
+        "orphan file must be deleted"
+    );
 }
 
 #[test]
@@ -77,7 +74,11 @@ fn ac_nfr_rel_02_1_valid_cas_blob_survives_sweep() {
     let (sm, tmp) = fixture();
     // Place a file with a valid 64-char hex name in the CAS tree
     let hash = "a".repeat(64);
-    let shard = tmp.path().join("store/cas").join(&hash[0..2]).join(&hash[2..4]);
+    let shard = tmp
+        .path()
+        .join("store/cas")
+        .join(&hash[0..2])
+        .join(&hash[2..4]);
     fs::create_dir_all(&shard).unwrap();
     let blob_path = shard.join(&hash[4..]);
     fs::write(&blob_path, b"valid blob data").unwrap();
@@ -117,7 +118,10 @@ fn ac_nfr_rel_02_1_no_partial_files_remain_after_sweep() {
     // Only files with valid hex names should remain. Since we created two
     // non-hex files, the shard dir should be empty.
     let remaining: Vec<_> = fs::read_dir(&shard).unwrap().collect();
-    assert!(remaining.is_empty(), "no non-CAS-address files should remain");
+    assert!(
+        remaining.is_empty(),
+        "no non-CAS-address files should remain"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -133,12 +137,15 @@ fn ac_nfr_rel_03_1_orphaned_active_session_gets_runtime_crash_receipt() {
     );
 
     // Create a session with Header only (no terminal entry)
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
-    let wal_path = tmp.path().join("sessions").join(&session_id.0).join("manifest.wal");
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&session_id.0)
+        .join("manifest.wal");
     let before = fs::read_to_string(&wal_path).unwrap();
     let line_count_before = before.lines().count();
 
@@ -151,12 +158,19 @@ fn ac_nfr_rel_03_1_orphaned_active_session_gets_runtime_crash_receipt() {
     // The WAL should now have an extra entry — the RuntimeCrash
     let after = fs::read_to_string(&wal_path).unwrap();
     let line_count_after = after.lines().count();
-    assert_eq!(line_count_after, line_count_before + 1, "RuntimeCrash entry added");
+    assert_eq!(
+        line_count_after,
+        line_count_before + 1,
+        "RuntimeCrash entry added"
+    );
 
     // The last line must be a RuntimeCrash entry
     let last_line = after.lines().last().unwrap();
     let entry: serde_json::Value = serde_json::from_str(last_line).unwrap();
-    assert_eq!(entry["kind"], "runtime_crash", "last entry must be runtime_crash");
+    assert_eq!(
+        entry["kind"], "runtime_crash",
+        "last entry must be runtime_crash"
+    );
 }
 
 #[test]
@@ -167,9 +181,8 @@ fn ac_nfr_rel_03_1_crashed_session_last_completed_action_id_correct() {
         Observability::new(tmp.path().join("loom2.log"), false),
     );
 
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     // Append two ActionReceipt entries (action_id = 1, 2)
@@ -188,15 +201,18 @@ fn ac_nfr_rel_03_1_crashed_session_last_completed_action_id_correct() {
 
     sm.sweep_manifests().unwrap();
 
-    let wal_path = tmp.path().join("sessions").join(&session_id.0).join("manifest.wal");
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&session_id.0)
+        .join("manifest.wal");
     let content = fs::read_to_string(&wal_path).unwrap();
     let last_line = content.lines().last().unwrap();
     let entry: serde_json::Value = serde_json::from_str(last_line).unwrap();
 
     assert_eq!(entry["kind"], "runtime_crash");
     assert_eq!(
-        entry["last_completed_action_id"],
-        2,
+        entry["last_completed_action_id"], 2,
         "last_completed_action_id must be the last ActionReceipt's action_id"
     );
 }
@@ -209,9 +225,8 @@ fn ac_nfr_rel_03_1_session_with_session_terminal_not_marked_crashed() {
         Observability::new(tmp.path().join("loom2.log"), false),
     );
 
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     // Close it properly
     mw.append(
@@ -227,7 +242,10 @@ fn ac_nfr_rel_03_1_session_with_session_terminal_not_marked_crashed() {
 
     let (recovered, crashed, failed) = sm.sweep_manifests().unwrap();
 
-    assert_eq!(crashed, 0, "properly closed session must not be marked crashed");
+    assert_eq!(
+        crashed, 0,
+        "properly closed session must not be marked crashed"
+    );
     assert_eq!(recovered, 1);
     assert!(failed.is_empty());
 }
@@ -242,9 +260,8 @@ fn ac_nfr_rel_03_1_per_session_isolation_one_corrupt_wal_does_not_block_others()
         sessions_root.clone(),
         Observability::new(tmp.path().join("l.log"), false),
     );
-    let good_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let good_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(good_id.clone(), None).unwrap();
 
     // Create one session with a corrupt WAL
@@ -258,7 +275,10 @@ fn ac_nfr_rel_03_1_per_session_isolation_one_corrupt_wal_does_not_block_others()
     // The good session is recovered as crashed (orphaned active)
     assert_eq!(crashed, 1, "good orphaned session recovered");
     // The corrupt session ends up in failed_sessions
-    assert!(!failed.is_empty() || crashed + recovered > 0, "corrupt session is isolated");
+    assert!(
+        !failed.is_empty() || crashed + recovered > 0,
+        "corrupt session is isolated"
+    );
 }
 
 #[test]
@@ -269,15 +289,21 @@ fn ac_nfr_rel_03_1_manifest_jsonl_checkpoint_written_after_crash_receipt() {
         Observability::new(tmp.path().join("loom2.log"), false),
     );
 
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     sm.sweep_manifests().unwrap();
 
-    let jsonl = tmp.path().join("sessions").join(&session_id.0).join("manifest.jsonl");
-    assert!(jsonl.exists(), "manifest.jsonl checkpoint must be written after crash receipt");
+    let jsonl = tmp
+        .path()
+        .join("sessions")
+        .join(&session_id.0)
+        .join("manifest.jsonl");
+    assert!(
+        jsonl.exists(),
+        "manifest.jsonl checkpoint must be written after crash receipt"
+    );
 }
 
 #[test]
@@ -289,9 +315,8 @@ fn ac_nfr_rel_03_1_list_sessions_info_shows_crashed_status() {
         sessions_root.clone(),
         Observability::new(tmp.path().join("l2.log"), false),
     );
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     // Run recovery sweep (adds RuntimeCrash entry + checkpoint)
@@ -300,7 +325,10 @@ fn ac_nfr_rel_03_1_list_sessions_info_shows_crashed_status() {
     // list_sessions_info must return the session with status "crashed"
     let infos = loom_core::core_api_facade::list_sessions_info_from_dir(&sessions_root).unwrap();
     let info = infos.iter().find(|(id, _, _)| id == &session_id.0);
-    assert!(info.is_some(), "crashed session must appear in session list");
+    assert!(
+        info.is_some(),
+        "crashed session must appear in session list"
+    );
     let (_, status, _) = info.unwrap();
     assert_eq!(status, "crashed");
 }
@@ -314,9 +342,8 @@ fn ac_nfr_rel_03_1_list_sessions_info_shows_closed_status() {
         sessions_root.clone(),
         Observability::new(tmp.path().join("l2.log"), false),
     );
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     mw.append(
         session_id.clone(),
@@ -349,9 +376,8 @@ fn ac_abortreason_01_list_sessions_info_encodes_abort_reason() {
         sessions_root.clone(),
         Observability::new(tmp.path().join("l2.log"), false),
     );
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     mw.append(
         session_id.clone(),
@@ -385,9 +411,8 @@ fn ac_abortreason_03_replay_complete_is_not_aborted() {
         sessions_root.clone(),
         Observability::new(tmp.path().join("l2.log"), false),
     );
-    let session_id = loom_core::manifest_writer::SessionId(
-        ulid::Ulid::new().to_string().to_lowercase(),
-    );
+    let session_id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     mw.append(
         session_id.clone(),
@@ -404,5 +429,8 @@ fn ac_abortreason_03_replay_complete_is_not_aborted() {
     let info = infos.iter().find(|(id, _, _)| id == &session_id.0);
     assert!(info.is_some(), "replay session must appear in list");
     let (_, status, _) = info.unwrap();
-    assert_eq!(status, "replay_complete", "replay_complete is its own status, not 'aborted:replay_complete'");
+    assert_eq!(
+        status, "replay_complete",
+        "replay_complete is its own status, not 'aborted:replay_complete'"
+    );
 }

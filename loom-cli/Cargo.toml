@@ -64,3 +64,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "loom"
 path = "src/bin/loom.rs"
+
+[lints]
+workspace = true

@@ -109,6 +109,23 @@ loom-daemon = { path = "loom-daemon" }
 loom-surfaces = { path = "loom-surfaces" }
 loom-shims = { path = "loom-shims" }
 
+[workspace.lints.clippy]
+# `module_inception` is triggered by the deliberate `<module>/<module>.rs`
+# file naming pattern (see CHANGELOG entry "Module file naming"). Each
+# `<module>/mod.rs` is glue + tests; the implementation lives in
+# `<module>/<module>.rs`. Allowed at the workspace level because the
+# pattern is intentional and uniform across all 11 member crates.
+module_inception = "allow"
+
+# Style lints whose strictness escalated in clippy 1.95+ versus the
+# version the codebase was originally written against. Allowed at the
+# workspace level rather than fixed in-place because they are pure
+# style preferences, not correctness signals — and the codebase's
+# `-Dwarnings` rustflag in `.cargo/config.toml` would otherwise gate
+# every CI run on the latest clippy's opinions.
+doc_lazy_continuation = "allow"
+manual_map = "allow"
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

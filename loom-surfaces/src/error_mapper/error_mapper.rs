@@ -18,7 +18,6 @@
 // - `std::time`, `std::net`, `std::fs::write`, `getrandom`,
 //   `std::panic::catch_unwind`. Pure `match` over closed enums only.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -82,10 +81,14 @@ pub enum LoomErrorCode {
     WebActionTimeout,
     WebSelectorNotFound,
     WebNavigationFailed,
-    TccPermissionDenied { permission: String },
+    TccPermissionDenied {
+        permission: String,
+    },
     SurfaceShimFailed,
     StoreIntegrityFailed,
-    HostInternalError { reason: String },
+    HostInternalError {
+        reason: String,
+    },
     /// AC-WEB-07.1: evaluate expression matched the safe-profile denylist.
     /// Wire string: "schema_violation" (matches AC spec).
     SchemaViolation,

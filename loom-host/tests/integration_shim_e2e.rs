@@ -115,12 +115,10 @@ async fn host_to_shim_to_fake_chromium_round_trip() {
 
     // The chain: ShimManager.spawn → loom-shim-chromium binary →
     // fake-chromium subprocess → ws connect → CdpSend round-trip.
-    let response = tokio::time::timeout(
-        Duration::from_secs(30),
-        mgr.send(id.clone(), payload_bytes),
-    )
-    .await
-    .expect("ShimManager::send did not return within 30s");
+    let response =
+        tokio::time::timeout(Duration::from_secs(30), mgr.send(id.clone(), payload_bytes))
+            .await
+            .expect("ShimManager::send did not return within 30s");
 
     let response_bytes = response.expect("ShimManager::send returned an error");
 
@@ -128,8 +126,7 @@ async fn host_to_shim_to_fake_chromium_round_trip() {
     // fake-chromium's Page.navigate canned response: `{"frameId":
     // "fake-frame-1", "loaderId": "fake-loader-1"}`.
     let response_value: ciborium::value::Value =
-        ciborium::de::from_reader(&response_bytes[..])
-            .expect("response is valid CBOR");
+        ciborium::de::from_reader(&response_bytes[..]).expect("response is valid CBOR");
 
     if let ciborium::value::Value::Map(entries) = &response_value {
         let has_frame_id = entries.iter().any(|(k, v)| {
@@ -223,34 +220,34 @@ async fn host_to_shim_to_fake_chromium_round_trip_per_verb() {
     };
 
     let cases: Vec<CdpMessage> = vec![
-        runtime_eval("document.querySelector(\"a\").click()"),  // click
-        runtime_eval("1+1"),                                     // evaluate
+        runtime_eval("document.querySelector(\"a\").click()"), // click
+        runtime_eval("1+1"),                                   // evaluate
         runtime_eval(
             "(function(){const el=document.querySelector(\"input\");\
              el.value=\"hello\";\
              el.dispatchEvent(new Event('input',{bubbles:true}));\
              el.dispatchEvent(new Event('change',{bubbles:true}));})()",
-        ),                                                       // type
+        ), // type
         runtime_eval(
             "(function(){const el=document.querySelector(\"select\");\
              el.value=\"v1\";\
              el.dispatchEvent(new Event('change',{bubbles:true}));})()",
-        ),                                                       // select
+        ), // select
         runtime_eval(
             "document.querySelector(\"a\").dispatchEvent(\
              new MouseEvent('mouseover',{bubbles:true,cancelable:true}))",
-        ),                                                       // hover
+        ), // hover
         runtime_eval(
             "(document.querySelector(\"body\") || document.scrollingElement).scrollBy(0, 100)",
-        ),                                                       // scroll
-        runtime_eval("document.querySelector(\"a\") !== null"),  // wait
+        ), // scroll
+        runtime_eval("document.querySelector(\"a\") !== null"), // wait
         CdpMessage {
             method: "Page.captureScreenshot".into(),
             params: ciborium::value::Value::Map(vec![(
                 ciborium::value::Value::Text("format".into()),
                 ciborium::value::Value::Text("png".into()),
             )]),
-        },                                                       // screenshot
+        }, // screenshot
         CdpMessage {
             method: "DOM.getDocument".into(),
             params: ciborium::value::Value::Map(vec![
@@ -263,20 +260,17 @@ async fn host_to_shim_to_fake_chromium_round_trip_per_verb() {
                     ciborium::value::Value::Bool(false),
                 ),
             ]),
-        },                                                       // snapshot
+        }, // snapshot
     ];
 
     for (idx, msg) in cases.iter().enumerate() {
         let payload = ciborium_to_vec(msg).expect("encode CdpMessage");
-        let response = tokio::time::timeout(
-            Duration::from_secs(30),
-            mgr.send(id.clone(), payload),
-        )
-        .await
-        .unwrap_or_else(|_| panic!("verb #{idx} ({}) did not return in 30s", msg.method));
+        let response = tokio::time::timeout(Duration::from_secs(30), mgr.send(id.clone(), payload))
+            .await
+            .unwrap_or_else(|_| panic!("verb #{idx} ({}) did not return in 30s", msg.method));
 
-        let bytes = response
-            .unwrap_or_else(|e| panic!("verb #{idx} ({}) errored: {e:?}", msg.method));
+        let bytes =
+            response.unwrap_or_else(|e| panic!("verb #{idx} ({}) errored: {e:?}", msg.method));
 
         let value: ciborium::value::Value = ciborium::de::from_reader(&bytes[..])
             .unwrap_or_else(|e| panic!("verb #{idx} ({}) response not CBOR: {e:?}", msg.method));

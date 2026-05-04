@@ -5,8 +5,8 @@
 // invariant.
 
 use super::module_library::{LoadFailure, ModuleLibrary, SurfaceName};
-use loom_core::error::{LoomError, LoomErrorCode};
 use crate::wasm_runtime::{WasmRuntime, WasmRuntimeConfig};
+use loom_core::error::{LoomError, LoomErrorCode};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -82,7 +82,9 @@ fn load_all_returns_per_surface_failure_list_not_aborting() {
 fn load_failure_carries_artifact_path_and_error_code() {
     let f = LoadFailure {
         surface: SurfaceName("stocktwits".into()),
-        artifact_path: PathBuf::from("/Users/x/Library/Application Support/loom/surfaces/stocktwits.cwasm"),
+        artifact_path: PathBuf::from(
+            "/Users/x/Library/Application Support/loom/surfaces/stocktwits.cwasm",
+        ),
         error_code: "store_integrity_failed".into(),
         details: "sha256 mismatch".into(),
     };

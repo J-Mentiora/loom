@@ -79,9 +79,7 @@ fn determinism_accessor_returns_arc_clone_of_internal_harness() {
 
 #[test]
 fn session_manager_accessor_returns_arc_local_session_manager() {
-    fn _ck(f: &CoreApiFacade)
-        -> Arc<loom_core::session_manager::LocalSessionManager>
-    {
+    fn _ck(f: &CoreApiFacade) -> Arc<loom_core::session_manager::LocalSessionManager> {
         f.session_manager()
     }
     let _ = _ck;
@@ -105,9 +103,7 @@ fn replay_engine_accessor_returns_arc_dyn_replay_engine() {
 
 #[test]
 fn budget_enforcer_accessor_returns_arc_dyn_budget_enforcer() {
-    fn _ck(f: &CoreApiFacade)
-        -> Arc<dyn loom_core::budget_enforcer::BudgetEnforcer>
-    {
+    fn _ck(f: &CoreApiFacade) -> Arc<dyn loom_core::budget_enforcer::BudgetEnforcer> {
         f.budget_enforcer()
     }
     let _ = _ck;
@@ -115,9 +111,7 @@ fn budget_enforcer_accessor_returns_arc_dyn_budget_enforcer() {
 
 #[test]
 fn content_store_accessor_returns_arc_dyn_content_store() {
-    fn _ck(f: &CoreApiFacade)
-        -> Arc<dyn loom_core::content_store::ContentStore>
-    {
+    fn _ck(f: &CoreApiFacade) -> Arc<dyn loom_core::content_store::ContentStore> {
         f.content_store()
     }
     let _ = _ck;
@@ -125,9 +119,7 @@ fn content_store_accessor_returns_arc_dyn_content_store() {
 
 #[test]
 fn manifest_writer_accessor_returns_arc_dyn_manifest_writer() {
-    fn _ck(f: &CoreApiFacade)
-        -> Arc<dyn loom_core::manifest_writer::ManifestWriter>
-    {
+    fn _ck(f: &CoreApiFacade) -> Arc<dyn loom_core::manifest_writer::ManifestWriter> {
         f.manifest_writer()
     }
     let _ = _ck;

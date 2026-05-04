@@ -71,3 +71,6 @@ path = "src/bin/loom-shim-chromium.rs"
 name = "fake-chromium"
 path = "src/bin/fake-chromium.rs"
 required-features = ["fake-chromium-bin"]
+
+[lints]
+workspace = true

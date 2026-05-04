@@ -125,7 +125,9 @@ impl ProcessMonitor for ChromiumProcessMonitor {
     }
 
     fn notify_resumed(&self) {
-        self.counters.consecutive_timeouts.store(0, Ordering::Relaxed);
+        self.counters
+            .consecutive_timeouts
+            .store(0, Ordering::Relaxed);
         self.counters.suspended.store(false, Ordering::Relaxed);
     }
 

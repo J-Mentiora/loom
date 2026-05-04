@@ -4,9 +4,7 @@
 // mode, IC-RPC-04 default path resolution, BC-RPC-01 shared-runtime
 // signature, BindError categorisation.
 
-use super::socket_server::{
-    BindError, SocketServer, SocketServerConfig, SOCKET_MODE,
-};
+use super::socket_server::{BindError, SocketServer, SocketServerConfig, SOCKET_MODE};
 use crate::auth_middleware::auth_middleware::Token;
 use crate::connection_handler::connection_handler::ConnectionHandlerDeps;
 use std::path::PathBuf;
@@ -42,9 +40,7 @@ fn bind_error_distinguishes_address_in_use_perm_denied_io() {
     // design.md §4 startup error rows.
     let _ = BindError::AddressInUse;
     let _ = BindError::PermissionDenied;
-    let _ = BindError::Io {
-        reason: "x".into(),
-    };
+    let _ = BindError::Io { reason: "x".into() };
 }
 
 #[test]

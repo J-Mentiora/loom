@@ -5,8 +5,7 @@
 // through RequestRouter.
 
 use super::mcp_adapter::{
-    McpAdapter, McpContent, McpError, McpTool, McpToolCall, McpToolResult,
-    ParityViolation,
+    McpAdapter, McpContent, McpError, McpTool, McpToolCall, McpToolResult, ParityViolation,
 };
 use crate::error_translator::error_translator::JsonRpcError;
 use crate::request_router::request_router::RequestRouterApi;
@@ -17,10 +16,7 @@ use std::sync::Arc;
 fn constructor_takes_router_and_schemas_for_bit_equal_tool_list() {
     // UX-13: McpAdapter reuses the RpcModule so MCP tools and JSON-RPC
     // methods are bit-equal.
-    fn _ck(
-        r: Arc<dyn RequestRouterApi>,
-        s: Arc<dyn SchemaProviderApi>,
-    ) -> Arc<McpAdapter> {
+    fn _ck(r: Arc<dyn RequestRouterApi>, s: Arc<dyn SchemaProviderApi>) -> Arc<McpAdapter> {
         McpAdapter::new(r, s)
     }
     let _ = _ck;
@@ -56,9 +52,7 @@ fn mcp_tool_result_carries_content_array_and_is_error_flag() {
 
 #[test]
 fn mcp_content_supports_text_variant() {
-    let c = McpContent::Text {
-        text: "{}".into(),
-    };
+    let c = McpContent::Text { text: "{}".into() };
     let s = serde_json::to_string(&c).unwrap();
     assert!(s.contains("\"type\":\"text\""));
 }
@@ -66,9 +60,7 @@ fn mcp_content_supports_text_variant() {
 #[test]
 fn mcp_error_distinguishes_malformed_unknown_tool_rpc() {
     let _ = McpError::Malformed;
-    let _ = McpError::UnknownTool {
-        name: "x".into(),
-    };
+    let _ = McpError::UnknownTool { name: "x".into() };
     fn _wrap(e: JsonRpcError) -> McpError {
         McpError::Rpc(e)
     }
@@ -86,10 +78,7 @@ fn list_tools_signature_returns_vec_mcp_tool() {
 #[test]
 fn handle_tool_call_signature_async_returns_tool_result_or_error() {
     fn _ck() {
-        async fn _go(
-            a: &McpAdapter,
-            c: McpToolCall,
-        ) -> Result<McpToolResult, McpError> {
+        async fn _go(a: &McpAdapter, c: McpToolCall) -> Result<McpToolResult, McpError> {
             a.handle_tool_call(c).await
         }
         let _ = _go;

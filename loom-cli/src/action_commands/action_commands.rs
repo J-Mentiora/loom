@@ -66,7 +66,10 @@ pub async fn dispatch(
         .unwrap_or_default();
     let extra_params = parse_extra_to_json_typed(&args.extra, &property_types)?;
     let mut full_params = serde_json::Map::new();
-    full_params.insert("session".to_string(), serde_json::Value::String(args.session.clone()));
+    full_params.insert(
+        "session".to_string(),
+        serde_json::Value::String(args.session.clone()),
+    );
     if let serde_json::Value::Object(m) = extra_params {
         full_params.extend(m);
     }
@@ -89,8 +92,7 @@ pub async fn dispatch(
                 // print_error in main uses eprintln! (stderr) — no double-stdout.
                 println!(
                     "{}",
-                    crate::output_formatter::format_output(v, cfg.pretty)
-                        .unwrap_or_default()
+                    crate::output_formatter::format_output(v, cfg.pretty).unwrap_or_default()
                 );
             }
             scheme_check?;
@@ -144,9 +146,9 @@ pub fn parse_extra_to_json_typed(
     let mut i = 0;
     while i < extra.len() {
         let s = &extra[i];
-        let key = s.strip_prefix("--").ok_or_else(|| {
-            CliError::Usage(format!("unexpected positional argument: {}", s))
-        })?;
+        let key = s
+            .strip_prefix("--")
+            .ok_or_else(|| CliError::Usage(format!("unexpected positional argument: {}", s)))?;
         let value = if let Some(next) = extra.get(i + 1) {
             if !next.starts_with("--") {
                 i += 1;
@@ -218,11 +220,9 @@ pub fn extract_property_types(
     for (name, prop) in props {
         let ty = match prop.get("type") {
             Some(serde_json::Value::String(s)) => Some(s.clone()),
-            Some(serde_json::Value::Array(items)) => items.iter().find_map(|v| {
-                v.as_str()
-                    .filter(|s| *s != "null")
-                    .map(String::from)
-            }),
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .find_map(|v| v.as_str().filter(|s| *s != "null").map(String::from)),
             _ => None,
         };
         if let Some(t) = ty {
@@ -255,7 +255,10 @@ pub fn validate_args(
         .map_err(|e| CliError::Internal(format!("schema compile error: {e}")))?;
     if !compiled.is_valid(args) {
         let errors: Vec<String> = compiled.iter_errors(args).map(|e| e.to_string()).collect();
-        return Err(CliError::Usage(format!("invalid args for {method}: {}", errors.join(", "))));
+        return Err(CliError::Usage(format!(
+            "invalid args for {method}: {}",
+            errors.join(", ")
+        )));
     }
     Ok(())
 }

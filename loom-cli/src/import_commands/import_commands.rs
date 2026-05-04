@@ -62,7 +62,10 @@ pub async fn import_playwright(
     let trace_hex = hex::encode(&bytes);
 
     let resp = rpc
-        .call("import.playwright", serde_json::json!({ "trace_hex": trace_hex }))
+        .call(
+            "import.playwright",
+            serde_json::json!({ "trace_hex": trace_hex }),
+        )
         .await?;
 
     // Forward raw receipt to stdout (canonical JSON, no rewriting — IC-CLI-03).

@@ -7,11 +7,11 @@ pub use request_router::*;
 #[cfg(test)]
 mod interface_tests;
 
+use crate::error_translator::error_translator::{JsonRpcError, LoomErrorCode};
 use crate::host_service_adapter::host_service_adapter::Action;
 use crate::rpc_handlers::rpc_handlers::RpcHandlers;
 use crate::schema_provider::schema_provider::SchemaProviderApi;
 use crate::schema_validator::schema_validator::SchemaValidatorApi;
-use crate::error_translator::error_translator::{JsonRpcError, LoomErrorCode};
 use jsonrpsee::RpcModule;
 use std::sync::Arc;
 
@@ -45,14 +45,20 @@ impl RequestRouter {
         });
         let module = Arc::new(RpcModule::from_arc(Arc::clone(&ctx)));
 
-        Ok(Arc::new(Self { module, ctx, methods }))
+        Ok(Arc::new(Self {
+            module,
+            ctx,
+            methods,
+        }))
     }
 }
 
 #[async_trait::async_trait]
 impl RequestRouterApi for RequestRouter {
     async fn dispatch(&self, method: &str, params: serde_json::Value) -> Vec<u8> {
-        use crate::core_service_adapter::core_service_adapter::{CreateSessionParams, GrantParams, VaultAddParams};
+        use crate::core_service_adapter::core_service_adapter::{
+            CreateSessionParams, GrantParams, VaultAddParams,
+        };
         match method {
             "health.ping" => canonical_bytes(&serde_json::json!({"status": "ok"})),
             "rpc.schemas" => match self.ctx.handlers.rpc_schemas().await {
@@ -63,8 +69,11 @@ impl RequestRouterApi for RequestRouter {
                 let p: CreateSessionParams = match serde_json::from_value(params) {
                     Ok(v) => v,
                     Err(e) => {
-                        let err = JsonRpcError { code: LoomErrorCode::SchemaViolation,
-                            message: format!("invalid params: {e}"), data: None };
+                        let err = JsonRpcError {
+                            code: LoomErrorCode::SchemaViolation,
+                            message: format!("invalid params: {e}"),
+                            data: None,
+                        };
                         return error_bytes(&err);
                     }
                 };
@@ -78,8 +87,11 @@ impl RequestRouterApi for RequestRouter {
                 Err(e) => error_bytes(&e),
             },
             "session.inspect" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 let at = params.get("at_action").and_then(|v| v.as_u64());
                 match self.ctx.handlers.session_inspect(sid, at).await {
                     Ok(v) => canonical_bytes(&v),
@@ -87,53 +99,97 @@ impl RequestRouterApi for RequestRouter {
                 }
             }
             "session.close" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 match self.ctx.handlers.session_close(sid).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
             }
             "session.abort" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
-                let reason = params.get("reason").and_then(|v| v.as_str())
-                    .unwrap_or("user-initiated").to_string();
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let reason = params
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user-initiated")
+                    .to_string();
                 match self.ctx.handlers.session_abort(sid, reason).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
             }
             "session.replay" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
-                let speed = params.get("speed").and_then(|v| v.as_f64()).map(|f| f as f32);
-                let nm = params.get("network_mode").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let speed = params
+                    .get("speed")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32);
+                let nm = params
+                    .get("network_mode")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 match self.ctx.handlers.session_replay(sid, speed, nm).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
             }
             "session.diff" => {
-                let a = params.get("a").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let b = params.get("b").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let inc_sc = params.get("include_screenshots").and_then(|v| v.as_bool()).unwrap_or(false);
-                let show_dom = params.get("show_dom_diffs").and_then(|v| v.as_bool()).unwrap_or(false);
+                let a = params
+                    .get("a")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let b = params
+                    .get("b")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let inc_sc = params
+                    .get("include_screenshots")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let show_dom = params
+                    .get("show_dom_diffs")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 match self.ctx.handlers.session_diff(a, b, inc_sc, show_dom).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
             }
             "session.export" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let fmt = params.get("format").and_then(|v| v.as_str()).unwrap_or("json").to_string();
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let fmt = params
+                    .get("format")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("json")
+                    .to_string();
                 match self.ctx.handlers.session_export(sid, fmt).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
             }
             "session.validate" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 match self.ctx.handlers.session_validate(sid).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
@@ -154,8 +210,11 @@ impl RequestRouterApi for RequestRouter {
                 let p: GrantParams = match serde_json::from_value(params) {
                     Ok(v) => v,
                     Err(e) => {
-                        let err = JsonRpcError { code: LoomErrorCode::SchemaViolation,
-                            message: format!("invalid params: {e}"), data: None };
+                        let err = JsonRpcError {
+                            code: LoomErrorCode::SchemaViolation,
+                            message: format!("invalid params: {e}"),
+                            data: None,
+                        };
                         return error_bytes(&err);
                     }
                 };
@@ -169,15 +228,21 @@ impl RequestRouterApi for RequestRouter {
                     Ok(v) => v,
                     Err(e) => return error_bytes(&e),
                 };
-                let reason = params.get("reason").and_then(|v| v.as_str())
-                    .unwrap_or("user-initiated").to_string();
+                let reason = params
+                    .get("reason")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user-initiated")
+                    .to_string();
                 match self.ctx.handlers.vault_revoke(grant_id, reason).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
             }
             "vault.list_grants" => {
-                let sid = params.get("session_id").and_then(|v| v.as_str()).map(String::from);
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
                 match self.ctx.handlers.vault_list_grants(sid).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
@@ -187,8 +252,11 @@ impl RequestRouterApi for RequestRouter {
                 let p: VaultAddParams = match serde_json::from_value(params) {
                     Ok(v) => v,
                     Err(e) => {
-                        let err = JsonRpcError { code: LoomErrorCode::SchemaViolation,
-                            message: format!("invalid params: {e}"), data: None };
+                        let err = JsonRpcError {
+                            code: LoomErrorCode::SchemaViolation,
+                            message: format!("invalid params: {e}"),
+                            data: None,
+                        };
                         return error_bytes(&err);
                     }
                 };
@@ -198,8 +266,11 @@ impl RequestRouterApi for RequestRouter {
                 }
             }
             "content.get" => {
-                let artifact_ref = params.get("artifact_ref").and_then(|v| v.as_str())
-                    .unwrap_or("").to_string();
+                let artifact_ref = params
+                    .get("artifact_ref")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 match self.ctx.handlers.content_get(artifact_ref).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
@@ -257,7 +328,10 @@ fn canonical_bytes<T: serde::Serialize>(val: &T) -> Vec<u8> {
 fn error_bytes(err: &JsonRpcError) -> Vec<u8> {
     let mut v = serde_json::to_value(err).unwrap_or_default();
     if let serde_json::Value::Object(ref mut m) = v {
-        m.insert("__loom_rpc_error".to_string(), serde_json::Value::Bool(true));
+        m.insert(
+            "__loom_rpc_error".to_string(),
+            serde_json::Value::Bool(true),
+        );
     }
     serde_json::to_vec(&v).unwrap_or_default()
 }
@@ -273,7 +347,10 @@ impl RequestRouter {
 /// for a known action surface (AC-RPCAD-01).
 fn is_surface_verb(method: &str) -> bool {
     const SURFACES: &[&str] = &["web", "shell", "fs", "api", "native"];
-    method.split_once('.').map(|(s, _)| SURFACES.contains(&s)).unwrap_or(false)
+    method
+        .split_once('.')
+        .map(|(s, _)| SURFACES.contains(&s))
+        .unwrap_or(false)
 }
 
 /// Extract the session_id from params. Accepts both "session_id" (internal
@@ -317,7 +394,10 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         "web.click" => {
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
-            Ok(Action::WebClick { session_id, selector })
+            Ok(Action::WebClick {
+                session_id,
+                selector,
+            })
         }
         // Canonical name `web.type` (was `web.type_text`); the legacy
         // spelling is rewritten upstream by `dispatch` via
@@ -326,41 +406,70 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
             let text = required_str(&params, "text")?;
-            Ok(Action::WebType { session_id, selector, text })
+            Ok(Action::WebType {
+                session_id,
+                selector,
+                text,
+            })
         }
         "web.select" => {
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
             let value = required_str(&params, "value")?;
-            Ok(Action::WebSelect { session_id, selector, value })
+            Ok(Action::WebSelect {
+                session_id,
+                selector,
+                value,
+            })
         }
         "web.hover" => {
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
-            Ok(Action::WebHover { session_id, selector })
+            Ok(Action::WebHover {
+                session_id,
+                selector,
+            })
         }
         "web.scroll" => {
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
             let delta_x = params.get("delta_x").and_then(|v| v.as_i64());
             let delta_y = params.get("delta_y").and_then(|v| v.as_i64());
-            Ok(Action::WebScroll { session_id, selector, delta_x, delta_y })
+            Ok(Action::WebScroll {
+                session_id,
+                selector,
+                delta_x,
+                delta_y,
+            })
         }
         "web.wait" => {
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
             let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
-            Ok(Action::WebWait { session_id, selector, timeout_ms })
+            Ok(Action::WebWait {
+                session_id,
+                selector,
+                timeout_ms,
+            })
         }
         "web.evaluate" => {
             let session_id = session_id_from_params(&params)?;
             let expression = required_str(&params, "expression")?;
-            Ok(Action::WebEvaluate { session_id, expression })
+            Ok(Action::WebEvaluate {
+                session_id,
+                expression,
+            })
         }
         "web.screenshot" => {
             let session_id = session_id_from_params(&params)?;
-            let selector = params.get("selector").and_then(|v| v.as_str()).map(|s| s.to_string());
-            Ok(Action::WebScreenshot { session_id, selector })
+            let selector = params
+                .get("selector")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Ok(Action::WebScreenshot {
+                session_id,
+                selector,
+            })
         }
         "web.snapshot" => {
             let session_id = session_id_from_params(&params)?;

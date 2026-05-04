@@ -48,11 +48,7 @@ pub trait RequestRouterApi: Send + Sync {
     /// `method` is the JSON-RPC method name; `params` is the
     /// already-deserialised parameter `Value`. Returns the canonical
     /// JSON response body bytes.
-    async fn dispatch(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> Vec<u8>;
+    async fn dispatch(&self, method: &str, params: serde_json::Value) -> Vec<u8>;
 
     /// Enumerate every registered method. `loom serve` uses this to
     /// emit a startup audit line.

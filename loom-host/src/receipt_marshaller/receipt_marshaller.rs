@@ -19,9 +19,9 @@
 // - **Backpressure.** Background queue depth 256; full → synchronous
 //   `ManifestWriter::append` on the calling task (rare, soft binding).
 
+use crate::wit_type_marshaller::Marshaller;
 use loom_core::error::LoomError;
 use loom_core::manifest_writer::{ManifestWriter, SessionId};
-use crate::wit_type_marshaller::Marshaller;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::runtime::Handle as TokioHandle;
@@ -202,9 +202,7 @@ impl ReceiptMarshaller {
     /// When navigate tier-2 fields are present, builds a
     /// `loom_core::ReceiptPayload` to get canonical field names and the
     /// unified serialization path (AC-NAVRECEIPT-01..05).
-    pub fn assemble_canonical_bytes(
-        builder: &ReceiptBuilder,
-    ) -> Result<Vec<u8>, LoomError> {
+    pub fn assemble_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
         use loom_core::error::LoomErrorCode;
 
         // AC-NAVERR-01/02/03: a typed navigate error receipt (structured
@@ -275,10 +273,7 @@ impl ReceiptMarshaller {
 
     /// Force-synchronous fallback. Called when the background pool
     /// refuses spawn. Logs a tracing warn before falling through.
-    pub fn append_synchronous_fallback(
-        &self,
-        outcome: ActionOutcome,
-    ) -> Result<(), LoomError> {
+    pub fn append_synchronous_fallback(&self, outcome: ActionOutcome) -> Result<(), LoomError> {
         use loom_core::manifest_writer::ManifestEntry;
         let bytes = Self::assemble_canonical_bytes(&outcome.builder)?;
         let now_ms = std::time::SystemTime::now()
@@ -309,7 +304,9 @@ impl ReceiptMarshaller {
 /// (AC-NAVRECEIPT-01..05, BC HARD #3).
 fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
     use loom_core::error_types::{ReceiptCode, ReceiptSurface};
-    use loom_core::receipt_builder::receipt_builder::{NetworkEvent, ReceiptPayload, ReceiptStatus};
+    use loom_core::receipt_builder::receipt_builder::{
+        NetworkEvent, ReceiptPayload, ReceiptStatus,
+    };
     use loom_shared::navigate_outcome::LoomNetworkEvent;
 
     // Invariant (host-side): only the navigate dispatch path on
@@ -453,7 +450,11 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         dom_snapshot_hash: builder.navigate_dom_snapshot_hash.clone(),
         console_count: builder.navigate_console_count,
         network_count: builder.navigate_network_count,
-        emitted_at_ms: if builder.emitted_at_ms > 0 { Some(builder.emitted_at_ms) } else { None },
+        emitted_at_ms: if builder.emitted_at_ms > 0 {
+            Some(builder.emitted_at_ms)
+        } else {
+            None
+        },
     };
 
     payload.canonical_bytes()
@@ -557,7 +558,11 @@ fn assemble_evaluate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         dom_snapshot_hash: None,
         console_count: None,
         network_count: None,
-        emitted_at_ms: if builder.emitted_at_ms > 0 { Some(builder.emitted_at_ms) } else { None },
+        emitted_at_ms: if builder.emitted_at_ms > 0 {
+            Some(builder.emitted_at_ms)
+        } else {
+            None
+        },
     };
 
     payload.canonical_bytes()

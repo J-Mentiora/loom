@@ -1,7 +1,6 @@
 // Interface tests for `ScrollVerb`. Verifies BC-SURF-05 (integer
 // deltas, no floats) and IC-SURF-07 hash-only tier.
 
-
 extern crate alloc;
 
 use super::scroll_verb::{ScrollAction, ScrollVerb};
@@ -68,7 +67,9 @@ fn scroll_execute_returns_hash_only_receipt() {
     assert_eq!(dom_ref.sha256_hex.len(), 64);
     assert!(dom_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
+    let ss_ref = receipt
+        .screenshot_after_ref
+        .expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 }

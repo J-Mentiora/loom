@@ -2,7 +2,6 @@
 // verbs implemented), IC-SURF-12 (wit-bindgen-only — no hand-rolled
 // exports), SR-SURF-05 (no mode awareness).
 
-
 extern crate alloc;
 
 use super::guest_bindings::{WebSurface, WebSurfaceImpl, WEB_SURFACE_VERBS};

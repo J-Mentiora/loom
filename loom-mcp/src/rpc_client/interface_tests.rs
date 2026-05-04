@@ -2,9 +2,7 @@
 // path, FSM shape, exp-backoff envelope, and BC-MCP-04 single
 // reconnect-task discipline.
 
-use super::rpc_client::{
-    ConnectionState, JsonRpcCaller, OnConnected, RpcClient, RpcClientConfig,
-};
+use super::rpc_client::{ConnectionState, JsonRpcCaller, OnConnected, RpcClient, RpcClientConfig};
 use crate::mcp_observability::McpObservability;
 use loom_rpc::error::LoomError;
 use std::path::PathBuf;
@@ -81,7 +79,11 @@ fn next_backoff_caps_at_configured_max() {
     let cfg = RpcClientConfig::defaults();
     // After many failures, the delay must not exceed the cap.
     let d = RpcClient::next_backoff(&cfg, 30);
-    assert!(d <= cfg.backoff_cap, "delay {d:?} must not exceed cap {:?}", cfg.backoff_cap);
+    assert!(
+        d <= cfg.backoff_cap,
+        "delay {d:?} must not exceed cap {:?}",
+        cfg.backoff_cap
+    );
 }
 
 #[test]

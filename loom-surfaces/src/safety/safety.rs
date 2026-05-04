@@ -16,7 +16,6 @@
 // # Banned in this module
 // - `std::time`, `std::net`, `std::fs::write`, `getrandom`, `HashMap`.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -67,9 +66,7 @@ pub enum PolicyViolation {
     /// AC-WEB-07.1: expression matched a pattern in `EVALUATE_DENYLIST`.
     EvaluateDenylistMatch,
     /// AC-WEB-07.2: download target path is outside the session-scoped dir.
-    DownloadPathBlocked {
-        candidate_path: String,
-    },
+    DownloadPathBlocked { candidate_path: String },
 }
 
 /// Stateless safety policy checker. All functions are pure — no I/O, no

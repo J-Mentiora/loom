@@ -1,7 +1,6 @@
 // Interface tests for `SnapshotVerb`. Verifies IC-SURF-07 full-blob
 // tier and SR-SURF-02 (DOM blob hashing via blob_put).
 
-
 extern crate alloc;
 
 use super::snapshot_verb::{SnapshotAction, SnapshotVerb};
@@ -53,7 +52,9 @@ fn snapshot_execute_returns_full_blob_receipt_with_screenshot() {
     assert_eq!(dom_ref.sha256_hex.len(), 64);
     assert!(dom_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
+    let ss_ref = receipt
+        .screenshot_after_ref
+        .expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 }
@@ -72,6 +73,12 @@ fn snapshot_dom_only_skips_screenshot() {
     let receipt = SnapshotVerb::execute(action).expect("snapshot must return Ok");
 
     // DOM blob must be present; screenshot must be absent
-    assert!(receipt.dom_after_ref.is_some(), "dom_after_ref must be Some");
-    assert!(receipt.screenshot_after_ref.is_none(), "snapshot dom-only must not capture screenshot");
+    assert!(
+        receipt.dom_after_ref.is_some(),
+        "dom_after_ref must be Some"
+    );
+    assert!(
+        receipt.screenshot_after_ref.is_none(),
+        "snapshot dom-only must not capture screenshot"
+    );
 }

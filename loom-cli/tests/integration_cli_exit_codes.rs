@@ -151,8 +151,7 @@ fn test_ac_cliexit_04_close_already_closed_maps_exit_1() {
 fn test_ac_cliexit_05_unknown_method_maps_exit_2() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({});
-    let r: Result<(), CliError> =
-        Err(validate_args(&schemas, "bogus.method", &args).unwrap_err());
+    let r: Result<(), CliError> = Err(validate_args(&schemas, "bogus.method", &args).unwrap_err());
     assert_eq!(map_exit_code(&r), EXIT_USAGE);
     assert_eq!(map_exit_code(&r), 2);
 }

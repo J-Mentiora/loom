@@ -21,9 +21,9 @@
 //   `replay_linker` registers `ReplayHostFns`, which has no edges into
 //   `Vault`, `ShimManager::send`, live HTTP, or `ContentStore::put`.
 
-use loom_core::error::LoomError;
 use crate::host_function_table::HostState;
 use crate::wit_type_marshaller::Mode;
+use loom_core::error::LoomError;
 use std::sync::Arc;
 
 pub struct HostFunctionRegistry {
@@ -62,7 +62,10 @@ impl HostFunctionRegistry {
         wasmtime_wasi::p2::add_to_linker_async(&mut replay_linker)
             .map_err(|e| LoomError::new(LoomErrorCode::Internal, e.to_string()))?;
 
-        Ok(Arc::new(Self { live_linker, replay_linker }))
+        Ok(Arc::new(Self {
+            live_linker,
+            replay_linker,
+        }))
     }
 
     /// Pick a linker by mode. Pointer comparison only — no table mutation.

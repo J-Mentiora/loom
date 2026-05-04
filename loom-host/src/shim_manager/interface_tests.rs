@@ -5,8 +5,8 @@
 // mapping.
 
 use super::shim_manager::{BreakerState, ShimConfig, ShimId, ShimManager};
-use loom_core::error::{LoomError, LoomErrorCode};
 use crate::host_observability::HostObservability;
+use loom_core::error::{LoomError, LoomErrorCode};
 use std::path::PathBuf;
 use std::sync::Arc;
 

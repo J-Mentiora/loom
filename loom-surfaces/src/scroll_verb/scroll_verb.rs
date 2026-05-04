@@ -8,7 +8,6 @@
 // - **Scope:** scrolls the element matched by `selector` into view if
 //   provided; otherwise scrolls the root document by the given delta.
 
-
 extern crate alloc;
 
 use alloc::string::String;

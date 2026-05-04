@@ -26,3 +26,6 @@ zeroize = { workspace = true }
 
 # Phase 6 will add platform-specific deps under [target.'cfg(...)'.dependencies]
 # blocks; left empty at scaffold time.
+
+[lints]
+workspace = true

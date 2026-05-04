@@ -69,8 +69,7 @@ fn registry_constructor_takes_only_engine_no_module_library_or_runtime_handle() 
 
 #[test]
 fn doc_pin_uses_generated_add_to_linker_not_hand_rolled_extern_fn() {
-    let pin =
-        "loom_surface_bindings::host::add_to_linker(&mut live_linker, |s| s)?;";
+    let pin = "loom_surface_bindings::host::add_to_linker(&mut live_linker, |s| s)?;";
     assert!(pin.contains("add_to_linker"));
     // The pin asserts the call shape. CI lint
     // `tools/lint-no-extern-host-fns.py` enforces no `unsafe extern \"C\"`

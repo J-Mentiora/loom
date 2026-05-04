@@ -30,14 +30,17 @@ fn now_ms() -> u64 {
 /// never modified here (the Header is the root of the chain).
 fn set_prev_hash(entry: ManifestEntry, hash: String) -> ManifestEntry {
     match entry {
-        ManifestEntry::ActionReceipt { action_id, emitted_at_ms, receipt_canonical_bytes, .. } => {
-            ManifestEntry::ActionReceipt {
-                action_id,
-                emitted_at_ms,
-                receipt_canonical_bytes,
-                prev_hash: hash,
-            }
-        }
+        ManifestEntry::ActionReceipt {
+            action_id,
+            emitted_at_ms,
+            receipt_canonical_bytes,
+            ..
+        } => ManifestEntry::ActionReceipt {
+            action_id,
+            emitted_at_ms,
+            receipt_canonical_bytes,
+            prev_hash: hash,
+        },
         ManifestEntry::AuditEntry {
             action_id_ref,
             emitted_at_ms,
@@ -51,12 +54,26 @@ fn set_prev_hash(entry: ManifestEntry, hash: String) -> ManifestEntry {
             canonical_bytes,
             prev_hash: hash,
         },
-        ManifestEntry::SessionTerminal { action_id, emitted_at_ms, reason, .. } => {
-            ManifestEntry::SessionTerminal { action_id, emitted_at_ms, reason, prev_hash: hash }
-        }
-        ManifestEntry::RuntimeCrash { last_completed_action_id, emitted_at_ms, .. } => {
-            ManifestEntry::RuntimeCrash { last_completed_action_id, emitted_at_ms, prev_hash: hash }
-        }
+        ManifestEntry::SessionTerminal {
+            action_id,
+            emitted_at_ms,
+            reason,
+            ..
+        } => ManifestEntry::SessionTerminal {
+            action_id,
+            emitted_at_ms,
+            reason,
+            prev_hash: hash,
+        },
+        ManifestEntry::RuntimeCrash {
+            last_completed_action_id,
+            emitted_at_ms,
+            ..
+        } => ManifestEntry::RuntimeCrash {
+            last_completed_action_id,
+            emitted_at_ms,
+            prev_hash: hash,
+        },
         header @ ManifestEntry::Header { .. } => header,
     }
 }
@@ -83,12 +100,18 @@ fn manifest_action_entries_as_json(wal_path: &Path) -> Result<Vec<serde_json::Va
         if line.is_empty() {
             continue;
         }
-        let entry: ManifestEntry = serde_json::from_str(line).map_err(|e| {
-            LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string())
-        })?;
-        if let ManifestEntry::ActionReceipt { action_id, receipt_canonical_bytes, .. } = entry {
-            let receipt_hex: String =
-                receipt_canonical_bytes.iter().map(|b| format!("{b:02x}")).collect();
+        let entry: ManifestEntry = serde_json::from_str(line)
+            .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
+        if let ManifestEntry::ActionReceipt {
+            action_id,
+            receipt_canonical_bytes,
+            ..
+        } = entry
+        {
+            let receipt_hex: String = receipt_canonical_bytes
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
             entries.push(serde_json::json!({
                 "action_id": action_id,
                 "action": null,
@@ -151,8 +174,10 @@ impl ManifestWriter for LocalManifestWriter {
         let wal_path = session_dir.join("manifest.wal");
         let checkpoint_path = session_dir.join("manifest.jsonl");
 
-        let file_result =
-            fs::OpenOptions::new().write(true).create_new(true).open(&wal_path);
+        let file_result = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&wal_path);
 
         match file_result {
             Ok(mut file) => {
@@ -175,7 +200,11 @@ impl ManifestWriter for LocalManifestWriter {
             Err(e) => return Err(LoomError::from(e)),
         }
 
-        Ok(WriterHandle { session_id: session, wal_path, checkpoint_path })
+        Ok(WriterHandle {
+            session_id: session,
+            wal_path,
+            checkpoint_path,
+        })
     }
 
     fn append(&self, session: SessionId, entry: ManifestEntry) -> Result<(), LoomError> {
@@ -262,9 +291,8 @@ impl ManifestWriter for LocalManifestWriter {
 
         for i in 1..lines.len() {
             let expected = sha256_hex(lines[i - 1].as_bytes());
-            let entry: serde_json::Value = serde_json::from_str(lines[i]).map_err(|e| {
-                LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string())
-            })?;
+            let entry: serde_json::Value = serde_json::from_str(lines[i])
+                .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
             let actual = entry["prev_hash"].as_str().unwrap_or("");
             if actual != expected {
                 return Err(LoomError::new(

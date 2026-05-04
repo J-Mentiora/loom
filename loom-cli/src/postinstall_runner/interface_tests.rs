@@ -76,7 +76,9 @@ fn chromium_step_signature_takes_url_and_expected_sha() {
 #[test]
 fn plist_step_signature() {
     use super::postinstall_runner::*;
-    fn _ck(w: &crate::launchd_plist_writer::LaunchdPlistWriter) -> Result<StepOutcome, crate::CliError> {
+    fn _ck(
+        w: &crate::launchd_plist_writer::LaunchdPlistWriter,
+    ) -> Result<StepOutcome, crate::CliError> {
         plist_step(w)
     }
     let _ = _ck;

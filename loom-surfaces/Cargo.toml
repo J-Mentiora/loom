@@ -42,3 +42,6 @@ mock = []
 path = "src/lib.rs"
 # Phase 6 will set crate-type = ["cdylib"] for the wasm32-wasi-preview2
 # build profile; left as default `lib` here so host-side tests work.
+
+[lints]
+workspace = true

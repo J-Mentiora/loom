@@ -90,7 +90,10 @@ fn resolve_build_date_is_set() {
     assert!(!v.build_date.is_empty(), "build_date empty");
     // Either YYYY-MM-DD or "unknown" — both honored shapes from build.rs.
     assert!(
-        v.build_date == "unknown" || (v.build_date.len() == 10 && v.build_date.as_bytes()[4] == b'-' && v.build_date.as_bytes()[7] == b'-'),
+        v.build_date == "unknown"
+            || (v.build_date.len() == 10
+                && v.build_date.as_bytes()[4] == b'-'
+                && v.build_date.as_bytes()[7] == b'-'),
         "build_date {:?} should be YYYY-MM-DD or 'unknown'",
         v.build_date
     );

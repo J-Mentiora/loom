@@ -140,7 +140,15 @@ mod tests {
             return;
         }
         let status = std::process::Command::new("curl")
-            .args(["-fsSL", "-I", "-o", "/dev/null", "-w", "%{http_code}", CHROMIUM_URL])
+            .args([
+                "-fsSL",
+                "-I",
+                "-o",
+                "/dev/null",
+                "-w",
+                "%{http_code}",
+                CHROMIUM_URL,
+            ])
             .output()
             .expect("curl not found");
         let code = String::from_utf8_lossy(&status.stdout);

@@ -11,9 +11,7 @@
 // AC-PICOMP-05: BC-CLI-01 preserved — compile_module unreachable from action path.
 // AC-PICOMP-06: Integration test: postinstall -> SchemaCache::load round-trip.
 
-use loom_cli::postinstall_runner::{
-    compile_step, schema_step, SchemaStepOutcome, StepOutcome,
-};
+use loom_cli::postinstall_runner::{compile_step, schema_step, SchemaStepOutcome, StepOutcome};
 use loom_cli::schema_cache::SchemaCache;
 use tempfile::TempDir;
 
@@ -45,7 +43,9 @@ fn test_ac_picomp_01_compile_step_works_without_feature_flag() {
     let outcomes = result.expect("AC-PICOMP-01: compile_step must not return Err");
 
     // Must have at least one Compiled outcome — NOT all Skipped.
-    let has_compiled = outcomes.iter().any(|o| matches!(o, StepOutcome::Compiled(_)));
+    let has_compiled = outcomes
+        .iter()
+        .any(|o| matches!(o, StepOutcome::Compiled(_)));
     assert!(
         has_compiled,
         "AC-PICOMP-01: compile_step in default build must return StepOutcome::Compiled, got: {:?}",
@@ -68,8 +68,7 @@ fn test_ac_picomp_02_schema_step_creates_and_populates_dir() {
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
 
-    let outcome = schema_step(&v1_dir)
-        .expect("AC-PICOMP-02: schema_step must not return Err");
+    let outcome = schema_step(&v1_dir).expect("AC-PICOMP-02: schema_step must not return Err");
 
     // Dir must now exist.
     assert!(
@@ -101,11 +100,7 @@ fn test_ac_picomp_02_schema_step_creates_and_populates_dir() {
         file_count += 1;
         let content = std::fs::read_to_string(&path).unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|e| {
-            panic!(
-                "AC-PICOMP-02: {} is not valid JSON: {}",
-                path.display(),
-                e
-            )
+            panic!("AC-PICOMP-02: {} is not valid JSON: {}", path.display(), e)
         });
         assert!(
             json.get("request").is_some(),
@@ -185,7 +180,9 @@ fn test_ac_picomp_04_wasm_discovered_without_loom_wasm_dir() {
 
     let outcomes = result.expect("AC-PICOMP-04: compile_step must not Err with no LOOM_WASM_DIR");
 
-    let has_compiled = outcomes.iter().any(|o| matches!(o, StepOutcome::Compiled(_)));
+    let has_compiled = outcomes
+        .iter()
+        .any(|o| matches!(o, StepOutcome::Compiled(_)));
     assert!(
         has_compiled,
         "AC-PICOMP-04: embedded-bytes fallback must produce StepOutcome::Compiled, got: {:?}",
@@ -240,8 +237,8 @@ fn test_ac_picomp_06_postinstall_action_roundtrip() {
     std::env::remove_var("LOOM_WASM_DIR");
 
     // Step 1: compile WASM (AC-PICOMP-01 path).
-    let compile_outcomes = compile_step(surfaces_dir.path())
-        .expect("AC-PICOMP-06: compile_step must succeed");
+    let compile_outcomes =
+        compile_step(surfaces_dir.path()).expect("AC-PICOMP-06: compile_step must succeed");
 
     // Restore env.
     match prev_wasm_dir {

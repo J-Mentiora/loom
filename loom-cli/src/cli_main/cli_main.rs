@@ -25,7 +25,7 @@
 use clap::Parser as _;
 
 use crate::cli_config::ResolveInputs;
-use crate::command_router::{Cli, dispatch};
+use crate::command_router::{dispatch, Cli};
 use crate::error_mapper::map_exit_code;
 use crate::CliConfig;
 use crate::CliError;

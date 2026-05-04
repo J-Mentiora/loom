@@ -2,7 +2,6 @@
 // `LoomErrorCode` table from design.md §4 and the IC-SURF-11 boundary
 // contract.
 
-
 extern crate alloc;
 
 use super::error_mapper::{
@@ -17,7 +16,9 @@ use alloc::string::ToString;
 #[test]
 fn budget_wall_clock_maps_to_budget_wall_clock_exceeded() {
     let r = ErrorMapper::map(
-        HostError::BudgetExceeded { kind: BudgetKind::WallClock },
+        HostError::BudgetExceeded {
+            kind: BudgetKind::WallClock,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::BudgetWallClockExceeded);
@@ -26,7 +27,9 @@ fn budget_wall_clock_maps_to_budget_wall_clock_exceeded() {
 #[test]
 fn budget_network_bytes_maps_to_budget_network_bytes_exceeded() {
     let r = ErrorMapper::map(
-        HostError::BudgetExceeded { kind: BudgetKind::NetworkBytes },
+        HostError::BudgetExceeded {
+            kind: BudgetKind::NetworkBytes,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::BudgetNetworkBytesExceeded);
@@ -35,7 +38,9 @@ fn budget_network_bytes_maps_to_budget_network_bytes_exceeded() {
 #[test]
 fn budget_dom_nodes_maps_to_budget_dom_node_count_exceeded() {
     let r = ErrorMapper::map(
-        HostError::BudgetExceeded { kind: BudgetKind::DomNodeCount },
+        HostError::BudgetExceeded {
+            kind: BudgetKind::DomNodeCount,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::BudgetDomNodeCountExceeded);
@@ -44,7 +49,9 @@ fn budget_dom_nodes_maps_to_budget_dom_node_count_exceeded() {
 #[test]
 fn budget_js_heap_maps_to_budget_js_heap_bytes_exceeded() {
     let r = ErrorMapper::map(
-        HostError::BudgetExceeded { kind: BudgetKind::JsHeapBytes },
+        HostError::BudgetExceeded {
+            kind: BudgetKind::JsHeapBytes,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::BudgetJsHeapBytesExceeded);
@@ -55,7 +62,9 @@ fn budget_js_heap_maps_to_budget_js_heap_bytes_exceeded() {
 #[test]
 fn vault_expired_maps_to_vault_grant_expired() {
     let r = ErrorMapper::map(
-        HostError::VaultRejection { reason: VaultRejectionReason::Expired },
+        HostError::VaultRejection {
+            reason: VaultRejectionReason::Expired,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::VaultGrantExpired);
@@ -64,7 +73,9 @@ fn vault_expired_maps_to_vault_grant_expired() {
 #[test]
 fn vault_scope_maps_to_vault_scope_violation() {
     let r = ErrorMapper::map(
-        HostError::VaultRejection { reason: VaultRejectionReason::Scope },
+        HostError::VaultRejection {
+            reason: VaultRejectionReason::Scope,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::VaultScopeViolation);
@@ -73,7 +84,9 @@ fn vault_scope_maps_to_vault_scope_violation() {
 #[test]
 fn vault_origin_maps_to_vault_origin_violation() {
     let r = ErrorMapper::map(
-        HostError::VaultRejection { reason: VaultRejectionReason::Origin },
+        HostError::VaultRejection {
+            reason: VaultRejectionReason::Origin,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::VaultOriginViolation);
@@ -82,7 +95,9 @@ fn vault_origin_maps_to_vault_origin_violation() {
 #[test]
 fn vault_revoked_maps_to_vault_grant_revoked() {
     let r = ErrorMapper::map(
-        HostError::VaultRejection { reason: VaultRejectionReason::Revoked },
+        HostError::VaultRejection {
+            reason: VaultRejectionReason::Revoked,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::VaultGrantRevoked);
@@ -93,7 +108,9 @@ fn vault_revoked_maps_to_vault_grant_revoked() {
 #[test]
 fn web_shim_timeout_maps_to_web_action_timeout() {
     let r = ErrorMapper::map(
-        HostError::ShimFailure { kind: ShimFailureKind::Timeout },
+        HostError::ShimFailure {
+            kind: ShimFailureKind::Timeout,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::WebActionTimeout);
@@ -102,7 +119,9 @@ fn web_shim_timeout_maps_to_web_action_timeout() {
 #[test]
 fn non_web_shim_timeout_maps_to_surface_shim_failed() {
     let r = ErrorMapper::map(
-        HostError::ShimFailure { kind: ShimFailureKind::Timeout },
+        HostError::ShimFailure {
+            kind: ShimFailureKind::Timeout,
+        },
         SurfaceContext::Shell,
     );
     assert_eq!(r, LoomErrorCode::SurfaceShimFailed);
@@ -111,7 +130,9 @@ fn non_web_shim_timeout_maps_to_surface_shim_failed() {
 #[test]
 fn shim_selector_not_found_maps_to_web_selector_not_found() {
     let r = ErrorMapper::map(
-        HostError::ShimFailure { kind: ShimFailureKind::SelectorNotFound },
+        HostError::ShimFailure {
+            kind: ShimFailureKind::SelectorNotFound,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::WebSelectorNotFound);
@@ -138,7 +159,9 @@ fn shim_permission_denied_carries_permission_name() {
 #[test]
 fn shim_crashed_maps_to_surface_shim_failed() {
     let r = ErrorMapper::map(
-        HostError::ShimFailure { kind: ShimFailureKind::Crashed },
+        HostError::ShimFailure {
+            kind: ShimFailureKind::Crashed,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::SurfaceShimFailed);
@@ -147,7 +170,9 @@ fn shim_crashed_maps_to_surface_shim_failed() {
 #[test]
 fn shim_navigation_failed_maps_to_web_navigation_failed() {
     let r = ErrorMapper::map(
-        HostError::ShimFailure { kind: ShimFailureKind::NavigationFailed },
+        HostError::ShimFailure {
+            kind: ShimFailureKind::NavigationFailed,
+        },
         SurfaceContext::Web,
     );
     assert_eq!(r, LoomErrorCode::WebNavigationFailed);
@@ -164,7 +189,9 @@ fn store_integrity_failed_passthrough() {
 #[test]
 fn internal_carries_reason() {
     let r = ErrorMapper::map(
-        HostError::Internal { reason: "wasm trap".to_string() },
+        HostError::Internal {
+            reason: "wasm trap".to_string(),
+        },
         SurfaceContext::Web,
     );
     match r {

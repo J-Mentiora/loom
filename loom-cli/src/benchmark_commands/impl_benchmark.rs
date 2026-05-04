@@ -44,8 +44,7 @@ pub fn run(args: &BenchmarkArgs, pretty: bool) -> Result<(), CliError> {
     })?;
 
     // Write JSON output (canonical by default, pretty if --pretty).
-    let value = serde_json::to_value(&report)
-        .map_err(|e| CliError::Internal(e.to_string()))?;
+    let value = serde_json::to_value(&report).map_err(|e| CliError::Internal(e.to_string()))?;
     println!("{}", format_output(&value, pretty)?);
 
     // Return error if SLAs failed (exit 1).

@@ -42,3 +42,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "loom-mcp"
 path = "src/bin/loom-mcp.rs"
+
+[lints]
+workspace = true

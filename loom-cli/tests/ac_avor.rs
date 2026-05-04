@@ -97,8 +97,13 @@ fn test_ac_avor_02_missing_required_field_exit_code_2() {
     use loom_cli::error_mapper::{map_exit_code, CliError, EXIT_USAGE};
     let (schemas, _dir) = cache_web_navigate();
     let params = json!({"session": "S1"});
-    let r: Result<(), CliError> = Err(validate_args(&schemas, "web.navigate", &params).unwrap_err());
-    assert_eq!(map_exit_code(&r), EXIT_USAGE, "missing required field must exit 2");
+    let r: Result<(), CliError> =
+        Err(validate_args(&schemas, "web.navigate", &params).unwrap_err());
+    assert_eq!(
+        map_exit_code(&r),
+        EXIT_USAGE,
+        "missing required field must exit 2"
+    );
 }
 
 // ── AC-AVOR-03 ────────────────────────────────────────────────────────────────
@@ -111,7 +116,10 @@ fn test_ac_avor_03_bogus_field_rejected() {
     let params = json!({"session": "S1", "url": "https://example.com", "bogus": "val"});
     let err = validate_args(&schemas, "web.navigate", &params).unwrap_err();
     let msg = err.to_string();
-    assert!(!msg.is_empty(), "bogus field error must be non-empty; got: {msg}");
+    assert!(
+        !msg.is_empty(),
+        "bogus field error must be non-empty; got: {msg}"
+    );
     // jsonschema should mention the unknown property name or additionalProperties
     assert!(
         msg.contains("bogus") || msg.contains("additional"),

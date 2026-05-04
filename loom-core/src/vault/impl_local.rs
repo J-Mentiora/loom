@@ -155,7 +155,10 @@ impl Vault for LocalVault {
                 AuditKind::GrantRejected,
                 audit_bytes(&payload),
             );
-            return Err(LoomError::new(LoomErrorCode::VaultGrantRevoked, "grant revoked"));
+            return Err(LoomError::new(
+                LoomErrorCode::VaultGrantRevoked,
+                "grant revoked",
+            ));
         }
 
         // Check 2: Origin match (AC-VAULT-02.2 / AC-NFR-SEC-02.1)
@@ -203,16 +206,17 @@ impl Vault for LocalVault {
                     AuditKind::GrantRejected,
                     audit_bytes(&payload),
                 );
-                return Err(
-                    LoomError::new(LoomErrorCode::VaultRejection, "vault-scope-insufficient")
-                        .with_context(serde_json::json!({
-                            "code": "vault_scope_insufficient",
-                            "details": {
-                                "required_scope": req_scope,
-                                "granted_scopes": grant_scopes
-                            }
-                        })),
-                );
+                return Err(LoomError::new(
+                    LoomErrorCode::VaultRejection,
+                    "vault-scope-insufficient",
+                )
+                .with_context(serde_json::json!({
+                    "code": "vault_scope_insufficient",
+                    "details": {
+                        "required_scope": req_scope,
+                        "granted_scopes": grant_scopes
+                    }
+                })));
             }
         }
 
@@ -307,10 +311,7 @@ impl Vault for LocalVault {
         Ok(())
     }
 
-    fn add_credential(
-        &self,
-        opts: AddCredentialOpts,
-    ) -> Result<AddCredentialReceipt, LoomError> {
+    fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError> {
         // Q2 + AC-VAULT-04.1: OAuth-only allowlist. Non-allowlisted providers
         // reject with the canonical `vault_credential_type_unsupported`
         // envelope (`details.allowed_types = ["oauth2_authorization_code_pkce"]`).
@@ -338,10 +339,7 @@ impl Vault for LocalVault {
         })
     }
 
-    fn list_grants(
-        &self,
-        session: Option<SessionId>,
-    ) -> Result<Vec<GrantSnapshot>, LoomError> {
+    fn list_grants(&self, session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError> {
         let grants = self.grants.read();
         let now = now_ms();
         let snapshots = grants
@@ -388,7 +386,10 @@ mod tests {
             if label == self.label {
                 Ok(Zeroizing::new(self.secret.clone()))
             } else {
-                Err(LoomError::new(LoomErrorCode::VaultUnknownLabel, "label not found"))
+                Err(LoomError::new(
+                    LoomErrorCode::VaultUnknownLabel,
+                    "label not found",
+                ))
             }
         }
     }
@@ -401,14 +402,10 @@ mod tests {
     /// Each call gets a unique session + dir so parallel tests don't share a WAL.
     fn fixture() -> (LocalVault, Arc<LocalManifestWriter>, SessionId) {
         let unique = ulid::Ulid::new().to_string();
-        let sessions_root =
-            std::env::temp_dir().join(format!("loom-vault-test-{unique}"));
+        let sessions_root = std::env::temp_dir().join(format!("loom-vault-test-{unique}"));
         std::fs::create_dir_all(&sessions_root).ok();
 
-        let obs = Observability::new(
-            sessions_root.join("test.log"),
-            false,
-        );
+        let obs = Observability::new(sessions_root.join("test.log"), false);
         let mw = Arc::new(LocalManifestWriter::new(sessions_root, obs.clone()));
         let sid = SessionId(unique);
         mw.open_manifest(sid.clone(), None).ok();
@@ -582,7 +579,10 @@ mod tests {
         assert_eq!(ctx["code"], "vault_origin_mismatch");
         assert_eq!(ctx["details"]["expected_origin"], TEST_ORIGIN);
         assert_eq!(ctx["details"]["observed_origin"], "api.gitlab.com");
-        assert!(!r.headers.contains_key("Authorization"), "no header on rejection");
+        assert!(
+            !r.headers.contains_key("Authorization"),
+            "no header on rejection"
+        );
     }
 
     // ── AC-VAULT-02.3: Scope escalation rejection ─────────────────────────
@@ -641,7 +641,10 @@ mod tests {
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
         assert!(!r.headers.contains_key("Authorization"));
         vault.substitute(gid, &mut r).unwrap();
-        let auth = r.headers.get("Authorization").expect("Authorization must be set");
+        let auth = r
+            .headers
+            .get("Authorization")
+            .expect("Authorization must be set");
         assert!(auth.starts_with("Bearer "), "must be a Bearer token");
     }
 
@@ -662,7 +665,12 @@ mod tests {
         let (vault, _mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         vault
-            .revoke(gid.clone(), RevokeReason { reason: "user_request".to_string() })
+            .revoke(
+                gid.clone(),
+                RevokeReason {
+                    reason: "user_request".to_string(),
+                },
+            )
             .unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
         let err = vault.substitute(gid, &mut r).unwrap_err();
@@ -679,26 +687,47 @@ mod tests {
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
         vault.substitute(gid.clone(), &mut r).unwrap();
         vault
-            .revoke(gid, RevokeReason { reason: "test".to_string() })
+            .revoke(
+                gid,
+                RevokeReason {
+                    reason: "test".to_string(),
+                },
+            )
             .unwrap();
 
         let entries = read_audit_entries(&mw, &sid);
-        assert!(entries.len() >= 3, "expected ≥3 audit entries, got {}", entries.len());
+        assert!(
+            entries.len() >= 3,
+            "expected ≥3 audit entries, got {}",
+            entries.len()
+        );
 
         let kinds: Vec<&str> = entries
             .iter()
             .filter_map(|e| e["audit_kind"].as_str())
             .collect();
 
-        let issued_pos = kinds.iter().position(|&k| k == "grant_issued")
+        let issued_pos = kinds
+            .iter()
+            .position(|&k| k == "grant_issued")
             .expect("AC-VAULT-03.1: missing grant_issued audit entry");
-        let consumed_pos = kinds.iter().position(|&k| k == "grant_consumed")
+        let consumed_pos = kinds
+            .iter()
+            .position(|&k| k == "grant_consumed")
             .expect("AC-VAULT-03.1: missing grant_consumed audit entry");
-        let revoked_pos = kinds.iter().position(|&k| k == "grant_revoked")
+        let revoked_pos = kinds
+            .iter()
+            .position(|&k| k == "grant_revoked")
             .expect("AC-VAULT-03.1: missing grant_revoked audit entry");
 
-        assert!(issued_pos < consumed_pos, "grant_issued must precede grant_consumed");
-        assert!(consumed_pos < revoked_pos, "grant_consumed must precede grant_revoked");
+        assert!(
+            issued_pos < consumed_pos,
+            "grant_issued must precede grant_consumed"
+        );
+        assert!(
+            consumed_pos < revoked_pos,
+            "grant_consumed must precede grant_revoked"
+        );
     }
 
     // ── AC-NFR-SEC-03.1: Audit payload completeness ───────────────────────
@@ -714,7 +743,9 @@ mod tests {
         assert!(!entries.is_empty(), "must have audit entries");
 
         for entry in &entries {
-            let Some(payload) = audit_payload_from_entry(entry) else { continue };
+            let Some(payload) = audit_payload_from_entry(entry) else {
+                continue;
+            };
             for field in &[
                 "grant_id",
                 "origin",
@@ -866,7 +897,12 @@ mod tests {
         let g1 = vault.grant(sid.clone(), default_opts()).unwrap();
         let _g2 = vault.grant(sid.clone(), default_opts()).unwrap();
         vault
-            .revoke(g1, RevokeReason { reason: "test".to_string() })
+            .revoke(
+                g1,
+                RevokeReason {
+                    reason: "test".to_string(),
+                },
+            )
             .unwrap();
         let grants = vault.list_grants(None).unwrap();
         assert_eq!(grants.len(), 1, "revoked grant must be excluded");

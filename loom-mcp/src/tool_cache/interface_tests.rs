@@ -3,9 +3,7 @@
 // transformation, IC-MCP-04 description sourcing, and BC-MCP-02
 // single-constructor discipline.
 
-use super::tool_cache::{
-    RpcMethodSchema, SchemaRegistry, Tool, ToolCache, TOOL_NAME_PREFIX,
-};
+use super::tool_cache::{RpcMethodSchema, SchemaRegistry, Tool, ToolCache, TOOL_NAME_PREFIX};
 
 // === IC-MCP-03: snake_case dotted, prefix `loom.` ===
 
@@ -149,7 +147,10 @@ fn schema_registry_has_methods_field() {
 
 #[test]
 fn get_returns_option_tool() {
-    fn _ck<'a>(c: &'a ToolCache, name: &'a str) -> Box<dyn std::future::Future<Output = Option<Tool>> + 'a> {
+    fn _ck<'a>(
+        c: &'a ToolCache,
+        name: &'a str,
+    ) -> Box<dyn std::future::Future<Output = Option<Tool>> + 'a> {
         Box::new(async move { c.get(name).await })
     }
     let _ = _ck;

@@ -13,7 +13,6 @@
 //   `host-error::shim-failure { kind: "selector_not_found" }` →
 //   ErrorMapper → `WebSelectorNotFound` → error Receipt.
 
-
 extern crate alloc;
 
 use alloc::string::String;

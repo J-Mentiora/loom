@@ -2,8 +2,8 @@
 //! constant member; assert garbage rejection.
 
 use super::profile_registry::{
-    is_known_budget_key, is_known_network_mode, is_known_profile,
-    KNOWN_BUDGET_KEYS, KNOWN_NETWORK_MODES, KNOWN_PROFILES,
+    is_known_budget_key, is_known_network_mode, is_known_profile, KNOWN_BUDGET_KEYS,
+    KNOWN_NETWORK_MODES, KNOWN_PROFILES,
 };
 
 #[test]

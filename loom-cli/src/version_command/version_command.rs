@@ -56,8 +56,7 @@ pub fn resolve() -> VersionInfo {
 /// stdout via the default `OutputFormatter` path. Bypasses `RpcClient`.
 pub fn print() -> Result<(), CliError> {
     let info = resolve();
-    let json =
-        serde_json::to_string(&info).map_err(|e| CliError::Internal(e.to_string()))?;
+    let json = serde_json::to_string(&info).map_err(|e| CliError::Internal(e.to_string()))?;
     println!("{json}");
     Ok(())
 }

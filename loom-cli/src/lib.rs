@@ -7,19 +7,20 @@ pub mod error {
 }
 
 // ---- Module declarations (23) ----
-pub mod benchmark_commands;
 pub mod action_commands;
-pub mod import_commands;
 pub mod admin_commands;
 pub mod auth_manager;
+pub mod benchmark_commands;
 pub mod chromium_downloader;
 pub mod chromium_pin;
-pub mod cli_config;        // Phase 5.3 system dir is `ConfigResolver`; renamed for crate path consistency.
+pub mod cli_config; // Phase 5.3 system dir is `ConfigResolver`; renamed for crate path consistency.
+pub mod cli_main;
 pub mod cli_observability;
 pub mod command_router;
 pub mod doctor_runner;
 pub mod error_mapper;
 pub mod help_generator;
+pub mod import_commands;
 pub mod launchd_plist_writer;
 pub mod mcp_delegate;
 pub mod output_formatter;
@@ -31,8 +32,7 @@ pub mod serve_runner;
 pub mod session_commands;
 pub mod url_allowlist;
 pub mod vault_commands;
-pub mod version_command;
-pub mod cli_main;   // Phase 5.3 system dir is `main`; renamed `cli_main` for crate path consistency.
+pub mod version_command; // Phase 5.3 system dir is `main`; renamed `cli_main` for crate path consistency.
 
 #[cfg(any(test, feature = "mock"))]
 pub mod mocks;

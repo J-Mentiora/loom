@@ -4,8 +4,7 @@
 // field set, SR-RPC-05 latency partition fields, redaction surface.
 
 use super::rpc_observability::{
-    RpcObservability, RpcObservabilityApi, RpcSpan, SpanGuard,
-    ValidationOutcome,
+    RpcObservability, RpcObservabilityApi, RpcSpan, SpanGuard, ValidationOutcome,
 };
 use std::sync::Arc;
 
@@ -52,11 +51,7 @@ fn observability_api_has_start_span_signature() {
 
 #[test]
 fn observability_api_supports_record_validation() {
-    fn _ck<O: RpcObservabilityApi>(
-        o: &O,
-        g: &mut SpanGuard,
-        v: ValidationOutcome,
-    ) {
+    fn _ck<O: RpcObservabilityApi>(o: &O, g: &mut SpanGuard, v: ValidationOutcome) {
         o.record_validation(g, v)
     }
     let _ = _ck::<RpcObservability>;

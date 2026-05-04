@@ -14,9 +14,7 @@ use tempfile::tempdir;
 /// Create a temp schema directory with N method JSON files.
 /// Each file is named `<method>.json` and contains
 /// `{"request": {...}, "response": {...}}`.
-fn setup_schema_dir(
-    methods: &[(&str, serde_json::Value, serde_json::Value)],
-) -> tempfile::TempDir {
+fn setup_schema_dir(methods: &[(&str, serde_json::Value, serde_json::Value)]) -> tempfile::TempDir {
     let dir = tempdir().unwrap();
     for (method, req, resp) in methods {
         let file = dir.path().join(format!("{}.json", method));
@@ -73,11 +71,17 @@ fn rpc_schemas_returns_per_method_schemas() {
     let names: Vec<&str> = snapshot.methods.iter().map(|m| m.method.as_str()).collect();
     let mut sorted = names.clone();
     sorted.sort();
-    assert_eq!(names, sorted, "AC-PROTO-02.2: methods must be sorted by name");
+    assert_eq!(
+        names, sorted,
+        "AC-PROTO-02.2: methods must be sorted by name"
+    );
 
     // Verify session.create is present.
     assert!(
-        snapshot.methods.iter().any(|m| m.method == "session.create"),
+        snapshot
+            .methods
+            .iter()
+            .any(|m| m.method == "session.create"),
         "AC-PROTO-02.2: session.create must appear in registry"
     );
 }
@@ -101,9 +105,15 @@ fn lookup_request_schema_returns_correct_entry() {
     )]);
     let provider = SchemaProvider::load_at_startup(&dir.path().to_path_buf()).unwrap();
     let schema = provider.lookup_request_schema("session.create");
-    assert!(schema.is_some(), "lookup_request_schema must find session.create");
+    assert!(
+        schema.is_some(),
+        "lookup_request_schema must find session.create"
+    );
     let missing = provider.lookup_request_schema("not.a.method");
-    assert!(missing.is_none(), "lookup_request_schema must return None for unknown methods");
+    assert!(
+        missing.is_none(),
+        "lookup_request_schema must return None for unknown methods"
+    );
 }
 
 #[test]

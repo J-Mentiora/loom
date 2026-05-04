@@ -80,18 +80,32 @@ fn make_session_manager(
     mw: Arc<dyn ManifestWriter>,
     obs: Arc<Observability>,
 ) -> Arc<LocalSessionManager> {
-    let cs: Arc<dyn ContentStore> =
-        Arc::new(LocalContentStore::new(tmp.path().join("sm-store"), obs.clone()));
+    let cs: Arc<dyn ContentStore> = Arc::new(LocalContentStore::new(
+        tmp.path().join("sm-store"),
+        obs.clone(),
+    ));
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
-    LocalSessionManager::new(cs, mw, v, be, dh, obs, 0, std::path::PathBuf::from("/tmp/loom-test/sessions"))
+    LocalSessionManager::new(
+        cs,
+        mw,
+        v,
+        be,
+        dh,
+        obs,
+        0,
+        std::path::PathBuf::from("/tmp/loom-test/sessions"),
+    )
 }
 
 fn sha256_hex(b: &[u8]) -> String {
     let d = digest(&SHA256, b);
-    d.as_ref().iter().map(|byte| format!("{byte:02x}")).collect()
+    d.as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Build a click receipt bytes using ReceiptBuilder (schema-drift-proof).
@@ -110,12 +124,7 @@ fn click_bytes(action_id: u64, dom_hash: &str) -> Vec<u8> {
 /// Write a WAL with Header + N click ActionReceipts + SessionTerminal.
 /// Each entry's prev_hash = sha256(raw_bytes_of_previous_line) so that
 /// LocalManifestWriter::validate() passes.
-fn write_click_session(
-    sessions_root: &Path,
-    session_id: &str,
-    n: u64,
-    dom_hash: &str,
-) {
+fn write_click_session(sessions_root: &Path, session_id: &str, n: u64, dom_hash: &str) {
     let session_dir = sessions_root.join(session_id);
     fs::create_dir_all(&session_dir).unwrap();
 
@@ -152,7 +161,10 @@ fn write_click_session(
 
 /// Build navigate-receipt bytes via ReceiptBuilder + post-set tier-2 fields.
 fn navigate_bytes(action_id: u64, url: &str, events: Vec<NetworkEvent>) -> Vec<u8> {
-    let blob = ContentRef { sha256: "0".repeat(64), size_bytes: 0 };
+    let blob = ContentRef {
+        sha256: "0".repeat(64),
+        size_bytes: 0,
+    };
     let mut p = ReceiptBuilder::build_navigate_receipt(
         action_id.to_string(),
         action_id * 1_000,
@@ -227,11 +239,19 @@ fn test_typed_receipt_drives_agent_control_flow() {
     let _cs = make_content_store(&tmp, obs.clone());
 
     let dom_hash = sha256_hex(b"stable-dom-state");
-    write_click_session(tmp.path().join("sessions").as_path(), "01USAGT01AGENT", 10, &dom_hash);
+    write_click_session(
+        tmp.path().join("sessions").as_path(),
+        "01USAGT01AGENT",
+        10,
+        &dom_hash,
+    );
 
     // Parse all 10 receipts; verify each has dom_after_hash field
     let wal = fs::read_to_string(
-        tmp.path().join("sessions").join("01USAGT01AGENT").join("manifest.wal"),
+        tmp.path()
+            .join("sessions")
+            .join("01USAGT01AGENT")
+            .join("manifest.wal"),
     )
     .unwrap();
 
@@ -239,7 +259,11 @@ fn test_typed_receipt_drives_agent_control_flow() {
         .lines()
         .filter_map(|l| serde_json::from_str::<ManifestEntry>(l).ok())
         .filter_map(|e| {
-            if let ManifestEntry::ActionReceipt { receipt_canonical_bytes, .. } = e {
+            if let ManifestEntry::ActionReceipt {
+                receipt_canonical_bytes,
+                ..
+            } = e
+            {
                 serde_json::from_slice(&receipt_canonical_bytes).ok()
             } else {
                 None
@@ -261,8 +285,11 @@ fn test_typed_receipt_drives_agent_control_flow() {
             "receipt[{i}] dom_after_hash must be stable (same DOM state)"
         );
         // Agent never needs to inspect screenshot — only dom_after_hash
-        assert!(!r.get("screenshot_after_blob_ref").is_some_and(|v| v.is_string()),
-            "receipt[{i}] must not require screenshot inspection for control flow");
+        assert!(
+            !r.get("screenshot_after_blob_ref")
+                .is_some_and(|v| v.is_string()),
+            "receipt[{i}] must not require screenshot inspection for control flow"
+        );
     }
 }
 
@@ -308,10 +335,21 @@ fn test_agent_never_sees_raw_secret_in_manifest() {
     // Every credential use shows grant-token mediation, not raw secret
     let has_grant_issued = wal.lines().any(|l| {
         serde_json::from_str::<ManifestEntry>(l)
-            .map(|e| matches!(e, ManifestEntry::AuditEntry { audit_kind: AuditKind::GrantIssued, .. }))
+            .map(|e| {
+                matches!(
+                    e,
+                    ManifestEntry::AuditEntry {
+                        audit_kind: AuditKind::GrantIssued,
+                        ..
+                    }
+                )
+            })
             .unwrap_or(false)
     });
-    assert!(has_grant_issued, "manifest must contain GrantIssued audit entry");
+    assert!(
+        has_grant_issued,
+        "manifest must contain GrantIssued audit entry"
+    );
 }
 
 // ── AC-US-AGT-04.1 — Runaway tab killed by budget ────────────────────────────
@@ -330,7 +368,10 @@ fn test_runaway_tab_killed_by_js_heap_budget() {
     be.register_session(
         sid.clone(),
         Arc::clone(&counters),
-        BudgetLimits { js_heap_bytes: 1, ..BudgetLimits::default() },
+        BudgetLimits {
+            js_heap_bytes: 1,
+            ..BudgetLimits::default()
+        },
         kill,
     );
 
@@ -338,13 +379,22 @@ fn test_runaway_tab_killed_by_js_heap_budget() {
     let result = be.account(sid.clone(), ResourceKind::JsHeap, 2);
 
     // Budget exceeded — kill callback fires
-    assert!(result.is_err(), "account must return error when budget exceeded");
+    assert!(
+        result.is_err(),
+        "account must return error when budget exceeded"
+    );
     assert_eq!(result.unwrap_err().code, LoomErrorCode::BudgetExceeded);
 
     let log = kill_log.lock().unwrap();
     assert_eq!(log.len(), 1, "kill callback must fire exactly once");
     assert!(
-        matches!(log[0], KillReason::BudgetExceeded { kind: ResourceKind::JsHeap, .. }),
+        matches!(
+            log[0],
+            KillReason::BudgetExceeded {
+                kind: ResourceKind::JsHeap,
+                ..
+            }
+        ),
         "kill reason must be JsHeap budget exceeded"
     );
 }
@@ -358,43 +408,54 @@ fn test_all_documented_error_codes_are_matchable() {
     // Kept in sync with loom-shared/src/error_format.rs; tools/lint-error-codes.py
     // provides a second coverage layer.
     const WIRE_CODES: &[(&str, LoomErrorCode)] = &[
-        ("session-not-found",               LoomErrorCode::SessionNotFound),
-        ("session-already-closed",          LoomErrorCode::SessionAlreadyClosed),
-        ("session-aborted",                 LoomErrorCode::SessionAborted),
-        ("session-killed",                  LoomErrorCode::SessionKilled),
-        ("surface-trap",                    LoomErrorCode::SurfaceTrap),
-        ("vault-rejection",                 LoomErrorCode::VaultRejection),
-        ("vault-grant-expired",             LoomErrorCode::VaultGrantExpired),
-        ("vault-grant-revoked",             LoomErrorCode::VaultGrantRevoked),
-        ("vault-unknown-label",             LoomErrorCode::VaultUnknownLabel),
-        ("budget-exceeded",                 LoomErrorCode::BudgetExceeded),
-        ("budget-rate-limited",             LoomErrorCode::BudgetRateLimited),
-        ("store-integrity-failed",          LoomErrorCode::StoreIntegrityFailed),
-        ("store-not-found",                 LoomErrorCode::StoreNotFound),
-        ("store-full-no-evictable",         LoomErrorCode::StoreFullNoEvictable),
-        ("manifest-corrupt",                LoomErrorCode::ManifestCorrupt),
-        ("replay-divergence",               LoomErrorCode::ReplayDivergence),
-        ("replay-missing-blob",             LoomErrorCode::ReplayMissingBlob),
-        ("llm-cache-miss",                  LoomErrorCode::LlmCacheMiss),
-        ("shim-failure",                    LoomErrorCode::ShimFailure),
-        ("shim-timeout",                    LoomErrorCode::ShimTimeout),
-        ("shim-breaker-open",               LoomErrorCode::ShimBreakerOpen),
-        ("rpc-invalid-request",             LoomErrorCode::RpcInvalidRequest),
-        ("rpc-auth-failed",                 LoomErrorCode::RpcAuthFailed),
-        ("rpc-schema-violation",            LoomErrorCode::RpcSchemaViolation),
-        ("io",                              LoomErrorCode::Io),
-        ("schema_violation",                LoomErrorCode::SchemaViolation),
-        ("safe_profile_download_blocked",   LoomErrorCode::SafeProfileDownloadBlocked),
-        ("invalid-argument",                LoomErrorCode::InvalidArgument),
-        ("unsupported",                     LoomErrorCode::Unsupported),
-        ("internal",                        LoomErrorCode::Internal),
+        ("session-not-found", LoomErrorCode::SessionNotFound),
+        (
+            "session-already-closed",
+            LoomErrorCode::SessionAlreadyClosed,
+        ),
+        ("session-aborted", LoomErrorCode::SessionAborted),
+        ("session-killed", LoomErrorCode::SessionKilled),
+        ("surface-trap", LoomErrorCode::SurfaceTrap),
+        ("vault-rejection", LoomErrorCode::VaultRejection),
+        ("vault-grant-expired", LoomErrorCode::VaultGrantExpired),
+        ("vault-grant-revoked", LoomErrorCode::VaultGrantRevoked),
+        ("vault-unknown-label", LoomErrorCode::VaultUnknownLabel),
+        ("budget-exceeded", LoomErrorCode::BudgetExceeded),
+        ("budget-rate-limited", LoomErrorCode::BudgetRateLimited),
+        (
+            "store-integrity-failed",
+            LoomErrorCode::StoreIntegrityFailed,
+        ),
+        ("store-not-found", LoomErrorCode::StoreNotFound),
+        (
+            "store-full-no-evictable",
+            LoomErrorCode::StoreFullNoEvictable,
+        ),
+        ("manifest-corrupt", LoomErrorCode::ManifestCorrupt),
+        ("replay-divergence", LoomErrorCode::ReplayDivergence),
+        ("replay-missing-blob", LoomErrorCode::ReplayMissingBlob),
+        ("llm-cache-miss", LoomErrorCode::LlmCacheMiss),
+        ("shim-failure", LoomErrorCode::ShimFailure),
+        ("shim-timeout", LoomErrorCode::ShimTimeout),
+        ("shim-breaker-open", LoomErrorCode::ShimBreakerOpen),
+        ("rpc-invalid-request", LoomErrorCode::RpcInvalidRequest),
+        ("rpc-auth-failed", LoomErrorCode::RpcAuthFailed),
+        ("rpc-schema-violation", LoomErrorCode::RpcSchemaViolation),
+        ("io", LoomErrorCode::Io),
+        ("schema_violation", LoomErrorCode::SchemaViolation),
+        (
+            "safe_profile_download_blocked",
+            LoomErrorCode::SafeProfileDownloadBlocked,
+        ),
+        ("invalid-argument", LoomErrorCode::InvalidArgument),
+        ("unsupported", LoomErrorCode::Unsupported),
+        ("internal", LoomErrorCode::Internal),
     ];
 
     for (wire, expected) in WIRE_CODES {
         // Deserialize from wire string (what an agent's match arm sees from RPC/MCP)
-        let deserialized: LoomErrorCode =
-            serde_json::from_value(serde_json::json!(wire))
-                .unwrap_or_else(|e| panic!("failed to deserialize {:?}: {e}", wire));
+        let deserialized: LoomErrorCode = serde_json::from_value(serde_json::json!(wire))
+            .unwrap_or_else(|e| panic!("failed to deserialize {:?}: {e}", wire));
         assert_eq!(
             &deserialized, expected,
             "serde round-trip failed for wire code {:?}",
@@ -423,7 +484,12 @@ fn test_replay_100x_zero_divergence() {
     let sm = make_session_manager(&tmp, mw.clone(), obs.clone());
 
     let dom_hash = sha256_hex(b"eval-01-dom");
-    write_click_session(tmp.path().join("sessions").as_path(), "01USEVAL01SRC", 3, &dom_hash);
+    write_click_session(
+        tmp.path().join("sessions").as_path(),
+        "01USEVAL01SRC",
+        3,
+        &dom_hash,
+    );
 
     let engine = LocalReplayEngine::new(
         cs.clone(),
@@ -447,7 +513,10 @@ fn test_replay_100x_zero_divergence() {
             .diff(
                 SessionId("01USEVAL01SRC".to_string()),
                 replay_id,
-                DiffOpts { exclude_screenshots: true, include_audit_entries: false },
+                DiffOpts {
+                    exclude_screenshots: true,
+                    include_audit_entries: false,
+                },
             )
             .unwrap_or_else(|e| panic!("diff {i} failed: {e:?}"));
 
@@ -476,20 +545,24 @@ fn test_diff_reports_dom_hash_change() {
     write_click_session(&sessions_root, "01USEVAL02DAY0", 1, &hash_day_n);
     write_click_session(&sessions_root, "01USEVAL02DAY1", 1, &hash_day_n1);
 
-    let engine = LocalReplayEngine::new(
-        cs, mw.clone(), make_harness(mw), obs, sm, sessions_root,
-    );
+    let engine = LocalReplayEngine::new(cs, mw.clone(), make_harness(mw), obs, sm, sessions_root);
 
     let diff = engine
         .diff(
             SessionId("01USEVAL02DAY0".to_string()),
             SessionId("01USEVAL02DAY1".to_string()),
-            DiffOpts { exclude_screenshots: true, include_audit_entries: false },
+            DiffOpts {
+                exclude_screenshots: true,
+                include_audit_entries: false,
+            },
         )
         .unwrap();
 
     // The diff must identify the dom_after_hash divergence
-    let dom_diff = diff.field_diffs.iter().find(|d| d.field_path.contains("dom_after_hash"));
+    let dom_diff = diff
+        .field_diffs
+        .iter()
+        .find(|d| d.field_path.contains("dom_after_hash"));
     assert!(
         dom_diff.is_some(),
         "diff must contain a field_diff for dom_after_hash (button label change); got: {:?}",
@@ -525,25 +598,44 @@ fn test_har_export_is_har_12_valid() {
     let bytes = exporter.export_har("01USEVAL03HAR").unwrap();
 
     // Must parse as valid JSON (Charles Proxy / Chrome DevTools requirement)
-    let har: serde_json::Value = serde_json::from_slice(&bytes)
-        .expect("HAR output must be valid JSON");
+    let har: serde_json::Value =
+        serde_json::from_slice(&bytes).expect("HAR output must be valid JSON");
 
     // HAR 1.2 structural requirements
     let log = har["log"].as_object().expect("HAR must have 'log' object");
-    assert_eq!(log["version"].as_str().unwrap(), "1.2", "HAR version must be '1.2'");
+    assert_eq!(
+        log["version"].as_str().unwrap(),
+        "1.2",
+        "HAR version must be '1.2'"
+    );
 
-    let creator = log["creator"].as_object().expect("HAR must have 'creator' object");
+    let creator = log["creator"]
+        .as_object()
+        .expect("HAR must have 'creator' object");
     assert!(creator.contains_key("name"), "creator must have 'name'");
-    assert!(creator.contains_key("version"), "creator must have 'version'");
+    assert!(
+        creator.contains_key("version"),
+        "creator must have 'version'"
+    );
 
-    let entries = log["entries"].as_array().expect("HAR must have 'entries' array");
-    assert!(!entries.is_empty(), "HAR entries must be non-empty (3 click actions)");
+    let entries = log["entries"]
+        .as_array()
+        .expect("HAR must have 'entries' array");
+    assert!(
+        !entries.is_empty(),
+        "HAR entries must be non-empty (3 click actions)"
+    );
 
     // Each entry must have the required HAR fields for tool compatibility
     for (i, entry) in entries.iter().enumerate() {
-        assert!(entry["startedDateTime"].is_string(), "entry[{i}] must have startedDateTime");
+        assert!(
+            entry["startedDateTime"].is_string(),
+            "entry[{i}] must have startedDateTime"
+        );
         assert!(entry["time"].is_number(), "entry[{i}] must have time");
-        let req = entry["request"].as_object().expect("entry[{i}] must have request");
+        let req = entry["request"]
+            .as_object()
+            .expect("entry[{i}] must have request");
         assert!(req["method"].is_string(), "entry[{i}].request.method");
         assert!(req["url"].is_string(), "entry[{i}].request.url");
     }
@@ -566,7 +658,10 @@ fn test_js_heap_budget_kills_within_60s() {
     be.register_session(
         sid.clone(),
         Arc::clone(&counters),
-        BudgetLimits { js_heap_bytes: 1, ..BudgetLimits::default() },
+        BudgetLimits {
+            js_heap_bytes: 1,
+            ..BudgetLimits::default()
+        },
         kill,
     );
 
@@ -585,7 +680,13 @@ fn test_js_heap_budget_kills_within_60s() {
     let log = kill_log.lock().unwrap();
     assert_eq!(log.len(), 1, "kill callback must fire exactly once");
     assert!(
-        matches!(log[0], KillReason::BudgetExceeded { kind: ResourceKind::JsHeap, .. }),
+        matches!(
+            log[0],
+            KillReason::BudgetExceeded {
+                kind: ResourceKind::JsHeap,
+                ..
+            }
+        ),
         "kill reason must be JsHeap budget exceeded"
     );
 }
@@ -638,7 +739,9 @@ fn test_json_manifest_readable_without_binary_blobs() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     // Must render a human-meaningful timeline without parsing binary blobs
-    let manifest = v["manifest"].as_object().expect("export_json must have 'manifest' key");
+    let manifest = v["manifest"]
+        .as_object()
+        .expect("export_json must have 'manifest' key");
     assert!(
         manifest.contains_key("entries") || !manifest.is_empty(),
         "manifest must contain action timeline entries"
@@ -662,7 +765,7 @@ fn test_evaluate_receipt_return_value_is_typed_json() {
         "eval-1".to_string(),
         1_000,
         Some(typed_value.to_string()), // return_value_json is canonical-JSON string of value
-        None, // return_value_blob_ref unset for inline values <= 64KB
+        None,                          // return_value_blob_ref unset for inline values <= 64KB
         Vec::new(),
     );
 
@@ -670,7 +773,8 @@ fn test_evaluate_receipt_return_value_is_typed_json() {
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     // Consumer parses return_value_json as typed serde_json::Value
-    let return_value_str = v["return_value_json"].as_str()
+    let return_value_str = v["return_value_json"]
+        .as_str()
         .expect("evaluate receipt must have return_value_json string");
     let typed: serde_json::Value = serde_json::from_str(return_value_str)
         .expect("return_value_json must be valid JSON (typed, not screenshot)");
@@ -700,18 +804,21 @@ fn test_inspect_at_action_5_returns_entries_0_to_5() {
     // Build a 10-action session (action_ids 0..9)
     write_click_session(&sessions_root, "01PARITY04INSPECT", 10, &dom_hash);
 
-    let engine = LocalReplayEngine::new(
-        cs, mw.clone(), make_harness(mw), obs, sm, sessions_root,
-    );
+    let engine = LocalReplayEngine::new(cs, mw.clone(), make_harness(mw), obs, sm, sessions_root);
 
     // inspect at action 5 → must return entries 0..=5 (6 entries)
     let result = engine
         .inspect(SessionId("01PARITY04INSPECT".to_string()), Some(5))
         .unwrap();
 
-    let entries = result["entries"].as_array()
+    let entries = result["entries"]
+        .as_array()
         .expect("inspect result must have 'entries' array");
-    assert_eq!(entries.len(), 6, "inspect at_action=5 must return 6 entries (0..=5)");
+    assert_eq!(
+        entries.len(),
+        6,
+        "inspect at_action=5 must return 6 entries (0..=5)"
+    );
 
     // Verify action IDs are 0..=5
     for (i, entry) in entries.iter().enumerate() {
@@ -774,7 +881,10 @@ fn test_vault_audit_trail_covers_five_grants() {
         .filter(|e| {
             matches!(
                 e,
-                ManifestEntry::AuditEntry { audit_kind: AuditKind::GrantIssued, .. }
+                ManifestEntry::AuditEntry {
+                    audit_kind: AuditKind::GrantIssued,
+                    ..
+                }
             )
         })
         .count();

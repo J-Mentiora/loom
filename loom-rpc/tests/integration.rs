@@ -81,13 +81,16 @@ async fn start_server() -> (TestServer, tokio::task::JoinHandle<()>) {
 
     // Stub CoreServiceAdapter using the empty-schemas path
     let core_bridge = Arc::new(NoopCoreBridge);
-    let core_adapter = loom_rpc::core_service_adapter::core_service_adapter::CoreServiceAdapter::new(
-        core_bridge as Arc<dyn loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge>,
-    );
-    let host_adapter = loom_rpc::host_service_adapter::host_service_adapter::HostServiceAdapter::new(
-        Arc::new(StubHostBridge)
-            as Arc<dyn loom_rpc::host_service_adapter::host_service_adapter::WasmHostBridge>,
-    );
+    let core_adapter =
+        loom_rpc::core_service_adapter::core_service_adapter::CoreServiceAdapter::new(
+            core_bridge
+                as Arc<dyn loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge>,
+        );
+    let host_adapter =
+        loom_rpc::host_service_adapter::host_service_adapter::HostServiceAdapter::new(Arc::new(
+            StubHostBridge,
+        )
+            as Arc<dyn loom_rpc::host_service_adapter::host_service_adapter::WasmHostBridge>);
 
     let handlers = RpcHandlers::new(
         core_adapter,
@@ -177,8 +180,10 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
     }
     fn list_sessions_info(
         &self,
-    ) -> Result<Vec<(String, String, u64)>, loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
-    {
+    ) -> Result<
+        Vec<(String, String, u64)>,
+        loom_rpc::core_service_adapter::core_service_adapter::AdapterError,
+    > {
         Ok(vec![])
     }
     fn replay_session_to_id(
@@ -192,20 +197,25 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _a: &str,
         _b: &str,
         _i: bool,
-    ) -> Result<serde_json::Value, loom_rpc::core_service_adapter::core_service_adapter::AdapterError> {
+    ) -> Result<serde_json::Value, loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
+    {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
     }
     fn inspect_session_json(
         &self,
         _s: &str,
         _at: Option<u64>,
-    ) -> Result<serde_json::Value, loom_rpc::core_service_adapter::core_service_adapter::AdapterError> {
+    ) -> Result<serde_json::Value, loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
+    {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
     }
     fn validate_session_result(
         &self,
         _s: &str,
-    ) -> Result<(bool, Vec<String>), loom_rpc::core_service_adapter::core_service_adapter::AdapterError> {
+    ) -> Result<
+        (bool, Vec<String>),
+        loom_rpc::core_service_adapter::core_service_adapter::AdapterError,
+    > {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
     }
     fn import_playwright_from_bytes(
@@ -225,7 +235,8 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _: Option<u64>,
         _: Option<serde_json::Value>,
         _: bool,
-    ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::AdapterError> {
+    ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
+    {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
     }
     fn close_session_raw(

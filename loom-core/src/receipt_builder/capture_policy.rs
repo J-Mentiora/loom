@@ -164,7 +164,11 @@ mod tests {
     #[test]
     fn keep_field_decision_table_is_exhaustive() {
         let scopes = [CaptureScope::Manifest, CaptureScope::Wire];
-        let profiles = [CaptureProfile::Default, CaptureProfile::Full, CaptureProfile::Minimal];
+        let profiles = [
+            CaptureProfile::Default,
+            CaptureProfile::Full,
+            CaptureProfile::Minimal,
+        ];
         let fields = [
             CaptureField::Url,
             CaptureField::FinalUrl,

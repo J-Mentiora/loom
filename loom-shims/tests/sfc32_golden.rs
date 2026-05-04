@@ -77,8 +77,11 @@ fn sfc32_seed_42_vs_seed_0_diverge_immediately() {
     // AC-RNGDET-02: different seeds produce different output streams.
     let mut a = Sfc32::new(0);
     let mut b = Sfc32::new(42);
-    assert_ne!(a.next_f64(), b.next_f64(),
-        "different seeds MUST produce different first output");
+    assert_ne!(
+        a.next_f64(),
+        b.next_f64(),
+        "different seeds MUST produce different first output"
+    );
 }
 
 #[test]
@@ -87,8 +90,11 @@ fn sfc32_seed_42_is_deterministic_across_runs() {
     let mut a = Sfc32::new(42);
     let mut b = Sfc32::new(42);
     for _ in 0..1000 {
-        assert_eq!(a.next_f64(), b.next_f64(),
-            "same seed MUST produce identical streams");
+        assert_eq!(
+            a.next_f64(),
+            b.next_f64(),
+            "same seed MUST produce identical streams"
+        );
     }
 }
 
@@ -100,8 +106,12 @@ fn rendered_template_carries_seed_42_into_initial_state_bytes() {
     // parse into u32 — proving the seed bits actually reach the page.
     let template = include_str!("../assets/determinism_init.js");
     let rendered = render_determinism_script(template, 42, 0);
-    assert!(rendered.contains("var _c = (0x0000002a) | 0;"),
-        "_c initializer must carry seed_lo=0x2a");
-    assert!(rendered.contains("var _d = (0x00000000) | 0;"),
-        "_d initializer must carry seed_hi=0");
+    assert!(
+        rendered.contains("var _c = (0x0000002a) | 0;"),
+        "_c initializer must carry seed_lo=0x2a"
+    );
+    assert!(
+        rendered.contains("var _d = (0x00000000) | 0;"),
+        "_d initializer must carry seed_hi=0"
+    );
 }

@@ -8,56 +8,39 @@ use super::safety::{PolicyViolation, SafetyPolicy, SafetyProfile};
 #[test]
 fn safe_profile_blocks_cookie_write() {
     // AC-WEB-07.1: action.evaluate({js: "document.cookie = ''"}) is blocked
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Safe,
-        "document.cookie = ''",
-    );
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document.cookie = ''");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
 
 #[test]
 fn safe_profile_blocks_local_storage() {
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Safe,
-        "localStorage.setItem('k', 'v')",
-    );
+    let result =
+        SafetyPolicy::check_evaluate(SafetyProfile::Safe, "localStorage.setItem('k', 'v')");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
 
 #[test]
 fn safe_profile_blocks_session_storage() {
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Safe,
-        "sessionStorage.clear()",
-    );
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "sessionStorage.clear()");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
 
 #[test]
 fn safe_profile_blocks_eval() {
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Safe,
-        "eval('alert(1)')",
-    );
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "eval('alert(1)')");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
 
 #[test]
 fn default_profile_allows_destructive_expressions() {
     // AC-WEB-07.1: only safe profile blocks; default profile is unrestricted
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Default,
-        "document.cookie = ''",
-    );
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Default, "document.cookie = ''");
     assert_eq!(result, None);
 }
 
 #[test]
 fn safe_profile_allows_benign_expression() {
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Safe,
-        "document.title",
-    );
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document.title");
     assert_eq!(result, None);
 }
 
@@ -101,10 +84,7 @@ fn safe_profile_blocks_console_log_of_window_location_intentional_defense_in_dep
     //
     // This test pins the broad-match behavior so it can't be silently
     // relaxed (decisions.md Q10).
-    let result = SafetyPolicy::check_evaluate(
-        SafetyProfile::Safe,
-        "console.log(window.location)",
-    );
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "console.log(window.location)");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
 

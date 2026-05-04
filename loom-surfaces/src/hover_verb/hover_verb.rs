@@ -7,7 +7,6 @@
 // - **No tooltip-wait built in.** Hover is synchronous; if the agent
 //   wants tooltip text, follow with a `wait` verb.
 
-
 extern crate alloc;
 
 use alloc::string::String;

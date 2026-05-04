@@ -74,7 +74,8 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         &self,
         _: &str,
         _: &str,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::ExportInfo, LoomErrorCode> {
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::ExportInfo, LoomErrorCode>
+    {
         Err(LoomErrorCode::InternalError)
     }
     fn get_export_bytes(&self, _: &str) -> Result<Vec<u8>, LoomErrorCode> {
@@ -107,8 +108,10 @@ impl CoreFacadeBridge for RecordingCoreBridge {
     fn import_playwright_from_bytes(
         &self,
         _: &[u8],
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::PlaywrightImportInfo, LoomErrorCode>
-    {
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::PlaywrightImportInfo,
+        LoomErrorCode,
+    > {
         Err(LoomErrorCode::InternalError)
     }
     fn create_session_raw(
@@ -186,7 +189,8 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         &self,
         _: Option<u64>,
         _: Option<u64>,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, LoomErrorCode> {
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, LoomErrorCode>
+    {
         Ok(loom_rpc::core_service_adapter::core_service_adapter::GcRunReport::default())
     }
 }

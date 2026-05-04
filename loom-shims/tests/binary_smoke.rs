@@ -25,9 +25,7 @@
 
 #![cfg(feature = "fake-chromium-bin")]
 
-use loom_shared::shim_protocol::{
-    ciborium_to_vec, ShimRequest, ShimResponse, LENGTH_PREFIX_BYTES,
-};
+use loom_shared::shim_protocol::{ciborium_to_vec, ShimRequest, ShimResponse, LENGTH_PREFIX_BYTES};
 use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
@@ -42,14 +40,7 @@ const FAKE_CHROMIUM_BIN: &str = env!("CARGO_BIN_EXE_fake-chromium");
 /// shim (child) side.
 fn make_socketpair() -> (RawFd, RawFd) {
     let mut fds = [0i32; 2];
-    let rc = unsafe {
-        libc::socketpair(
-            libc::AF_UNIX,
-            libc::SOCK_STREAM,
-            0,
-            fds.as_mut_ptr(),
-        )
-    };
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
     if rc != 0 {
         panic!("socketpair failed: {}", std::io::Error::last_os_error());
     }
@@ -166,4 +157,3 @@ fn socketpair_smoke_matches_libc_signature() {
         libc::close(b);
     }
 }
-

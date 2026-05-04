@@ -21,8 +21,8 @@ use tempfile::TempDir;
 fn schema_cache_from_builtins() -> (SchemaCache, TempDir) {
     let dir = TempDir::new().unwrap();
     for (method, json_str) in BUILTIN_SCHEMAS {
-        let parsed: serde_json::Value = serde_json::from_str(json_str)
-            .expect("BUILTIN_SCHEMAS entries must parse as JSON");
+        let parsed: serde_json::Value =
+            serde_json::from_str(json_str).expect("BUILTIN_SCHEMAS entries must parse as JSON");
         std::fs::write(
             dir.path().join(format!("{method}.json")),
             serde_json::to_string_pretty(&parsed).unwrap(),

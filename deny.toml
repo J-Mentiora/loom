@@ -8,12 +8,16 @@ all-features = false
 no-default-features = false
 
 [advisories]
+# cargo-deny v2 schema:
+#   `vulnerability` and `notice` were removed (severity is implicit).
+#   `unmaintained` is now scope, not severity. "all" matches the prior
+#     behavior of warning on every unmaintained crate (and the `ignore`
+#     list below still suppresses individual cases).
+#   `yanked` remains a severity.
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
+unmaintained = "all"
 yanked = "warn"
-notice = "warn"
 ignore = [
     # RUSTSEC-2025-0052: async-std discontinued (unmaintained).
     # Transitive via chromiumoxide → loom-shims only (out-of-process Chromium
@@ -24,7 +28,14 @@ ignore = [
 ]
 
 [licenses]
-unlicensed = "deny"
+# cargo-deny v2 schema:
+#   `unlicensed`, `copyleft`, `default`, and `allow-osi-fsf-free` were
+#   removed (see https://github.com/EmbarkStudios/cargo-deny/pull/611).
+#   v2 evaluates licenses purely against `allow`: anything not on the
+#   list (including unlicensed crates and copyleft licenses we didn't
+#   explicitly opt into) is denied. Behavior is equivalent to the prior
+#   `default = "deny"` + `unlicensed = "deny"` + `copyleft = "warn"`
+#   when our `allow` list deliberately excludes copyleft licenses.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -37,9 +48,6 @@ allow = [
     "MPL-2.0",
     "Zlib",
 ]
-copyleft = "warn"
-allow-osi-fsf-free = "neither"
-default = "deny"
 confidence-threshold = 0.8
 
 [bans]

@@ -8,6 +8,8 @@
 //   AC-DET-04.1: test_determinism_init_js_markers_for_animation_disabling
 //   AC-DET-06.1: test_supervisor_sets_lc_all_in_child_env (stub)
 
+use ciborium::value::Value;
+use loom_shared::types::{EpochMs, Seed};
 use loom_shims::cdp_connection::cdp_connection::{
     CdpConnection, CdpError, EventFilter, EventHandler, EventRegistration,
 };
@@ -16,8 +18,6 @@ use loom_shims::determinism_injector::determinism_injector::{
     DeterminismError, DeterminismInjector, ADD_SCRIPT_METHOD,
 };
 use loom_shims::ipc_endpoint::ipc_endpoint::{CdpMessage, TargetId};
-use loom_shared::types::{EpochMs, Seed};
-use ciborium::value::Value;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -31,14 +31,20 @@ impl RecordingCdp {
     fn new() -> Arc<Self> {
         Arc::new(Self {
             calls: Mutex::new(Vec::new()),
-            response: Value::Map(vec![
-                (Value::Text("identifier".into()), Value::Text("script-id-1".into()))
-            ]),
+            response: Value::Map(vec![(
+                Value::Text("identifier".into()),
+                Value::Text("script-id-1".into()),
+            )]),
         })
     }
 
     fn recorded_methods(&self) -> Vec<String> {
-        self.calls.lock().unwrap().iter().map(|(_, m, _)| m.clone()).collect()
+        self.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, m, _)| m.clone())
+            .collect()
     }
 
     /// Return all `source` strings sent via `Page.addScriptToEvaluateOnNewDocument`.
@@ -53,7 +59,11 @@ impl RecordingCdp {
                 m.iter()
                     .find(|(k, _)| k == &Value::Text("source".into()))
                     .and_then(|(_, v)| {
-                        if let Value::Text(s) = v { Some(s.clone()) } else { None }
+                        if let Value::Text(s) = v {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
                     })
             })
             .collect()
@@ -62,20 +72,36 @@ impl RecordingCdp {
 
 #[async_trait::async_trait]
 impl CdpConnection for RecordingCdp {
-    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> { Ok(()) }
+    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> {
+        Ok(())
+    }
 
-    async fn command(&self, target_id: TargetId, msg: CdpMessage, _timeout: Option<Duration>) -> Result<Value, CdpError> {
-        self.calls.lock().unwrap().push((target_id, msg.method.clone(), msg.params));
+    async fn command(
+        &self,
+        target_id: TargetId,
+        msg: CdpMessage,
+        _timeout: Option<Duration>,
+    ) -> Result<Value, CdpError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((target_id, msg.method.clone(), msg.params));
         Ok(self.response.clone())
     }
 
-    fn register_event_handler(&self, _filter: EventFilter, _handler: EventHandler) -> EventRegistration {
+    fn register_event_handler(
+        &self,
+        _filter: EventFilter,
+        _handler: EventHandler,
+    ) -> EventRegistration {
         EventRegistration { handler_id: 0 }
     }
 
     fn invalidate_session(&self) {}
 
-    fn is_connected(&self) -> bool { true }
+    fn is_connected(&self) -> bool {
+        true
+    }
 }
 
 /// A mock CdpConnection that always returns CdpError on `command`.
@@ -83,15 +109,28 @@ struct FailingCdp;
 
 #[async_trait::async_trait]
 impl CdpConnection for FailingCdp {
-    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> { Ok(()) }
-    async fn command(&self, _target_id: TargetId, _msg: CdpMessage, _t: Option<Duration>) -> Result<Value, CdpError> {
+    async fn connect(&self, _ws_url: &str) -> Result<(), CdpError> {
+        Ok(())
+    }
+    async fn command(
+        &self,
+        _target_id: TargetId,
+        _msg: CdpMessage,
+        _t: Option<Duration>,
+    ) -> Result<Value, CdpError> {
         Err(CdpError::Timeout { ms: 0 })
     }
-    fn register_event_handler(&self, _filter: EventFilter, _handler: EventHandler) -> EventRegistration {
+    fn register_event_handler(
+        &self,
+        _filter: EventFilter,
+        _handler: EventHandler,
+    ) -> EventRegistration {
         EventRegistration { handler_id: 0 }
     }
     fn invalidate_session(&self) {}
-    fn is_connected(&self) -> bool { true }
+    fn is_connected(&self) -> bool {
+        true
+    }
 }
 
 /// Test fixture: a minimal determinism template containing the canonical
@@ -106,7 +145,8 @@ fn make_script() -> String {
   Date.now = function() { return _epoch_ms; };
   Math.random = function() { return 0; };
   window.requestAnimationFrame = function(cb) { cb(0); return 0; };
-})();"#.to_string()
+})();"#
+        .to_string()
 }
 
 // === IC-SHIM-05 (KILL): canonical CDP method + runImmediately ===
@@ -116,7 +156,10 @@ async fn test_inject_sends_add_script_method_with_run_immediately_true() {
     let cdp = RecordingCdp::new();
     let injector = ChromiumDeterminismInjector::new(cdp.clone(), make_script());
 
-    injector.inject(1, Seed(0), EpochMs(0)).await.expect("inject should succeed");
+    injector
+        .inject(1, Seed(0), EpochMs(0))
+        .await
+        .expect("inject should succeed");
 
     let methods = cdp.recorded_methods();
     assert!(
@@ -129,7 +172,11 @@ async fn test_inject_sends_add_script_method_with_run_immediately_true() {
     if let Value::Map(m) = params {
         let key = Value::Text("runImmediately".into());
         let v = m.iter().find(|(k, _)| k == &key).map(|(_, v)| v);
-        assert_eq!(v, Some(&Value::Bool(true)), "runImmediately must be true (IC-SHIM-05 KILL)");
+        assert_eq!(
+            v,
+            Some(&Value::Bool(true)),
+            "runImmediately must be true (IC-SHIM-05 KILL)"
+        );
     } else {
         panic!("expected Map params");
     }
@@ -140,12 +187,21 @@ async fn test_inject_idempotent_second_call_is_noop() {
     let cdp = RecordingCdp::new();
     let injector = ChromiumDeterminismInjector::new(cdp.clone(), make_script());
 
-    injector.inject(1, Seed(0), EpochMs(0)).await.expect("first inject");
-    injector.inject(1, Seed(0), EpochMs(0)).await.expect("second inject — must be noop, not error");
+    injector
+        .inject(1, Seed(0), EpochMs(0))
+        .await
+        .expect("first inject");
+    injector
+        .inject(1, Seed(0), EpochMs(0))
+        .await
+        .expect("second inject — must be noop, not error");
 
     let methods = cdp.recorded_methods();
     assert_eq!(
-        methods.iter().filter(|m| m.as_str() == ADD_SCRIPT_METHOD).count(),
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
         1,
         "second inject must be a no-op (only 1 CDP call, not 2)"
     );
@@ -190,8 +246,14 @@ fn test_determinism_init_js_has_animation_markers() {
     // The include_str! embedded script must have animation-disabling markers.
     // This test will use the actual determinism_init.js once it's embedded.
     let script = include_str!("../assets/determinism_init.js");
-    assert!(script.contains("requestAnimationFrame"), "must override requestAnimationFrame");
-    assert!(script.contains("animation-duration"), "must inject CSS animation-duration: 0");
+    assert!(
+        script.contains("requestAnimationFrame"),
+        "must override requestAnimationFrame"
+    );
+    assert!(
+        script.contains("animation-duration"),
+        "must inject CSS animation-duration: 0"
+    );
     assert!(script.contains("Date.now"), "must override Date.now");
     assert!(script.contains("Math.random"), "must override Math.random");
 }
@@ -201,19 +263,31 @@ async fn test_clear_target_removes_from_registry() {
     let cdp = RecordingCdp::new();
     let injector = ChromiumDeterminismInjector::new(cdp, make_script());
 
-    injector.inject(1, Seed(0), EpochMs(0)).await.expect("inject");
+    injector
+        .inject(1, Seed(0), EpochMs(0))
+        .await
+        .expect("inject");
     injector.clear_target(1);
 
     // After clear, the target is no longer registered (next inject should fire CDP again).
     // This is tested indirectly — re-inject after clear should send a new CDP command.
     let cdp2 = RecordingCdp::new();
     let injector2 = ChromiumDeterminismInjector::new(cdp2.clone(), make_script());
-    injector2.inject(1, Seed(0), EpochMs(0)).await.expect("first inject");
+    injector2
+        .inject(1, Seed(0), EpochMs(0))
+        .await
+        .expect("first inject");
     injector2.clear_target(1);
-    injector2.inject(1, Seed(0), EpochMs(0)).await.expect("re-inject after clear");
+    injector2
+        .inject(1, Seed(0), EpochMs(0))
+        .await
+        .expect("re-inject after clear");
     let methods = cdp2.recorded_methods();
     assert_eq!(
-        methods.iter().filter(|m| m.as_str() == ADD_SCRIPT_METHOD).count(),
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
         2,
         "re-inject after clear must send 2 CDP calls total"
     );
@@ -227,15 +301,27 @@ async fn test_clear_target_removes_from_registry() {
 async fn test_inject_substitutes_seed_into_wire_source() {
     let cdp = RecordingCdp::new();
     let injector = ChromiumDeterminismInjector::new(cdp.clone(), make_script());
-    injector.inject(7, Seed(42), EpochMs(1700)).await.expect("inject");
+    injector
+        .inject(7, Seed(42), EpochMs(1700))
+        .await
+        .expect("inject");
 
     let sources = cdp.recorded_inject_sources();
     assert_eq!(sources.len(), 1, "exactly one inject command sent");
     let s = &sources[0];
-    assert!(s.contains("0x0000002a"), "seed_lo=0x2a (42) must appear in rendered source");
-    assert!(s.contains("0x00000000"), "seed_hi=0 must appear (seed fits in u32)");
+    assert!(
+        s.contains("0x0000002a"),
+        "seed_lo=0x2a (42) must appear in rendered source"
+    );
+    assert!(
+        s.contains("0x00000000"),
+        "seed_hi=0 must appear (seed fits in u32)"
+    );
     assert!(s.contains("1700"), "epoch_ms=1700 must appear");
-    assert!(!s.contains("__LOOM_SEED_LO__"), "tokens must be substituted, not present");
+    assert!(
+        !s.contains("__LOOM_SEED_LO__"),
+        "tokens must be substituted, not present"
+    );
     assert!(!s.contains("__LOOM_SEED_HI__"));
     assert!(!s.contains("__LOOM_EPOCH_MS__"));
 }
@@ -253,7 +339,10 @@ async fn test_different_seeds_produce_different_wire_sources() {
 
     let src_a = &cdp_a.recorded_inject_sources()[0];
     let src_b = &cdp_b.recorded_inject_sources()[0];
-    assert_ne!(src_a, src_b, "different seeds must produce different rendered sources");
+    assert_ne!(
+        src_a, src_b,
+        "different seeds must produce different rendered sources"
+    );
 }
 
 /// J.2: when `inject` fails, `per_target_identifiers` is NOT populated, so a
@@ -270,6 +359,8 @@ async fn test_inject_failure_does_not_poison_idempotency_cache() {
     // the second result is also an Err — if the cache had been poisoned
     // we would have got Ok(()) here.
     let r2 = injector.inject(1, Seed(42), EpochMs(0)).await;
-    assert!(matches!(r2, Err(DeterminismError::CdpFailure(_))),
-        "retry must reach CDP after failed first attempt");
+    assert!(
+        matches!(r2, Err(DeterminismError::CdpFailure(_))),
+        "retry must reach CDP after failed first attempt"
+    );
 }

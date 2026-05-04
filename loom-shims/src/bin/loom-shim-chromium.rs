@@ -38,7 +38,9 @@ fn main() -> ExitCode {
     };
     let user_data_dir = std::env::var("LOOM_SHIM_USER_DATA_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir().join(format!("loom-chromium-{}", std::process::id())));
+        .unwrap_or_else(|_| {
+            std::env::temp_dir().join(format!("loom-chromium-{}", std::process::id()))
+        });
 
     let config = loom_shims::supervisor::SupervisorConfig::new(chromium_path, user_data_dir);
 

@@ -6,8 +6,8 @@
 //! that compile for both wasm32 and native targets. No WASM runtime required.
 
 use loom_surfaces::cdp_message_encoder::{
-    CdpMessage, CdpMessageEncoder, PageNavigate, RuntimeEvaluate,
-    CHROMIUM_SHIM_ID, DET_INIT_JS_NAME,
+    CdpMessage, CdpMessageEncoder, PageNavigate, RuntimeEvaluate, CHROMIUM_SHIM_ID,
+    DET_INIT_JS_NAME,
 };
 use loom_surfaces::safety::{PolicyViolation, SafetyPolicy, SafetyProfile, EVALUATE_DENYLIST};
 
@@ -76,7 +76,11 @@ fn test_cdp_message_encoder_page_navigate_produces_cbor() {
         transition_type: "typed".into(),
     });
 
-    assert_eq!(msg.method_name(), "Page.navigate", "method_name must be stable wire identifier");
+    assert_eq!(
+        msg.method_name(),
+        "Page.navigate",
+        "method_name must be stable wire identifier"
+    );
 
     let bytes = CdpMessageEncoder::encode(&msg);
     assert!(!bytes.is_empty(), "encoded CBOR must not be empty");
@@ -106,14 +110,20 @@ fn test_cdp_message_encoder_runtime_evaluate_produces_cbor() {
     assert_eq!(msg.method_name(), "Runtime.evaluate");
 
     let bytes = CdpMessageEncoder::encode(&msg);
-    assert!(!bytes.is_empty(), "RuntimeEvaluate must encode to non-empty CBOR");
+    assert!(
+        !bytes.is_empty(),
+        "RuntimeEvaluate must encode to non-empty CBOR"
+    );
 
     // Encoding for two different messages must differ
     let nav_bytes = CdpMessageEncoder::encode(&CdpMessage::PageNavigate(PageNavigate {
         url: "https://example.com".into(),
         transition_type: "typed".into(),
     }));
-    assert_ne!(bytes, nav_bytes, "different CDP messages must produce different CBOR");
+    assert_ne!(
+        bytes, nav_bytes,
+        "different CDP messages must produce different CBOR"
+    );
 }
 
 // ─── Test 6: Happy — CHROMIUM_SHIM_ID constant is "chromium" ─────────────────

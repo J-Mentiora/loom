@@ -38,7 +38,6 @@
 //   point of HostBindings is that it is the SOLE legitimate path to time,
 //   net, RNG, and storage from inside WASM.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -201,14 +200,19 @@ pub mod mock_host {
         h.update(bytes);
         let hash_bytes = h.finalize();
         let sha256_hex = hex_encode(&hash_bytes);
-        Ok(ContentRef { sha256_hex, size_bytes: bytes.len() as u64 })
+        Ok(ContentRef {
+            sha256_hex,
+            size_bytes: bytes.len() as u64,
+        })
     }
 
     pub fn shim_call_impl(shim_id: &str, msg: &[u8]) -> Result<Vec<u8>, HostError> {
-        CALLS.with(|c| c.borrow_mut().push(HostCall::ShimCall {
-            shim_id: shim_id.to_string(),
-            msg_len: msg.len(),
-        }));
+        CALLS.with(|c| {
+            c.borrow_mut().push(HostCall::ShimCall {
+                shim_id: shim_id.to_string(),
+                msg_len: msg.len(),
+            })
+        });
         Ok(SHIM_RESP.with(|r| r.borrow().clone()))
     }
 

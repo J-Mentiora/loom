@@ -35,3 +35,6 @@ anyhow = { workspace = true }
 [[bin]]
 name = "loom-daemon"
 path = "src/main.rs"
+
+[lints]
+workspace = true

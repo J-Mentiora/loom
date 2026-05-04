@@ -29,7 +29,11 @@ fn build_inject_params_sets_run_immediately_true() {
     let params = build_inject_params("var x = 1;");
     if let Value::Map(m) = params {
         let key = Value::Text("runImmediately".into());
-        let v = m.iter().find(|(k, _)| k == &key).map(|(_, v)| v).expect("runImmediately key");
+        let v = m
+            .iter()
+            .find(|(k, _)| k == &key)
+            .map(|(_, v)| v)
+            .expect("runImmediately key");
         assert_eq!(v, &Value::Bool(true));
     } else {
         panic!("expected Map");
@@ -42,7 +46,11 @@ fn build_inject_params_carries_source() {
     let params = build_inject_params(src);
     if let Value::Map(m) = params {
         let key = Value::Text("source".into());
-        let v = m.iter().find(|(k, _)| k == &key).map(|(_, v)| v).expect("source key");
+        let v = m
+            .iter()
+            .find(|(k, _)| k == &key)
+            .map(|(_, v)| v)
+            .expect("source key");
         assert_eq!(v, &Value::Text(src.to_string()));
     } else {
         panic!("expected Map");
@@ -97,7 +105,6 @@ fn cdp_failure_passes_through_via_inner_mapping() {
 #[test]
 fn cdp_protocol_inside_determinism_maps_to_cdp_protocol_error() {
     use crate::cdp_connection::cdp_connection::CdpError;
-    let code: ShimErrorCode =
-        DeterminismError::CdpFailure(CdpError::Protocol("bad".into())).into();
+    let code: ShimErrorCode = DeterminismError::CdpFailure(CdpError::Protocol("bad".into())).into();
     assert_eq!(code, ShimErrorCode::CdpProtocolError);
 }

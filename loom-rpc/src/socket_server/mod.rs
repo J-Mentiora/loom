@@ -37,18 +37,25 @@ impl SocketServer {
     /// Bind the Unix socket, set mode 0600, and return the server handle.
     /// Stale-socket recovery: on EADDRINUSE, probe-connect; if refused,
     /// unlink and retry once.
-    pub fn new(config: SocketServerConfig, deps: Arc<ConnectionHandlerDeps>) -> Result<Self, BindError> {
+    pub fn new(
+        config: SocketServerConfig,
+        deps: Arc<ConnectionHandlerDeps>,
+    ) -> Result<Self, BindError> {
         let token = config.token_override.unwrap_or_else(Token::generate);
         let token = Arc::new(token);
         let path = &config.socket_path;
 
         let listener = try_bind(path)?;
         apply_permissions(path)?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| BindError::Io { reason: e.to_string() })?;
+        listener.set_nonblocking(true).map_err(|e| BindError::Io {
+            reason: e.to_string(),
+        })?;
 
-        Ok(Self { listener, deps, token })
+        Ok(Self {
+            listener,
+            deps,
+            token,
+        })
     }
 
     /// Accept-loop. Spawns a `ConnectionHandler` task per connection.
@@ -88,29 +95,33 @@ impl SocketServer {
 fn try_bind(path: &Path) -> Result<StdUnixListener, BindError> {
     match StdUnixListener::bind(path) {
         Ok(l) => Ok(l),
-        Err(e) if e.kind() == ErrorKind::AddrInUse => {
-            match StdUnixStream::connect(path) {
-                Ok(_) => Err(BindError::AddressInUse),
-                Err(_) => {
-                    std::fs::remove_file(path)
-                        .map_err(|e| BindError::Io { reason: e.to_string() })?;
-                    StdUnixListener::bind(path).map_err(map_io_err)
-                }
+        Err(e) if e.kind() == ErrorKind::AddrInUse => match StdUnixStream::connect(path) {
+            Ok(_) => Err(BindError::AddressInUse),
+            Err(_) => {
+                std::fs::remove_file(path).map_err(|e| BindError::Io {
+                    reason: e.to_string(),
+                })?;
+                StdUnixListener::bind(path).map_err(map_io_err)
             }
-        }
+        },
         Err(e) => Err(map_io_err(e)),
     }
 }
 
 fn apply_permissions(path: &Path) -> Result<(), BindError> {
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(SOCKET_MODE))
-        .map_err(|e| BindError::Io { reason: e.to_string() })
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(SOCKET_MODE)).map_err(|e| {
+        BindError::Io {
+            reason: e.to_string(),
+        }
+    })
 }
 
 fn map_io_err(e: std::io::Error) -> BindError {
     match e.kind() {
         ErrorKind::PermissionDenied => BindError::PermissionDenied,
-        _ => BindError::Io { reason: e.to_string() },
+        _ => BindError::Io {
+            reason: e.to_string(),
+        },
     }
 }
 

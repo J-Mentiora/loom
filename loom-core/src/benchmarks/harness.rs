@@ -7,9 +7,7 @@ use crate::budget_enforcer::{
 use crate::content_store::{ContentRef, ContentStore, GcReport};
 use crate::determinism_harness::DeterminismHarness;
 use crate::error::LoomError;
-use crate::manifest_writer::{
-    AuditKind, ManifestEntry, ManifestWriter, SessionId, WriterHandle,
-};
+use crate::manifest_writer::{AuditKind, ManifestEntry, ManifestWriter, SessionId, WriterHandle};
 use crate::observability::Observability;
 use crate::session_manager::LocalSessionManager;
 use crate::vault::{
@@ -29,7 +27,9 @@ pub struct BenchmarkContentStore {
 
 impl BenchmarkContentStore {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { blobs: Mutex::new(HashMap::new()) })
+        Arc::new(Self {
+            blobs: Mutex::new(HashMap::new()),
+        })
     }
 }
 
@@ -38,23 +38,28 @@ impl ContentStore for BenchmarkContentStore {
         let d = digest(&SHA256, bytes);
         let sha256: String = d.as_ref().iter().map(|b| format!("{b:02x}")).collect();
         let size_bytes = bytes.len() as u64;
-        self.blobs.lock().entry(sha256.clone()).or_insert_with(|| bytes.to_vec());
+        self.blobs
+            .lock()
+            .entry(sha256.clone())
+            .or_insert_with(|| bytes.to_vec());
         Ok(ContentRef { sha256, size_bytes })
     }
 
     fn get(&self, r: &ContentRef) -> Result<Vec<u8>, LoomError> {
-        self.blobs
-            .lock()
-            .get(&r.sha256)
-            .cloned()
-            .ok_or_else(|| LoomError::new(
+        self.blobs.lock().get(&r.sha256).cloned().ok_or_else(|| {
+            LoomError::new(
                 loom_shared::error_format::LoomErrorCode::StoreIntegrityFailed,
                 format!("benchmark store: blob {} not found", r.sha256),
-            ))
+            )
+        })
     }
 
     fn gc(&self, _ttl: std::time::Duration) -> Result<GcReport, LoomError> {
-        Ok(GcReport { blobs_scanned: 0, blobs_collected: 0, bytes_freed: 0 })
+        Ok(GcReport {
+            blobs_scanned: 0,
+            blobs_collected: 0,
+            bytes_freed: 0,
+        })
     }
 }
 
@@ -109,20 +114,14 @@ impl Vault for BenchmarkVault {
         Ok(())
     }
 
-    fn add_credential(
-        &self,
-        _opts: AddCredentialOpts,
-    ) -> Result<AddCredentialReceipt, LoomError> {
+    fn add_credential(&self, _opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError> {
         Err(LoomError::new(
             loom_shared::error_format::LoomErrorCode::VaultRejection,
             "benchmark vault: no credentials configured",
         ))
     }
 
-    fn list_grants(
-        &self,
-        _session: Option<SessionId>,
-    ) -> Result<Vec<GrantSnapshot>, LoomError> {
+    fn list_grants(&self, _session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError> {
         Ok(Vec::new())
     }
 }
@@ -222,9 +221,7 @@ impl ManifestWriter for MockManifestWriter {
 /// - MockBudgetEnforcer (no-op)
 /// - DeterminismHarness (virtual clock, seed=42)
 /// - Observability (logs to /dev/null, otel disabled)
-pub fn build_session_manager(
-    manifest_writer: Arc<dyn ManifestWriter>,
-) -> Arc<LocalSessionManager> {
+pub fn build_session_manager(manifest_writer: Arc<dyn ManifestWriter>) -> Arc<LocalSessionManager> {
     let content_store = BenchmarkContentStore::new() as Arc<dyn ContentStore>;
     let vault = Arc::new(BenchmarkVault) as Arc<dyn Vault>;
     let budget_enforcer = Arc::new(MockBudgetEnforcer) as Arc<dyn BudgetEnforcer>;

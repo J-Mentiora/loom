@@ -7,7 +7,9 @@ pub use schema_validator::*;
 #[cfg(test)]
 mod interface_tests;
 
-use crate::error_translator::error_translator::{ErrorTranslator, LoomErrorCode, SchemaViolationDetail};
+use crate::error_translator::error_translator::{
+    ErrorTranslator, LoomErrorCode, SchemaViolationDetail,
+};
 use crate::schema_provider::schema_provider::{CompiledJsonSchema, SchemaProviderApi};
 use std::sync::Arc;
 
@@ -62,7 +64,11 @@ impl SchemaValidator {
         if let Err(err) = validator.validate(instance) {
             let field = build_field_path(err.instance_path());
             let (expected, actual) = classify_violation(&err);
-            return Some(SchemaViolationDetail { field, expected, actual });
+            return Some(SchemaViolationDetail {
+                field,
+                expected,
+                actual,
+            });
         }
         None
     }

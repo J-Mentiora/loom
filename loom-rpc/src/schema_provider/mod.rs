@@ -25,11 +25,11 @@ impl SchemaProvider {
         let mut hasher_input = Vec::<u8>::new();
 
         let entries: Vec<_> = std::fs::read_dir(schema_dir)
-            .map_err(|_e| SchemaLoadError::DirectoryMissing { path: schema_dir.clone() })?
+            .map_err(|_e| SchemaLoadError::DirectoryMissing {
+                path: schema_dir.clone(),
+            })?
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path().extension().map(|x| x == "json").unwrap_or(false)
-            })
+            .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
             .collect();
 
         if entries.is_empty() {
@@ -40,12 +40,11 @@ impl SchemaProvider {
 
         for entry in entries {
             let path = entry.path();
-            let contents = std::fs::read_to_string(&path).map_err(|e| {
-                SchemaLoadError::InvalidSchema {
+            let contents =
+                std::fs::read_to_string(&path).map_err(|e| SchemaLoadError::InvalidSchema {
                     method: path.display().to_string(),
                     reason: e.to_string(),
-                }
-            })?;
+                })?;
             hasher_input.extend_from_slice(contents.as_bytes());
 
             let doc: serde_json::Value =
@@ -80,7 +79,9 @@ impl SchemaProvider {
             );
             response_schemas.insert(
                 method.clone(),
-                Arc::new(CompiledJsonSchema { inner: resp.clone() }),
+                Arc::new(CompiledJsonSchema {
+                    inner: resp.clone(),
+                }),
             );
             let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(&method)
                 .into_iter()

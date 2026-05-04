@@ -23,9 +23,7 @@ use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
 use loom_core::determinism_harness::{DeterminismHarness, SideEffectTape, TapeFrame};
 use loom_core::error::{LoomError, LoomErrorCode};
-use loom_core::manifest_writer::{
-    LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId,
-};
+use loom_core::manifest_writer::{LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
 use loom_core::replay_engine::{DiffOpts, LocalReplayEngine, ReplayEngine, ReplayOpts};
 use loom_core::session_manager::LocalSessionManager;
@@ -75,12 +73,23 @@ fn make_session_manager(
     dh: Arc<DeterminismHarness>,
     obs: Arc<Observability>,
 ) -> Arc<LocalSessionManager> {
-    let cs: Arc<dyn ContentStore> =
-        Arc::new(LocalContentStore::new(tmp.path().join("store"), obs.clone()));
+    let cs: Arc<dyn ContentStore> = Arc::new(LocalContentStore::new(
+        tmp.path().join("store"),
+        obs.clone(),
+    ));
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs));
-    LocalSessionManager::new(cs, mw, v, be, dh, Observability::new(PathBuf::from("/dev/null"), false), 0, PathBuf::from("/tmp/loom-test/sessions"))
+    LocalSessionManager::new(
+        cs,
+        mw,
+        v,
+        be,
+        dh,
+        Observability::new(PathBuf::from("/dev/null"), false),
+        0,
+        PathBuf::from("/tmp/loom-test/sessions"),
+    )
 }
 
 fn make_engine(
@@ -159,8 +168,7 @@ fn extract_action_receipts(
     sessions_root: &std::path::Path,
     id: &SessionId,
 ) -> Vec<(u64, u64, Vec<u8>)> {
-    let content =
-        std::fs::read_to_string(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
+    let content = std::fs::read_to_string(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
     let mut out = Vec::new();
     for line in content.lines() {
         if let Ok(ManifestEntry::ActionReceipt {
@@ -186,7 +194,12 @@ fn test_replay_produces_bit_equal_receipt_bytes() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -195,8 +208,12 @@ fn test_replay_produces_bit_equal_receipt_bytes() {
         sm.clone(),
     );
 
-    let (source_id, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 5, b"payload");
+    let (source_id, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        5,
+        b"payload",
+    );
 
     let replay_id = engine
         .replay(source_id.clone(), ReplayOpts::default())
@@ -206,11 +223,18 @@ fn test_replay_produces_bit_equal_receipt_bytes() {
     // (emitted_at_ms is also copied from source to preserve hash-chain equality)
     let source_receipts = extract_action_receipts(&sessions_root, &source_id);
     let replay_receipts = extract_action_receipts(&sessions_root, &replay_id);
-    assert_eq!(source_receipts.len(), replay_receipts.len(), "same number of actions");
+    assert_eq!(
+        source_receipts.len(),
+        replay_receipts.len(),
+        "same number of actions"
+    );
     for ((sa, se, sb), (ra, re, rb)) in source_receipts.iter().zip(replay_receipts.iter()) {
         assert_eq!(sa, ra, "action_id order preserved");
         assert_eq!(se, re, "emitted_at_ms copied from source");
-        assert_eq!(sb, rb, "receipt bytes for action {sa} must be byte-identical");
+        assert_eq!(
+            sb, rb,
+            "receipt bytes for action {sa} must be byte-identical"
+        );
     }
 }
 
@@ -223,7 +247,12 @@ fn test_replay_100x_produces_identical_receipt_bytes() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -263,7 +292,12 @@ fn test_replay_aborts_on_missing_non_screenshot_blob_with_correct_error() {
     // Use a real but EMPTY content store — all blob gets will return StoreNotFound.
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -304,7 +338,10 @@ fn test_replay_aborts_on_missing_non_screenshot_blob_with_correct_error() {
     .unwrap();
 
     let result = engine.replay(id, ReplayOpts::default());
-    assert!(result.is_err(), "replay must abort when non-screenshot blob is missing");
+    assert!(
+        result.is_err(),
+        "replay must abort when non-screenshot blob is missing"
+    );
     let err = result.unwrap_err();
     assert_eq!(
         err.code,
@@ -323,7 +360,12 @@ fn test_replay_proceeds_on_missing_screenshot_blob() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone()); // empty CAS
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -381,20 +423,26 @@ fn test_replay_installs_tape_driven_determinism() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
 
     // Write a tape.jsonl for the source session containing a clock frame
     let source_id = SessionId("01TESTTAPEREP0000000".to_string());
     std::fs::create_dir_all(sessions_root.join(&source_id.0)).unwrap();
     let tape_path = sessions_root.join(&source_id.0).join("tape.jsonl");
-    let tape_line =
-        serde_jcs::to_string(&TapeFrame::ClockRead { observed_ns: 9876 }).unwrap();
+    let tape_line = serde_jcs::to_string(&TapeFrame::ClockRead { observed_ns: 9876 }).unwrap();
     std::fs::write(&tape_path, format!("{tape_line}\n")).unwrap();
 
     mw.open_manifest(source_id.clone(), None).unwrap();
-    let receipt_bytes = serde_jcs::to_string(&serde_json::json!({"action_id": 0, "dom_after_hash": "c".repeat(64)}))
-        .unwrap()
-        .into_bytes();
+    let receipt_bytes = serde_jcs::to_string(
+        &serde_json::json!({"action_id": 0, "dom_after_hash": "c".repeat(64)}),
+    )
+    .unwrap()
+    .into_bytes();
     mw.append(
         source_id.clone(),
         ManifestEntry::ActionReceipt {
@@ -426,7 +474,11 @@ fn test_replay_installs_tape_driven_determinism() {
 
     // Replay should succeed — tape was loaded and install_replay_mode called
     let result = engine.replay(source_id, ReplayOpts::default());
-    assert!(result.is_ok(), "replay with tape should succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "replay with tape should succeed: {:?}",
+        result.err()
+    );
 }
 
 // ---- AC-REPLAY-02.1: diff action count delta ----
@@ -439,7 +491,12 @@ fn test_diff_action_count_delta_positive() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -448,20 +505,34 @@ fn test_diff_action_count_delta_positive() {
         sm.clone(),
     );
 
-    let (id_a, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 3, b"payload");
-    let (id_b, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 4, b"payload");
+    let (id_a, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        3,
+        b"payload",
+    );
+    let (id_b, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        4,
+        b"payload",
+    );
 
     let report = engine
         .diff(
             id_a.clone(),
             id_b.clone(),
-            DiffOpts { exclude_screenshots: true, include_audit_entries: false },
+            DiffOpts {
+                exclude_screenshots: true,
+                include_audit_entries: false,
+            },
         )
         .expect("diff should succeed");
 
-    assert_eq!(report.action_count_delta, 1, "B has one more action: delta should be +1");
+    assert_eq!(
+        report.action_count_delta, 1,
+        "B has one more action: delta should be +1"
+    );
     assert_eq!(report.a.0, id_a.0);
     assert_eq!(report.b.0, id_b.0);
 }
@@ -474,7 +545,12 @@ fn test_diff_action_count_delta_zero_no_extras() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -483,17 +559,38 @@ fn test_diff_action_count_delta_zero_no_extras() {
         sm.clone(),
     );
 
-    let (id_a, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 3, b"payload");
-    let (id_b, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 3, b"payload");
+    let (id_a, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        3,
+        b"payload",
+    );
+    let (id_b, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        3,
+        b"payload",
+    );
 
     let report = engine
-        .diff(id_a, id_b, DiffOpts { exclude_screenshots: true, include_audit_entries: false })
+        .diff(
+            id_a,
+            id_b,
+            DiffOpts {
+                exclude_screenshots: true,
+                include_audit_entries: false,
+            },
+        )
         .expect("diff should succeed");
 
-    assert_eq!(report.action_count_delta, 0, "identical action counts → delta 0");
-    assert!(report.field_diffs.is_empty(), "identical receipts → no field diffs");
+    assert_eq!(
+        report.action_count_delta, 0,
+        "identical action counts → delta 0"
+    );
+    assert!(
+        report.field_diffs.is_empty(),
+        "identical receipts → no field diffs"
+    );
 }
 
 // ---- AC-REPLAY-02.2: per-receipt field diff ----
@@ -506,7 +603,12 @@ fn test_diff_field_level_diff_on_dom_hash_mismatch() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -516,17 +618,35 @@ fn test_diff_field_level_diff_on_dom_hash_mismatch() {
     );
 
     // A: action 0 receipt has dom_after_hash of "version-a"
-    let (id_a, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 1, b"version-a");
+    let (id_a, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        1,
+        b"version-a",
+    );
     // B: action 0 receipt has dom_after_hash of "version-b" (different hash)
-    let (id_b, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 1, b"version-b");
+    let (id_b, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        1,
+        b"version-b",
+    );
 
     let report = engine
-        .diff(id_a, id_b, DiffOpts { exclude_screenshots: true, include_audit_entries: false })
+        .diff(
+            id_a,
+            id_b,
+            DiffOpts {
+                exclude_screenshots: true,
+                include_audit_entries: false,
+            },
+        )
         .expect("diff should succeed");
 
-    assert!(!report.field_diffs.is_empty(), "different dom_after_hash should produce field diff");
+    assert!(
+        !report.field_diffs.is_empty(),
+        "different dom_after_hash should produce field diff"
+    );
     let diff = &report.field_diffs[0];
     assert_eq!(diff.action_id, 0);
     assert!(
@@ -546,7 +666,12 @@ fn test_diff_screenshot_excluded_from_differences_count() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -616,7 +741,14 @@ fn test_diff_screenshot_excluded_from_differences_count() {
     .unwrap();
 
     let report = engine
-        .diff(id_a, id_b, DiffOpts { exclude_screenshots: true, include_audit_entries: false })
+        .diff(
+            id_a,
+            id_b,
+            DiffOpts {
+                exclude_screenshots: true,
+                include_audit_entries: false,
+            },
+        )
         .expect("diff should succeed");
 
     assert!(
@@ -640,7 +772,12 @@ fn test_diff_screenshot_in_screenshot_diffs_with_flag() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -705,10 +842,23 @@ fn test_diff_screenshot_in_screenshot_diffs_with_flag() {
 
     // exclude_screenshots: false → screenshot diffs go in screenshot_diffs[], never field_diffs[]
     let report = engine
-        .diff(id_a, id_b, DiffOpts { exclude_screenshots: false, include_audit_entries: false })
+        .diff(
+            id_a,
+            id_b,
+            DiffOpts {
+                exclude_screenshots: false,
+                include_audit_entries: false,
+            },
+        )
         .expect("diff ok");
-    assert!(report.field_diffs.is_empty(), "screenshot diffs must NOT be in field_diffs");
-    assert!(!report.screenshot_diffs.is_empty(), "screenshot diffs should be in screenshot_diffs");
+    assert!(
+        report.field_diffs.is_empty(),
+        "screenshot diffs must NOT be in field_diffs"
+    );
+    assert!(
+        !report.screenshot_diffs.is_empty(),
+        "screenshot diffs should be in screenshot_diffs"
+    );
     assert_eq!(report.action_count_delta, 0);
 }
 
@@ -722,7 +872,12 @@ fn test_inspect_at_action_5_returns_entries_0_to_5() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -731,12 +886,20 @@ fn test_inspect_at_action_5_returns_entries_0_to_5() {
         sm.clone(),
     );
 
-    let (id, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 10, b"data");
+    let (id, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        10,
+        b"data",
+    );
 
-    let snap = engine.inspect(id.clone(), Some(5)).expect("inspect should succeed");
+    let snap = engine
+        .inspect(id.clone(), Some(5))
+        .expect("inspect should succeed");
 
-    let entries = snap["entries"].as_array().expect("entries must be an array");
+    let entries = snap["entries"]
+        .as_array()
+        .expect("entries must be an array");
     assert_eq!(entries.len(), 6, "at_action=5 → entries 0-5 = 6 entries");
     let last_id = entries.last().unwrap()["action_id"].as_u64().unwrap();
     assert_eq!(last_id, 5, "last entry must be action_id=5");
@@ -750,7 +913,12 @@ fn test_inspect_does_not_mutate_manifest() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -759,17 +927,27 @@ fn test_inspect_does_not_mutate_manifest() {
         sm.clone(),
     );
 
-    let (id, _) =
-        build_recorded_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root, 5, b"data");
+    let (id, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        5,
+        b"data",
+    );
 
-    let wal_before =
-        std::fs::read(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
+    let wal_before = std::fs::read(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
 
-    engine.inspect(id.clone(), Some(3)).expect("inspect should succeed");
-    engine.inspect(id.clone(), Some(1)).expect("second inspect should succeed");
+    engine
+        .inspect(id.clone(), Some(3))
+        .expect("inspect should succeed");
+    engine
+        .inspect(id.clone(), Some(1))
+        .expect("second inspect should succeed");
 
     let wal_after = std::fs::read(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
-    assert_eq!(wal_before, wal_after, "inspect must not mutate the manifest WAL");
+    assert_eq!(
+        wal_before, wal_after,
+        "inspect must not mutate the manifest WAL"
+    );
 }
 
 // ---- AC-PERF-03.1: replay speed >= 5x real-time ----
@@ -785,7 +963,12 @@ fn test_replay_throughput_structural_exceeds_5x() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -802,7 +985,9 @@ fn test_replay_throughput_structural_exceeds_5x() {
     );
 
     let start = std::time::Instant::now();
-    engine.replay(id, ReplayOpts::default()).expect("replay should succeed");
+    engine
+        .replay(id, ReplayOpts::default())
+        .expect("replay should succeed");
     let elapsed = start.elapsed();
 
     assert!(
@@ -822,7 +1007,12 @@ fn test_validate_passes_intact_chain_and_present_blobs() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -867,8 +1057,15 @@ fn test_validate_passes_intact_chain_and_present_blobs() {
     .unwrap();
 
     let result = engine.validate(id).expect("validate should succeed");
-    assert!(result.passed, "intact chain + present blobs → validate passes");
-    assert!(result.reasons.is_empty(), "no reasons on pass: {:?}", result.reasons);
+    assert!(
+        result.passed,
+        "intact chain + present blobs → validate passes"
+    );
+    assert!(
+        result.reasons.is_empty(),
+        "no reasons on pass: {:?}",
+        result.reasons
+    );
 }
 
 #[test]
@@ -879,7 +1076,12 @@ fn test_validate_fails_on_broken_hash_chain() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone());
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -891,7 +1093,9 @@ fn test_validate_fails_on_broken_hash_chain() {
     let id = SessionId("01TESTBROKENHASH0000".to_string());
     std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
     mw.open_manifest(id.clone(), None).unwrap();
-    let receipt = serde_jcs::to_string(&serde_json::json!({"action_id": 0})).unwrap().into_bytes();
+    let receipt = serde_jcs::to_string(&serde_json::json!({"action_id": 0}))
+        .unwrap()
+        .into_bytes();
     mw.append(
         id.clone(),
         ManifestEntry::ActionReceipt {
@@ -916,12 +1120,18 @@ fn test_validate_fails_on_broken_hash_chain() {
     // Corrupt the WAL by appending a line with a bad prev_hash
     let wal_path = sessions_root.join(&id.0).join("manifest.wal");
     use std::io::Write as _;
-    let mut f = std::fs::OpenOptions::new().append(true).open(&wal_path).unwrap();
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&wal_path)
+        .unwrap();
     writeln!(f, r#"{{"kind":"action_receipt","prev_hash":"bad_hash","action_id":99,"emitted_at_ms":9,"receipt_canonical_bytes":[]}}"#).unwrap();
 
     let result = engine.validate(id).expect("validate call should not panic");
     assert!(!result.passed, "broken hash chain → validate must fail");
-    assert!(!result.reasons.is_empty(), "must provide reason for failure");
+    assert!(
+        !result.reasons.is_empty(),
+        "must provide reason for failure"
+    );
 }
 
 #[test]
@@ -932,7 +1142,12 @@ fn test_validate_fails_on_missing_blob() {
     let mw = make_manifest_writer(&tmp, obs.clone());
     let cs = make_content_store(&tmp, obs.clone()); // empty CAS
     let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
-    let sm = make_session_manager(&tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs.clone());
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
     let engine = make_engine(
         &tmp,
         cs.clone() as Arc<dyn ContentStore>,
@@ -978,7 +1193,11 @@ fn test_validate_fails_on_missing_blob() {
         .reasons
         .iter()
         .any(|r| r.contains("missing") || r.contains("blob") || r.contains("StoreNotFound"));
-    assert!(reason_contains_blob, "reason must mention missing blob, got: {:?}", result.reasons);
+    assert!(
+        reason_contains_blob,
+        "reason must mention missing blob, got: {:?}",
+        result.reasons
+    );
 }
 
 // ---- Tape persistence ----
@@ -996,15 +1215,18 @@ fn test_tape_persisted_and_loaded() {
     let dh = DeterminismHarness::new(42, mw);
     let mut tw = dh.new_tape_writer();
     tw.record(TapeFrame::ClockRead { observed_ns: 12345 });
-    tw.record(TapeFrame::RngDraw { value_u64: 0xdeadbeef });
+    tw.record(TapeFrame::RngDraw {
+        value_u64: 0xdeadbeef,
+    });
     tw.record(TapeFrame::ClockRead { observed_ns: 99999 });
 
     // Persist to disk
-    tw.persist(&sessions_root, session_id).expect("persist should succeed");
+    tw.persist(&sessions_root, session_id)
+        .expect("persist should succeed");
 
     // Load back
-    let loaded = SideEffectTape::load_from_file(&sessions_root, session_id)
-        .expect("load should succeed");
+    let loaded =
+        SideEffectTape::load_from_file(&sessions_root, session_id).expect("load should succeed");
 
     assert_eq!(loaded.frames.len(), 3, "should load 3 frames");
     match &loaded.frames[0] {
@@ -1085,10 +1307,7 @@ fn test_ac_shcrt_08_replay_header_started_at_ms_matches_source() {
 
 /// Helper: read the `started_at_ms` field from the Header entry (first
 /// line of `manifest.wal`).
-fn read_header_started_at_ms(
-    sessions_root: &std::path::Path,
-    id: &SessionId,
-) -> Option<u64> {
+fn read_header_started_at_ms(sessions_root: &std::path::Path, id: &SessionId) -> Option<u64> {
     let path = sessions_root.join(&id.0).join("manifest.wal");
     let content = std::fs::read_to_string(&path).ok()?;
     let first = content.lines().next()?;
@@ -1129,16 +1348,28 @@ fn test_ac_shcrt_08_two_consecutive_replays_produce_identical_headers() {
 
     let (source_id, _) =
         build_recorded_session(mw.as_ref(), &sessions_root, 1, b"two-replays-payload");
-    let source_ts =
-        read_header_started_at_ms(&sessions_root, &source_id).unwrap();
+    let source_ts = read_header_started_at_ms(&sessions_root, &source_id).unwrap();
 
-    let r1 = engine.replay(source_id.clone(), ReplayOpts::default()).unwrap();
-    let r2 = engine.replay(source_id.clone(), ReplayOpts::default()).unwrap();
+    let r1 = engine
+        .replay(source_id.clone(), ReplayOpts::default())
+        .unwrap();
+    let r2 = engine
+        .replay(source_id.clone(), ReplayOpts::default())
+        .unwrap();
 
     let r1_ts = read_header_started_at_ms(&sessions_root, &r1).unwrap();
     let r2_ts = read_header_started_at_ms(&sessions_root, &r2).unwrap();
 
-    assert_eq!(source_ts, r1_ts, "replay 1 Header started_at_ms must equal source");
-    assert_eq!(source_ts, r2_ts, "replay 2 Header started_at_ms must equal source");
-    assert_eq!(r1_ts, r2_ts, "two consecutive replays must produce identical Header timestamps");
+    assert_eq!(
+        source_ts, r1_ts,
+        "replay 1 Header started_at_ms must equal source"
+    );
+    assert_eq!(
+        source_ts, r2_ts,
+        "replay 2 Header started_at_ms must equal source"
+    );
+    assert_eq!(
+        r1_ts, r2_ts,
+        "two consecutive replays must produce identical Header timestamps"
+    );
 }

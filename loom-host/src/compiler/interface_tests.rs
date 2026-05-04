@@ -4,8 +4,8 @@
 // contract signature exact-match, and atomic-write expectations.
 
 use super::compiler::{CompileReport, Compiler};
-use loom_core::error::LoomError;
 use crate::wasm_runtime::WasmRuntime;
+use loom_core::error::LoomError;
 use std::path::Path;
 use std::sync::Arc;
 

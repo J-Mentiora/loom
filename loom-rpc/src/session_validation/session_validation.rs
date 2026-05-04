@@ -18,17 +18,15 @@
 use crate::core_service_adapter::core_service_adapter::CreateSessionParams;
 use crate::error_translator::error_translator::{ErrorTranslator, JsonRpcError};
 use loom_core::profile_registry::profile_registry::{
-    is_known_budget_key, is_known_network_mode, is_known_profile,
-    KNOWN_BUDGET_KEYS, KNOWN_NETWORK_MODES, KNOWN_PROFILES,
+    is_known_budget_key, is_known_network_mode, is_known_profile, KNOWN_BUDGET_KEYS,
+    KNOWN_NETWORK_MODES, KNOWN_PROFILES,
 };
 
 /// Validate a `session.create` request's typed business rules. Returns
 /// `Ok(())` if every value is in its canonical allowlist; otherwise
 /// returns a fully-formed `JsonRpcError` envelope built by
 /// `ErrorTranslator::from_*`.
-pub fn validate_create_session_params(
-    p: &CreateSessionParams,
-) -> Result<(), JsonRpcError> {
+pub fn validate_create_session_params(p: &CreateSessionParams) -> Result<(), JsonRpcError> {
     if !is_known_profile(&p.profile) {
         return Err(ErrorTranslator::from_unknown_profile(
             &p.profile,

@@ -24,7 +24,6 @@
 // - **Console capture.** All `Runtime.consoleAPICalled` events emitted
 //   during the evaluate are folded into `Receipt.console_lines`.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -49,7 +48,9 @@ pub struct EvaluateVerb;
 
 impl EvaluateVerb {
     pub fn execute(action: EvaluateAction) -> Result<Receipt, HostError> {
-        use crate::cdp_message_encoder::cdp_message_encoder::{CdpMessage, CdpMessageEncoder, RuntimeEvaluate};
+        use crate::cdp_message_encoder::cdp_message_encoder::{
+            CdpMessage, CdpMessageEncoder, RuntimeEvaluate,
+        };
         use crate::error_mapper::error_mapper::{ErrorMapper, SurfaceContext};
         use crate::host_bindings::host_bindings::host;
         use crate::receipt_builder::receipt_builder::{ReceiptBuilder, ReceiptInputs, VerbKind};

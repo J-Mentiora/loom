@@ -389,16 +389,12 @@ impl ShimManager {
             }
         }
 
-        let config = self
-            .configs
-            .get(&id)
-            .map(|c| c.clone())
-            .ok_or_else(|| {
-                LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {} not registered", id.0),
-                )
-            })?;
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
 
         let process = self.get_or_spawn(&id, &config).await?;
 
@@ -629,7 +625,11 @@ fn parse_evaluate_payload(payload: &ciborium::value::Value) -> Result<EvaluateOu
     let lookup = |key: &str| -> Option<&Value> {
         map.iter().find_map(|(k, v)| {
             if let Value::Text(s) = k {
-                if s == key { Some(v) } else { None }
+                if s == key {
+                    Some(v)
+                } else {
+                    None
+                }
             } else {
                 None
             }
@@ -644,8 +644,14 @@ fn parse_evaluate_payload(payload: &ciborium::value::Value) -> Result<EvaluateOu
         let ed_lookup = |key: &str| -> Option<&Value> {
             ed_map.iter().find_map(|(k, v)| {
                 if let Value::Text(s) = k {
-                    if s == key { Some(v) } else { None }
-                } else { None }
+                    if s == key {
+                        Some(v)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             })
         };
         let text = match ed_lookup("text") {
@@ -669,8 +675,14 @@ fn parse_evaluate_payload(payload: &ciborium::value::Value) -> Result<EvaluateOu
                 let em_lookup = |key: &str| -> Option<&Value> {
                     em.iter().find_map(|(k, v)| {
                         if let Value::Text(s) = k {
-                            if s == key { Some(v) } else { None }
-                        } else { None }
+                            if s == key {
+                                Some(v)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     })
                 };
                 if let Some(Value::Text(s)) = em_lookup("description") {
@@ -685,7 +697,12 @@ fn parse_evaluate_payload(payload: &ciborium::value::Value) -> Result<EvaluateOu
         };
         return Ok(EvaluateOutcome {
             result: None,
-            exception: Some(EvaluateException { text, message, line, column }),
+            exception: Some(EvaluateException {
+                text,
+                message,
+                line,
+                column,
+            }),
         });
     }
 
@@ -701,8 +718,14 @@ fn parse_evaluate_payload(payload: &ciborium::value::Value) -> Result<EvaluateOu
     let res_lookup = |key: &str| -> Option<&Value> {
         result_map.iter().find_map(|(k, v)| {
             if let Value::Text(s) = k {
-                if s == key { Some(v) } else { None }
-            } else { None }
+                if s == key {
+                    Some(v)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
         })
     };
     if let Some(v) = res_lookup("value") {
