@@ -1321,7 +1321,7 @@ fn read_header_started_at_ms(sessions_root: &std::path::Path, id: &SessionId) ->
 }
 
 #[test]
-fn test_ac_shcrt_08_two_consecutive_replays_produce_identical_headers() {
+fn two_consecutive_replays_produce_identical_headers() {
     // Replay determinism: replaying the same source twice produces two
     // sessions with identical Header started_at_ms values (both equal
     // to the source). This is the meaningful "deterministic chain"
