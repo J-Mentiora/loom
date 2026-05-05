@@ -7,12 +7,13 @@
 //! - `auth_token` — `HelloToken` shared by daemon + CLI + MCP.
 
 pub mod action_aliases;
+pub mod auth_token;
+pub mod binary_resolver;
 pub mod error_format;
 pub mod llm_types;
 pub mod logging;
-pub mod auth_token;
-pub mod shim_protocol;
 pub mod navigate_outcome;
+pub mod shim_protocol;
 pub mod types;
 
 // Convenience re-exports so downstream crates can `use loom_shared::*;`

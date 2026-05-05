@@ -350,7 +350,8 @@ impl CoreFacadeBridge for CoreBridge {
         &self,
         ttl_days: Option<u64>,
         _store_max_bytes: Option<u64>,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, AdapterError> {
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, AdapterError>
+    {
         // AC-GCRPC-01..04: GC the content store. ttl_days defaults to 7
         // when unset; the AC mandates the default is documented and
         // tested. Honor `store_max_bytes` later via auto-GC threshold
@@ -362,11 +363,13 @@ impl CoreFacadeBridge for CoreBridge {
             .content_store
             .gc(ttl)
             .map_err(|e| map_loom_error(&e))?;
-        Ok(loom_rpc::core_service_adapter::core_service_adapter::GcRunReport {
-            blobs_scanned: report.blobs_scanned,
-            blobs_collected: report.blobs_collected,
-            bytes_freed: report.bytes_freed,
-        })
+        Ok(
+            loom_rpc::core_service_adapter::core_service_adapter::GcRunReport {
+                blobs_scanned: report.blobs_scanned,
+                blobs_collected: report.blobs_collected,
+                bytes_freed: report.bytes_freed,
+            },
+        )
     }
 }
 
@@ -894,20 +897,21 @@ fn build_navigate_wire_receipt(
         .unwrap_or_default();
 
     // Brief AC-NAVRECEIPT2-01 extension: typed NetworkSummary aggregate.
-    let network_summary: Option<loom_core::receipt_builder::receipt_builder::NetworkSummary> = builder
-        .navigate_network_summary_json
-        .as_deref()
-        .and_then(|bytes| match serde_json::from_slice(bytes) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                tracing::warn!(
-                    action_id = builder.action_id,
-                    error = %e,
-                    "navigate receipt: network_summary decode failed; emitting None"
-                );
-                None
-            }
-        });
+    let network_summary: Option<loom_core::receipt_builder::receipt_builder::NetworkSummary> =
+        builder
+            .navigate_network_summary_json
+            .as_deref()
+            .and_then(|bytes| match serde_json::from_slice(bytes) {
+                Ok(v) => Some(v),
+                Err(e) => {
+                    tracing::warn!(
+                        action_id = builder.action_id,
+                        error = %e,
+                        "navigate receipt: network_summary decode failed; emitting None"
+                    );
+                    None
+                }
+            });
 
     // AC-EVALRESULT-01..04: surface the evaluate return value on the
     // wire. The host's `evaluate_execute` populates
@@ -1331,27 +1335,38 @@ fn build_host_bridge(
         .join("loom")
         .join("surfaces");
 
-    // Resolve shim-chromium binary alongside the daemon binary. If the
-    // current_exe lookup fails (rare), skip chromium registration and the
-    // host returns SurfaceUnavailable for web actions.
-    let shim_chromium = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .map(|bin_dir| {
-            let shim_bin = bin_dir.join("loom-shim-chromium");
-            // Resolve the verified Chromium binary the same way `loom doctor`
-            // does (~/.config/loom/chromium/Chromium.app/...).
-            let chromium = dirs::home_dir()
-                .unwrap_or_else(|| PathBuf::from("/tmp"))
-                .join(".config")
-                .join("loom")
-                .join("chromium")
-                .join("Chromium.app/Contents/MacOS/Chromium");
+    // Resolve shim-chromium binary via the shared resolver — picks up the
+    // postinstall-managed `dirs::data_local_dir()/loom/bin/` for cargo-install
+    // installs, then falls back to the daemon's own dir (brew/manual paths).
+    // Resolve the verified Chromium binary the same way `loom doctor` does
+    // (~/.config/loom/chromium/Chromium.app/...).
+    let chromium = dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".config")
+        .join("loom")
+        .join("chromium")
+        .join("Chromium.app/Contents/MacOS/Chromium");
+
+    // AC-DIST-05: actionable error when Chromium isn't yet present. Drop the
+    // shim_chromium registration entirely (web actions return
+    // `SurfaceUnavailable`) AND emit a clear stderr line so the user knows
+    // the next step. No silent panic — see daemon `serve_runner` which
+    // inherits stderr to the user's terminal.
+    let shim_chromium = if !chromium.exists() {
+        tracing::error!(
+            "Chromium not yet downloaded. Run `loom postinstall` to fetch the \
+             pinned Chromium build (~150 MB, one-time). Web actions will return \
+             SurfaceUnavailable until then."
+        );
+        None
+    } else {
+        loom_shared::binary_resolver::resolve_loom_sibling("loom-shim-chromium").map(|shim_bin| {
             ShimChromiumConfig {
                 shim_binary_path: shim_bin,
                 chromium_path: chromium,
             }
-        });
+        })
+    };
 
     let host_config = HostConfig {
         surfaces_dir,
@@ -1422,11 +1437,7 @@ mod tests {
     /// reproducer reads from stdout JSON.
     #[test]
     fn profile_restricted_evaluate_receipt_carries_required_fields() {
-        let receipt = profile_restricted_evaluate_receipt(
-            42,
-            "01HZSESSION",
-            "window.location",
-        );
+        let receipt = profile_restricted_evaluate_receipt(42, "01HZSESSION", "window.location");
         assert_eq!(receipt.action_id, 42);
         assert_eq!(receipt.session_id, "01HZSESSION");
         assert!(matches!(
@@ -1438,10 +1449,7 @@ mod tests {
         let detail = err.detail.expect("detail present");
         assert_eq!(detail["matched_pattern"], "window.location");
         assert_eq!(detail["profile"], "safe");
-        assert_eq!(
-            detail["violation"],
-            "safe_profile_evaluate_denylist_match"
-        );
+        assert_eq!(detail["violation"], "safe_profile_evaluate_denylist_match");
         // Tier-2 navigate fields should all be None on a synthesized
         // error receipt — no DOM/screenshot/network on a refused action.
         assert!(receipt.url.is_none());

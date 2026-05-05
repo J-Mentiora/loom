@@ -36,22 +36,55 @@ artifacts, and a typed error wire shape that doesn't leak generic
 
 ## Install
 
-### Pre-built binaries (recommended)
+Pick whichever fits your environment. All three end at the same `loom postinstall`
+step, which downloads + verifies the pinned Chromium build (~150 MB, one-time)
+and AOT-compiles the WASM surfaces.
+
+### Homebrew — macOS arm64/x64, Linux x64
+
+```bash
+brew install mentiora/loom/loom
+loom postinstall
+loom doctor
+```
+
+### `cargo install` — any platform with Rust 1.92+
+
+```bash
+cargo install --git https://github.com/J-Mentiora/loom --tag v1.0.0 loom-cli
+loom postinstall
+loom doctor
+```
+
+`--tag` is required: `loom postinstall` fetches `loom-daemon`, `loom-mcp`, and
+`loom-shim-chromium` from the GitHub Release matching the installed crate
+version, so the tag must point at an existing release. (Substitute the latest
+release version for `v1.0.0`.)
+
+### Manual download — pre-built tarball
 
 ```bash
 curl -fsSL https://github.com/J-Mentiora/loom/releases/latest/download/loom-installer.sh | sh
+loom postinstall
+loom doctor
 ```
 
-The installer drops `loom`, `loom-daemon`, `loom-shim-chromium`, `loom-mcp`
-into `~/.cargo/bin` (or `~/.local/bin` if Cargo isn't installed). After
-installation:
+The installer drops all four binaries into `~/.cargo/bin` (or `~/.local/bin` if
+Cargo isn't installed).
+
+### After install: Gatekeeper on macOS
+
+The release artifacts aren't notarized yet. On first run macOS may quarantine
+`loom-shim-chromium`:
 
 ```bash
-loom postinstall    # downloads + verifies pinned Chromium, AOT-compiles WASM surfaces
-loom doctor         # confirms socket reachable, daemon responsive, chromium present
+xattr -d com.apple.quarantine $(which loom-shim-chromium)
 ```
 
-### From source
+Notarization is tracked as a follow-up. Windows isn't supported — see
+[Known limitations](#known-limitations) below.
+
+### Build from source
 
 ```bash
 git clone https://github.com/J-Mentiora/loom
@@ -61,7 +94,9 @@ cargo build --release
 ./target/release/loom postinstall
 ```
 
-Requires Rust 1.92+.
+Source builds skip the vendored WASM artifact and compile the surface from
+scratch, so they need the `wasm32-wasip2` target installed. The `cargo install`
+path uses the vendored bytes and works without it.
 
 ## 5-minute quickstart
 
@@ -199,14 +234,21 @@ v1.0.0 — first stable release. Production users include Mentiora's
 GA-driven software-generation pipeline (the harness loom was extracted
 from). API is stable; breaking changes will bump the major version.
 
-Known limitations:
+### Known limitations
 
 - macOS arm64/x86 + linux x86/arm64 only. Windows isn't tested.
+- macOS binaries are not notarized. First run may need
+  `xattr -d com.apple.quarantine $(which loom-shim-chromium)` —
+  see the install section above. Notarization is a follow-up.
 - Chromium pinned at version 132 (Playwright build 1153). Newer
   Chromium revisions may require a `chromium_pin.rs` update.
 - `loom-mcp`'s implicit session is single-session-per-process. Power
   users who need multiple parallel browsers per MCP connection should
   use the CLI directly.
+- `loom postinstall` requires network access to fetch Chromium (and,
+  for `cargo install` users, the auxiliary loom binaries). Air-gapped
+  installs work via the manual-download tarball, which bundles all four
+  binaries — only Chromium needs to be vendored separately on those hosts.
 
 ## Contributing
 

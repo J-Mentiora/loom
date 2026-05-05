@@ -40,8 +40,22 @@ pub struct ServeArgs {
 }
 
 /// `loom postinstall` arguments. Forwarded to `PostinstallRunner::run`.
+///
+/// AC-DIST-01 added two skip flags so a brew/manual user (with the 3
+/// sibling binaries already co-located) can `loom postinstall --skip-binaries`
+/// to avoid the GH Release fetch entirely. The detection in
+/// `loom_binaries_step` handles the no-flag case automatically (sentinel
+/// + presence check), so most users never need these flags.
 #[derive(Debug, Clone, Args, Serialize, Deserialize, Default)]
-pub struct PostinstallArgs {}
+pub struct PostinstallArgs {
+    /// Skip the Chromium download + verification step.
+    #[arg(long)]
+    pub skip_chromium: bool,
+    /// Skip the loom-daemon / loom-mcp / loom-shim-chromium download
+    /// from the matching GitHub Release.
+    #[arg(long)]
+    pub skip_binaries: bool,
+}
 
 /// `loom mcp serve` arguments. Forwarded to `McpDelegate::run`.
 #[derive(Debug, Clone, Args, Serialize, Deserialize)]
@@ -62,10 +76,15 @@ impl Default for McpArgs {
 /// `loom gc` handler — the SOLE RPC-bearing subcommand under
 /// `AdminCommands`. Maps to RPC method `gc.run`.
 pub async fn gc(rpc: &RpcClient, cfg: &CliConfig, args: GcArgs) -> Result<(), CliError> {
-    let resp = rpc.call("gc.run", serde_json::json!({
-        "ttl_days": args.ttl,
-        "store_max_bytes": args.store_max_bytes,
-    })).await?;
+    let resp = rpc
+        .call(
+            "gc.run",
+            serde_json::json!({
+                "ttl_days": args.ttl,
+                "store_max_bytes": args.store_max_bytes,
+            }),
+        )
+        .await?;
     println!("{}", format_output(&resp, cfg.pretty)?);
     Ok(())
 }

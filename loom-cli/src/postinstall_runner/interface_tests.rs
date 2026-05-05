@@ -6,8 +6,12 @@
 use super::postinstall_runner::{PostinstallOptions, PostinstallReceipt, StepOutcome, STEP_LABELS};
 
 #[test]
-fn step_labels_are_compile_chromium_launchd_in_order() {
-    assert_eq!(STEP_LABELS, &["compile_module", "chromium", "launchd"]);
+fn step_labels_are_compile_chromium_loom_binaries_launchd_in_order() {
+    // AC-DIST-01: loom_binaries step inserted between chromium and launchd.
+    assert_eq!(
+        STEP_LABELS,
+        &["compile_module", "chromium", "loom_binaries", "launchd"]
+    );
 }
 
 #[test]
@@ -19,6 +23,11 @@ fn postinstall_options_carry_surfaces_chromium_plist() {
         chromium_expected_sha256: "abc".into(),
         chromium_dir: "/tmp/chromium".into(),
         plist_path: "/tmp/com.loom.daemon.plist".into(),
+        loom_binaries_version: "1.0.0".into(),
+        loom_binaries_target_triple: "aarch64-apple-darwin".into(),
+        loom_binaries_install_dir: "/tmp/loom-bin".into(),
+        skip_chromium: false,
+        skip_binaries: false,
     };
     assert_eq!(o.chromium_expected_sha256, "abc");
 }
@@ -40,13 +49,14 @@ fn step_outcome_variant_set_locked() {
 fn postinstall_receipt_carries_steps_and_outcomes() {
     let r = PostinstallReceipt {
         status: "ok".into(),
-        steps: vec!["compile_module", "chromium", "launchd"],
+        steps: vec!["compile_module", "chromium", "loom_binaries", "launchd"],
         compile_outcomes: vec![StepOutcome::Skipped],
         schemas: super::postinstall_runner::SchemaStepOutcome::Skipped,
         chromium: StepOutcome::Skipped,
+        loom_binaries: Some(StepOutcome::Skipped),
         launchd: Some(StepOutcome::Skipped),
     };
-    assert_eq!(r.steps.len(), 3);
+    assert_eq!(r.steps.len(), 4);
 }
 
 // === BC-CLI-01: loom-host gated behind cfg(feature = "postinstall") ===
@@ -76,7 +86,9 @@ fn chromium_step_signature_takes_url_and_expected_sha() {
 #[test]
 fn plist_step_signature() {
     use super::postinstall_runner::*;
-    fn _ck(w: &crate::launchd_plist_writer::LaunchdPlistWriter) -> Result<StepOutcome, crate::CliError> {
+    fn _ck(
+        w: &crate::launchd_plist_writer::LaunchdPlistWriter,
+    ) -> Result<StepOutcome, crate::CliError> {
         plist_step(w)
     }
     let _ = _ck;
