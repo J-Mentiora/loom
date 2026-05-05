@@ -1,0 +1,70 @@
+# @loom/sdk
+
+TypeScript client library for the
+[loom](https://github.com/mentiora-ai/loom) browser-automation daemon.
+
+## Prerequisites
+
+The SDK talks to a running `loom-daemon` over a Unix socket. Install
+loom (CLI + daemon + chromium pin) first via Homebrew, `cargo install`,
+or the install script — see the
+[main README](https://github.com/mentiora-ai/loom#install). Then start
+the daemon:
+
+```bash
+loom serve
+```
+
+## Install
+
+```bash
+npm install @loom/sdk
+```
+
+Requires Node ≥ 20.
+
+## Quick start
+
+```ts
+import { Session } from "@loom/sdk";
+
+const session = await Session.create();
+try {
+  const receipt = await session.navigate("https://example.com");
+  console.log(receipt.action_hash);
+} finally {
+  await session.close();
+}
+```
+
+## What the SDK exposes
+
+- `Session` — session lifecycle (create / close / abort / replay /
+  inspect / validate / export).
+- `Session.{navigate, click, typeText, select, hover, scroll, wait,
+  evaluate, screenshot, snapshot}` — every web action surface.
+- Receipt + summary types in `@loom/sdk/types` — `Receipt`,
+  `SessionInfo`, `SessionInspection`, `DiffReport`, `ExportInfo`,
+  `ValidationResult`, `GrantInfo`, `SchemaRegistry`, `LoomErrorCode`.
+- Typed errors: `LoomError`, `LoomRPCError`, `LoomConnectionError`,
+  `LoomTokenError`.
+
+## Connection details
+
+`Session.create()` defaults work when a single user runs the daemon on
+their own machine. Override per-call if needed:
+
+```ts
+const session = await Session.create({
+  socketPath: "/var/run/loom/loom.sock",  // custom daemon socket
+  token: "...",                            // explicit HELLO-token
+  profile: "standard",                     // or "safe", "full"
+  networkMode: "live",                     // or "replay"
+  seed: 42,                                // determinism seed
+});
+```
+
+## License
+
+Apache-2.0. See the
+[main repository](https://github.com/mentiora-ai/loom) for details.
