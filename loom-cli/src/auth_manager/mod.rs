@@ -1,6 +1,4 @@
-//! `auth_manager` — see `systems/loom-cli/modules/AuthManager/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `auth_manager` — see crate root.
 pub mod auth_manager;
 pub use auth_manager::*;
 

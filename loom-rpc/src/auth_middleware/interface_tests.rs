@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/auth_middleware/interface_tests.rs` instead.
 // Interface tests for `AuthMiddleware`. Verifies HELLO
 // handshake surface, AuthError categorisation, idle-timeout constant,
 // constant-time token comparison.

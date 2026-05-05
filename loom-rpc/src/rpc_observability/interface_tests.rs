@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/rpc_observability/interface_tests.rs` instead.
 // Interface tests for `RpcObservability`. Verifies span
 // field set, latency partition fields, redaction surface.
 

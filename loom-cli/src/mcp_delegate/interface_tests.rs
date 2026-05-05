@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/McpDelegate/interface_tests.rs` instead.
 // Interface tests for `McpDelegate`. Verifies delegation
 // shape and the cargo-deny ban on in-line MCP framing.
 

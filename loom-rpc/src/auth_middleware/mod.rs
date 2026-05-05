@@ -1,6 +1,4 @@
-//! `auth_middleware` — see `systems/loom-rpc/modules/auth_middleware/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `auth_middleware` — see crate root.
 pub mod auth_middleware;
 pub use auth_middleware::*;
 

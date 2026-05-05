@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/session_executor/interfaces.rs` instead.
 // SessionExecutor — builds per-dispatch `wasmtime::Store<HostState>`
 // and runs the surface invocation on the caller's tokio task.
 //

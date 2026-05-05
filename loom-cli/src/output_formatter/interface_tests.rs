@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/OutputFormatter/interface_tests.rs` instead.
 // Interface tests for `OutputFormatter`. Verifies the canonical
 // JSON path, pretty delegation shape, and verbatim
 // pass-through.

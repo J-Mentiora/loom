@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/host_function_table/interface_tests.rs` instead.
 // Interface tests for `HostFunctionTable`. Verifies the sole WASM↔core
 // bridge, the no-secret-in-WASM-linear-memory invariant, that every
 // host-fn writes to tape, the WIT-derived signatures, and the no-audit-

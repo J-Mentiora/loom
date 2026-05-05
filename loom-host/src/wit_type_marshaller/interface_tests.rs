@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/wit_type_marshaller/interface_tests.rs` instead.
 // Interface tests for `WitTypeMarshaller`. The module itself is
 // `wit-bindgen`-generated at build time, so the tests pin invariants
 // that the generation step must satisfy: WIT is the schema source of

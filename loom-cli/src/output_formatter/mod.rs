@@ -1,6 +1,4 @@
-//! `output_formatter` — see `systems/loom-cli/modules/OutputFormatter/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `output_formatter` — see crate root.
 pub mod output_formatter;
 pub use output_formatter::*;
 

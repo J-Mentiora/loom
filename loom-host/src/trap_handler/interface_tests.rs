@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/trap_handler/interface_tests.rs` instead.
 // Interface tests for `TrapHandler`. Verifies typed-receipt conversion
 // (daemon survives) and the .dwp debug-info resolution signature.
 

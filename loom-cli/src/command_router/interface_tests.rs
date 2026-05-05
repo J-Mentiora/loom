@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/CommandRouter/interface_tests.rs` instead.
 // Interface tests for `CommandRouter`. Verifies clap-derive shape and
 // the subcommand-coverage invariant.
 

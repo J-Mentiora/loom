@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/CliObservability/interfaces.rs` instead.
 // CliObservability — `tracing` subscriber + per-command span +
 // redaction layer.
 //

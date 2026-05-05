@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/rpc_observability/interfaces.rs` instead.
 // RpcObservability — `tracing` spans per RPC method + redaction layer.
 //
 // # Contract semantics

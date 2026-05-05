@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/mcp_adapter/interface_tests.rs` instead.
 // Interface tests for `McpAdapter`. Verifies the
 // 1:1 tool↔method mapping, ToolResult shape, no-bypass routing
 // through RequestRouter.

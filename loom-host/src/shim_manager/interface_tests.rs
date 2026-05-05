@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/shim_manager/interface_tests.rs` instead.
 // Interface tests for `ShimManager`. Verifies the no-platform-symbols
 // boundary, the circuit-breaker state machine, and per-shim error code
 // mapping.

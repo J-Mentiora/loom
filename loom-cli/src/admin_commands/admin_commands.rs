@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/AdminCommands/interfaces.rs` instead.
 // AdminCommands — `gc` (RPC), `serve` / `postinstall` / `doctor`
 // (local), `mcp serve` (delegate), `--version` (special).
 //

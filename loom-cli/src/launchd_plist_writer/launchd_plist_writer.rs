@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/LaunchdPlistWriter/interfaces.rs` instead.
 // LaunchdPlistWriter — `cfg(target_os = "macos")`-gated plist
 // emission.
 //

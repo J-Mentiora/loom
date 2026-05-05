@@ -1,6 +1,4 @@
-//! `supervisor` — see `systems/loom-shims/modules/supervisor/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `supervisor` — see crate root.
 pub mod run;
 pub mod supervisor;
 pub use supervisor::*;

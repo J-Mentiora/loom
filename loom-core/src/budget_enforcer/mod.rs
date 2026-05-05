@@ -1,6 +1,4 @@
-//! `budget_enforcer` — see `systems/loom-core/modules/budget_enforcer/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `budget_enforcer` — see crate root.
 pub mod budget_enforcer;
 pub use budget_enforcer::*;
 

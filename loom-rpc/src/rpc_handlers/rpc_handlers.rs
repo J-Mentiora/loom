@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/rpc_handlers/interfaces.rs` instead.
 // RpcHandlers — one handler function per canonical RPC method
 // (loom-rpc_contract.md). Each handler routes to either
 // `CoreServiceAdapter` (session.* / vault.*) or `HostServiceAdapter`

@@ -1,6 +1,4 @@
-//! `wasm_runtime` — see `systems/loom-host/modules/wasm_runtime/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `wasm_runtime` — see crate root.
 pub mod wasm_runtime;
 pub use wasm_runtime::*;
 
