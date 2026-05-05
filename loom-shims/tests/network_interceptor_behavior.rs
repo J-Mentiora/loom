@@ -1,10 +1,10 @@
 // Behavior tests for NetworkInterceptor blocklist — TDD.
 //
 // AC coverage:
-//   AC-DET-05.1     : default blocklist ships with >= 100 active entries
-//   AC-BLOCKLIST-02 : matched URLs carry a `reason` derived from the
+//  .1     : default blocklist ships with >= 100 active entries
+//   matched URLs carry a `reason` derived from the
 //                     section header (e.g. GA → "analytics")
-//   AC-BLOCKLIST-01 : strict matcher only inspects the URL host, not
+//   strict matcher only inspects the URL host, not
 //                     path/query — page-level navigates with blocklisted
 //                     domain in the query don't false-positive
 
@@ -14,7 +14,7 @@ use loom_shims::network_interceptor::network_interceptor::{
 
 static BLOCKLIST_TEXT: &str = include_str!("../assets/default_blocklist.txt");
 
-// === AC-DET-05.1: default blocklist has >= 100 entries ===
+// === default blocklist has >= 100 entries ===
 
 #[test]
 fn test_blocklist_applies_entry_count_ge_100() {
@@ -82,7 +82,7 @@ fn test_url_in_blocklist_strict_empty_patterns_returns_none() {
 
 // === NEW (Round-2 plan, item I1) ===
 
-/// AC-BLOCKLIST-02: GA section entries are tagged `reason="analytics"`,
+/// GA section entries are tagged `reason="analytics"`,
 /// DoubleClick advertising-section entries are tagged with the
 /// advertising section's lowercased name. Wildcard `*.` patterns match
 /// against the host suffix only (host-strict).
@@ -108,7 +108,7 @@ fn test_parse_blocklist_with_categories_groups_by_section_header() {
     );
 }
 
-/// AC-BLOCKLIST-01 host-only matching (D3): a blocklisted DOMAIN
+/// host-only matching (D3): a blocklisted DOMAIN
 /// appearing as a query-string token MUST NOT match. The original
 /// `str::contains` matcher would false-positive on this URL.
 #[test]
@@ -129,7 +129,7 @@ fn test_url_in_blocklist_strict_rejects_path_match() {
     );
 }
 
-/// AC-BLOCKLIST-02: wildcard `*.google-analytics.com` matches any
+/// wildcard `*.google-analytics.com` matches any
 /// subdomain AND returns the category from the section header.
 #[test]
 fn test_url_in_blocklist_strict_accepts_subdomain_for_wildcard_with_category() {

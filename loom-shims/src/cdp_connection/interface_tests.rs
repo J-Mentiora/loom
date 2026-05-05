@@ -1,7 +1,7 @@
 // Interface tests for `CdpConnection`.
-// Verifies BC-SHIM-01 (chromiumoxide-only), IC-SHIM-12 (async non-
-// blocking signature), error → ShimErrorCode mapping (IC-SHIM-10),
-// callback-based handler registration (acyclicity).
+// Verifies the chromiumoxide-only impl, async non-blocking signature,
+// error → ShimErrorCode mapping, and callback-based handler
+// registration (acyclicity).
 
 use super::cdp_connection::{
     is_browser_scope_method, method_matches, CdpConnection, CdpError, ChromiumCdpConnection,
@@ -67,7 +67,7 @@ fn register_event_handler_does_not_import_caller_modules() {
     let _reg = cdp.register_event_handler(EventFilter::new("X."), h);
 }
 
-// === IC-SHIM-10: error mapping ===
+// === error mapping ===
 
 #[test]
 fn cdp_timeout_maps_to_shim_cdp_timeout() {
@@ -97,7 +97,7 @@ fn cdp_target_not_attached_maps_to_target_unknown() {
     assert_eq!(code, ShimErrorCode::TargetUnknown);
 }
 
-// === IC-SHIM-12: async non-blocking signature ===
+// === async non-blocking signature ===
 
 #[test]
 fn cdp_connection_command_takes_timeout_and_returns_future() {
@@ -164,7 +164,7 @@ async fn connect_to_invalid_url_returns_connect_failed() {
     assert!(!cdp.is_connected());
 }
 
-// === AC-CDPATT-04: browser-scope vs page-scope classifier ===
+// === browser-scope vs page-scope classifier ===
 
 #[test]
 fn ac_cdpatt_04_method_classifier_browser_scope_methods() {
@@ -187,7 +187,7 @@ fn ac_cdpatt_04_method_classifier_browser_scope_methods() {
     ] {
         assert!(
             is_browser_scope_method(method),
-            "AC-CDPATT-04: '{method}' must be browser-scope (no sessionId on the wire)"
+            "'{method}' must be browser-scope (no sessionId on the wire)"
         );
     }
 }
@@ -216,7 +216,7 @@ fn ac_cdpatt_04_method_classifier_page_scope_methods() {
     ] {
         assert!(
             !is_browser_scope_method(method),
-            "AC-CDPATT-04: '{method}' must be page-scope (sessionId required on the wire)"
+            "'{method}' must be page-scope (sessionId required on the wire)"
         );
     }
 }

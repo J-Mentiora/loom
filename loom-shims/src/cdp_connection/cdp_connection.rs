@@ -28,7 +28,7 @@
 // - **Multiplex outbound commands.** Each `command(target_id, msg)`
 //   allocates a unique `id` and parks a oneshot listener until the matching
 //   response arrives. Multiple in-flight commands do NOT serialise
-//   (IC-SHIM-12).
+//   so cdp_send latency is bounded by the slowest in-flight command, not the queue.
 // - **Demux to handlers via Arc<dyn Fn>, not static deps.**
 //   `NetworkInterceptor` and `DeterminismInjector` register event
 //   handlers at construction; `CdpConnection` does NOT import them.
@@ -43,8 +43,8 @@
 // methods; there is no escape hatch for arbitrary `(method_name, params)`
 // pairs. Building typed wrappers for every CDP method we'll need is
 // strictly more code than running the JSON wire ourselves. The shim
-// is the only crate allowed to link `chromiumoxide` (BC-SHIM-01,
-// cargo-deny enforced) — that invariant is preserved either way.
+// is the only crate allowed to link `chromiumoxide`
+// (cargo-deny enforced) — that invariant is preserved either way.
 
 use crate::cdp_connection::cbor_json::{cbor_to_json, json_to_cbor};
 use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, TargetId};
@@ -523,7 +523,7 @@ impl ChromiumCdpConnection {
                 })?;
         }
 
-        // STEP 5: AC-SAFEPROF-04 / AC-WEB-07.2 — apply safe-profile download
+        // STEP 5: apply safe-profile download
         // confinement. When the daemon spawned this shim with
         // `LOOM_SHIM_PROFILE=safe` + `LOOM_SHIM_DOWNLOADS_DIR=<dir>`, send
         // `Browser.setDownloadBehavior(allowAndName, downloadPath=<dir>)`
@@ -536,7 +536,7 @@ impl ChromiumCdpConnection {
         // returns true so `raw_command` correctly omits sessionId.
         //
         // Best-effort: a setDownloadBehavior failure does NOT block bootstrap.
-        // The daemon-layer evaluate gate (AC-SAFEPROF-01) still fires for the
+        // The daemon-layer evaluate gate still fires for the
         // evaluate path, so the security model degrades gracefully — only
         // download confinement is impaired. Logged via tracing::warn so an
         // operator can spot it in the shim logs.
@@ -556,20 +556,20 @@ impl ChromiumCdpConnection {
                     Ok(_) => {
                         tracing::info!(
                             downloads_dir = %downloads_dir,
-                            "AC-SAFEPROF-04: Browser.setDownloadBehavior(allowAndName) applied"
+                            "safe-profile: Browser.setDownloadBehavior(allowAndName) applied"
                         );
                     }
                     Err(e) => {
                         tracing::warn!(
                             error = ?e,
                             downloads_dir = %downloads_dir,
-                            "AC-SAFEPROF-04: Browser.setDownloadBehavior failed; downloads not confined"
+                            "safe-profile: Browser.setDownloadBehavior failed; downloads not confined"
                         );
                     }
                 }
             } else {
                 tracing::warn!(
-                    "AC-SAFEPROF-04: LOOM_SHIM_PROFILE=safe but LOOM_SHIM_DOWNLOADS_DIR unset — \
+                    "safe-profile: LOOM_SHIM_PROFILE=safe but LOOM_SHIM_DOWNLOADS_DIR unset — \
                      downloads NOT confined. Daemon should populate both env vars together."
                 );
             }

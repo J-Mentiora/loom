@@ -1,16 +1,16 @@
 // Supervisor — sole owner of the Chromium child process lifecycle.
 //
 // # Contract semantics
-// - **`posix_spawn` only (IC-SHIM-02, HARD).** Chromium is launched
+// - **`posix_spawn` only (HARD).** Chromium is launched
 //   via `posix_spawn(2)` (through `nix::unistd::execvp`-equivalent or
 //   `tokio::process::Command::spawn` with `pre_exec` for env scrub).
 //   `fork()`+`exec()` is also acceptable as long as the spawn call is
 //   atomic from the daemon's perspective. NO shell, NO `system(3)`.
-// - **Locale-scrubbed env (AC-DET-06.1).** Sets `LC_ALL=C.UTF-8` +
+// - **Locale-scrubbed env.** Sets `LC_ALL=C.UTF-8` +
 //   `LANG=C.UTF-8`; removes `LC_MESSAGES`, `LC_NUMERIC`, `LC_TIME`.
 //   This is structurally load-bearing for bit-equal replay (R3 +
 //   locale = both in place before any user navigation).
-// - **Bounded restart budget (SR-SHIM-04).** Max 3 restarts within
+// - **Bounded restart budget.** Max 3 restarts within
 //   60s. On exhaustion the shim enters degraded state; all subsequent
 //   requests resolve to `ShimErrorCode::ChromiumUnavailable`. The
 //   daemon's `ShimManager` decides whether to respawn the entire
@@ -26,7 +26,7 @@
 //   `Arc<dyn Fn() + Send + Sync>` with `ProcessMonitor`; the monitor
 //   invokes it on hang detection. Same kill-callback pattern as
 //   loom-core's `BudgetEnforcer → SessionManager`.
-// - **Pinned Chromium revision (SR-SHIM-03).** `chromium_path`
+// - **Pinned Chromium revision.** `chromium_path`
 //   resolution + SHA-256 verification is the daemon's job (`loom
 //   postinstall`). On first `spawn_target` after a mismatch, the
 //   daemon passes `version_mismatch=true` and `Supervisor::start`
@@ -61,7 +61,7 @@ impl Default for RestartBudget {
 }
 
 /// Configuration passed to `Supervisor::start`. Resolved by daemon
-/// from `[chromium]` config.toml section (BC §6).
+/// from the `[chromium]` section of `config.toml`.
 #[derive(Debug, Clone)]
 pub struct SupervisorConfig {
     /// Pinned Chromium binary path (verified SHA-256 by daemon).
@@ -229,13 +229,12 @@ impl Supervisor for ChromiumSupervisor {
             .stdout(Stdio::null())
             .kill_on_drop(false);
 
-        // AC-SHCRT-05.2: pin Chromium into a fresh process group so a
+        // Pin Chromium into a fresh process group so a
         // single `killpg(pgid, SIGKILL)` reaps the entire helper-process
         // subtree atomically. Chromium spawns ~7 helper processes
         // (renderer, GPU, utility, network) which inherit the parent's
         // pgid. Without this, `kill -9` of the shim leaves orphans
-        // running — observed in the AC-SHCRT-05 manual smoke before
-        // this fix.
+        // running — observed in manual smoke testing before this fix.
         //
         // SAFETY: setpgid(0,0) is async-signal-safe per POSIX, so it's
         // permitted in pre_exec. process_group(0) is the tokio
@@ -500,7 +499,7 @@ pub fn parse_active_port_file(contents: &str) -> Option<String> {
 }
 
 /// Pure helper: locale-scrub map applied at spawn time. Public for
-/// testability — Phase 5.4 calls this when building the spawn env.
+/// testability — called when building the spawn env.
 /// Returns (set_pairs, remove_keys).
 pub fn locale_scrub_env() -> (Vec<(&'static str, &'static str)>, Vec<&'static str>) {
     (

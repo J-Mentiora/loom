@@ -1,5 +1,5 @@
 // Interface tests for `DeterminismInjector`.
-// Verifies IC-SHIM-05 (R3 LOAD-BEARING — runImmediately + canonical
+// Verifies R3 LOAD-BEARING (runImmediately + canonical
 // method name), error mapping, source-validation guard.
 
 use super::determinism_injector::{
@@ -9,19 +9,19 @@ use super::determinism_injector::{
 use crate::ipc_endpoint::ipc_endpoint::ShimErrorCode;
 use ciborium::value::Value;
 
-// === IC-SHIM-05 (KILL): canonical CDP method name ===
+// === canonical CDP method name (KILL) ===
 
 #[test]
 fn cdp_method_is_page_add_script_to_evaluate_on_new_document() {
     assert_eq!(ADD_SCRIPT_METHOD, "Page.addScriptToEvaluateOnNewDocument");
 }
 
-// === IC-SHIM-05 (KILL): runImmediately=true is load-bearing ===
+// === runImmediately=true is load-bearing (KILL) ===
 
 #[test]
 #[allow(clippy::assertions_on_constants)]
 fn run_immediately_is_true() {
-    assert!(RUN_IMMEDIATELY); // IC-SHIM-05 KILL: constant must stay true
+    assert!(RUN_IMMEDIATELY); // KILL: constant must stay true
 }
 
 #[test]
@@ -81,7 +81,7 @@ fn script_source_rejected_when_missing_markers() {
     assert!(!script_source_has_determinism_markers("Date.now = 0;")); // missing rng + raf
 }
 
-// === IC-SHIM-10: error mapping ===
+// === error mapping ===
 
 #[test]
 fn empty_source_maps_to_shim_internal_error() {

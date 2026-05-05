@@ -10,7 +10,7 @@
 //! value once means a future regression in either the Rust impl or the
 //! JS template is caught by this test.
 //!
-//! AC-RNGDET-04 (golden hex pin).
+//! (golden hex pin).
 
 use loom_shims::determinism_script_template::render_determinism_script;
 
@@ -58,7 +58,7 @@ impl Sfc32 {
 #[test]
 fn sfc32_seed_42_first_output_is_pinned() {
     // Pinning value: derived once from running this exact algorithm
-    // against seed=42. AC-RNGDET-04. If this changes, either the Rust
+    // against seed=42.. If this changes, either the Rust
     // impl drifted from the JS template, or someone changed the
     // initial state / warmup count. Either is a deliberate breaking
     // change requiring a coordinated update.
@@ -74,7 +74,7 @@ fn sfc32_seed_42_first_output_is_pinned() {
 
 #[test]
 fn sfc32_seed_42_vs_seed_0_diverge_immediately() {
-    // AC-RNGDET-02: different seeds produce different output streams.
+    // different seeds produce different output streams.
     let mut a = Sfc32::new(0);
     let mut b = Sfc32::new(42);
     assert_ne!(
@@ -86,7 +86,7 @@ fn sfc32_seed_42_vs_seed_0_diverge_immediately() {
 
 #[test]
 fn sfc32_seed_42_is_deterministic_across_runs() {
-    // AC-RNGDET-01: same seed, same first output.
+    // same seed, same first output.
     let mut a = Sfc32::new(42);
     let mut b = Sfc32::new(42);
     for _ in 0..1000 {

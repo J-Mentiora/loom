@@ -1,18 +1,18 @@
 // ActionExecutor — verb library + `cdp_send` worker.
 //
 // # Contract semantics
-// - **R3 pre-condition (IC-SHIM-05).** Before dispatching any
+// - **R3 pre-condition.** Before dispatching any
 //   `Page.navigate`, `ActionExecutor` calls
 //   `TargetManager::determinism_ready(target_id)` and returns
 //   `ShimErrorCode::ShimInternalError` (with detail
 //   `"R3OrderingViolation"`) if the flag is still false.
-// - **R1 pre-condition (IC-SHIM-04).** Before `Page.navigate`,
+// - **R1 pre-condition.** Before `Page.navigate`,
 //   subscribes `NetworkInterceptor` for the target so the
 //   `Network.responseReceived` events arrive before the response body
 //   is evicted from Chromium's cache.
-// - **`cdp_send` async (IC-SHIM-12).** Each `cdp_send` is its own
+// - **`cdp_send` async.** Each `cdp_send` is its own
 //   tokio task; multiple in-flight roundtrips do not serialise.
-// - **No CDP payload escape (IC-SHIM-06).** `ActionExecutor`
+// - **No CDP payload escape.** `ActionExecutor`
 //   translates CDP responses into typed `ActionResult` shapes.
 //   `cdp_send` is the one path that round-trips opaque CBOR — the
 //   daemon already routed that bytes-only via `loom-host::shim_call`,
@@ -43,7 +43,7 @@ pub const DEFAULT_ACTION_BUDGET: Duration = Duration::from_secs(30);
 /// Default budget specifically for `page_navigate`. Tighter than
 /// `DEFAULT_ACTION_BUDGET` so an unreachable host (DNS failure,
 /// connection refused, slow-TLS handshake) surfaces a typed-error
-/// receipt within the AC-NETERR-01..04 window. CDP itself fast-
+/// receipt within the network-error budget window. CDP itself fast-
 /// fails DNS / connection-refused sub-second; this constant bounds
 /// the slow-TLS / unresponsive-host worst case.
 pub const DEFAULT_NAVIGATE_BUDGET: Duration = Duration::from_secs(10);
@@ -67,14 +67,14 @@ pub enum ActionResult {
         /// SHA-256 of the captured DOM snapshot (post-load). Hex.
         dom_after_sha256: String,
         /// SHA-256 of the captured screenshot (post-load). Hex. NOT
-        /// part of the bit-equal replay hash chain (NFR-DET-01).
+        /// part of the bit-equal replay hash chain.
         screenshot_sha256: String,
-        // --- Tier-2 payload fields (AC-NAVRECEIPT-01..05) ---
+        // --- Tier-2 payload fields ---
         /// Requested URL (from PageNavigate.url).
         url: String,
-        /// Final URL after redirects. Phase 6 stub: same as url.
+        /// Final URL after redirects. Stub: same as url.
         final_url: String,
-        /// Page title. Phase 6 stub: empty string.
+        /// Page title. Stub: empty string.
         page_title: String,
         /// HTTP status of main document. Derived from network_events[0].status,
         /// falls back to 0 when network_events is empty.
@@ -83,10 +83,10 @@ pub enum ActionResult {
         dom_bytes: Vec<u8>,
         /// Raw CBOR bytes of the Page.captureScreenshot response (screenshot_sha256 = sha256 of these).
         screenshot_bytes: Vec<u8>,
-        /// Console lines captured by shim. Phase 6: always empty.
+        /// Console lines captured by shim. Stub: always empty.
         console_lines: Vec<ShimConsoleLine>,
-        /// Sub-resource requests blocked by the default blocklist
-        /// (AC-DET-05.1, AC-BLOCKLIST-02). Drained from
+        /// Sub-resource requests blocked by the default blocklist.
+        /// Drained from
         /// `NetworkInterceptor::drain_blocked` after `Page.loadEventFired`;
         /// the host writes one `AuditEntry { kind: BlockedUrl }` per
         /// event into the manifest hash chain. `serde(default)` so a
@@ -125,11 +125,11 @@ impl ChromiumActionExecutor {
 
 /// Public ActionExecutor trait surface. All methods are async so the
 /// dispatcher can drive multiple in-flight CDP roundtrips concurrently
-/// (IC-SHIM-12) and so that L4's `chromiumoxide::Browser` calls — which
+/// and so that L4's `chromiumoxide::Browser` calls — which
 /// are inherently async — fit cleanly into the call chain.
 #[async_trait]
 pub trait ActionExecutor: Send + Sync {
-    /// Pass-through CDP command. p99 ≤ 50ms (IC-SHIM-12).
+    /// Pass-through CDP command. p99 ≤ 50ms.
     /// Errors: `CdpTimeout`, `CdpProtocolError`, `TargetUnknown`.
     async fn cdp_send(
         &self,
@@ -142,7 +142,7 @@ pub trait ActionExecutor: Send + Sync {
     /// `Page.navigate`. Drains `LoomNetworkEvent`s from `NetworkInterceptor`
     /// after `Page.loadEventFired`.
     ///
-    /// `blocklist_enabled` (AC-DET-05.1, AC-BLOCKLIST-04) — when true,
+    /// `blocklist_enabled` — when true,
     /// also issues `Fetch.enable` before navigate so sub-resources are
     /// gated against the default blocklist; drained `BlockedEvent`s
     /// land in the receipt's `blocked_events` field and become
@@ -205,7 +205,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         budget: Option<Duration>,
         blocklist_enabled: bool,
     ) -> Result<ActionResult, ShimResponse> {
-        // R3 PRECONDITION (IC-SHIM-05). Refuse to navigate before the
+        // R3 PRECONDITION. Refuse to navigate before the
         // determinism script has been installed for this target. Today
         // the flag flips true ONLY on Ok(()) from `inject` (per
         // target_manager); a false flag here would mean a regression
@@ -221,7 +221,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         }
 
         // Tighter default for navigate so unreachable hosts surface a
-        // typed-error receipt within the AC-NETERR window. Callers
+        // typed-error receipt within the network-error budget window. Callers
         // passing an explicit `budget` keep their value.
         let timeout = budget.unwrap_or(DEFAULT_NAVIGATE_BUDGET);
 
@@ -269,7 +269,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         // so we just snapshot the events accumulated so far at navigate end.
 
         // STEP 2b: subscribe to Fetch.requestPaused for sub-resource
-        // blocklist enforcement (AC-DET-05.1, AC-BLOCKLIST-04). Skipped
+        // blocklist enforcement. Skipped
         // when the operator passed --no-blocklist (decoded into
         // `blocklist_enabled = false` on the wire). The interceptor's
         // own constructor short-circuits when its blocklist is empty,
@@ -342,8 +342,8 @@ impl ActionExecutor for ChromiumActionExecutor {
         let screenshot_bytes = cbor_to_bytes(&shot_result);
 
         // STEP 6a: extract document.title and final_url via a single
-        // Runtime.evaluate roundtrip. This replaces the Phase 6 stubs
-        // that left both fields empty (AC-NAVTIER2SHIM-01..02). Both
+        // Runtime.evaluate roundtrip. This replaces the earlier stubs
+        // that left both fields empty. Both
         // are best-effort: a CDP error here doesn't fail the navigate
         // — we just leave the field empty (same as the stub it
         // replaces). Single roundtrip keeps the cost ~constant vs
@@ -380,7 +380,6 @@ impl ActionExecutor for ChromiumActionExecutor {
         // STEP 7: drain network events + blocked sub-resource events
         // accumulated by NetworkInterceptor. Blocked events become
         // manifest `AuditEntry { kind: BlockedUrl }` on the host side.
-        // AC-BLOCKLIST-02.
         //
         // CDP envelope events arrive at handlers with `target_id == 0`
         // (cdp_connection's read_loop hardcodes that — there's no
@@ -390,7 +389,6 @@ impl ActionExecutor for ChromiumActionExecutor {
         // Falling back to the requested `target_id` keeps the
         // fake-chromium harness's per-target drain working — that
         // path uses real per-target IDs.
-        // AC-NETEVENTS-01..03.
         let mut network_events = self.network.drain_events(0);
         if network_events.is_empty() {
             network_events = self.network.drain_events(target_id);
@@ -412,7 +410,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         // (DNS, conn-refused, TLS, etc.). The host-side `navigate_execute`
         // detects events with `error_reason.is_some()` and converts them
         // into an HostError::ShimFailure carrying a structured JSON
-        // detail (kind="dns_failure"). AC-NAVERR-03.
+        // detail (kind="dns_failure").
         if let Some(err_text) = extract_nav_error_text(&nav_response) {
             // Classify at the boundary (D-01): the shim owns chromium-
             // specific error mapping, the host reads the typed kind.
@@ -482,7 +480,7 @@ impl ActionExecutor for ChromiumActionExecutor {
 /// Pull a non-empty `errorText` field from a `Page.navigate` CBOR
 /// response Map. CDP populates this when navigation fails before a
 /// server response (DNS, connection refused, TLS, etc.). Returns
-/// `None` if the field is absent or empty (success path). AC-NAVERR-03.
+/// `None` if the field is absent or empty (success path).
 pub(super) fn extract_nav_error_text(response: &CborValue) -> Option<String> {
     if let CborValue::Map(entries) = response {
         for (k, v) in entries {
@@ -506,7 +504,6 @@ pub(super) fn extract_nav_error_text(response: &CborValue) -> Option<String> {
 /// Returns `None` when the response doesn't match the expected shape
 /// (e.g. CDP error, page hadn't finished load yet, or guard was
 /// triggered) — caller falls back to the requested URL + empty title.
-/// AC-NAVTIER2SHIM-01..02.
 pub(super) fn extract_title_and_url_from_evaluate(
     response: &CborValue,
 ) -> Option<(String, String)> {

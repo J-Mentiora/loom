@@ -1,11 +1,11 @@
 // Interface tests for `TargetManager`.
-// Verifies IC-SHIM-05 (R3 ordering, KILL), SR-SHIM-01 (one target per
-// session), state-invalidation cascade, R3 invariant guard.
+// Verifies R3 ordering (KILL), one target per
+// session, state-invalidation cascade, R3 invariant guard.
 
 use super::target_manager::{assert_r3_ready, ordered_domain_enables, TargetError, TargetState};
 use crate::ipc_endpoint::ipc_endpoint::ShimErrorCode;
 
-// === IC-SHIM-05: domain-enable order is Network → Page → Log AFTER inject ===
+// === domain-enable order is Network → Page → Log AFTER inject ===
 
 #[test]
 fn domain_enable_order_is_network_first_then_page_then_log() {
@@ -48,7 +48,7 @@ fn target_state_default_determinism_injected_is_false() {
     assert!(!s.determinism_injected);
 }
 
-// === IC-SHIM-10: TargetError → ShimErrorCode mapping ===
+// === TargetError → ShimErrorCode mapping ===
 
 #[test]
 fn not_found_maps_to_target_unknown() {
@@ -68,7 +68,7 @@ fn determinism_injection_failed_maps_to_shim_internal_error() {
     assert_eq!(code, ShimErrorCode::ShimInternalError);
 }
 
-// === SR-SHIM-01: one target per session (TargetState carries SessionId) ===
+// === one target per session (TargetState carries SessionId) ===
 
 #[test]
 fn target_state_binds_session_id() {

@@ -1,14 +1,14 @@
-# Loom default network blocklist — AC-DET-05.1
+# Loom default network blocklist
 # Format: one domain pattern per line. Prefix with '*.' for subdomain wildcard.
 # Comment lines start with '#'. Empty lines are ignored.
-# Minimum 100 entries required (AC-DET-05.1).
+# Minimum 100 entries required.
 #
 # Section headers (`# --- Section ---`) become the `reason` field on
 # manifest AuditEntry::BlockedUrl entries (lowercased verbatim, e.g.
 # `Analytics` → `analytics`). Don't reorganize sections without
 # updating the test pins in `loom-shims/tests/network_interceptor_behavior.rs`.
 #
-# SCOPE: enforcement gates SUB-RESOURCE requests only (AC-BLOCKLIST-01).
+# SCOPE: enforcement gates SUB-RESOURCE requests only.
 # The operator's primary navigate URL (the one passed to `loom action
 # web.navigate --url ...`) is NOT filtered against this list — the
 # operator can opt into navigating to a blocklisted page directly.

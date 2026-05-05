@@ -1,7 +1,7 @@
 // Interface tests for `ActionExecutor`.
-// Verifies IC-SHIM-12 (cdp_send async signature), IC-SHIM-05
-// (R3 pre-condition), IC-SHIM-04 (R1 pre-condition), IC-SHIM-06
-// (no CDP payload escape — `ActionResult` is typed), error mapping.
+// Verifies cdp_send async signature,
+// R3 pre-condition, R1 pre-condition,
+// no CDP payload escape (`ActionResult` is typed), error mapping.
 
 use super::action_executor::{
     action_error_to_response, ActionError, ActionResult, DEFAULT_ACTION_BUDGET,
@@ -17,7 +17,7 @@ fn default_action_budget_is_thirty_seconds() {
     assert_eq!(DEFAULT_ACTION_BUDGET, Duration::from_secs(30));
 }
 
-// === IC-SHIM-06: ActionResult is typed, no raw CDP bytes for navigate ===
+// === ActionResult is typed, no raw CDP bytes for navigate ===
 
 #[test]
 fn navigated_result_carries_typed_fields_not_cdp_bytes() {
@@ -70,7 +70,7 @@ fn cdp_send_result_passes_cbor_through_only_for_cdp_send_path() {
     }
 }
 
-// === IC-SHIM-10: ActionError → ShimErrorCode mapping ===
+// === ActionError → ShimErrorCode mapping ===
 
 #[test]
 fn r3_violation_maps_to_shim_internal_error() {
@@ -130,7 +130,7 @@ fn action_error_to_response_works_without_session_id() {
 
 // === Fix 2 (navigate-status-code-error-surfacing) ===
 // extract_nav_error_text pulls CDP `Page.navigate`'s non-empty `errorText`
-// field — the channel for DNS / conn-refused / TLS / etc. (AC-NAVERR-03).
+// field — the channel for DNS / conn-refused / TLS / etc.
 
 #[test]
 fn extract_nav_error_text_returns_some_when_error_text_is_non_empty() {

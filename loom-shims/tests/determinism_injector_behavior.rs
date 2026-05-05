@@ -1,12 +1,12 @@
 // Behavior tests for ChromiumDeterminismInjector — TDD Red phase.
 //
 // AC coverage:
-//   IC-SHIM-05: test_inject_sends_add_script_method_with_run_immediately_true
+//   test_inject_sends_add_script_method_with_run_immediately_true
 //               test_inject_idempotent_second_call_is_noop
 //               test_inject_empty_source_returns_empty_source_error
 //               test_script_source_has_required_markers
-//   AC-DET-04.1: test_determinism_init_js_markers_for_animation_disabling
-//   AC-DET-06.1: test_supervisor_sets_lc_all_in_child_env (stub)
+//  .1: test_determinism_init_js_markers_for_animation_disabling
+//  .1: test_supervisor_sets_lc_all_in_child_env (stub)
 
 use ciborium::value::Value;
 use loom_shared::types::{EpochMs, Seed};
@@ -149,7 +149,7 @@ fn make_script() -> String {
         .to_string()
 }
 
-// === IC-SHIM-05 (KILL): canonical CDP method + runImmediately ===
+// === KILL: canonical CDP method + runImmediately ===
 
 #[tokio::test]
 async fn test_inject_sends_add_script_method_with_run_immediately_true() {
@@ -175,7 +175,7 @@ async fn test_inject_sends_add_script_method_with_run_immediately_true() {
         assert_eq!(
             v,
             Some(&Value::Bool(true)),
-            "runImmediately must be true (IC-SHIM-05 KILL)"
+            "runImmediately must be true (KILL)"
         );
     } else {
         panic!("expected Map params");
@@ -230,7 +230,7 @@ fn test_script_source_present_returns_true_for_valid_script() {
     assert!(injector.script_source_present());
 }
 
-// === AC-DET-04.1: animation disabling markers ===
+// === animation disabling markers ===
 
 #[test]
 fn test_script_source_has_required_markers() {
@@ -293,7 +293,7 @@ async fn test_clear_target_removes_from_registry() {
     );
 }
 
-// === AC-RNGDET-01..04: per-session seed substitution on the wire ===
+// === per-session seed substitution on the wire ===
 
 /// J.2: the seed value supplied to `inject` is rendered into the script
 /// source actually sent via `Page.addScriptToEvaluateOnNewDocument`.

@@ -1,14 +1,14 @@
 // Behavior tests for ChromiumNetworkInterceptor blocklist wiring.
 //
 // AC coverage:
-//   AC-DET-05.1     : subscribe() issues Fetch.enable when blocklist
+//  .1     : subscribe() issues Fetch.enable when blocklist
 //                     is non-empty, no-op when empty
-//   AC-BLOCKLIST-02 : blocked sub-resource drains as a BlockedEvent
+//   blocked sub-resource drains as a BlockedEvent
 //                     with reason from the section header
-//   AC-BLOCKLIST-01 : top-frame Document request is skipped (operator
+//   top-frame Document request is skipped (operator
 //                     opt-in to the primary URL)
 //   Regression      : legacy `new()` constructor stays no-op for
-//                     Fetch.enable (back-compat with pre-AC-DET-05.1)
+//                     Fetch.enable (back-compat with pre-feature)
 
 use ciborium::value::Value;
 use loom_shims::cdp_connection::cdp_connection::{
@@ -128,7 +128,7 @@ fn ga_blocklist() -> Vec<(String, String)> {
     )]
 }
 
-// === AC-DET-05.1: subscribe() issues Fetch.enable when blocklist is non-empty ===
+// === subscribe() issues Fetch.enable when blocklist is non-empty ===
 
 #[tokio::test]
 async fn test_subscribe_issues_fetch_enable_when_blocklist_nonempty() {
@@ -190,7 +190,7 @@ async fn test_legacy_new_constructor_is_no_op_for_fetch_enable() {
     );
 }
 
-// === AC-BLOCKLIST-02: blocklisted sub-resource drains as BlockedEvent ===
+// === blocklisted sub-resource drains as BlockedEvent ===
 
 #[tokio::test]
 async fn test_request_paused_blocklisted_calls_fail_request_and_records() {
@@ -272,7 +272,7 @@ async fn test_request_paused_non_blocklisted_calls_continue() {
     );
 }
 
-// === AC-BLOCKLIST-01: top-frame Document request is skipped ===
+// === top-frame Document request is skipped ===
 
 #[tokio::test]
 async fn test_top_frame_document_skips_gate() {

@@ -1,7 +1,7 @@
 // DeterminismInjector — R3 mitigation owner.
 //
 // # Contract semantics
-// - **R3 LOAD-BEARING (IC-SHIM-05, KILL).** Every CDP target attach
+// - **R3 LOAD-BEARING (KILL).** Every CDP target attach
 //   triggers `Page.addScriptToEvaluateOnNewDocument({source:
 //   <determinism_init.js>, runImmediately: true})` BEFORE any user
 //   navigation begins. With `runImmediately: true` the script fires

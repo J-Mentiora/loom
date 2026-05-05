@@ -1,6 +1,6 @@
 // Interface tests for `Dispatcher`.
-// Verifies IC-SHIM-12 (non-blocking dispatch), routing table,
-// IC-SHIM-10 (error envelope shape), state-invalidation hook.
+// Verifies non-blocking dispatch, routing table,
+// error envelope shape, state-invalidation hook.
 
 use super::dispatcher::{
     make_error_response, make_ok_response, route_target, Dispatcher, RouteTarget, ShimDispatcher,
@@ -9,7 +9,7 @@ use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, ShimRequest, 
 use ciborium::value::Value as CborValue;
 use loom_shared::types::{EpochMs, Seed};
 
-// === IC-SHIM-12: routing table is the foundation of non-blocking dispatch ===
+// === routing table is the foundation of non-blocking dispatch ===
 
 #[test]
 fn spawn_target_routes_to_target_manager() {
@@ -69,7 +69,7 @@ fn shutdown_routes_to_shutdown() {
     );
 }
 
-// === IC-SHIM-10: error envelope shape ===
+// === error envelope shape ===
 
 #[test]
 fn make_error_response_carries_code_and_detail() {
@@ -112,7 +112,7 @@ fn make_ok_response_carries_payload() {
     }
 }
 
-// === State-invalidation hook signature (SR-SHIM-04 cascade) ===
+// === State-invalidation hook signature (cascade) ===
 
 #[test]
 fn dispatcher_trait_object_is_send_sync() {
@@ -129,7 +129,7 @@ fn dispatcher_exposes_invalidate_in_flight_hook() {
     let _ = _check::<dyn Dispatcher>;
 }
 
-// === Routing exhaustiveness (BC-SHIM-03 closed enum guarantee) ===
+// === Routing exhaustiveness (closed enum guarantee) ===
 
 #[test]
 fn route_target_handles_every_shim_request_variant() {

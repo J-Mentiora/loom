@@ -1,7 +1,7 @@
 // Dispatcher — `tokio::select!` non-blocking router.
 //
 // # Contract semantics
-// - **Non-blocking dispatch (IC-SHIM-12).** Multiple in-flight
+// - **Non-blocking dispatch.** Multiple in-flight
 //   `cdp_send` requests do NOT serialise. Each request spawns its own
 //   tokio task; chromiumoxide multiplexes responses by CDP message id.
 //   `cdp_send` p99 ≤ 50ms is achievable only because of this.
@@ -14,7 +14,7 @@
 //   (state-invalidation cascade, §3.3).
 // - **Unknown kind handling.** Returns `ShimErrorCode::ShimInternalError`
 //   with `detail: "unknown kind: <name>"`. Does NOT crash the shim.
-// - **No CDP payload escape (IC-SHIM-06).** Dispatcher passes typed
+// - **No CDP payload escape.** Dispatcher passes typed
 //   `CdpMessage` values to lower layers; never inspects or transforms
 //   CDP method strings beyond enum routing.
 
@@ -226,7 +226,7 @@ async fn handle_request(
             // Lazy-spawn: when the host doesn't know the target yet (target_id == 0),
             // create one here so the per-session seed reaches the inject path even
             // when the host calls navigate without a prior explicit SpawnTarget.
-            // Idempotent at the target_manager level (SR-SHIM-01).
+            // Idempotent at the target_manager level.
             let effective_target_id = if target_id == 0 {
                 match target_manager
                     .create_new_target(session_id, "default".into(), seed, epoch_ms)

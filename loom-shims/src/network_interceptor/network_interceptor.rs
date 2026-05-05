@@ -1,7 +1,7 @@
 // NetworkInterceptor — R1 mitigation owner.
 //
 // # Contract semantics
-// - **R1 LOAD-BEARING ORDERING (IC-SHIM-04, KILL).** For each
+// - **R1 LOAD-BEARING ORDERING (KILL).** For each
 //   `Network.responseReceived` event:
 //     1. Call `Network.getResponseBody({requestId})` — chromiumoxide
 //        returns the DECOMPRESSED body bytes. Chromium itself
@@ -12,7 +12,7 @@
 //     3. Compute SHA-256 of the decompressed bytes.
 //     4. Append a `LoomNetworkEvent` with the hash.
 //   Hashing compressed bytes → KILL — replay parity broken.
-// - **No CDP payload escape (IC-SHIM-06).** The emitted
+// - **No CDP payload escape.** The emitted
 //   `LoomNetworkEvent` carries typed fields only — method, URL,
 //   request_hash, response_hash, status, content_type, duration_ms.
 //   The raw `Network.responseReceived` CBOR object never leaves
@@ -42,7 +42,7 @@ pub use loom_shared::navigate_outcome::BlockedEvent;
 pub const SHA256_HEX_LEN: usize = 64;
 
 /// Typed network event emitted by the shim. Replaces the raw CDP
-/// `Network.responseReceived` payload at the boundary (IC-SHIM-06).
+/// `Network.responseReceived` payload at the boundary.
 /// All numeric fields are integers per Hard Binding 3.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoomNetworkEvent {
@@ -84,8 +84,8 @@ pub struct ChromiumNetworkInterceptor {
     pub(crate) per_target:
         parking_lot::RwLock<std::collections::BTreeMap<TargetId, Vec<LoomNetworkEvent>>>,
     pub(crate) registration: parking_lot::Mutex<Option<EventRegistration>>,
-    /// Sub-resource requests blocked by the default blocklist
-    /// (AC-DET-05.1, AC-BLOCKLIST-02). Drained by `ActionExecutor::page_navigate`
+    /// Sub-resource requests blocked by the default blocklist.
+    /// Drained by `ActionExecutor::page_navigate`
     /// after `Page.loadEventFired`; the host then writes one
     /// `AuditEntry { kind: BlockedUrl }` per event into the manifest
     /// hash chain.
@@ -100,7 +100,7 @@ pub struct ChromiumNetworkInterceptor {
     /// `Fetch.requestPaused` event has already been processed. The
     /// first event for a given frame's top-frame document is the
     /// page-level navigate (operator's primary URL); skip-gate that
-    /// one regardless of blocklist match per AC-BLOCKLIST-01. All
+    /// one regardless of blocklist match (top-frame Document is the operator's primary navigation). All
     /// subsequent events on the same target are gated normally.
     pub(crate) top_frame_seen: parking_lot::RwLock<
         std::collections::BTreeMap<TargetId, std::collections::BTreeSet<String>>,
@@ -114,8 +114,8 @@ pub struct ChromiumNetworkInterceptor {
 
 impl ChromiumNetworkInterceptor {
     /// Legacy constructor — back-compat alias for
-    /// `new_with_blocklist(cdp, vec![])`. Preserves the pre-AC-DET-05.1
-    /// behavior: registers only the `Network.*` event observer; no
+    /// `new_with_blocklist(cdp, vec![])`. Preserves the
+    /// pre-blocklist-enforcement behavior: registers only the `Network.*` event observer; no
     /// `Fetch.enable` is issued, no sub-resource gating happens.
     /// `subscribe(target_id)` becomes a no-op.
     pub fn new(cdp: Arc<dyn CdpConnection>) -> Arc<Self> {
@@ -124,7 +124,7 @@ impl ChromiumNetworkInterceptor {
 
     /// Construct + register the `Network.*` event observer (always),
     /// plus a `Fetch.*` handler when `blocklist` is non-empty
-    /// (AC-DET-05.1 enforcement path). The registrations are the ONLY
+    /// (the blocklist enforcement path). The registrations are the ONLY
     /// edges between these modules; no import of `CdpConnection`
     /// happens in the reverse direction.
     pub fn new_with_blocklist(
@@ -197,7 +197,7 @@ impl ChromiumNetworkInterceptor {
         let frame_id = cbor_map_text(map, "frameId").unwrap_or_default();
         let resource_type = cbor_map_text(map, "resourceType").unwrap_or_default();
 
-        // AC-BLOCKLIST-01: top-frame Document request is the operator's
+        // The top-frame Document request is the operator's
         // primary URL — skip-gate regardless of blocklist match.
         // First Document event per (target_id, frame_id) is the
         // page-level navigate; subsequent same-frame Documents (e.g.
@@ -302,7 +302,6 @@ pub trait NetworkInterceptor: Send + Sync {
     /// (NOT the deprecated `Network.setRequestInterception`) via
     /// `CdpConnection`. With an empty blocklist the implementation
     /// short-circuits to `Ok(())` — see `new_with_blocklist`.
-    /// AC-DET-05.1.
     async fn subscribe(&self, target_id: TargetId) -> Result<(), NetworkError>;
 
     /// Drain accumulated events for a target. Called by
@@ -312,7 +311,7 @@ pub trait NetworkInterceptor: Send + Sync {
     /// Drain accumulated blocked sub-resource events for a target.
     /// Called by `ActionExecutor::page_navigate` after
     /// `Page.loadEventFired`; events become `AuditEntry::BlockedUrl`s
-    /// in the manifest hash chain on the host side. AC-BLOCKLIST-02.
+    /// in the manifest hash chain on the host side.
     fn drain_blocked(&self, target_id: TargetId) -> Vec<BlockedEvent>;
 
     /// Append an event. Used by tests + the chromiumoxide event
@@ -339,14 +338,13 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
         // Empty blocklist = no enforcement = no Fetch.enable. Avoids
         // the latency of issuing a no-op CDP command on every navigate
         // when the operator passed --no-blocklist OR no blocklist file
-        // was loaded. AC-BLOCKLIST-04.
+        // was loaded.
         if self.blocklist.is_empty() {
             return Ok(());
         }
         // Fetch.enable with `urlPattern: "*"` matches every request;
         // `requestStage: "Request"` fires before the request is sent
         // so we can decide continue/fail before the wire roundtrip.
-        // AC-DET-05.1, AC-BLOCKLIST-05.
         let msg = CdpMessage {
             method: "Fetch.enable".into(),
             params: CborValue::Map(vec![(
@@ -399,7 +397,7 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
 /// event into a `LoomNetworkEvent`. Returns `None` for events that
 /// aren't main-document loads (subresource CSS/JS/images), so the
 /// document-status derivation in `action_executor::page_navigate`
-/// stays unambiguous (AC-NAVERR-01..04). The shim is the only place
+/// stays unambiguous. The shim is the only place
 /// that classifies chromium error codes (D-01); the `error_kind` field
 /// is set here for `loadingFailed`, mirroring the synthetic-event
 /// path in `action_executor::page_navigate` for `Page.navigate`-time
@@ -500,7 +498,7 @@ fn cbor_map_u16(map: &[(CborValue, CborValue)], key: &str) -> Option<u16> {
 /// - `blocked`: `ERR_BLOCKED_BY_CLIENT` (default analytics/ads/telemetry
 ///   blocklist hit) — distinct kind from `network_error` so agent
 ///   dashboards can match on intentional blocks vs. real connectivity
-///   failures (AC-BLOCKKIND-01..04).
+///   failures.
 pub fn classify_chromium_nav_error(error_text: &str) -> &'static str {
     if error_text.contains("ERR_BLOCKED_BY_CLIENT")
         || error_text.contains("ERR_BLOCKED_BY_RESPONSE")
@@ -535,7 +533,7 @@ pub fn compute_response_hash(decompressed: &[u8]) -> String {
 
 /// Pure helper: strip `Content-Encoding` from a header list. The
 /// canonical request descriptor is hashed AFTER this strip per R1
-/// (IC-SHIM-04) so request_hash is computed over the post-decompression
+/// so request_hash is computed over the post-decompression
 /// shape that the daemon will replay.
 pub fn strip_content_encoding(headers: Vec<(String, String)>) -> Vec<(String, String)> {
     headers
@@ -550,7 +548,7 @@ pub fn strip_content_encoding(headers: Vec<(String, String)>) -> Vec<(String, St
 /// dash-and-space-trimmed section name. Lines preceding any section
 /// header get `category="other"` (none in the current
 /// `assets/default_blocklist.txt`). The input is typically the contents
-/// of that file via `include_str!`. AC-DET-05.1 / AC-BLOCKLIST-02.
+/// of that file via `include_str!`.
 ///
 /// Examples:
 ///   `# --- Analytics ---`     → category `"analytics"`
@@ -586,7 +584,7 @@ pub fn parse_blocklist_with_categories(text: &str) -> Vec<(String, String)> {
 /// - `*.suffix`    → URL host equals `suffix` OR ends with `.suffix`
 ///
 /// URL parsing uses `url::Url`; URLs that don't parse OR don't have a
-/// host return `None`. This is the production blocklist gate (AC-DET-05.1).
+/// host return `None`. This is the production blocklist gate.
 pub fn url_in_blocklist_strict<'a>(
     url: &str,
     patterns: &'a [(String, String)],
@@ -611,7 +609,7 @@ pub fn url_in_blocklist_strict<'a>(
 }
 
 /// Lightweight hex encoder — avoids pulling another crate at the
-/// interface header. Phase 5.4 may swap to `hex` crate.
+/// interface header. May swap to `hex` crate later.
 fn hex_encode(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut out = String::with_capacity(bytes.len() * 2);

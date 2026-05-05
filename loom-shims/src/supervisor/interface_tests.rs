@@ -1,7 +1,7 @@
 // Interface tests for `Supervisor`.
-// Verifies IC-SHIM-02 (posix_spawn semantics — by structure),
-// AC-DET-06.1 (locale-scrubbed env), SR-SHIM-04 (restart budget),
-// SR-SHIM-03 (version mismatch), state-invalidation cascade.
+// Verifies posix_spawn semantics (by structure),
+// locale-scrubbed env, restart budget,
+// version mismatch, state-invalidation cascade.
 
 use super::supervisor::{
     extract_ws_url, locale_scrub_env, parse_active_port_file, restart_allowed, RestartBudget,
@@ -58,7 +58,7 @@ fn parse_active_port_file_returns_none_for_garbage() {
     assert_eq!(parse_active_port_file("not-a-port\n/devtools"), None);
 }
 
-// === AC-DET-06.1: locale-scrubbed env ===
+// === locale-scrubbed env ===
 
 #[test]
 fn locale_scrub_sets_lc_all_c_utf8() {
@@ -80,7 +80,7 @@ fn locale_scrub_removes_lc_messages_numeric_time() {
     }
 }
 
-// === SR-SHIM-04: restart budget (max 3 within 60s) ===
+// === restart budget (max 3 within 60s) ===
 
 #[test]
 fn default_restart_budget_is_three_within_sixty_seconds() {
@@ -118,7 +118,7 @@ fn restart_allowed_when_old_restarts_fall_outside_window() {
     assert!(restart_allowed(&history, now, RestartBudget::default()));
 }
 
-// === SupervisorError → ShimErrorCode mapping (IC-SHIM-10) ===
+// === SupervisorError → ShimErrorCode mapping ===
 
 #[test]
 fn budget_exhausted_maps_to_chromium_unavailable() {
@@ -144,7 +144,7 @@ fn version_mismatch_maps_to_shim_internal_error() {
     assert_eq!(code, ShimErrorCode::ShimInternalError);
 }
 
-// === SR-SHIM-03: version mismatch flag ===
+// === version mismatch flag ===
 
 #[test]
 fn supervisor_config_carries_version_mismatch_flag() {
@@ -157,7 +157,7 @@ fn supervisor_config_carries_version_mismatch_flag() {
     assert!(cfg.version_mismatch);
 }
 
-// === IC-SHIM-09: user_data_dir under TMPDIR-style path ===
+// === user_data_dir under TMPDIR-style path ===
 
 #[test]
 fn supervisor_config_user_data_dir_is_caller_provided() {
@@ -169,7 +169,7 @@ fn supervisor_config_user_data_dir_is_caller_provided() {
     assert!(s.contains("loom-chromium"), "user_data_dir = {}", s);
 }
 
-// === BC-SHIM-05: no FS write expectation outside bundle/tmp ===
+// === no FS write expectation outside bundle/tmp ===
 
 #[test]
 fn extra_flags_default_empty() {
@@ -182,4 +182,4 @@ fn extra_flags_default_empty() {
 // (Construction requires the dependent traits; we assert behavioural
 // stubs at the pure-function layer above. The trait method panics are
 // covered by the dispatcher/cdp/targets tests since each module's
-// trait stubs share the same Phase 5.4 panic contract.)
+// trait stubs share the same v5.4 panic contract.)
