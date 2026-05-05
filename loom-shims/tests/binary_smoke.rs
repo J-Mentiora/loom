@@ -29,11 +29,29 @@ use loom_shared::shim_protocol::{ciborium_to_vec, ShimRequest, ShimResponse, LEN
 use std::io::{Read, Write};
 use std::os::unix::io::{FromRawFd, RawFd};
 use std::os::unix::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-const SHIM_BIN: &str = env!("CARGO_BIN_EXE_loom-shim-chromium");
-const FAKE_CHROMIUM_BIN: &str = env!("CARGO_BIN_EXE_fake-chromium");
+// `loom-shim-chromium` lives in `loom-cli` (cargo-dist bundling), so
+// `env!("CARGO_BIN_EXE_loom-shim-chromium")` is unset in this test crate.
+// Mirror the path-discovery used by `loom-host/tests/integration_*.rs`:
+// `current_exe()` for an integration test is
+// `target/<profile>/deps/<hash>`, so two `parent()` hops get us to the
+// shared profile dir where workspace binaries land.
+fn target_bin_dir() -> PathBuf {
+    let test_exe = std::env::current_exe().expect("current_exe");
+    let deps = test_exe.parent().expect("deps dir");
+    deps.parent().expect("profile dir").to_path_buf()
+}
+
+fn shim_bin() -> PathBuf {
+    target_bin_dir().join("loom-shim-chromium")
+}
+
+fn fake_chromium_bin() -> PathBuf {
+    target_bin_dir().join("fake-chromium")
+}
 
 /// Create an AF_UNIX SOCK_STREAM socketpair, returning the two raw fds.
 /// The first fd is for the test (parent) side, the second is for the
@@ -49,12 +67,25 @@ fn make_socketpair() -> (RawFd, RawFd) {
 
 #[test]
 fn shim_binary_round_trips_shutdown() {
+    let shim_path = shim_bin();
+    let fake_path = fake_chromium_bin();
+    assert!(
+        shim_path.is_file(),
+        "loom-shim-chromium binary not built at {}; run `cargo build -p loom-cli --bin loom-shim-chromium --release` first",
+        shim_path.display()
+    );
+    assert!(
+        fake_path.is_file(),
+        "fake-chromium binary not built at {}; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --release` first",
+        fake_path.display()
+    );
+
     let (parent_fd, child_fd) = make_socketpair();
     let user_data_dir = tempfile::tempdir().expect("tempdir");
 
-    let mut cmd = Command::new(SHIM_BIN);
+    let mut cmd = Command::new(&shim_path);
     cmd.env("LOOM_SHIM_FD", "3")
-        .env("LOOM_SHIM_CHROMIUM_PATH", FAKE_CHROMIUM_BIN)
+        .env("LOOM_SHIM_CHROMIUM_PATH", &fake_path)
         .env("LOOM_SHIM_USER_DATA_DIR", user_data_dir.path())
         .env("LOOM_FAKE_CHROMIUM_USER_DATA_DIR", user_data_dir.path())
         .stdin(Stdio::null())
