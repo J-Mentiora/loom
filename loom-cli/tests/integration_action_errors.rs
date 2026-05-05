@@ -41,7 +41,7 @@ fn schema_cache_with_navigate() -> (SchemaCache, TempDir) {
 // ── missing schemas dir error includes path + exit code 2 ───────
 
 #[test]
-fn test_ac_aesf_01_schema_cache_missing_dir_error_includes_path() {
+fn schema_cache_missing_dir_error_includes_path() {
     let dir = TempDir::new().unwrap();
     let nonexistent = dir.path().join("missing_schemas");
     match SchemaCache::load(&nonexistent) {
@@ -66,7 +66,7 @@ fn test_ac_aesf_01_schema_cache_missing_dir_error_includes_path() {
 }
 
 #[test]
-fn test_ac_aesf_01_missing_schemas_exit_code_is_2() {
+fn missing_schemas_exit_code_is_2() {
     let dir = TempDir::new().unwrap();
     let nonexistent = dir.path().join("missing");
     match SchemaCache::load(&nonexistent) {
@@ -83,7 +83,7 @@ fn test_ac_aesf_01_missing_schemas_exit_code_is_2() {
 }
 
 #[test]
-fn test_ac_aesf_01_missing_schemas_format_error_non_empty() {
+fn missing_schemas_format_error_non_empty() {
     let dir = TempDir::new().unwrap();
     let nonexistent = dir.path().join("missing");
     match SchemaCache::load(&nonexistent) {
@@ -101,7 +101,7 @@ fn test_ac_aesf_01_missing_schemas_format_error_non_empty() {
 // ── unknown method error names method + lists available ──────────
 
 #[test]
-fn test_ac_aesf_02_unknown_method_names_method() {
+fn unknown_method_names_method() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({});
     let err = validate_args(&schemas, "bogus.method", &args).unwrap_err();
@@ -113,7 +113,7 @@ fn test_ac_aesf_02_unknown_method_names_method() {
 }
 
 #[test]
-fn test_ac_aesf_02_unknown_method_lists_available() {
+fn unknown_method_lists_available() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({});
     let err = validate_args(&schemas, "bogus.method", &args).unwrap_err();
@@ -130,7 +130,7 @@ fn test_ac_aesf_02_unknown_method_lists_available() {
 }
 
 #[test]
-fn test_ac_aesf_02_unknown_method_exit_code_is_2() {
+fn unknown_method_exit_code_is_2() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "bogus.method", &args).unwrap_err());
@@ -138,7 +138,7 @@ fn test_ac_aesf_02_unknown_method_exit_code_is_2() {
 }
 
 #[test]
-fn test_ac_aesf_02_unknown_method_format_error_non_empty() {
+fn unknown_method_format_error_non_empty() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "bogus.method", &args).unwrap_err());
@@ -152,7 +152,7 @@ fn test_ac_aesf_02_unknown_method_format_error_non_empty() {
 // ── malformed args error names failing param ────────────────────
 
 #[test]
-fn test_ac_aesf_03_malformed_args_names_missing_field() {
+fn malformed_args_names_missing_field() {
     let (schemas, _dir) = schema_cache_with_navigate();
     // Missing required "url"
     let args = json!({"session": "S1"});
@@ -170,7 +170,7 @@ fn test_ac_aesf_03_malformed_args_names_missing_field() {
 }
 
 #[test]
-fn test_ac_aesf_03_malformed_args_exit_code_is_2() {
+fn malformed_args_exit_code_is_2() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({"session": "S1"});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "web.navigate", &args).unwrap_err());
@@ -178,7 +178,7 @@ fn test_ac_aesf_03_malformed_args_exit_code_is_2() {
 }
 
 #[test]
-fn test_ac_aesf_03_malformed_args_format_error_non_empty() {
+fn malformed_args_format_error_non_empty() {
     let (schemas, _dir) = schema_cache_with_navigate();
     let args = json!({"session": "S1"});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "web.navigate", &args).unwrap_err());
@@ -192,7 +192,7 @@ fn test_ac_aesf_03_malformed_args_format_error_non_empty() {
 // ── SurfaceUnavailable — exit 5 + clear message ─────────────────
 
 #[test]
-fn test_ac_aesf_04_surface_unavailable_exit_code_is_5() {
+fn surface_unavailable_exit_code_is_5() {
     let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
         "web surface not loaded".into(),
     ));
@@ -201,7 +201,7 @@ fn test_ac_aesf_04_surface_unavailable_exit_code_is_5() {
 }
 
 #[test]
-fn test_ac_aesf_04_surface_unavailable_format_error_mentions_surface() {
+fn surface_unavailable_format_error_mentions_surface() {
     let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
         "web surface not loaded".into(),
     ));
@@ -216,7 +216,7 @@ fn test_ac_aesf_04_surface_unavailable_format_error_mentions_surface() {
 // ── every CliError variant has non-empty Display ────────────────
 
 #[test]
-fn test_ac_aesf_05_every_variant_has_display() {
+fn every_variant_has_display() {
     use loom_cli::error_mapper::{ConnectionError, DoctorReport};
     let variants: Vec<CliError> = vec![
         CliError::Usage("test usage".into()),
@@ -247,7 +247,7 @@ fn test_ac_aesf_05_every_variant_has_display() {
 // ── errors don't leak to stdout (structural guarantee test) ──────
 
 #[test]
-fn test_ac_aesf_06_ok_result_produces_no_stderr_message() {
+fn ok_result_produces_no_stderr_message() {
     // format_error(Ok) must return None — stdout is the success path only.
     assert!(
         format_error(&Ok(())).is_none(),
@@ -256,7 +256,7 @@ fn test_ac_aesf_06_ok_result_produces_no_stderr_message() {
 }
 
 #[test]
-fn test_ac_aesf_06_parse_extra_unknown_key_flag() {
+fn parse_extra_unknown_key_flag() {
     // Verify parse_extra_to_json handles --flag correctly (flags set to true).
     let extra = vec!["--flag".to_string()];
     let result = parse_extra_to_json(&extra).unwrap();
@@ -264,7 +264,7 @@ fn test_ac_aesf_06_parse_extra_unknown_key_flag() {
 }
 
 #[test]
-fn test_ac_aesf_06_parse_extra_key_value() {
+fn parse_extra_key_value() {
     // Verify parse_extra_to_json handles --key value correctly.
     let extra = vec!["--url".to_string(), "https://example.com".to_string()];
     let result = parse_extra_to_json(&extra).unwrap();

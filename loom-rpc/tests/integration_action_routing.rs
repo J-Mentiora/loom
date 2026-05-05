@@ -617,7 +617,7 @@ async fn test_web_navigate_accepts_session_field_alias() {
 /// Without this, downstream tools that enumerate verbs from rpc.schemas
 /// never discover the alias and break at runtime.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_ac_cliroute_04_rpc_schemas_advertises_alias_for_web_type() {
+async fn rpc_schemas_advertises_alias_for_web_type() {
     let (srv, _bg) = start_action_server().await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -664,7 +664,7 @@ async fn test_ac_cliroute_04_rpc_schemas_advertises_alias_for_web_type() {
 /// though the CLI canonicalises before sending, third-party clients
 /// (mcp_adapter, future SDKs) may still send the alias.
 #[tokio::test(flavor = "multi_thread")]
-async fn test_ac_cliroute_02_request_router_accepts_web_type_text_alias() {
+async fn request_router_accepts_web_type_text_alias() {
     let (srv, _bg) = start_action_server().await;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 

@@ -112,44 +112,44 @@ fn test_color_disable_signals_honoured() {
 // ── AC-NFR-DX-02.1: Error receipts are actionable ───────────────────────────
 
 #[test]
-fn test_ac_nfr_dx_02_1_map_exit_code_ok() {
+fn map_exit_code_ok() {
     assert_eq!(map_exit_code(&Ok(())), 0);
 }
 
 #[test]
-fn test_ac_nfr_dx_02_1_map_exit_code_usage_error() {
+fn map_exit_code_usage_error() {
     let err = Err(CliError::Usage("missing --session".into()));
     assert_eq!(map_exit_code(&err), 2);
 }
 
 #[test]
-fn test_ac_nfr_dx_02_1_map_exit_code_receipt_error() {
+fn map_exit_code_receipt_error() {
     let receipt = json!({"status": "error", "code": "NotFound"});
     let err = Err(CliError::Receipt(receipt));
     assert_eq!(map_exit_code(&err), 1);
 }
 
 #[test]
-fn test_ac_nfr_dx_02_1_map_exit_code_receipt_ok() {
+fn map_exit_code_receipt_ok() {
     let receipt = json!({"status": "ok", "session_id": "s1"});
     let err = Err(CliError::Receipt(receipt));
     assert_eq!(map_exit_code(&err), 0);
 }
 
 #[test]
-fn test_ac_nfr_dx_02_1_map_exit_code_connection_error() {
+fn map_exit_code_connection_error() {
     let err = Err(CliError::Connection(ConnectionError::DaemonNotRunning));
     assert_eq!(map_exit_code(&err), 1);
 }
 
 #[test]
-fn test_ac_nfr_dx_02_1_map_exit_code_internal_error() {
+fn map_exit_code_internal_error() {
     let err = Err(CliError::Internal("bug".into()));
     assert_eq!(map_exit_code(&err), 2);
 }
 
 #[test]
-fn test_ac_nfr_dx_02_1_error_receipt_verbatim() {
+fn error_receipt_verbatim() {
     // The error receipt flows verbatim through OutputFormatter
     let mut sink = VecSink(Vec::new());
     let mut fmt = OutputFormatter::new(&mut sink);
