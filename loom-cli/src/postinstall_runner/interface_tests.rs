@@ -162,7 +162,10 @@ async fn chromium_step_supply_chain_on_sha_mismatch() {
 }
 
 // === AC-CHPIN-08: PermissionDenied on plist write degrades to Skipped ===
-#[cfg(unix)]
+// `LaunchdPlistWriter::write` is `#[cfg(target_os = "macos")]`; the non-macOS
+// stub returns `CliError::Internal`, not the `PermissionDenied` path this
+// test exercises. Gating on `unix` would otherwise fail on Linux runners.
+#[cfg(target_os = "macos")]
 #[test]
 fn plist_step_returns_skipped_on_permission_denied() {
     use std::os::unix::fs::PermissionsExt as _;
