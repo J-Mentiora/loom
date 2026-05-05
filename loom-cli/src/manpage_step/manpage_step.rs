@@ -137,18 +137,24 @@ pub fn manpage_step(opts_dir: Option<&Path>) -> Result<StepOutcome, CliError> {
 /// Atomically write `bytes` to `target` if the existing content differs (or
 /// the file doesn't exist). Returns `Ok(true)` if it wrote, `Ok(false)` if
 /// the file already matched.
+///
+/// The temp filename includes the process id so two concurrent `loom
+/// postinstall` invocations don't write to the same `.tmp` and clobber each
+/// other before the atomic rename (per code-council finding on race
+/// conditions). The rename itself is atomic on POSIX.
 fn write_atomic_if_changed(target: &Path, bytes: &[u8]) -> io::Result<bool> {
     if let Ok(existing) = std::fs::read(target) {
         if existing == bytes {
             return Ok(false);
         }
     }
+    let pid = std::process::id();
     let tmp = target.with_extension(
         target
             .extension()
             .and_then(|s| s.to_str())
-            .map(|e| format!("{e}.tmp"))
-            .unwrap_or_else(|| "tmp".to_string()),
+            .map(|e| format!("{e}.tmp.{pid}"))
+            .unwrap_or_else(|| format!("tmp.{pid}")),
     );
     std::fs::write(&tmp, bytes)?;
     std::fs::rename(&tmp, target)?;
