@@ -2,7 +2,7 @@
 // the WASM surface.
 //
 // # Contract semantics
-// - **Surface-side translation only (IC-SURF-11 boundary).** Maps the
+// - **Surface-side translation only.** Maps the
 //   typed `host-error` returned by host-fns to the `error_code` field
 //   inside Receipts assembled by surface verbs. This is distinct from
 //   `loom-host::ErrorMapper` which translates `LoomError` → `host-error`
@@ -14,7 +14,7 @@
 //   match arms; they call `ErrorMapper::map`. Enforced by CI lint
 //   `tools/lint-surface-error-paths.py`.
 //
-// # Banned in this module (BC-SURF-04)
+// # Banned in this module
 // - `std::time`, `std::net`, `std::fs::write`, `getrandom`,
 //   `std::panic::catch_unwind`. Pure `match` over closed enums only.
 
@@ -110,11 +110,11 @@ pub enum LoomErrorCode {
     HostInternalError {
         reason: String,
     },
-    /// AC-WEB-07.1: evaluate expression matched the safe-profile denylist.
+    /// evaluate expression matched the safe-profile denylist.
     /// Wire string: "schema_violation" (matches AC spec).
     SchemaViolation,
-    /// AC-WEB-07.2: download target path outside session-scoped downloads dir.
-    /// Wire string: "safe_profile_download_blocked" (matches AC spec).
+    /// Download target path outside session-scoped downloads dir.
+    /// Wire string: "safe_profile_download_blocked".
     SafeProfileDownloadBlocked,
 }
 

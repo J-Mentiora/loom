@@ -1,7 +1,6 @@
-// Interface tests for `ReceiptBuilder`. Verifies IC-SURF-07 tier
-// discipline, BC-SURF-05 integer-only fields, and IC-SURF-08
-// capture-mode boundary (surface emits at default tier; SessionExecutor
-// post-processes).
+// Interface tests for `ReceiptBuilder`. Verifies tier discipline,
+// integer-only fields, and the capture-mode boundary (surface emits at
+// default tier; SessionExecutor post-processes).
 
 extern crate alloc;
 
@@ -36,7 +35,7 @@ fn fixture_inputs() -> ReceiptInputs {
     }
 }
 
-// === IC-SURF-07: full-blob tier (navigate, snapshot) ===
+// === Full-blob tier (navigate, snapshot) ===
 
 #[test]
 fn navigate_uses_full_blob_tier_carrying_dom_and_screenshot() {
@@ -62,7 +61,7 @@ fn snapshot_uses_full_blob_tier() {
     assert!(r.screenshot_after_ref.is_some());
 }
 
-// === IC-SURF-07: hash-only tier (click/type/hover/select/scroll/wait) ===
+// === Hash-only tier (click/type/hover/select/scroll/wait) ===
 
 #[test]
 fn click_hash_only_tier_carries_refs_no_evaluate_return() {
@@ -87,7 +86,7 @@ fn each_hash_only_verb_accepts_the_tier() {
     }
 }
 
-// === IC-SURF-07: screenshot-only tier ===
+// === Screenshot-only tier ===
 
 #[test]
 fn screenshot_tier_zeros_out_dom_and_network() {
@@ -100,7 +99,7 @@ fn screenshot_tier_zeros_out_dom_and_network() {
     assert!(r.console_lines.is_empty());
 }
 
-// === IC-SURF-07: console-only tier (evaluate) ===
+// === Console-only tier (evaluate) ===
 
 #[test]
 fn evaluate_tier_carries_console_and_return_value_only() {
@@ -138,7 +137,7 @@ fn error_receipt_has_status_error_and_error_code_set() {
     assert!(r.network_events.is_empty());
 }
 
-// === BC-SURF-05: integer-only fields (no f32/f64 anywhere) ===
+// === Integer-only fields (no f32/f64 anywhere) ===
 
 #[test]
 fn timing_ticks_field_is_u64_integer() {
@@ -167,7 +166,7 @@ fn network_event_size_and_status_are_integers() {
     let _: u64 = n.timing_ticks;
 }
 
-// === BC-SURF-05: tags use BTreeMap (no HashMap; canonical iteration order) ===
+// === Tags use BTreeMap (no HashMap; canonical iteration order) ===
 
 #[test]
 fn tags_use_btreemap_for_canonical_iteration() {
@@ -182,7 +181,7 @@ fn tags_use_btreemap_for_canonical_iteration() {
     assert_eq!(keys[1], "zeta");
 }
 
-// === IC-SURF-08: surface emits at default tier — no `--capture` knob ===
+// === Surface emits at default tier — no `--capture` knob ===
 
 #[test]
 fn receipt_builder_has_no_capture_mode_argument() {

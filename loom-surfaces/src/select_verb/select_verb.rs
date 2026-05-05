@@ -1,7 +1,7 @@
 // SelectVerb — implements `web-surface::select`.
 //
 // # Contract semantics
-// - **Tier:** hash-only (IC-SURF-07 row `select`).
+// - **Tier:** hash-only.
 // - **CDP methods:** `DOM.querySelector` to find the `<select>` element,
 //   then `Runtime.callFunctionOn` to set its value and dispatch a
 //   synthetic `change` event. Two host::shim_call invocations.

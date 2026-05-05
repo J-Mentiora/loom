@@ -1,8 +1,7 @@
 // TypeTextVerb — implements `web-surface::type-text`.
 //
 // # Contract semantics
-// - **Tier:** hash-only DOM + hash-only screenshot + console lines
-//   (IC-SURF-07 row `type-text`).
+// - **Tier:** hash-only DOM + hash-only screenshot + console lines.
 // - **CDP method:** `Input.dispatchKeyEvent` per character — one
 //   `keyDown` + one `char` + one `keyUp` per code point. Surface never
 //   uses Runtime.evaluate-style `el.value = "..."` shortcuts (would

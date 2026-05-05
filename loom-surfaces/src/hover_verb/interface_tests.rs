@@ -1,4 +1,4 @@
-// Interface tests for `HoverVerb`. Verifies IC-SURF-07 hash-only tier.
+// Interface tests for `HoverVerb`. Verifies the hash-only tier.
 
 extern crate alloc;
 
@@ -47,9 +47,9 @@ fn hover_execute_returns_hash_only_receipt() {
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    // AC-HOVER-02 (regression guard against the original (0,0) bug):
-    // assert one mouseMoved at the box centre. Box (200,300)–(250,350)
-    // → centre (225, 325).
+    // Regression guard against the original (0,0) bug: assert one
+    // mouseMoved at the box centre. Box (200,300)–(250,350) → centre
+    // (225, 325).
     let dispatches = mock_host::mouse_dispatches();
     assert_eq!(
         dispatches.len(),

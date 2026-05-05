@@ -1,5 +1,5 @@
-// Interface tests for `TypeTextVerb`. Verifies IC-SURF-07 hash-only
-// tier and IC-SURF-06 (typed CDP only — no Runtime.evaluate shortcut).
+// Interface tests for `TypeTextVerb`. Verifies the hash-only tier and
+// typed CDP only (no Runtime.evaluate shortcut).
 
 extern crate alloc;
 

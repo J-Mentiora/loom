@@ -1,6 +1,6 @@
 // EvaluateVerb — implements `web-surface::evaluate`.
 //
-// **DEAD CODE NOTICE (AC-SAFEPROF-01..03 fix, 2026-05-03):**
+// **DEAD CODE NOTICE (safe-profile fix, 2026-05-03):**
 // The production safe-profile evaluate gate now lives at
 // `loom-daemon/src/main.rs::WasmBridge::dispatch_action_blocking` —
 // the daemon-layer gate operates on the typed `Action::WebEvaluate`
@@ -14,8 +14,8 @@
 // the safety-policy logic here without also updating the daemon gate.
 //
 // # Contract semantics
-// - **Tier:** console-only + return value (IC-SURF-07 row `evaluate`).
-//   No DOM blob, no screenshot, no network events.
+// - **Tier:** console-only + return value. No DOM blob, no screenshot,
+//   no network events.
 // - **CDP method:** `Runtime.evaluate` with `returnByValue: true`.
 // - **Return value canonicalisation.** The shim returns a CBOR-encoded
 //   serde value; surface stores the canonical-JSON string in
@@ -59,7 +59,7 @@ impl EvaluateVerb {
         let t_start = host::clock_now();
         let action_id = action.action_id.clone();
 
-        // AC-WEB-07.1: safe profile pre-gate — check expression against denylist
+        // Safe profile pre-gate — check expression against denylist
         // before reaching the CDP shim. Early-return error receipt; script NOT run.
         {
             use crate::error_mapper::error_mapper::LoomErrorCode;
@@ -103,7 +103,7 @@ impl EvaluateVerb {
                 hex
             };
             let t_end = host::clock_now();
-            // Console-only tier (IC-SURF-07): no DOM, no screenshot, no network
+            // Console-only tier: no DOM, no screenshot, no network
             Ok(ReceiptBuilder::build_console_only_receipt(ReceiptInputs {
                 action_id: action.action_id.clone(),
                 timing_ticks: t_end.ticks.saturating_sub(t_start.ticks),

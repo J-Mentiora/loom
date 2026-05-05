@@ -1,8 +1,7 @@
 // WaitVerb — implements `web-surface::wait`.
 //
 // # Contract semantics
-// - **Tier:** hash-only screenshot + console lines, no DOM blob
-//   (IC-SURF-07 row `wait`).
+// - **Tier:** hash-only screenshot + console lines, no DOM blob.
 // - **Polling loop.** Internally calls `host::shim_call("chromium",
 //   Runtime.evaluate(predicate))` repeatedly until the JS predicate
 //   evaluates truthy or `timeout_ticks` elapses (measured via
@@ -73,7 +72,7 @@ impl WaitVerb {
                 }
             }
 
-            // Screenshot-only tier (IC-SURF-07 row wait): no DOM blob
+            // Screenshot-only tier for wait: no DOM blob
             let ss_bytes = host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::PageCaptureScreenshot(

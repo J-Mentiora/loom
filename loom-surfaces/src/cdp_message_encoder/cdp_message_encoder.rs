@@ -2,7 +2,7 @@
 // `host::shim_call("chromium", &cbor)`.
 //
 // # Contract semantics
-// - **Typed structs only (IC-SURF-06).** No raw JSON; no string-templated
+// - **Typed structs only.** No raw JSON; no string-templated
 //   CDP. Every CDP method we use is a Rust struct with `#[derive(Serialize)]`
 //   under a `serde_cbor`-compatible profile. The chromium shim is the
 //   only thing that converts CBOR back to CDP JSON on the wire.
@@ -14,7 +14,7 @@
 //   method's parameter order; renaming a field is a breaking change to
 //   the chromium-shim peer.
 // - **No `f32`/`f64`.** Coordinates are integers (CDP allows but we
-//   restrict per BC-SURF-05).
+//   restrict here).
 //
 // # Banned in this module
 // - `serde_json`, `std::time`, `std::net`, raw CDP JSON strings.
@@ -25,7 +25,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::Serialize;
 
-/// Chromium shim ID used in `host::shim_call`. Constant per IC-SURF-06.
+/// Chromium shim ID used in `host::shim_call`.
 pub const CHROMIUM_SHIM_ID: &str = "chromium";
 
 /// CDP `Page.navigate` request.
@@ -37,7 +37,7 @@ pub struct PageNavigate {
 }
 
 /// CDP `Page.addScriptToEvaluateOnNewDocument` — used for det_init.js
-/// injection BEFORE `Page.navigate` (SR-SURF-03).
+/// injection BEFORE `Page.navigate` .
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PageAddScriptToEvaluateOnNewDocument {
     pub source: String,
@@ -204,7 +204,7 @@ impl CdpMessageEncoder {
     /// ```
     /// Encoding cannot fail in steady state; OOM during serialization
     /// becomes a wasmtime trap (translated to `SurfaceTrap` receipt by
-    /// `loom-host::TrapHandler`, IC-SURF-11).
+    /// `loom-host::TrapHandler`).
     pub fn encode(msg: &CdpMessage) -> Vec<u8> {
         let mut buf = Vec::new();
         match msg {
@@ -300,7 +300,7 @@ impl CdpMessageEncoder {
 
 /// Det-init script source. Constant string injected via
 /// `Page.AddScriptToEvaluateOnNewDocument` before any DOM observation
-/// (SR-SURF-03). Overrides `Date.now`, `Math.random`,
+/// . Overrides `Date.now`, `Math.random`,
 /// `requestAnimationFrame`, `crypto.getRandomValues`, `performance.now`.
 ///
 /// The actual script source is embedded at build time via

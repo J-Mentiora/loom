@@ -1,13 +1,12 @@
 // SnapshotVerb — implements `web-surface::snapshot`.
 //
 // # Contract semantics
-// - **Tier:** full DOM blob + full screenshot (IC-SURF-07 row `snapshot`).
-//   No network events (snapshot is a pure observation; nothing
-//   navigates).
+// - **Tier:** full DOM blob + full screenshot. No network events
+//   (snapshot is a pure observation; nothing navigates).
 // - **CDP methods:** `DOM.getDocument { depth: -1, pierce: true }` to
 //   capture the full subtree, then `Page.captureScreenshot` for the
 //   visual.
-// - **Hashing (SR-SURF-02).** DOM serialised bytes → `host::blob_put`
+// - **Hashing.** DOM serialised bytes → `host::blob_put`
 //   → `ContentRef`; the ref populates `Receipt.dom_after_ref`. Same for
 //   screenshot.
 

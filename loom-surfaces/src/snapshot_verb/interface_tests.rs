@@ -1,5 +1,5 @@
-// Interface tests for `SnapshotVerb`. Verifies IC-SURF-07 full-blob
-// tier and SR-SURF-02 (DOM blob hashing via blob_put).
+// Interface tests for `SnapshotVerb`. Verifies the full-blob tier and
+// DOM blob hashing via blob_put.
 
 extern crate alloc;
 

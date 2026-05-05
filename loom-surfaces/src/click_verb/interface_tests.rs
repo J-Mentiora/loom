@@ -1,6 +1,5 @@
-// Interface tests for `ClickVerb`. Verifies IC-SURF-07 hash-only tier,
-// IC-SURF-09 receipt-emit path, IC-SURF-06 chromium shim usage,
-// BC-SURF-05 integer coordinates.
+// Interface tests for `ClickVerb`. Verifies the hash-only tier,
+// receipt-emit path, chromium shim usage, integer coordinates.
 
 extern crate alloc;
 
@@ -29,7 +28,7 @@ fn click_execute_returns_result_receipt_host_error() {
 
 #[test]
 fn click_action_takes_no_capture_mode_argument() {
-    // IC-SURF-08: surface emits hash-only by default; SessionExecutor
+    // Surface emits hash-only by default; SessionExecutor
     // upgrades to full under `--capture full`. The verb's action struct
     // has no `capture_mode` field.
     use core::mem::size_of;
@@ -60,14 +59,14 @@ fn click_execute_returns_hash_only_receipt() {
 
     let receipt = ClickVerb::execute(action).expect("click must return Ok");
 
-    // Hash-only tier: dom_after_ref with 64-char SHA-256 (AC-WEB-02.2)
+    // Hash-only tier: dom_after_ref with 64-char SHA-256
     let dom_ref = receipt.dom_after_ref.expect("dom_after_ref must be Some");
     assert_eq!(dom_ref.sha256_hex.len(), 64);
     assert!(dom_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    // AC-CLICK-02 (regression guard against the original (0,0) bug):
-    // assert that BOTH mouse events were dispatched at the box centre,
-    // not at page origin. Box (300,200)–(400,240) → centre (350, 220).
+    // Regression guard against the original (0,0) bug: assert that
+    // BOTH mouse events were dispatched at the box centre, not at page
+    // origin. Box (300,200)–(400,240) → centre (350, 220).
     let dispatches = mock_host::mouse_dispatches();
     assert_eq!(
         dispatches.len(),

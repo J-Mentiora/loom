@@ -1,5 +1,5 @@
 //! Mock harness for `loom-surfaces`. Deterministic verb outcomes for
-//! host-side TDD before WASM compilation lands in Phase 6.
+//! host-side TDD before WASM compilation lands.
 
 use loom_shared::error_format::{LoomError, LoomErrorCode};
 

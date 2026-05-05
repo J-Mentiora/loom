@@ -1,14 +1,13 @@
-// Interface tests for `NavigateVerb`. Verifies SR-SURF-03 (det_init
-// injection BEFORE Page.navigate), IC-SURF-07 (full-blob tier),
-// IC-SURF-09 (sole receipt_emit path), and SR-SURF-05 (no replay-mode
-// branching).
+// Interface tests for `NavigateVerb`. Verifies det_init injection
+// BEFORE Page.navigate, full-blob tier, sole receipt_emit path, and
+// no replay-mode branching.
 
 extern crate alloc;
 
 use super::navigate_verb::{NavigateAction, NavigateStep, NavigateVerb};
 use alloc::string::ToString;
 
-// === SR-SURF-03: det_init injection precedes Page.navigate ===
+// === det_init injection precedes Page.navigate ===
 
 #[test]
 fn det_init_injection_runs_before_page_navigate() {
@@ -23,26 +22,26 @@ fn det_init_injection_runs_before_page_navigate() {
         .expect("page-navigate step must exist");
     assert!(
         inject_pos < nav_pos,
-        "SR-SURF-03 KILL: det_init must run BEFORE Page.navigate"
+        "KILL: det_init must run BEFORE Page.navigate"
     );
 }
 
-// === IC-SURF-07: navigate captures DOM + screenshot blobs ===
+// === Navigate captures DOM + screenshot blobs ===
 
 #[test]
 fn navigate_captures_dom_and_screenshot_blobs() {
     let steps = NavigateVerb::canonical_steps();
     assert!(
         steps.contains(&NavigateStep::BlobPutDom),
-        "IC-SURF-07: navigate full-blob tier requires DOM blob_put"
+        "navigate full-blob tier requires DOM blob_put"
     );
     assert!(
         steps.contains(&NavigateStep::BlobPutScreenshot),
-        "IC-SURF-07: navigate full-blob tier requires screenshot blob_put"
+        "navigate full-blob tier requires screenshot blob_put"
     );
 }
 
-// === IC-SURF-02: two clock_now reads bracket the action (timing_ticks) ===
+// === Two clock_now reads bracket the action (timing_ticks) ===
 
 #[test]
 fn navigate_brackets_action_with_two_clock_reads() {
@@ -68,7 +67,7 @@ fn navigate_brackets_action_with_two_clock_reads() {
     assert!(s_pos < e_pos, "t_start precedes t_end");
 }
 
-// === IC-SURF-09: receipt_emit is the LAST host-fn the verb makes ===
+// === receipt_emit is the LAST host-fn the verb makes ===
 
 #[test]
 fn receipt_emit_is_final_step() {
@@ -76,7 +75,7 @@ fn receipt_emit_is_final_step() {
     assert_eq!(
         *steps.last().unwrap(),
         NavigateStep::ReceiptEmit,
-        "IC-SURF-09: receipt_emit MUST be the last verb operation"
+        "receipt_emit MUST be the last verb operation"
     );
 }
 
@@ -104,7 +103,7 @@ fn navigate_action_carries_url_and_action_id_and_timeout() {
     let _: u64 = a.timeout_ticks;
 }
 
-// === SR-SURF-05: no replay-mode branch in NavigateVerb ===
+// === No replay-mode branch in NavigateVerb ===
 //
 // Compile-time evidence: `execute` takes (NavigateAction) — NO `mode`
 // parameter, NO `host::current_mode()` call (that host-fn does not

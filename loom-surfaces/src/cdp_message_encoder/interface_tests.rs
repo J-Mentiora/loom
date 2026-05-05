@@ -1,6 +1,5 @@
-// Interface tests for `CdpMessageEncoder`. Verifies IC-SURF-06 (typed
-// CDP structs only — never raw JSON) and BC-SURF-05 (integer
-// coordinates, no floats).
+// Interface tests for `CdpMessageEncoder`. Verifies the typed-CDP-structs
+// invariant (never raw JSON) and integer-only coordinates (no floats).
 
 extern crate alloc;
 
@@ -12,7 +11,7 @@ use super::cdp_message_encoder::{
 };
 use alloc::string::ToString;
 
-// === IC-SURF-06: typed CDP method names match the on-the-wire CDP namespace ===
+// === typed CDP method names match the on-the-wire CDP namespace ===
 
 #[test]
 fn method_names_match_cdp_wire_namespace() {
@@ -117,7 +116,7 @@ fn method_names_match_cdp_wire_namespace() {
     );
 }
 
-// === IC-SURF-06: encode returns CBOR bytes (Vec<u8>), not JSON String ===
+// === encode returns CBOR bytes (Vec<u8>), not JSON String ===
 
 #[test]
 fn encode_returns_byte_vec_not_string() {
@@ -132,7 +131,7 @@ fn encode_returns_byte_vec_not_string() {
     let _ = bytes;
 }
 
-// === SR-SURF-03: det_init injection identifier is stable ===
+// === det_init injection identifier is stable ===
 
 #[test]
 fn det_init_js_constant_is_named() {
@@ -143,7 +142,7 @@ fn det_init_js_constant_is_named() {
 fn add_script_to_evaluate_on_new_document_supports_run_immediately() {
     // CDP semantics: `runImmediately = true` is essential — without it
     // the page's own scripts can capture references to `Date.now` /
-    // `Math.random` before our overrides install (SR-SURF-03 KILL).
+    // `Math.random` before our overrides install (KILL: would break determinism).
     let m = PageAddScriptToEvaluateOnNewDocument {
         source: "Date.now=()=>0".to_string(),
         run_immediately: true,
@@ -158,7 +157,7 @@ fn chromium_shim_id_is_string_constant() {
     assert_eq!(CHROMIUM_SHIM_ID, "chromium");
 }
 
-// === BC-SURF-05: integer coordinates only — no floats ===
+// === integer coordinates only — no floats ===
 
 #[test]
 fn mouse_event_coordinates_are_integers() {

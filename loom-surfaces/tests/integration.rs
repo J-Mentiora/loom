@@ -1,4 +1,4 @@
-//! Integration tests — `loom-surfaces` contract (AC-WEB-07 / IC-SURF-06 / SR-SURF-03).
+//! Integration tests — `loom-surfaces` contract.
 //!
 //! Contract: `projects/loom/architecture/contracts/loom-surfaces_contract.md`
 //!
@@ -14,7 +14,7 @@ use loom_surfaces::safety::{PolicyViolation, SafetyPolicy, SafetyProfile, EVALUA
 // ─── Test 1: Happy — SafetyPolicy allows benign expression under Safe profile ─
 
 /// Contract: SafetyPolicy::check_evaluate returns None when the expression does
-/// not match any EVALUATE_DENYLIST pattern (AC-WEB-07.1).
+/// not match any EVALUATE_DENYLIST pattern .
 #[test]
 fn test_safe_profile_allows_benign_expression() {
     let result = SafetyPolicy::check_evaluate(
@@ -32,7 +32,7 @@ fn test_safe_profile_allows_benign_expression() {
 
 /// Contract: SafetyPolicy::check_evaluate returns EvaluateDenylistMatch when
 /// the expression contains a EVALUATE_DENYLIST pattern with SafetyProfile::Safe
-/// (AC-WEB-07.1). Covers all patterns in the denylist.
+/// . Covers all patterns in the denylist.
 #[test]
 fn test_safe_profile_blocks_denylist_patterns() {
     for pattern in EVALUATE_DENYLIST {
@@ -51,7 +51,7 @@ fn test_safe_profile_blocks_denylist_patterns() {
 
 /// Contract: SafetyPolicy::check_evaluate returns None for any expression under
 /// SafetyProfile::Default — the default profile has no evaluate restrictions
-/// (AC-WEB-07.1).
+/// .
 #[test]
 fn test_default_profile_allows_denylist_expressions() {
     for pattern in EVALUATE_DENYLIST {
@@ -68,7 +68,7 @@ fn test_default_profile_allows_denylist_expressions() {
 // ─── Test 4: Happy — CdpMessageEncoder produces non-empty CBOR bytes ─────────
 
 /// Contract: CdpMessageEncoder::encode produces valid CBOR bytes with the
-/// correct method name (IC-SURF-06). The shim ID is "chromium" (constant).
+/// correct method name . The shim ID is "chromium" (constant).
 #[test]
 fn test_cdp_message_encoder_page_navigate_produces_cbor() {
     let msg = CdpMessage::PageNavigate(PageNavigate {
@@ -97,7 +97,7 @@ fn test_cdp_message_encoder_page_navigate_produces_cbor() {
 // ─── Test 5: Happy — RuntimeEvaluate encodes correctly ────────────────────────
 
 /// Contract: CdpMessageEncoder::encode produces distinct, non-empty CBOR for
-/// each CDP message variant (IC-SURF-06 stable wire shape).
+/// each CDP message variant (the wire shape is stable).
 #[test]
 fn test_cdp_message_encoder_runtime_evaluate_produces_cbor() {
     let msg = CdpMessage::RuntimeEvaluate(RuntimeEvaluate {
@@ -129,7 +129,7 @@ fn test_cdp_message_encoder_runtime_evaluate_produces_cbor() {
 // ─── Test 6: Happy — CHROMIUM_SHIM_ID constant is "chromium" ─────────────────
 
 /// Contract: CHROMIUM_SHIM_ID is the stable "chromium" shim identifier used in
-/// host::shim_call (IC-SURF-06). If this changes, the shim peer breaks.
+/// host::shim_call . If this changes, the shim peer breaks.
 #[test]
 fn test_chromium_shim_id_is_stable() {
     assert_eq!(
@@ -138,14 +138,14 @@ fn test_chromium_shim_id_is_stable() {
     );
     assert_eq!(
         DET_INIT_JS_NAME, "loom_det_init.js",
-        "DET_INIT_JS_NAME must be stable (SR-SURF-03)"
+        "DET_INIT_JS_NAME must be stable"
     );
 }
 
 // ─── Test 7: Happy — is_session_scoped_path path scoping ─────────────────────
 
 /// Contract: SafetyPolicy::is_session_scoped_path returns true only for paths
-/// under the session downloads dir (AC-WEB-07.2).
+/// under the session downloads dir .
 #[test]
 fn test_is_session_scoped_path_positive_and_negative() {
     let base = "/tmp/loom/sessions/s1/downloads";

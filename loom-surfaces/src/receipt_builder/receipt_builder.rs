@@ -1,18 +1,18 @@
 // ReceiptBuilder — tier-aware Receipt assembly for surface verbs.
 //
 // # Contract semantics
-// - **Per-tier method (IC-SURF-07).** One method per Receipt tier from
+// - **Per-tier method.** One method per Receipt tier from
 //   the verb-tier table (design.md §6 / contract §Receipt Tier Discipline):
 //     * `build_full_blob_receipt`   → navigate, snapshot
 //     * `build_hash_only_receipt`   → click, type-text, hover, select, scroll, wait
 //     * `build_screenshot_only_receipt` → screenshot
 //     * `build_console_only_receipt` → evaluate
-// - **Integer-only fields (BC-SURF-05 / hard binding 3).** No `f32`/`f64`
+// - **Integer-only fields (hard binding 3).** No `f32`/`f64`
 //   anywhere in the Receipt struct. Timing is `timing_ticks: u64`.
-// - **Canonical-JSON-ready (BC-SURF-05).** No `HashMap`; ordered
+// - **Canonical-JSON-ready.** No `HashMap`; ordered
 //   `BTreeMap`/`Vec<(K,V)>` only. `serde_jcs::to_string` happens
 //   host-side in `loom-host::ReceiptMarshaller`.
-// - **No `--capture` awareness (IC-SURF-08).** Builders always emit at
+// - **No `--capture` awareness.** Builders always emit at
 //   the verb-default tier; SessionExecutor post-processes per
 //   `--capture full|minimal`.
 // - **Never fails.** Pure data transformation; returns `Receipt` directly
@@ -33,7 +33,7 @@ use alloc::vec::Vec;
 use crate::error_mapper::error_mapper::LoomErrorCode;
 
 /// Content store reference (mirrors `wit/loom-surface.wit::types.content-ref`).
-/// Integer-only fields per BC-SURF-05.
+/// Integer-only fields.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentRef {
     /// Lowercase hex SHA-256, exactly 64 chars.
@@ -48,7 +48,7 @@ pub struct NetworkEvent {
     pub method: String,
     pub url: String,
     pub status_code: u32,
-    /// Hash of the response body (post-decompression — SR-SURF-04).
+    /// Hash of the response body (post-decompression).
     pub response_body_sha256_hex: String,
     pub response_body_size_bytes: u64,
     /// Optional blob ref for `--capture full` / navigate full-blob tier.
@@ -90,7 +90,7 @@ pub enum VerbKind {
 }
 
 /// The Receipt struct emitted via `host::receipt_emit`. Mirrors WIT
-/// `types.receipt`. Integer fields only (BC-SURF-05). Field order is
+/// `types.receipt`. Integer fields only. Field order is
 /// canonical-JSON-ready when serialized via `serde_jcs` host-side.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Receipt {

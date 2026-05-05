@@ -1,5 +1,5 @@
-// Interface tests for `ScrollVerb`. Verifies BC-SURF-05 (integer
-// deltas, no floats) and IC-SURF-07 hash-only tier.
+// Interface tests for `ScrollVerb`. Verifies integer-deltas (no floats)
+// and the hash-only outcome tier.
 
 extern crate alloc;
 
@@ -78,7 +78,7 @@ fn scroll_execute_returns_hash_only_receipt() {
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    // AC-SCROLL-02 (regression guard, None branch): with no selector,
+    // Regression guard, None branch: with no selector,
     // the wheel is dispatched at the viewport centre via
     // Page.getLayoutMetrics. 1024×768 viewport → centre (512, 384).
     // Pre-fix this dispatched at (0,0); the assertion below catches
