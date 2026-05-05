@@ -90,7 +90,10 @@ fn socket_path_for(home: &Path) -> PathBuf {
 /// Parent dir of `socket_path_for(home)`, used both for creating the dir at
 /// sandbox setup and for the `XDG_RUNTIME_DIR` env var on Linux.
 fn socket_parent_for(home: &Path) -> PathBuf {
-    socket_path_for(home).parent().expect("socket parent").to_path_buf()
+    socket_path_for(home)
+        .parent()
+        .expect("socket parent")
+        .to_path_buf()
 }
 
 // ─── Fixture: built-once-per-test-binary state ──────────────────────────────
