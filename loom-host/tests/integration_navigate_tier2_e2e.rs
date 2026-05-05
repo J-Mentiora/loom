@@ -1,5 +1,6 @@
-//! End-to-end spine test for `navigate-receipt-tier2-still-missing`
-//! (anti-Potemkin per Phase 8 round-2 retest skeptic plan-review).
+//! End-to-end spine test for the navigate-receipt structural fields:
+//! catches regressions where the marshalling layer drops shim-side data
+//! before it reaches the wire receipt.
 //!
 //! Drives `ShimManager::send_navigate` against the real
 //! `loom-shim-chromium` binary which spawns `fake-chromium`. The point
@@ -153,11 +154,11 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
     let _: &str = &doc.method;
     assert_eq!(doc.url, "http://fake.test/status/200");
 
-    // (2) Brief AC-NAVRECEIPT2-01 extension precondition: outcome.console_lines
-    // is the structural source for the wire `console_lines` field. Phase 6
-    // shim returns Vec::new(); this assertion just pins the type so a
-    // future shim that emits console events gets caught by the wire-receipt
-    // tests, not silently dropped.
+    // (2) Precondition: outcome.console_lines is the structural source for
+    // the wire `console_lines` field. The current shim returns Vec::new();
+    // this assertion just pins the type so a future shim that emits
+    // console events gets caught by the wire-receipt tests, not silently
+    // dropped.
     let _: &Vec<loom_shared::navigate_outcome::ShimConsoleLine> = &outcome.console_lines;
 
     // (3) Brief AC-NAVRECEIPT2-01 extension: NetworkSummary aggregation

@@ -1,9 +1,7 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/ErrorMapper/interfaces.rs` instead.
 // ErrorMapper — SOLE owner of `CliError` and exit-code mapping.
 //
 // # Contract semantics
-// - **IC-CLI-04.** Exit codes 0/1/2/3/4/5/6 are owned exclusively here.
+// - Exit codes 0/1/2/3/4/5/6 are owned exclusively here.
 //   `Ok→0`, `CliError::Receipt(error)→1`, `CliError::Connection→1`,
 //   `CliError::SupplyChain→1`, `CliError::DoctorFailed→1`,
 //   `CliError::Usage→2`, `CliError::Internal→2`,
@@ -12,12 +10,10 @@
 //   Arbitrary codes (127 etc.) banned. Clippy lint
 //   `// FORBIDDEN: std::process::exit outside main + ErrorMapper`
 //   forbids `std::process::exit` outside `main` and this module.
-//   Full contract table: `architecture/contracts/loom-cli_contract.md`
-//   §"Exit Codes" (AC-CLIEXIT3-01).
-// - **BC-CLI-05.** `From<RpcError> for CliError` mirrors
+// - `From<RpcError> for CliError` mirrors
 //   `LoomErrorCode` 1:1; `tools/lint-error-codes.py` walks the
 //   codegen output and asserts every variant has a matching arm.
-// - **Actionable error messages (steal from C-02).**
+// - **Actionable error messages.**
 //   `DaemonNotRunning → "Try: loom serve"` etc. The full catalog is
 //   pinned in `connection_message`.
 
@@ -30,7 +26,7 @@ pub enum CliError {
     /// Usage error — caught BEFORE any RPC call. Exit 2.
     Usage(String),
     /// Typed error receipt from the daemon. Exit 1. Receipt flows
-    /// through verbatim per SR-CLI-03.
+    /// through verbatim.
     Receipt(serde_json::Value),
     /// Connection failure. Exit 1 with actionable message.
     Connection(ConnectionError),
@@ -46,27 +42,27 @@ pub enum CliError {
     Internal(String),
     /// Operation requires elevated privileges; caller degrades gracefully. Exit 0.
     /// Used by `postinstall_runner::plist_step` when the launchd plist write is
-    /// denied due to the user not running as root (AC-CHPIN-08).
+    /// denied due to the user not running as root.
     PermissionDenied(String),
-    /// The requested surface is not loaded in the daemon. Exit 5 (AC-AESF-04).
+    /// The requested surface is not loaded in the daemon. Exit 5.
     /// Mapped from `LoomErrorCode::SurfaceUnavailable` (RPC wire code
     /// `"surface_unavailable"`) by `From<RpcError> for CliError`.
     SurfaceUnavailable(String),
-    /// Configuration resolution failure. Exit 3 (AC-CLIEXIT-06).
+    /// Configuration resolution failure. Exit 3.
     /// Reserved for future emitters in `cli_config::resolve` and friends;
     /// the mapping is wired now so the table is testable today.
     Config(String),
     /// JSON-RPC protocol-level failure (malformed envelope, schema skew
-    /// mid-call, etc). Exit 4 (AC-CLIEXIT-06). Reserved for future emitters
+    /// mid-call, etc). Exit 4. Reserved for future emitters
     /// in `rpc_client`; the mapping is wired now so the table is testable today.
     Protocol(String),
     /// `loom session diff` found structural differences between two sessions.
-    /// Exit 6 (AC-CLIEXIT3-01). Distinct from `Internal` because diverging
+    /// Exit 6. Distinct from `Internal` because diverging
     /// sessions are an *expected* result, not a CLI usage bug — Unix-`diff(1)`
     /// precedent (0 = same, non-0 = differ, 2 = error). The carried String
     /// is a one-line summary for stderr (e.g. "3 field diffs, action_count_delta=1").
     SessionsDiffer(String),
-    /// AC-DIST-05: chromium binary could not be located by the resolver.
+    /// Chromium binary could not be located by the resolver.
     /// Exit 1 with a platform-aware actionable install message. Mapped from
     /// `LoomErrorCode::BrowserNotFound` (RPC wire code `"browser_not_found"`)
     /// by `From<RpcError> for CliError`.
@@ -91,7 +87,7 @@ impl std::fmt::Display for CliError {
                 // error info lives in error.kind / error.detail. Falling back
                 // to "unknown error" loses that information; instead, prefer
                 // error.kind as the code and the action method name as the
-                // surface tag (when available). AC-NFR-DX-02.1.
+                // surface tag (when available).
                 let code = v.get("code").and_then(|c| c.as_str()).or_else(|| {
                     v.get("error")
                         .and_then(|e| e.get("kind"))
@@ -205,7 +201,7 @@ impl std::fmt::Display for CliError {
                 Ok(())
             }
             CliError::Internal(msg) => write!(f, "Error: {msg}"),
-            // PermissionDenied exits 0 (graceful degrade, AC-CHPIN-08). Informational only.
+            // PermissionDenied exits 0 (graceful degrade). Informational only.
             CliError::PermissionDenied(msg) => write!(f, "Warning: {msg} (skipped)"),
             CliError::SurfaceUnavailable(msg) => {
                 write!(f, "Error: surface unavailable — {msg}")
@@ -213,7 +209,7 @@ impl std::fmt::Display for CliError {
             CliError::Config(msg) => write!(f, "Error: config: {msg}"),
             CliError::Protocol(msg) => write!(f, "Error: protocol: {msg}"),
             CliError::SessionsDiffer(msg) => write!(f, "Error: sessions differ — {msg}"),
-            // AC-DIST-05: platform-aware actionable install command.
+            // Platform-aware actionable install command.
             // The carried `_msg` is the daemon-side detail; we render a fixed
             // user-facing message keyed off the host OS so the install hint
             // matches the user's package manager.
@@ -296,17 +292,17 @@ pub fn map_exit_code(result: &Result<(), CliError>) -> i32 {
         Err(CliError::SupplyChain { .. }) => EXIT_RECEIPT_ERROR,
         Err(CliError::DoctorFailed(_)) => EXIT_RECEIPT_ERROR,
         Err(CliError::Internal(_)) => EXIT_USAGE,
-        // PermissionDenied is a graceful degrade (AC-CHPIN-08) — non-root plist
+        // PermissionDenied is a graceful degrade — non-root plist
         // write is skipped, not fatal. Exit 0 so the postinstall receipt is "ok".
         Err(CliError::PermissionDenied(_)) => EXIT_OK,
-        // SurfaceUnavailable: daemon has no surface loaded for this action. Exit 5 (AC-AESF-04).
+        // SurfaceUnavailable: daemon has no surface loaded for this action. Exit 5.
         Err(CliError::SurfaceUnavailable(_)) => EXIT_SURFACE_UNAVAILABLE,
-        // Config / Protocol: AC-CLIEXIT-06 mapping table.
+        // Config / Protocol mapping table.
         Err(CliError::Config(_)) => EXIT_CONFIG,
         Err(CliError::Protocol(_)) => EXIT_PROTOCOL,
-        // SessionsDiffer: `loom session diff` found structural differences. Exit 6 (AC-CLIEXIT3-01).
+        // SessionsDiffer: `loom session diff` found structural differences. Exit 6.
         Err(CliError::SessionsDiffer(_)) => EXIT_DIFFERS,
-        // AC-DIST-05: BrowserNotFound is exit 1 (consistent with other
+        // BrowserNotFound is exit 1 (consistent with other
         // prereq-missing errors like `Connection(DaemonNotRunning)`).
         Err(CliError::BrowserNotFound(_)) => EXIT_RECEIPT_ERROR,
     }
@@ -315,7 +311,7 @@ pub fn map_exit_code(result: &Result<(), CliError>) -> i32 {
 /// Inspect a daemon receipt JSON. If the top-level `status` field is the
 /// string `"error"`, raise it to `Err(CliError::Receipt(v))` so it joins the
 /// receipt-error class (exit 1). Otherwise (status absent, or any non-error
-/// value) return the value verbatim. AC-CLIEXIT-01/04 fitness function.
+/// value) return the value verbatim.
 pub fn receipt_to_result(v: serde_json::Value) -> Result<serde_json::Value, CliError> {
     if v.get("status").and_then(|s| s.as_str()) == Some("error") {
         Err(CliError::Receipt(v))
@@ -326,7 +322,7 @@ pub fn receipt_to_result(v: serde_json::Value) -> Result<serde_json::Value, CliE
 
 /// Format an error for display to the user. Returns `None` for `Ok(())`.
 /// Pure function; used by `print_error` and by integration tests that need
-/// to assert stderr content without process-level stderr capture (AC-AESF-06).
+/// to assert stderr content without process-level stderr capture.
 pub fn format_error(result: &Result<(), CliError>) -> Option<String> {
     match result {
         Ok(()) => None,
@@ -334,10 +330,10 @@ pub fn format_error(result: &Result<(), CliError>) -> Option<String> {
     }
 }
 
-/// Print the error message for a CLI result to stderr (AC-AESF-05).
+/// Print the error message for a CLI result to stderr.
 /// Called by `main` before `map_exit_code` to ensure every error class
 /// is surfaced to the user before process exit. Uses stderr so errors
-/// never pollute the JSON receipt stream on stdout (AC-AESF-06).
+/// never pollute the JSON receipt stream on stdout.
 ///
 /// Color-agnostic version (used in early-init paths where no resolved
 /// `CliConfig` exists yet). Plain bytes; no ANSI.
@@ -347,7 +343,7 @@ pub fn print_error(result: &Result<(), CliError>) {
     }
 }
 
-/// Color-aware variant per D-20: when `stderr_color_enabled` is true,
+/// Color-aware variant: when `stderr_color_enabled` is true,
 /// the message is rendered RED+BOLD. Used after `CliConfig` resolution
 /// in `cli_main`. The plain `print_error` is preserved for the early-init
 /// failure path.
@@ -384,11 +380,11 @@ pub fn connection_message(err: &ConnectionError) -> &'static str {
 pub const EXIT_OK: i32 = 0;
 pub const EXIT_RECEIPT_ERROR: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
-/// Surface not loaded in the daemon (AC-AESF-04).
+/// Surface not loaded in the daemon.
 pub const EXIT_SURFACE_UNAVAILABLE: i32 = 5;
-/// Configuration resolution failure (AC-CLIEXIT-06).
+/// Configuration resolution failure.
 pub const EXIT_CONFIG: i32 = 3;
-/// JSON-RPC protocol-level failure (AC-CLIEXIT-06).
+/// JSON-RPC protocol-level failure.
 pub const EXIT_PROTOCOL: i32 = 4;
-/// `loom session diff` found structural differences (AC-CLIEXIT3-01).
+/// `loom session diff` found structural differences.
 pub const EXIT_DIFFERS: i32 = 6;

@@ -47,8 +47,8 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 tokio-tungstenite = { workspace = true }
 loom-core = { workspace = true, features = ["mock"] }
-# AC-HAREXPORT-04: integration_har_export.rs validates the
-# end-to-end-produced HAR against the vendored HAR 1.2 schema
+# integration_har_export.rs validates the end-to-end-produced HAR
+# against the vendored HAR 1.2 schema
 # (tests/integration_har_export.rs). Same workspace dep loom-core
 # uses; scoped to dev-deps here so loom-host's runtime closure
 # stays unchanged.

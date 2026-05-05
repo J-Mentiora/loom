@@ -1,6 +1,9 @@
-# cargo-deny configuration. Enforces SR-CORE-01 (no platform symbols
-# in core), the chromiumoxide-only-in-loom-shims rule, and the
-# no-getrandom/no-std-time rule for surface guests.
+# cargo-deny configuration. Enforces:
+#   - the chromiumoxide-only-in-loom-shims rule (Chromium driver lives
+#     out-of-process, in one crate)
+#   - no platform-specific keychain crates outside loom-keychain
+#   - no `getrandom` reachable from WASM-guest surfaces
+# License + advisory checks are enforced too; see [licenses] / [advisories].
 
 [graph]
 # All-features evaluation so feature-gated keychain backends are visible
@@ -18,8 +21,7 @@ ignore = [
     # Transitive via chromiumoxide → loom-shims only (out-of-process Chromium
     # driver). Not in the WASM execution path. Accepted risk until
     # chromiumoxide ships an async-std-free release.
-    # AC-WTUPG-06 accepted-risk justification.
-    # Re-evaluate by 2026-09-30. Tracking: chromiumoxide async-std-free release.
+    # Re-evaluate by 2026-09-30.
     { id = "RUSTSEC-2025-0052" },
     # RUSTSEC-2026-0114: wasmtime 44.0.0 GHSA-p8xm-42r7-89xg.
     # Fix is wasmtime >= 44.0.1 (not yet published to crates.io as of
@@ -32,9 +34,9 @@ ignore = [
 
 [licenses]
 version = 2
-# Exhaustive allow list under v2 — any license not listed is denied.
-# This is how AC-CI-03 ("fail on any GPL / unknown licenses") is satisfied:
-# GPL-2.0/3.0, AGPL, LGPL, etc. fall through to the default-deny.
+# Exhaustive allow-list under v2 — any license not listed is denied.
+# GPL-2.0/3.0, AGPL, LGPL, etc. fall through to the default-deny so the
+# release artifacts stay license-clean.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
@@ -60,7 +62,7 @@ wildcards = "warn"
 highlight = "all"
 
 # ---- Per-crate / per-target bans ----
-# These rules encode binding-constraints architectural invariants. cargo-deny
+# These rules encode the workspace's architectural invariants. cargo-deny
 # v2 matches `wrappers` against DIRECT parents in the resolved dep graph —
 # transitive ancestors are not implicit wrappers. The lists below name the
 # direct parents on the host target; `secret-service` and `windows-credentials`
@@ -94,10 +96,10 @@ wrappers = [
     "zip",             # archive randomness for loom-cli
 ]
 
-# 3. Forbid platform-specific keychain crates outside loom-keychain
-#    (BC-CORE-02 / SR-CORE-01). `rustls-platform-verifier` and
-#    `rustls-native-certs` are also allowed because they use these
-#    crates for OS-level TLS certificate verification, not keychain ops.
+# 3. Forbid platform-specific keychain crates outside loom-keychain.
+#    `rustls-platform-verifier` and `rustls-native-certs` are also
+#    allowed because they use these crates for OS-level TLS certificate
+#    verification, not keychain ops.
 [[bans.deny]]
 name = "security-framework"
 wrappers = ["loom-keychain", "rustls-platform-verifier", "rustls-native-certs"]

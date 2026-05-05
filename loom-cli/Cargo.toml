@@ -16,10 +16,10 @@ loom-shared = { workspace = true }
 loom-core = { workspace = true }
 loom-rpc = { workspace = true }
 loom-host = { workspace = true, optional = true }
-# AC-DIST-01: loom-daemon, loom-mcp, loom-shims are added as deps so the
-# `[[bin]]` entries for loom-daemon, loom-mcp, loom-shim-chromium (in
-# `src/bin/`) can call into their library code. cargo-dist 0.30+ requires
-# all `[[bin]]` entries to live in one Cargo Package to bundle them into
+# loom-daemon, loom-mcp, loom-shims are added as deps so the `[[bin]]`
+# entries for loom-daemon, loom-mcp, loom-shim-chromium (in `src/bin/`)
+# can call into their library code. cargo-dist 0.30+ requires all
+# `[[bin]]` entries to live in one Cargo Package to bundle them into
 # one tarball / one brew formula.
 loom-daemon = { workspace = true }
 loom-mcp = { workspace = true }
@@ -59,24 +59,23 @@ wasmparser = "0.246"
 clap_mangen = "0.2"
 
 [features]
-# AC-PICOMP-01: postinstall enabled by default so `cargo build --release --bin loom`
-# produces a binary with a fully-functional `loom postinstall` command.
-# BC-CLI-01 is preserved by code structure: compile_module is only reachable from
-# Command::Postinstall → postinstall_runner::compile_step, never from the action
-# dispatch path.
+# `postinstall` enabled by default so `cargo build --release --bin loom`
+# produces a binary with a fully-functional `loom postinstall`.
+# `compile_module` stays reachable only from `Command::Postinstall →
+# postinstall_runner::compile_step`, never from the action dispatch path.
 #
-# AC-DIST-01: `vendored-wasm` lets `cargo install --git ... loom-cli` succeed without
-# `rustup target add wasm32-wasip2`. build.rs reads `vendor/loom_surface_web.wasm`
-# instead of recursively building the wasm32-wasip2 cdylib. CI guards staleness via
-# the `vendored-wasm-check` job in ci.yml.
+# `vendored-wasm` lets `cargo install --git ... loom-cli` succeed without
+# `rustup target add wasm32-wasip2`. build.rs reads
+# `vendor/loom_surface_web.wasm` instead of recursively building the
+# wasm32-wasip2 cdylib. CI guards staleness via the `vendored-wasm-check`
+# job in ci.yml.
 default = ["postinstall", "vendored-wasm"]
 mock = []
 postinstall = ["dep:loom-host"]
 vendored-wasm = []
 
-# Binary crate but exposes a library facade for integration tests
-# (per `main` interfaces.rs comment: "exports `fn main()` and a
-# library-style `run` helper for integration tests").
+# Binary crate that also exposes a library facade for integration tests
+# (`fn main()` plus a library-style `run` helper).
 [lib]
 name = "loom_cli"
 path = "src/lib.rs"
@@ -85,8 +84,8 @@ path = "src/lib.rs"
 name = "loom"
 path = "src/bin/loom.rs"
 
-# AC-DIST-01: 3 sibling binaries co-located in this package so cargo-dist
-# 0.30+ ships them in one tarball + one brew formula.
+# 3 sibling binaries co-located in this package so cargo-dist 0.30+
+# ships them in one tarball + one brew formula.
 [[bin]]
 name = "loom-daemon"
 path = "src/bin/loom-daemon.rs"

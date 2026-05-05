@@ -19,13 +19,13 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 zeroize = { workspace = true }
 ciborium = { workspace = true }
-# AC-DIST-01: binary_resolver locates sibling loom binaries in
+# binary_resolver locates sibling loom binaries in
 # `dirs::data_local_dir()/loom/bin/` for the cargo-install path.
 dirs = { workspace = true }
 
 [dev-dependencies]
-# AC-DIST-05: chromium_resolver tests plant fake-chromium executables
-# in tempdirs to exercise every branch of the resolution chain.
+# chromium_resolver tests plant fake-chromium executables in tempdirs
+# to exercise every branch of the resolution chain.
 tempfile = { workspace = true }
 
 [lints]

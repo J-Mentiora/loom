@@ -11,7 +11,7 @@ ci = "github"
 installers = ["shell", "homebrew"]
 # A GitHub repo to push Homebrew formulas to
 tap = "mentiora-ai/homebrew-loom"
-# AC-DIST-01: brew formula name. Without this, cargo-dist names the formula
+# Brew formula name. Without this, cargo-dist names the formula
 # after the package (`loom-cli.rb`) which forces `brew install
 # mentiora-ai/loom/loom-cli`. We want the more natural
 # `brew install mentiora-ai/loom/loom`.

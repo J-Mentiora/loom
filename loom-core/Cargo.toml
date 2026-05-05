@@ -49,8 +49,8 @@ filetime = { workspace = true }
 tar = { workspace = true }
 flate2 = { workspace = true }
 zip = { workspace = true }
-# AC-HAREXPORT-04: validate exporter output against vendored HAR 1.2
-# JSON Schema in tests/. The workspace dep is runtime-typed (used by
+# Validate HAR-exporter output against the vendored HAR 1.2 JSON
+# Schema in tests/. The workspace dep is runtime-typed (used by
 # loom-rpc + loom-cli for request validation); declaring it here as a
 # dev-dep scopes its inclusion in loom-core to test code only.
 jsonschema = { workspace = true }

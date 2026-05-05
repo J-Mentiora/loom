@@ -37,11 +37,11 @@ mock = []
 [lib]
 path = "src/lib.rs"
 
-# AC-DIST-01: This package is a library only. The `loom-mcp` binary is built
-# from `loom-cli/src/bin/loom-mcp.rs` (a thin clap wrapper calling
+# Library-only package. The `loom-mcp` binary is built from
+# `loom-cli/src/bin/loom-mcp.rs` (a thin clap wrapper calling
 # `loom_mcp::mcp_main::run()`) so cargo-dist 0.30+ can ship all 4 loom
-# binaries in a single tarball — its docs require all `[[bin]]` entries to
-# be in one Cargo Package to bundle.
+# binaries in a single tarball — its docs require all `[[bin]]` entries
+# to be in one Cargo Package to bundle.
 [package.metadata.dist]
 dist = false
 

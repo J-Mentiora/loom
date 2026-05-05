@@ -31,7 +31,7 @@ categories = ["command-line-utilities", "development-tools::testing", "web-progr
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 
-# Serde + canonicalization (BC §4)
+# Serde + canonical-bytes serialization (manifests, receipts).
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_jcs = "0.1"
@@ -93,7 +93,7 @@ humantime = "2"
 rustix = { version = "1", features = ["net", "process"] }
 libc = "0.2"
 
-# WebSocket — only as a dev-dep for the stub CDP harness (AC-SHCRT-06).
+# WebSocket — only as a dev-dep for the stub CDP harness.
 # Not allowed in production code paths (cargo-deny enforced; chromiumoxide
 # transitively pulls async-tungstenite for real CDP).
 tokio-tungstenite = "0.21"

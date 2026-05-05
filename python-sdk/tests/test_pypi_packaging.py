@@ -1,10 +1,10 @@
 """
-Tests for AC-SDK-01.1 — Python SDK ships on PyPI.
+Smoke test for the published Python SDK.
 
-Given Python >= 3.11 with `pip install loom`,
-When `python -c "import loom; loom.Session.create()"` is run,
-Then import succeeds, the call returns a Session instance whose
-.session_id matches the daemon's record.
+After `pip install loom` on Python >= 3.11, importing `loom` should
+expose `Session` / `AsyncSession`, and `Session.create()` should
+round-trip through the daemon and return a Session whose `session_id`
+matches the daemon's record.
 """
 from __future__ import annotations
 
