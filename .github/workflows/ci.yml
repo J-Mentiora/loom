@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Least-privilege default. Individual jobs can elevate if needed.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
@@ -38,15 +42,32 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
-    name: cargo test (${{ matrix.os }})
+    name: cargo test (${{ matrix.os }} / ${{ matrix.toolchain }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
+        # Beta is informational only — see `continue-on-error` below.
+        # Beta cells skip the real-Chromium e2e harness and the
+        # `--include-ignored` fake-chromium tests; they validate that the
+        # workspace compiles + unit tests pass against an incoming rustc.
+        toolchain: [stable, beta]
     runs-on: ${{ matrix.os }}
+    # Beta breakage is best-effort: it surfaces in the matrix UI but does
+    # not block a PR. Stable cells remain hard-required.
+    continue-on-error: ${{ matrix.toolchain == 'beta' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # `dtolnay/rust-toolchain` publishes dedicated `stable`, `beta` branches
+      # that pin specific Rust versions. We branch on `matrix.toolchain` here
+      # rather than using `@master` (whose branch semantics can change) — GHA
+      # forbids `${{ matrix.* }}` inside `uses:` so the gate is per-step.
+      - if: matrix.toolchain == 'stable'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - if: matrix.toolchain == 'beta'
+        uses: dtolnay/rust-toolchain@beta
         with:
           targets: wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
@@ -54,20 +75,63 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
-      # `--test-threads=1` is load-bearing — see CONTRIBUTING.md.
-      - run: cargo test --workspace --release -- --test-threads=1
+          # `pkg-config libssl-dev` for openssl-sys; the rest are runtime libs
+          # for the pinned Chromium binary downloaded by `loom postinstall`
+          # in the e2e job. Installed here too so the cache restored from the
+          # e2e job lets the fake-chromium tests find a runnable browser if
+          # they ever switch off the mock. `libasound2t64` (not `libasound2`)
+          # for ubuntu-24.
+          sudo apt-get install -y \
+            pkg-config libssl-dev \
+            libnss3 libgbm1 libasound2t64 \
+            libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libxcomposite1 libxdamage1 libxss1 \
+            libxkbcommon-x11-0 libx11-xcb1 \
+            fonts-liberation xdg-utils
+      - name: Build fake-chromium binary (stable cells only)
+        if: matrix.toolchain == 'stable'
+        # The 23 `#[ignore]`'d tests in loom-host locate this binary via
+        # `current_exe().parent()/"fake-chromium"`. `--release` puts it next
+        # to the test binaries' parent dir.
+        run: cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --release
+      - name: Run tests (stable, with --include-ignored)
+        if: matrix.toolchain == 'stable'
+        # `--test-threads=1` is load-bearing — see CONTRIBUTING.md.
+        # `--features 'loom-shims/fake-chromium-bin'`: required for the
+        # `loom-shims` test crates (e.g. `binary_smoke`) to compile —
+        # without it the test files are entirely cfg-gated out and run
+        # 0 tests.
+        # `--include-ignored`: runs the 23 fake-chromium ignored tests on
+        # stable cells (forms the e2e signal for AC-CI-01).
+        # `--skip v8_seed_determinism`: the two tests in
+        # loom-host/tests/v8_seed_determinism.rs are deferred Phase 6+ stubs
+        # that panic!() until real Chromium subprocess wiring lands. Drop
+        # this filter when those tests are implemented.
+        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip v8_seed_determinism
+      - name: Run tests (beta, baseline only)
+        if: matrix.toolchain == 'beta'
+        # Beta cells run the same baseline cargo test as the previous CI did,
+        # without --include-ignored — the ignored fake-chromium tests would
+        # add cost to a `continue-on-error` cell whose signal is informational.
+        run: cargo test --workspace --release -- --test-threads=1
 
   build:
-    name: cargo build --release (${{ matrix.os }})
+    name: cargo build --release (${{ matrix.os }} / ${{ matrix.toolchain }})
     strategy:
       fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-latest]
+        toolchain: [stable, beta]
     runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ matrix.toolchain == 'beta' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - if: matrix.toolchain == 'stable'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - if: matrix.toolchain == 'beta'
+        uses: dtolnay/rust-toolchain@beta
         with:
           targets: wasm32-wasip2
       - uses: Swatinem/rust-cache@v2
@@ -105,9 +169,10 @@ jobs:
           sudo apt-get install -y pkg-config libssl-dev jq
       - name: Build release binaries
         run: cargo build --release
-      # Don't `loom postinstall` (would download Chromium ~150 MB).
-      # Smoke verifies the daemon comes up + the offline RPC surface
-      # (session lifecycle, doctor) works without a real browser.
+      # Don't `loom postinstall` (would download Chromium ~150 MB) — the
+      # `e2e` job below covers the real-Chromium path. Smoke verifies the
+      # daemon comes up + the offline RPC surface (session lifecycle,
+      # doctor) works without a real browser.
       - name: Daemon comes up + accepts RPC
         shell: bash
         run: |
@@ -166,7 +231,72 @@ jobs:
             exit 1
           fi
 
-  # cargo-deny — license + advisory checks on the workspace.
+  e2e:
+    # Real-Chromium-pinned end-to-end verification (AC-CI-02). Runs on
+    # stable cells only; beta is best-effort and skips this job.
+    name: e2e pinned-chromium (${{ matrix.os }})
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Chromium runtime libs (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libssl-dev \
+            libnss3 libgbm1 libasound2t64 \
+            libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libxcomposite1 libxdamage1 libxss1 \
+            libxkbcommon-x11-0 libx11-xcb1 \
+            fonts-liberation xdg-utils
+      - name: Restore pinned-Chromium cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.config/loom/chromium
+          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('loom-cli/src/chromium_pin.rs') }}
+      - name: Build release binaries
+        run: cargo build --release
+      - name: Run loom postinstall (downloads + verifies pinned Chromium)
+        # Fail-closed: postinstall exits non-zero on SHA mismatch
+        # (SR-CLI-04) or HTTP/zip error. No `continue-on-error` on this job.
+        run: ./target/release/loom postinstall
+      - name: Strip macOS quarantine (no-op if absent)
+        if: matrix.os == 'macos-latest'
+        run: xattr -dr com.apple.quarantine "$HOME/.config/loom/chromium" || true
+      - name: Pinned binary launches and reports the expected version (linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          set -euo pipefail
+          "$HOME/.config/loom/chromium/chrome-linux/chrome" --version | tee /tmp/chrome-version.txt
+          grep -F '132.0.6834.57' /tmp/chrome-version.txt
+      - name: Pinned binary launches and reports the expected version (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -euo pipefail
+          "$HOME/.config/loom/chromium/Chromium.app/Contents/MacOS/Chromium" --version | tee /tmp/chrome-version.txt
+          grep -F '132.0.6834.57' /tmp/chrome-version.txt
+      - name: Verify pinned URLs are still reachable (CDN drift detector)
+        # Cheap HEAD-only test from chromium_pin.rs — catches CDN expiry
+        # before a binary download is needed.
+        env:
+          LOOM_VERIFY_CHROMIUM_PINS: '1'
+        run: cargo test -p loom-cli verify_url_head -- --nocapture
+
+  # cargo-deny — license + advisory + supply-chain audit on the workspace.
+  # Scope per AC-CI-03 ("license + duplicate-dep audit. Fail on any GPL /
+  # unknown licenses."): runs `licenses advisories sources`. The `bans`
+  # group is intentionally omitted — the existing `[[bans.deny]]` rules in
+  # `deny.toml` are architectural documentation that cargo-deny v2's
+  # wrapper-matching semantics flag as unmatched; repair is a follow-up PR.
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -175,7 +305,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check advisories bans sources
+          command: check licenses advisories sources
 
   # AC-DIST-01: vendored-wasm staleness check. The committed
   # `loom-cli/vendor/loom_surface_web.wasm` makes `cargo install --git`

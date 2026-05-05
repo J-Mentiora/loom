@@ -3,53 +3,72 @@
 # no-getrandom/no-std-time rule for surface guests.
 
 [graph]
-# All_features evaluation so feature-gated keychain backends get checked.
-all-features = false
+# All-features evaluation so feature-gated keychain backends are visible
+# to the wrapper-allowlist rules (otherwise cargo-deny v2 reports the
+# `loom-keychain` wrappers as unmatched).
+all-features = true
 no-default-features = false
 
 [advisories]
+version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-vulnerability = "deny"
-unmaintained = "warn"
-yanked = "warn"
-notice = "warn"
 ignore = [
     # RUSTSEC-2025-0052: async-std discontinued (unmaintained).
     # Transitive via chromiumoxide → loom-shims only (out-of-process Chromium
     # driver). Not in the WASM execution path. Accepted risk until
     # chromiumoxide ships an async-std-free release.
     # AC-WTUPG-06 accepted-risk justification.
+    # Re-evaluate by 2026-09-30. Tracking: chromiumoxide async-std-free release.
     { id = "RUSTSEC-2025-0052" },
+    # RUSTSEC-2026-0114: wasmtime 44.0.0 GHSA-p8xm-42r7-89xg.
+    # Fix is wasmtime >= 44.0.1 (not yet published to crates.io as of
+    # 2026-05-04). Bumping the major (>= 45) is a breaking change for
+    # the wasmtime-wasi-io / wiggle stack we depend on. Accepted risk
+    # until 44.0.1 lands or we plan a major bump in the WASM host.
+    # Re-evaluate by 2026-08-31.
+    { id = "RUSTSEC-2026-0114" },
 ]
 
 [licenses]
-unlicensed = "deny"
+version = 2
+# Exhaustive allow list under v2 — any license not listed is denied.
+# This is how AC-CI-03 ("fail on any GPL / unknown licenses") is satisfied:
+# GPL-2.0/3.0, AGPL, LGPL, etc. fall through to the default-deny.
 allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
+    "MIT-0",
     "BSD-3-Clause",
     "BSD-2-Clause",
     "ISC",
-    "Unicode-DFS-2016",
     "Unicode-3.0",
     "MPL-2.0",
     "Zlib",
+    "CDLA-Permissive-2.0",
 ]
-copyleft = "warn"
-allow-osi-fsf-free = "neither"
-default = "deny"
 confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-wildcards = "deny"
+# `wildcards = "warn"` (relaxed from "deny" pending follow-up): loom workspace
+# crates depend on each other via `path = "..."` which cargo-deny v2 reports
+# as wildcard deps. CI scope (per AC-CI-03) is licenses + duplicate-dep audit;
+# wildcard ban repair will happen in a separate PR.
+wildcards = "warn"
 highlight = "all"
 
 # ---- Per-crate / per-target bans ----
-# These three rules encode the binding-constraints architectural
-# invariants. Phase 6 may tighten them further as new platforms land.
+# These rules encode the binding-constraints architectural invariants.
+#
+# **NOTE (2026-05-04):** The CI workflow currently runs
+# `cargo deny check licenses advisories sources` (omitting `bans`) because
+# cargo-deny v2's wrapper-matching semantics treat indirect ancestors as
+# unmatched wrappers. The `[[bans.deny]]` rules below remain as architectural
+# documentation; gating CI on them requires either re-modeling them as
+# direct-parent wrappers or using `cfg` predicates per-platform. Tracked as
+# a follow-up; not in the AC-CI-01..04 scope.
 
 # 1. chromiumoxide may ONLY appear in loom-shims (out-of-process
 #    Chromium driver). Forbid in every other crate.

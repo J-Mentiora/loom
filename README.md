@@ -1,5 +1,7 @@
 # Loom
 
+[![CI](https://github.com/J-Mentiora/loom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/J-Mentiora/loom/actions/workflows/ci.yml)
+
 **Agent-first browser automation runtime.** A local daemon + CLI + MCP server
 that drives a real Chromium subprocess through a deterministic action store.
 Designed for AI agents that need to browse, fill forms, run JavaScript, and
@@ -15,6 +17,8 @@ artifacts, and a typed error wire shape that doesn't leak generic
 └─────────────┘  RPC    │   manifest)  │         └────────────────┘
                         └──────────────┘
 ```
+
+**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v1.0.0.
 
 ## What makes loom different
 
