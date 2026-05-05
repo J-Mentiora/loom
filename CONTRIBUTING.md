@@ -13,12 +13,20 @@ rustup target add wasm32-wasip2
 cargo build --workspace
 ```
 
-The `loom-cli` build script produces the `loom_surface_web.wasm` artifact
-recursively (it invokes `cargo build --target wasm32-wasip2 -p
-loom-surface-web`), and `loom-host`'s build script reads that artifact's
-SHA-256 to embed in `LOOM_SURFACE_WEB_SHA256`. Editing the surface
-crate without `touch loom-surface-web/src/lib.rs` may leave a stale SHA
-in `loom-host`. When in doubt: `cargo clean -p loom-host -p loom-surface-web`.
+The `loom-cli` build script produces the `loom_surface_web.wasm` artifact.
+By default (release builds) it reads the committed
+`loom-cli/vendor/loom_surface_web.wasm` — the `vendored-wasm` cargo feature
+makes `cargo install --git ... loom-cli` work without `rustup target add
+wasm32-wasip2`. To rebuild from source instead (for instance after editing
+`loom-surface-web/`), use `cargo build --no-default-features --features
+postinstall`, or regenerate the vendored bytes with `just vendor-wasm` and
+commit the diff. CI's `vendored-wasm-check` job will fail PRs where the
+vendored bytes drift from `loom-surface-web/`'s source.
+
+`loom-host`'s build script reads the surface artifact's SHA-256 to embed
+in `LOOM_SURFACE_WEB_SHA256`. Editing the surface crate without `touch
+loom-surface-web/src/lib.rs` may leave a stale SHA in `loom-host`. When in
+doubt: `cargo clean -p loom-host -p loom-surface-web`.
 
 ## Testing
 
@@ -78,19 +86,47 @@ attempted); validate/replay/diff/export → typed SessionNotFound.
 
 Releases are cut from the `main` branch via git tag. `cargo-dist`'s
 GitHub Actions workflow handles cross-compilation for macOS arm64/x86
-and linux x86/arm64 and uploads the binaries to the GitHub release.
+and linux x86/arm64, uploads the binaries to the GitHub release, and
+auto-publishes the Homebrew formula to the
+[J-Mentiora/homebrew-loom](https://github.com/J-Mentiora/homebrew-loom) tap.
 
-To cut a release:
+### One-time setup (first release only)
+
+1. Create the tap repo `J-Mentiora/homebrew-loom` (the `homebrew-` prefix
+   is required so `brew install J-Mentiora/loom/loom` resolves). Initialize
+   with a single-line README.
+2. Generate a **fine-grained** GitHub personal access token, scoped to
+   only `J-Mentiora/homebrew-loom`, with `contents: write`. Do NOT use a
+   classic `repo`-scoped PAT — that grants access to all your private
+   repos and would fail an audit.
+3. Add the PAT as a secret named `HOMEBREW_TAP_TOKEN` in the loom repo
+   (Settings → Secrets and variables → Actions → New repository secret).
+4. (Optional, recommended): bump cargo-dist to the latest release and
+   regenerate the workflow:
+   ```bash
+   cargo install cargo-dist --locked
+   dist init --yes  # picks up the homebrew installer + tap from dist-workspace.toml
+   ```
+   Commit any changes to `.github/workflows/release.yml` and
+   `dist-workspace.toml`.
+
+### Cutting a release
 
 ```bash
 # 1. Bump the workspace version + add a CHANGELOG entry
 #    (cargo-dist will refuse to release if these are out of sync)
-# 2. Tag + push
+# 2. Regenerate the vendored WASM if loom-surface-web/ changed:
+just vendor-wasm
+git add loom-cli/vendor/loom_surface_web.wasm
+# 3. Tag + push
 git tag -a v1.x.y -m "release v1.x.y"
 git push origin v1.x.y
 ```
 
-The release workflow takes ~10-15 minutes to produce binaries.
+The release workflow takes ~10-15 minutes. After completion the
+`homebrew-formula-smoke-check` job verifies the auto-pushed formula's
+version matches the tag — failures here usually mean
+`HOMEBREW_TAP_TOKEN` expired and needs rotation.
 
 ## Code of conduct
 

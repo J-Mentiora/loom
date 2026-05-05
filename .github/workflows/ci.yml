@@ -143,3 +143,36 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories bans sources
+
+  # AC-DIST-01: vendored-wasm staleness check. The committed
+  # `loom-cli/vendor/loom_surface_web.wasm` makes `cargo install --git`
+  # work without `rustup target add wasm32-wasip2`. If the vendored bytes
+  # drift from `loom-surface-web/` source, cargo-install users get stale
+  # behavior. This job rebuilds from source and diffs.
+  vendored-wasm-check:
+    name: vendored-wasm staleness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Build wasm32-wasip2 from source
+        run: |
+          cargo build -p loom-surface-web \
+            --target wasm32-wasip2 \
+            --profile=wasm-guest \
+            --target-dir target/wasm-guest
+      - name: Diff against committed vendor copy
+        run: |
+          set -euo pipefail
+          FRESH=target/wasm-guest/wasm32-wasip2/wasm-guest/loom_surface_web.wasm
+          VENDORED=loom-cli/vendor/loom_surface_web.wasm
+          if ! cmp -s "$FRESH" "$VENDORED"; then
+            echo "::error::loom-cli/vendor/loom_surface_web.wasm is stale."
+            echo "Run \`just vendor-wasm\` to regenerate, then commit."
+            ls -la "$FRESH" "$VENDORED"
+            exit 1
+          fi
+          echo "✓ vendored wasm matches source"

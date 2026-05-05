@@ -2585,6 +2585,7 @@ name = "loom-shared"
 version = "1.0.0"
 dependencies = [
  "ciborium",
+ "dirs",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

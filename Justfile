@@ -12,3 +12,15 @@ gen-meta:
     mkdir -p target/release
     echo '{"strategy":"downloaded"}' > target/release/meta.json
     @echo "Wrote target/release/meta.json (strategy: downloaded)"
+
+# AC-DIST-01: regenerate the committed loom_surface_web.wasm artifact.
+# Run after editing anything under loom-surface-web/ — CI's
+# vendored-wasm-check job will fail PRs where this is stale.
+vendor-wasm:
+    cargo build -p loom-surface-web \
+        --target wasm32-wasip2 \
+        --profile=wasm-guest \
+        --target-dir target/wasm-guest
+    cp target/wasm-guest/wasm32-wasip2/wasm-guest/loom_surface_web.wasm \
+       loom-cli/vendor/loom_surface_web.wasm
+    @echo "✓ regenerated loom-cli/vendor/loom_surface_web.wasm — commit if changed"

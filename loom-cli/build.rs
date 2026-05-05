@@ -5,13 +5,14 @@
 //
 // ## Behavior matrix
 //
-// | PROFILE  | LOOM_SURFACE_WEB_WASM_PATH | LOOM_SKIP_WASM_BUILD | Outcome |
-// |----------|----------------------------|----------------------|---------|
-// | release  | set                        | -                    | Copy supplied artifact (CI / explicit override) |
-// | release  | unset                      | unset                | Auto-build wasm32-wasip2 cdylib via recursive cargo |
-// | release  | unset                      | =1                   | Panic — release builds refuse the stub |
-// | debug    | set                        | -                    | Copy supplied artifact |
-// | debug    | unset                      | -                    | Emit 8-byte minimal-component stub + cargo:warning |
+// | PROFILE  | LOOM_SURFACE_WEB_WASM_PATH | feature vendored-wasm | LOOM_SKIP_WASM_BUILD | Outcome |
+// |----------|----------------------------|------------------------|----------------------|---------|
+// | release  | set                        | -                      | -                    | Copy supplied artifact (CI / explicit override) |
+// | release  | unset                      | on (default)           | -                    | Copy committed `vendor/loom_surface_web.wasm` (AC-DIST-01) |
+// | release  | unset                      | off                    | unset                | Auto-build wasm32-wasip2 cdylib via recursive cargo |
+// | release  | unset                      | off                    | =1                   | Panic — release builds refuse the stub |
+// | debug    | set                        | -                      | -                    | Copy supplied artifact |
+// | debug    | unset                      | -                      | -                    | Emit 8-byte minimal-component stub + cargo:warning |
 //
 // ## Recursive cargo invocation
 //
@@ -70,6 +71,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=LOOM_SKIP_WASM_BUILD");
     println!("cargo:rerun-if-env-changed=PROFILE");
     println!("cargo:rerun-if-env-changed=CARGO_NET_OFFLINE");
+    println!("cargo:rerun-if-env-changed=CARGO_FEATURE_VENDORED_WASM");
+    // Vendored-wasm path: watch the committed artifact so feature-on rebuilds
+    // pick up updates from `just vendor-wasm`.
+    println!(
+        "cargo:rerun-if-changed={}",
+        manifest_dir.join("vendor/loom_surface_web.wasm").display()
+    );
     // Directory watch catches new/deleted files; explicit file watches add
     // belt-and-suspenders coverage for the most-edited source file in case
     // a future cargo version changes directory-recursion semantics.
@@ -128,6 +136,23 @@ fn main() {
             dest.display()
         );
         return;
+    } else if std::env::var("CARGO_FEATURE_VENDORED_WASM").is_ok() {
+        // AC-DIST-01: `vendored-wasm` (default) reads the committed artifact
+        // so `cargo install --git ... loom-cli` succeeds on a fresh machine
+        // without requiring `rustup target add wasm32-wasip2`. CI's
+        // `vendored-wasm-check` job re-builds from source and diffs against
+        // this file to catch staleness.
+        let vendored = manifest_dir.join("vendor/loom_surface_web.wasm");
+        if !vendored.exists() {
+            panic!(
+                "build.rs: vendored-wasm feature is on but {} is missing. \
+                 Run `just vendor-wasm` to regenerate, or build with \
+                 `--no-default-features --features postinstall` to fall back to \
+                 the recursive cargo build path.",
+                vendored.display()
+            );
+        }
+        vendored
     } else if std::env::var("LOOM_SKIP_WASM_BUILD").as_deref() == Ok("1") {
         // Explicit opt-out at release: refuse. Silent-stub-in-release is
         // the failure mode that produced the FIX-INCOMPLETE retest.
@@ -152,8 +177,7 @@ fn main() {
 
     // Path-divergence fix (council C2): also copy to the convention path
     // so loom-host/build.rs can compute the integrity SHA (AC-WASMB-05).
-    let convention_path = workspace_root
-        .join("target/wasm32-wasip2/release/loom_surface_web.wasm");
+    let convention_path = workspace_root.join("target/wasm32-wasip2/release/loom_surface_web.wasm");
     if let Some(parent) = convention_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

@@ -47,6 +47,20 @@ pub struct PostinstallOptions {
     /// macOS plist destination
     /// (`/Library/LaunchDaemons/com.loom.daemon.plist`).
     pub plist_path: PathBuf,
+    /// AC-DIST-01: workspace crate version, used to construct the GH
+    /// Release URL `releases/download/v{version}/dist-manifest.json`.
+    /// Typically `env!("CARGO_PKG_VERSION")` from the caller.
+    pub loom_binaries_version: String,
+    /// AC-DIST-01: rustc-style host triple for tarball selection
+    /// (e.g. `"aarch64-apple-darwin"`).
+    pub loom_binaries_target_triple: String,
+    /// AC-DIST-01: directory the 3 sibling binaries are extracted to.
+    /// Default: `dirs::data_local_dir().join("loom/bin/")`.
+    pub loom_binaries_install_dir: PathBuf,
+    /// `--skip-chromium`: bypass step 3.
+    pub skip_chromium: bool,
+    /// `--skip-binaries`: bypass the loom-binaries download step.
+    pub skip_binaries: bool,
 }
 
 /// Per-step outcome — used for the final stdout receipt.
@@ -75,6 +89,9 @@ pub struct PostinstallReceipt {
     pub compile_outcomes: Vec<StepOutcome>,
     pub schemas: SchemaStepOutcome,
     pub chromium: StepOutcome,
+    /// AC-DIST-01: outcome of the loom-binaries download step. `None` when
+    /// the step was skipped via `--skip-binaries`.
+    pub loom_binaries: Option<StepOutcome>,
     pub launchd: Option<StepOutcome>,
 }
 
@@ -84,11 +101,34 @@ pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliErro
 
     let schemas = schema_step(&opts.schemas_dir)?;
 
-    let downloader = ChromiumDownloader::new(crate::chromium_downloader::ChromiumDownloaderConfig {
-        install_dir: opts.chromium_dir.clone(),
-        binary_subpath: PathBuf::from("Chromium.app/Contents/MacOS/Chromium"),
-    });
-    let chromium = chromium_step(&downloader, &opts.chromium_url, &opts.chromium_expected_sha256).await?;
+    let chromium = if opts.skip_chromium {
+        StepOutcome::Skipped
+    } else {
+        let downloader =
+            ChromiumDownloader::new(crate::chromium_downloader::ChromiumDownloaderConfig {
+                install_dir: opts.chromium_dir.clone(),
+                binary_subpath: PathBuf::from("Chromium.app/Contents/MacOS/Chromium"),
+            });
+        chromium_step(
+            &downloader,
+            &opts.chromium_url,
+            &opts.chromium_expected_sha256,
+        )
+        .await?
+    };
+
+    let loom_binaries = if opts.skip_binaries {
+        None
+    } else {
+        Some(
+            loom_binaries_step(
+                &opts.loom_binaries_version,
+                &opts.loom_binaries_target_triple,
+                &opts.loom_binaries_install_dir,
+            )
+            .await?,
+        )
+    };
 
     let writer = LaunchdPlistWriter::new(crate::launchd_plist_writer::LaunchdPlistConfig {
         loom_binary: std::env::current_exe().unwrap_or_default(),
@@ -102,6 +142,7 @@ pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliErro
         compile_outcomes,
         schemas,
         chromium,
+        loom_binaries,
         launchd,
     })
 }
@@ -110,8 +151,7 @@ pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliErro
 // Used as the fallback when LOOM_WASM_DIR is not set and the Cargo convention
 // target path does not exist (i.e., standard end-user install with no dev env).
 #[cfg(feature = "postinstall")]
-const EMBEDDED_SURFACE_WEB: &[u8] =
-    include_bytes!(env!("LOOM_CLI_EMBEDDED_SURFACE_WEB"));
+const EMBEDDED_SURFACE_WEB: &[u8] = include_bytes!(env!("LOOM_CLI_EMBEDDED_SURFACE_WEB"));
 
 /// Compile WASM surface modules to `.cwasm` in `surfaces_dir`.
 ///
@@ -141,8 +181,7 @@ pub fn compile_step(surfaces_dir: &std::path::Path) -> Result<Vec<StepOutcome>, 
             // Path 3: extract embedded WASM bytes to a stable temp location.
             let tmp_dir = std::env::temp_dir()
                 .join(format!("loom-postinstall-surfaces-{}", std::process::id()));
-            std::fs::create_dir_all(&tmp_dir)
-                .map_err(|e| CliError::Internal(e.to_string()))?;
+            std::fs::create_dir_all(&tmp_dir).map_err(|e| CliError::Internal(e.to_string()))?;
             let wasm_path = tmp_dir.join("loom_surface_web.wasm");
             std::fs::write(&wasm_path, EMBEDDED_SURFACE_WEB)
                 .map_err(|e| CliError::Internal(e.to_string()))?;
@@ -155,8 +194,8 @@ pub fn compile_step(surfaces_dir: &std::path::Path) -> Result<Vec<StepOutcome>, 
 
     std::fs::create_dir_all(surfaces_dir).map_err(|e| CliError::Internal(e.to_string()))?;
 
-    let runtime =
-        WasmRuntime::new(WasmRuntimeConfig::default()).map_err(|e| CliError::Internal(e.message))?;
+    let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
+        .map_err(|e| CliError::Internal(e.message))?;
     let compiler = Compiler::new(runtime);
 
     let mut outcomes = Vec::new();
@@ -214,8 +253,7 @@ fn discover_wasm_sources() -> Result<Vec<(String, std::path::PathBuf)>, CliError
     let wasm_dir = if let Ok(dir) = std::env::var("LOOM_WASM_DIR") {
         std::path::PathBuf::from(dir)
     } else {
-        let manifest_dir =
-            std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
+        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         match std::path::Path::new(&manifest_dir).parent() {
             Some(parent) => parent.join("target/wasm32-wasip2/release"),
             None => return Ok(vec![]),
@@ -249,14 +287,12 @@ fn discover_wasm_sources() -> Result<Vec<(String, std::path::PathBuf)>, CliError
 #[cfg(feature = "postinstall")]
 /// Returns `true` if the `.sha256` sidecar exists and matches the current
 /// SHA-256 of `wasm_path` — the compile_step idempotence guard (AC-WASMB-02).
-fn is_up_to_date(
-    wasm_path: &std::path::Path,
-    sidecar: &std::path::Path,
-) -> Result<bool, CliError> {
+fn is_up_to_date(wasm_path: &std::path::Path, sidecar: &std::path::Path) -> Result<bool, CliError> {
     if !sidecar.exists() {
         return Ok(false);
     }
-    let recorded = std::fs::read_to_string(sidecar).map_err(|e| CliError::Internal(e.to_string()))?;
+    let recorded =
+        std::fs::read_to_string(sidecar).map_err(|e| CliError::Internal(e.to_string()))?;
     let current = sha256_file(wasm_path)?;
     Ok(current == recorded.trim())
 }
@@ -279,6 +315,37 @@ pub async fn chromium_step(
     match downloader.ensure(url, expected_sha256).await? {
         crate::chromium_downloader::DownloadOutcome::Skipped => Ok(StepOutcome::Skipped),
         crate::chromium_downloader::DownloadOutcome::Downloaded(_p) => Ok(StepOutcome::Downloaded),
+    }
+}
+
+/// AC-DIST-01: download + extract `loom-daemon`, `loom-mcp`,
+/// `loom-shim-chromium` from the GH Release tagged `v{version}`. Skips
+/// when the 3 siblings are already co-located next to the running `loom`
+/// binary (brew/manual install path) — only the cargo-install path
+/// actually fetches.
+pub async fn loom_binaries_step(
+    version: &str,
+    target_triple: &str,
+    install_dir: &std::path::Path,
+) -> Result<StepOutcome, CliError> {
+    use crate::loom_binaries_downloader::{ensure, AUX_BINARY_NAMES};
+
+    // Detect: brew/manual already co-locate all 4 binaries next to `loom`.
+    if let Some(exe_parent) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+    {
+        if AUX_BINARY_NAMES
+            .iter()
+            .all(|n| exe_parent.join(n).is_file())
+        {
+            return Ok(StepOutcome::Skipped);
+        }
+    }
+
+    match ensure(version, target_triple, install_dir).await? {
+        crate::loom_binaries_downloader::DownloadOutcome::Skipped => Ok(StepOutcome::Skipped),
+        crate::loom_binaries_downloader::DownloadOutcome::Downloaded => Ok(StepOutcome::Downloaded),
     }
 }
 
@@ -343,19 +410,49 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
     // fields (AC-NAVRECEIPT2-01 + brief extensions). `additionalProperties`
     // is intentionally NOT declared on the response so the wire receipt
     // can grow further fields without invalidating older schemas.
-    ("web.navigate", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"url":{"type":"string"}},"required":["session","url"],"additionalProperties":false},"response":{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"},"timing_ticks":{"type":"integer"},"side_effects":{"type":"array"},"error":{"type":["object","null"]},"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"url":{"type":"string"},"final_url":{"type":"string"},"title":{"type":"string"},"status_code":{"type":"integer"},"dom_snapshot_hash":{"type":"string"},"screenshot_after_hash":{"type":"string"},"console_count":{"type":"integer"},"console_lines":{"type":"array"},"network_count":{"type":"integer"},"network_summary":{"type":"object","properties":{"total_count":{"type":"integer"},"total_bytes":{"type":"integer"},"error_count":{"type":"integer"}}}}}}"#),
-    ("web.click", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
+    (
+        "web.navigate",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"url":{"type":"string"}},"required":["session","url"],"additionalProperties":false},"response":{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"},"timing_ticks":{"type":"integer"},"side_effects":{"type":"array"},"error":{"type":["object","null"]},"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"url":{"type":"string"},"final_url":{"type":"string"},"title":{"type":"string"},"status_code":{"type":"integer"},"dom_snapshot_hash":{"type":"string"},"screenshot_after_hash":{"type":"string"},"console_count":{"type":"integer"},"console_lines":{"type":"array"},"network_count":{"type":"integer"},"network_summary":{"type":"object","properties":{"total_count":{"type":"integer"},"total_bytes":{"type":"integer"},"error_count":{"type":"integer"}}}}}}"#,
+    ),
+    (
+        "web.click",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
     // Canonical name `web.type` (was `web.type_text`); the legacy
     // `web.type_text` spelling resolves here via
     // `loom_shared::action_aliases::METHOD_ALIASES`.
-    ("web.type", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"text":{"type":"string"}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.select", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"value":{"type":"string"}},"required":["session","selector","value"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.hover", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.scroll", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"delta_x":{"type":"integer"},"delta_y":{"type":"integer"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.wait", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.evaluate", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"expression":{"type":"string"}},"required":["session","expression"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"return_value_json":{"type":"string","description":"Canonical-JSON of the evaluated value (AC-EVALRESULT-01..02). Numerics serialize as JSON strings per AC-NFR-DET-03.1 (1+1 -> \"2\", Math.PI -> \"3.141...\"). Absent when value > 64KB and offloaded to content store; see return_value_blob_ref."},"return_value_blob_ref":{"type":"object","description":"ContentRef when canonical-JSON > 64KB (AC-EVALRESULT-04). Truncation discriminator = this field present.","properties":{"sha256":{"type":"string"},"size_bytes":{"type":"integer"}},"required":["sha256","size_bytes"]}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.screenshot", r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
-    ("web.snapshot", r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#),
+    (
+        "web.type",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"text":{"type":"string"}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.select",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"value":{"type":"string"}},"required":["session","selector","value"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.hover",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.scroll",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"delta_x":{"type":"integer"},"delta_y":{"type":"integer"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.wait",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.evaluate",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"expression":{"type":"string"}},"required":["session","expression"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"return_value_json":{"type":"string","description":"Canonical-JSON of the evaluated value (AC-EVALRESULT-01..02). Numerics serialize as JSON strings per AC-NFR-DET-03.1 (1+1 -> \"2\", Math.PI -> \"3.141...\"). Absent when value > 64KB and offloaded to content store; see return_value_blob_ref."},"return_value_blob_ref":{"type":"object","description":"ContentRef when canonical-JSON > 64KB (AC-EVALRESULT-04). Truncation discriminator = this field present.","properties":{"sha256":{"type":"string"},"size_bytes":{"type":"integer"}},"required":["sha256","size_bytes"]}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.screenshot",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.snapshot",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
     // `rpc.schemas` — JSON-RPC introspection (AC-PROTO-02.2). Wire-side
     // schema_validator treats it as a built-in (no param check); this
     // CLI-side schema is permissive so `loom action rpc.schemas` reaches
@@ -364,9 +461,12 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
     // field. The response declares no required fields because the
     // SchemaRegistry envelope is shape-stable but field names are
     // implementation-defined.
-    ("rpc.schemas", r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#),
+    (
+        "rpc.schemas",
+        r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#,
+    ),
 ];
 
-/// The 3 step labels in stable order. Used by the final receipt and
+/// The 4 step labels in stable order. Used by the final receipt and
 /// by interface tests.
-pub const STEP_LABELS: &[&str] = &["compile_module", "chromium", "launchd"];
+pub const STEP_LABELS: &[&str] = &["compile_module", "chromium", "loom_binaries", "launchd"];

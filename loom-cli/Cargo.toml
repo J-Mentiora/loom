@@ -50,9 +50,15 @@ wasmparser = "0.246"
 # BC-CLI-01 is preserved by code structure: compile_module is only reachable from
 # Command::Postinstall → postinstall_runner::compile_step, never from the action
 # dispatch path.
-default = ["postinstall"]
+#
+# AC-DIST-01: `vendored-wasm` lets `cargo install --git ... loom-cli` succeed without
+# `rustup target add wasm32-wasip2`. build.rs reads `vendor/loom_surface_web.wasm`
+# instead of recursively building the wasm32-wasip2 cdylib. CI guards staleness via
+# the `vendored-wasm-check` job in ci.yml.
+default = ["postinstall", "vendored-wasm"]
 mock = []
 postinstall = ["dep:loom-host"]
+vendored-wasm = []
 
 # Binary crate but exposes a library facade for integration tests
 # (per `main` interfaces.rs comment: "exports `fn main()` and a
