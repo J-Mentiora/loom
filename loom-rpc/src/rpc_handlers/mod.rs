@@ -1,5 +1,5 @@
 //! `rpc_handlers` — see `systems/loom-rpc/modules/rpc_handlers/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod rpc_handlers;
 pub use rpc_handlers::*;
@@ -36,12 +36,12 @@ impl RpcHandlers {
         })
     }
 
-    /// `rpc.schemas` — AC-PROTO-02.2. Returns the in-memory schema registry.
+    /// `rpc.schemas` — returns the in-memory schema registry.
     pub async fn rpc_schemas(&self) -> HandlerResult<SchemaRegistry> {
         Ok(self.schemas.get_registry_snapshot())
     }
 
-    /// Serialise a handler result to canonical JSON string (RFC 8785 / AC-CLI-01.1).
+    /// Serialise a handler result to canonical JSON string (RFC 8785).
     pub fn serialise_canonical<T: serde::Serialize>(val: &T) -> Result<String, JsonRpcError> {
         serde_jcs::to_string(val).map_err(|e| JsonRpcError {
             code: LoomErrorCode::InternalError,
@@ -53,12 +53,11 @@ impl RpcHandlers {
     // === Session method stubs — implemented by session-* features ===
 
     pub async fn session_create(&self, p: CreateSessionParams) -> HandlerResult<SessionInfo> {
-        // AC-PROFVAL-01/02/03 (parent AC-PROTO-02.1): typed business
-        // validation runs before delegating to the adapter, so bogus
-        // profile / network-mode / budget-key values are rejected with
-        // typed envelopes carrying the canonical allowlist in `data`.
+        // Typed business validation runs before delegating to the adapter,
+        // so bogus profile / network-mode / budget-key values are rejected
+        // with typed envelopes carrying the canonical allowlist in `data`.
         crate::session_validation::session_validation::validate_create_session_params(&p)?;
-        // AC-DIST-05: fail-fast when no chromium binary was resolved at
+        // Fail-fast when no chromium binary was resolved at
         // daemon boot. Without this check, session.create succeeds and
         // the failure surfaces only on first action (an opaque
         // `shim-failure: action dispatch failed` from spawn ENOENT). The
@@ -191,7 +190,7 @@ impl RpcHandlers {
     }
 
     /// `import.playwright` — decode hex-encoded trace bytes and forward to
-    /// the core importer. AC-INTEROP-01.1.
+    /// the core importer.
     pub async fn import_playwright(
         &self,
         trace_hex: String,
@@ -271,9 +270,8 @@ impl RpcHandlers {
         })
     }
 
-    /// `gc.run` — AC-GCRPC-01..04, AC-STORE-01.1. Runs GC on the
-    /// content store. `ttl_days` defaults to the daemon-configured TTL
-    /// when None.
+    /// `gc.run` — runs GC on the content store. `ttl_days` defaults
+    /// to the daemon-configured TTL when None.
     pub async fn gc_run(
         &self,
         ttl_days: Option<u64>,

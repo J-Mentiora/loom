@@ -1,18 +1,18 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/rpc_observability/interfaces.rs` instead.
 // RpcObservability — `tracing` spans per RPC method + redaction layer.
 //
 // # Contract semantics
-// - **Span fields per RPC (AC-ARCH-38).** `request_id`, `method_name`,
+// - **Span fields per RPC .** `request_id`, `method_name`,
 //   `session_id?`, `latency_us`, `validation_outcome`, `error_code?`.
 //   Emitted as JSON via the `tracing` subscriber.
-// - **Latency partition (SR-RPC-05 / IC-RPC-08).** `validation_us`,
+// - **Latency partition.** `validation_us`,
 //   `framing_us`, and `host_dispatch_us` are recorded as separate
-//   span fields so the IC-RPC-08 budget is measured against
+//   span fields so the budget is measured against
 //   roundtrip overhead, NOT host action work.
 // - **Redaction layer.** `vault.grant` request fields (`secret`,
 //   `token`, `value`, `credential`, `password`) are scrubbed BEFORE
-//   the span is emitted (BC-CORE-02 leak prevention in logs).
+//   the span is emitted (leak prevention in logs).
 // - **Best-effort.** Span emission MUST NEVER block the request
 //   path. Subscriber failures are dropped silently.
 
@@ -27,7 +27,7 @@ pub enum ValidationOutcome {
     MethodNotFound,
 }
 
-/// One span's structured fields (AC-ARCH-38). `None`-valued fields
+/// One span's structured fields . `None`-valued fields
 /// are omitted from the JSON output.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcSpan {
@@ -39,7 +39,7 @@ pub struct RpcSpan {
     pub validation_outcome: ValidationOutcome,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
-    // SR-RPC-05 latency partition
+    // latency partition
     #[serde(skip_serializing_if = "Option::is_none")]
     pub validation_us: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -86,7 +86,7 @@ impl SpanGuard {
 }
 
 /// Concrete implementation. Wraps a `tracing` subscriber configured
-/// at daemon startup (BC-RPC-04: log level from config / env / CLI).
+/// at daemon startup (log level from config / env / CLI).
 pub struct RpcObservability {
     pub(crate) redaction_keys: Vec<String>,
 }

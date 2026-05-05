@@ -1,4 +1,4 @@
-//! AC-PROTO-01.1 — Unix socket file permissions.
+//! — Unix socket file permissions.
 //!
 //! Given the `loom` daemon starts,
 //! When the socket file is inspected (`stat`),
@@ -29,7 +29,7 @@ fn socket_mode_is_0600_after_bind() {
     let mode = meta.permissions().mode() & 0o777;
     assert_eq!(
         mode, 0o600,
-        "AC-PROTO-01.1: socket mode must be exactly 0600"
+        "socket mode must be exactly 0600"
     );
 
     // Ownership: socket must belong to the running user.
@@ -37,7 +37,7 @@ fn socket_mode_is_0600_after_bind() {
     assert_eq!(
         meta.uid(),
         unsafe { libc::getuid() },
-        "AC-PROTO-01.1: socket must be owned by the running user"
+        "socket must be owned by the running user"
     );
 
     drop(server);

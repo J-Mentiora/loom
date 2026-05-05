@@ -1,10 +1,10 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/frame_handler/interfaces.rs` instead.
 // FrameHandler — `tokio_util::codec::LengthDelimitedCodec` wrapper
-// per IC-RPC-04. 4-byte big-endian length prefix; 16 MB payload cap.
+// per. 4-byte big-endian length prefix; 16 MB payload cap.
 //
 // # Contract semantics
-// - **Codec (IC-RPC-04).** `tokio_util::codec::LengthDelimitedCodec`
+// - **Codec .** `tokio_util::codec::LengthDelimitedCodec`
 //   configured with `length_field_offset=0`, `length_field_length=4`,
 //   `length_adjustment=0`, big-endian length encoding.
 // - **Payload cap.** `MAX_FRAME_BYTES = 16 * 1024 * 1024` (16 MB).
@@ -16,12 +16,12 @@
 use tokio::net::UnixStream;
 use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-/// Maximum payload bytes accepted per request (IC-RPC-04 + design.md
+/// Maximum payload bytes accepted per request (per design.md
 /// soft binding). Exceeding this returns `LoomErrorCode::ProtocolMalformed`
 /// and closes the connection.
 pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024;
 
-/// Length-prefix size in bytes (IC-RPC-04: 4-byte big-endian).
+/// Length-prefix size in bytes (4-byte big-endian).
 pub const LENGTH_PREFIX_BYTES: usize = 4;
 
 /// The framed stream type used per-connection. Returned from
@@ -31,7 +31,7 @@ pub type FramedUnixStream = Framed<UnixStream, LengthDelimitedCodec>;
 pub struct FrameHandler;
 
 impl FrameHandler {
-    /// Build the codec configured per IC-RPC-04. Pure builder; no I/O.
+    /// Build the codec configured per. Pure builder; no I/O.
     pub fn build_codec() -> LengthDelimitedCodec {
         LengthDelimitedCodec::builder()
             .length_field_offset(0)

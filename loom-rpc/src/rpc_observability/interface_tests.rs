@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/rpc_observability/interface_tests.rs` instead.
-// Interface tests for `RpcObservability`. Verifies AC-ARCH-38 span
-// field set, SR-RPC-05 latency partition fields, redaction surface.
+// Interface tests for `RpcObservability`. Verifies span
+// field set, latency partition fields, redaction surface.
 
 use super::rpc_observability::{
     RpcObservability, RpcObservabilityApi, RpcSpan, SpanGuard, ValidationOutcome,
@@ -59,7 +59,7 @@ fn observability_api_supports_record_validation() {
 
 #[test]
 fn observability_api_supports_record_host_dispatch_separately() {
-    // SR-RPC-05: action latency excluded from RPC budget.
+    // action latency excluded from RPC budget.
     fn _ck<O: RpcObservabilityApi>(o: &O, g: &mut SpanGuard, us: u64) {
         o.record_host_dispatch(g, us)
     }
@@ -76,7 +76,7 @@ fn observability_api_supports_record_error_with_loom_error_code() {
 
 #[test]
 fn observability_api_exposes_redact_for_vault_grant_inputs() {
-    // AC-ARCH-38 redaction layer.
+    // redaction layer.
     fn _ck<O: RpcObservabilityApi>(o: &O, body: &mut serde_json::Value) {
         o.redact(body)
     }

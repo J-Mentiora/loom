@@ -1,4 +1,4 @@
-// Wire-shape integration test for `--no-blocklist` (AC-DET-05.1, AC-BLOCKLIST-04).
+// Wire-shape integration test for `--no-blocklist` .
 //
 // Confirms BOTH plumbing directions through the loom-rpc layer's
 // `CreateSessionParams`:

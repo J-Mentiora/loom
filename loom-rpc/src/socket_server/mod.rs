@@ -1,5 +1,5 @@
 //! `socket_server` — see `systems/loom-rpc/modules/socket_server/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod socket_server;
 pub use socket_server::*;
@@ -24,12 +24,12 @@ impl fmt::Debug for SocketServer {
 }
 
 impl SocketServer {
-    /// Public associated-function form of `apply_permissions` (IC-RPC-04).
+    /// Public associated-function form of `apply_permissions` .
     pub fn apply_permissions(path: &std::path::Path) -> Result<(), BindError> {
         apply_permissions(path)
     }
 
-    /// Public associated-function form of `default_socket_path` (IC-RPC-04).
+    /// Public associated-function form of `default_socket_path` .
     pub fn default_socket_path() -> std::path::PathBuf {
         default_socket_path()
     }
@@ -125,7 +125,7 @@ fn map_io_err(e: std::io::Error) -> BindError {
     }
 }
 
-/// Default socket path per IC-RPC-04 / BC-RPC-04.
+/// Default socket path per the contract /.
 pub fn default_socket_path() -> std::path::PathBuf {
     #[cfg(target_os = "macos")]
     {

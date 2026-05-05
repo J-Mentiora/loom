@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/connection_handler/interface_tests.rs` instead.
-// Interface tests for `ConnectionHandler`. Verifies IC-RPC-05 FSM
-// states, IC-RPC-08 single-task hot path signature, BC-RPC-01
+// Interface tests for `ConnectionHandler`. Verifies FSM
+// states, single-task hot path signature,
 // deps-injection (no fresh runtime constructed inside).
 
 use super::connection_handler::{
@@ -51,7 +51,7 @@ fn handler_constructor_takes_arc_deps_starts_in_awaiting_hello() {
 
 #[test]
 fn run_signature_consumes_unix_stream_async() {
-    // BC-RPC-01: runs on the caller's task; no fresh runtime spawned.
+    // runs on the caller's task; no fresh runtime spawned.
     fn _ck() {
         async fn _go(h: ConnectionHandler, s: tokio::net::UnixStream) {
             h.run(s).await

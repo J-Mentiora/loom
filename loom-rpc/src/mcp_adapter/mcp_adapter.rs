@@ -1,10 +1,9 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/mcp_adapter/interfaces.rs` instead.
-// McpAdapter — MCP wire-protocol translator (UX-13 / FR-PROTO-03 /
-// AC-PROTO-03.1).
+// McpAdapter — MCP wire-protocol translator .
 //
 // # Contract semantics
-// - **1:1 tool ↔ method mapping (UX-13).** MCP tool names are equal
+// - **1:1 tool ↔ method mapping.** MCP tool names are equal
 //   to the canonical JSON-RPC method names (`session.create`,
 //   `action.web.click`, ...). Tool descriptions + input schemas are
 //   pulled from `SchemaProvider::get_registry_snapshot` so the MCP

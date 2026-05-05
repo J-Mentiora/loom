@@ -1,4 +1,4 @@
-//! Integration tests — AC-PROFVAL-01/02/03/04 (parent AC-PROTO-02.1).
+//! Integration tests.
 //!
 //! Verifies that `session.create` rejects unrecognized profile,
 //! network-mode, and budget-key values with typed `JsonRpcError`
@@ -172,7 +172,7 @@ fn create_params(
     }
 }
 
-// --- AC-PROFVAL-01 — unknown profile ------------------------------------
+// --- — unknown profile ------------------------------------
 
 #[tokio::test]
 async fn ac_profval_01_unknown_profile_rejected_with_typed_envelope() {
@@ -188,7 +188,7 @@ async fn ac_profval_01_unknown_profile_rejected_with_typed_envelope() {
     );
 }
 
-// --- AC-PROFVAL-02 — invalid network mode -------------------------------
+// --- — invalid network mode -------------------------------
 
 #[tokio::test]
 async fn ac_profval_02_invalid_network_mode_rejected_with_typed_envelope() {
@@ -201,7 +201,7 @@ async fn ac_profval_02_invalid_network_mode_rejected_with_typed_envelope() {
     assert!(data["available"].is_array());
 }
 
-// --- AC-PROFVAL-03 — invalid budget key (server side) -------------------
+// --- — invalid budget key (server side) -------------------
 
 #[tokio::test]
 async fn ac_profval_03_invalid_budget_key_rejected_with_typed_envelope() {
@@ -214,12 +214,12 @@ async fn ac_profval_03_invalid_budget_key_rejected_with_typed_envelope() {
     assert!(data["available"].is_array());
 }
 
-// --- AC-PROFVAL-04 — every rejection emits a typed envelope -------------
+// --- — every rejection emits a typed envelope -------------
 
 /// Sweep: each rejection class produces an envelope where `code` is its
 /// canonical typed variant (snake_case on the wire) and `data.provided`
 /// matches the offending value. Single integration test asserting the
-/// AC-PROFVAL-04 contract umbrella over -01/-02/-03.
+/// contract umbrella over -01/-02/-03.
 #[tokio::test]
 async fn ac_profval_04_each_rejection_class_serialises_typed_envelope() {
     let h = make_handlers();

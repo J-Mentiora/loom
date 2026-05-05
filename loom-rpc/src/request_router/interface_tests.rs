@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/request_router/interface_tests.rs` instead.
-// Interface tests for `RequestRouter`. Verifies SR-RPC-03 startup
-// enumeration, IC-RPC-03 pre-dispatch validation wiring, FR-PROTO-01
+// Interface tests for `RequestRouter`. Verifies startup
+// enumeration, pre-dispatch validation wiring,
 // refuse-to-start on missing handler/schema.
 
 use super::request_router::{RegistrationError, RequestRouter, RequestRouterApi, RouterContext};
@@ -34,7 +34,7 @@ fn register_methods_signature_takes_handlers_schemas_validator() {
 
 #[test]
 fn registration_error_distinguishes_handler_missing_schema_missing_jsonrpsee() {
-    // FR-PROTO-01: refuse-to-start at startup, not at request time.
+    // refuse-to-start at startup, not at request time.
     let _ = RegistrationError::HandlerMissing {
         method: "session.create".into(),
     };
@@ -68,7 +68,7 @@ fn dispatch_signature_takes_method_and_params_returns_bytes() {
 
 #[test]
 fn module_accessor_returns_arc_rpc_module_for_mcp_reuse() {
-    // UX-13: McpAdapter reuses the RpcModule so the JSON-RPC and MCP
+    // McpAdapter reuses the RpcModule so the JSON-RPC and MCP
     // tool lists are bit-equal.
     fn _ck(r: &RequestRouter) -> Arc<RpcModule<RouterContext>> {
         r.module()

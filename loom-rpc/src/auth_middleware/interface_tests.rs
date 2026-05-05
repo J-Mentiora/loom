@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/auth_middleware/interface_tests.rs` instead.
-// Interface tests for `AuthMiddleware`. Verifies IC-RPC-05 HELLO
+// Interface tests for `AuthMiddleware`. Verifies HELLO
 // handshake surface, AuthError categorisation, idle-timeout constant,
 // constant-time token comparison.
 
@@ -35,7 +35,7 @@ fn token_ct_eq_is_constant_time_comparison() {
 
 #[test]
 fn hello_idle_timeout_is_5_seconds() {
-    // design.md §4 + IC-RPC-05.
+    // design.md §4 +.
     assert_eq!(HELLO_IDLE_TIMEOUT, Duration::from_secs(5));
 }
 
@@ -49,7 +49,7 @@ fn hello_message_carries_token() {
 
 #[test]
 fn auth_error_distinguishes_malformed_mismatch_timeout() {
-    // IC-RPC-05: three failure modes per design.md §4.
+    // three failure modes per design.md §4.
     let _ = AuthError::Malformed;
     let _ = AuthError::TokenMismatch;
     let _ = AuthError::Timeout;

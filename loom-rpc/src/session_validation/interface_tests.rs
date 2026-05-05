@@ -1,5 +1,5 @@
 //! Interface tests for `session_validation::validate_create_session_params`.
-//! Covers AC-PROFVAL-01/02/03 at the function level (handler-level
+//! Covers behavior at the function level (handler-level
 //! coverage lives in `rpc_handlers/interface_tests.rs`; integration-level
 //! coverage in `tests/ac_profval.rs`).
 
@@ -99,7 +99,7 @@ fn validate_skips_non_object_budget() {
     assert!(validate_create_session_params(&p).is_ok());
 }
 
-/// AC-BUDGETCLI-01: the CLI parses `--budget wall_clock=1s` into a
+/// the CLI parses `--budget wall_clock=1s` into a
 /// `BudgetLimits` struct that serialises to JSON using its typed
 /// internal field names (`session_walltime_ms`, etc.). The RPC
 /// validator must accept that shape — a regression here breaks every
@@ -124,7 +124,7 @@ fn validate_accepts_typed_budget_limits_field_names() {
     );
 }
 
-/// AC-BUDGETCLI-02: direct-RPC clients sending the user-facing keys
+/// direct-RPC clients sending the user-facing keys
 /// (network / wall_clock / dom_nodes / js_heap) still work.
 #[test]
 fn validate_accepts_user_facing_budget_keys() {
@@ -157,7 +157,7 @@ fn validate_rejects_network_mode_before_budget() {
     assert_eq!(err.code, LoomErrorCode::InvalidNetworkMode);
 }
 
-// === AC-CAPPOL-04: server-side capture_policy validation ===
+// === server-side capture_policy validation ===
 
 #[test]
 fn unknown_capture_policy_returns_typed_invalid_capture_policy() {

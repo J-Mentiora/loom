@@ -1,8 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/rpc_handlers/interface_tests.rs` instead.
 // Interface tests for `RpcHandlers`. Verifies every contract method
-// has a handler signature, IC-RPC-09 routing split (action vs core),
-// IC-RPC-10 vault response shape, IC-RPC-02 rpc.schemas in-memory.
+// has a handler signature, the routing split (action vs core),
+// vault response shape, and that rpc.schemas is served in-memory.
 
 use super::rpc_handlers::{HandlerResult, RpcHandlers};
 use crate::core_service_adapter::core_service_adapter::{
@@ -80,7 +80,7 @@ fn session_close_signature() {
 }
 
 #[test]
-fn session_abort_signature_for_ac_core_08_1() {
+fn session_abort_signature() {
     fn _ck() {
         async fn _go(h: &RpcHandlers, s: String, r: String) -> HandlerResult<SessionInfo> {
             h.session_abort(s, r).await
@@ -145,11 +145,11 @@ fn session_validate_signature() {
     let _ = _ck;
 }
 
-// ===== action.* — IC-RPC-09 routing =====
+// ===== action.* — routing =====
 
 #[test]
 fn action_dispatch_returns_receipt_via_host_adapter() {
-    // IC-RPC-09: single host dispatch path; IC-RPC-07: typed Receipt only.
+    // Single host dispatch path; typed Receipt only.
     fn _ck() {
         async fn _go(h: &RpcHandlers, a: Action) -> HandlerResult<Receipt> {
             h.action_dispatch(a).await
@@ -159,11 +159,11 @@ fn action_dispatch_returns_receipt_via_host_adapter() {
     let _ = _ck;
 }
 
-// ===== vault.* — IC-RPC-10 =====
+// ===== vault.* =====
 
 #[test]
 fn vault_grant_returns_grant_info_no_secret_field() {
-    // IC-RPC-10: response is GrantInfo (grant_id only).
+    // Response is GrantInfo (grant_id only).
     fn _ck() {
         async fn _go(h: &RpcHandlers, p: GrantParams) -> HandlerResult<GrantInfo> {
             h.vault_grant(p).await
@@ -195,11 +195,11 @@ fn vault_list_grants_signature() {
     let _ = _ck;
 }
 
-// ===== rpc.* — IC-RPC-02 =====
+// ===== rpc.* =====
 
 #[test]
 fn rpc_schemas_returns_in_memory_registry_snapshot() {
-    // IC-RPC-02: never re-reads disk on request path.
+    // Never re-reads disk on request path.
     fn _ck() {
         async fn _go(h: &RpcHandlers) -> HandlerResult<SchemaRegistry> {
             h.rpc_schemas().await
@@ -209,11 +209,11 @@ fn rpc_schemas_returns_in_memory_registry_snapshot() {
     let _ = _ck;
 }
 
-// ===== AC-CLI-01.1 canonical-JSON =====
+// ===== canonical-JSON =====
 
 #[test]
 fn serialise_canonical_uses_jcs_helper_function() {
-    // AC-CLI-01.1: all responses go through the canonical-JSON helper.
+    // All responses go through the canonical-JSON helper.
     fn _ck<T: serde::Serialize>(v: &T) -> Result<String, super::rpc_handlers::JsonRpcError> {
         RpcHandlers::serialise_canonical(v)
     }

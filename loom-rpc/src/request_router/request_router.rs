@@ -1,20 +1,20 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/request_router/interfaces.rs` instead.
 // RequestRouter — `jsonrpsee::RpcModule` mapping method names to
-// `RpcHandlers::*` functions (SR-RPC-03 / FR-PROTO-01).
+// `RpcHandlers::*` functions .
 //
 // # Contract semantics
 // - **Built once at startup.** `register_methods` walks
 //   `SchemaProvider::registered_methods` and inserts a closure per
 //   method into a `jsonrpsee::RpcModule<RouterContext>`. Missing
 //   handler for a registered method → `RegistrationError::HandlerMissing`;
-//   daemon refuses to start (SR-RPC-03). Missing schema for a
+//   daemon refuses to start. Missing schema for a
 //   registered handler → `RegistrationError::SchemaMissing`.
 // - **Immutable after build.** Returned `Arc<RpcModule>` is shared
 //   across all per-connection tasks — no mutation on the request path.
 // - **Validation runs first.** Each registered closure invokes
 //   `SchemaValidatorApi::validate_request` BEFORE dispatching to the
-//   handler (IC-RPC-03). On schema violation the closure short-circuits
+//   handler. On schema violation the closure short-circuits
 //   and returns the envelope built by `ErrorTranslator`.
 
 use crate::rpc_handlers::rpc_handlers::RpcHandlers;

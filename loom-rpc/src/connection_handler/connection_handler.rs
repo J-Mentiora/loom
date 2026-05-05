@@ -1,22 +1,21 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/connection_handler/interfaces.rs` instead.
 // ConnectionHandler — per-connection tokio task running the
-// `AwaitingHello → Authenticated` FSM (IC-RPC-05 / IC-RPC-08 /
-// BC-RPC-01).
+// `AwaitingHello → Authenticated` FSM.
 //
 // # Contract semantics
-// - **Per-connection task (BC-RPC-01).** Each accepted connection
+// - **Per-connection task .** Each accepted connection
 //   runs on its own tokio task spawned onto the daemon's shared
 //   runtime — no fresh runtime, no global thread pool.
-// - **Two-state FSM (IC-RPC-05).**
+// - **Two-state FSM .**
 //     * `AwaitingHello` — read first frame within `HELLO_IDLE_TIMEOUT`;
 //       parse + validate via `AuthMiddleware`; close on failure.
 //     * `Authenticated` — loop: read frame → validate schema →
 //       dispatch via `RequestRouter` → marshal response → write frame.
-// - **Single-task hot path (IC-RPC-08).** decode → validate →
+// - **Single-task hot path .** decode → validate →
 //   dispatch → marshal → encode all on the same task. No
 //   `tokio::spawn` inside the request loop. Action work runs on
-//   loom-host's session task (out-of-band per IC-RPC-09).
+//   loom-host's session task (out-of-band per the contract).
 // - **Per-task panic hook (design.md §4).** Handler panics are
 //   caught via `JoinHandle::await`'s `JoinError`; `ErrorTranslator`
 //   converts the payload to an `InternalError` envelope; the
@@ -29,7 +28,7 @@ use crate::schema_validator::schema_validator::SchemaValidatorApi;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// FSM state per IC-RPC-05.
+/// FSM state per.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConnectionState {
     AwaitingHello,

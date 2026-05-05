@@ -1,5 +1,5 @@
 //! `request_router` — see `systems/loom-rpc/modules/request_router/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod request_router;
 pub use request_router::*;
@@ -25,13 +25,13 @@ impl RequestRouter {
         if !methods.contains(&"rpc.schemas".to_string()) {
             methods.push("rpc.schemas".to_string());
         }
-        // AC-GCRPC-01: gc.run is a router-level (not schema-driven) method —
+        // gc.run is a router-level (not schema-driven) method —
         // ensure it is enumerated by `methods()` so callers (CLI / MCP /
         // observability startup audit) see it.
         if !methods.contains(&"gc.run".to_string()) {
             methods.push("gc.run".to_string());
         }
-        // AC-INTEROP-01.1: import.playwright is router-level (not in the
+        // import.playwright is router-level (not in the
         // schema-driven action enumeration) — ensure callers see it via
         // `rpc.schemas`.
         if !methods.contains(&"import.playwright".to_string()) {
@@ -288,7 +288,7 @@ impl RequestRouterApi for RequestRouter {
                 // Canonicalise alias method names (e.g. `web.type_text` →
                 // `web.type`) so the parse_action match arm and downstream
                 // observability see only the canonical form
-                // (AC-CLIROUTE-02 + IC-CLI-03 wire discipline).
+                // (matches the wire discipline for canonical method names).
                 let canonical = loom_shared::action_aliases::canonicalise(method);
                 match parse_action(canonical, params) {
                     Ok(action) => match self.ctx.handlers.action_dispatch(action).await {
@@ -337,14 +337,14 @@ fn error_bytes(err: &JsonRpcError) -> Vec<u8> {
 }
 
 impl RequestRouter {
-    /// Expose the inner `RpcModule` for McpAdapter reuse (UX-13).
+    /// Expose the inner `RpcModule` for McpAdapter reuse.
     pub fn module(&self) -> Arc<RpcModule<RouterContext>> {
         Arc::clone(&self.module)
     }
 }
 
 /// Returns true if `method` matches the `<surface>.<verb>` pattern
-/// for a known action surface (AC-RPCAD-01).
+/// for a known action surface.
 fn is_surface_verb(method: &str) -> bool {
     const SURFACES: &[&str] = &["web", "shell", "fs", "api", "native"];
     method
@@ -354,8 +354,7 @@ fn is_surface_verb(method: &str) -> bool {
 }
 
 /// Extract the session_id from params. Accepts both "session_id" (internal
-/// convention) and "session" (postinstall schema convention) for compatibility
-/// (AC-RPCAD-02).
+/// convention) and "session" (postinstall schema convention) for compatibility.
 fn session_id_from_params(params: &serde_json::Value) -> Result<String, JsonRpcError> {
     params
         .get("session_id")
@@ -423,7 +422,7 @@ pub fn known_router_methods() -> &'static [&'static str] {
 
 /// Parse a `<surface>.<verb>` method + JSON params into a typed `Action`
 /// enum. Returns `JsonRpcError::SchemaViolation` with the field name on
-/// parse failure (AC-RPCAD-02).
+/// parse failure.
 fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonRpcError> {
     match method {
         "web.navigate" => {

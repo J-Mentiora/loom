@@ -1,18 +1,18 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/schema_provider/interfaces.rs` instead.
 // SchemaProvider — loads WIT-derived JSON Schemas at startup; serves
 // the in-memory registry to `SchemaValidator` and to clients via
 // `rpc.schemas`.
 //
 // # Contract semantics
-// - **WIT is source of truth (BC-RPC-02 HARD).** Schemas are emitted
+// - **WIT is source of truth (HARD).** Schemas are emitted
 //   at install time by `loom-tools/wit-to-json-schema` reading
 //   `wit/loom-surface.wit`. `SchemaProvider` is read-only at runtime.
-// - **Load once at startup (IC-RPC-01).** `load_at_startup` reads
+// - **Load once at startup.** `load_at_startup` reads
 //   every `*.json` file in the schema directory and compiles each
 //   schema. Daemon refuses to start if the directory is missing or
 //   any expected method file is absent.
-// - **In-memory only on the request path (IC-RPC-02).**
+// - **In-memory only on the request path.**
 //   `lookup_request_schema` and `lookup_response_schema` read the
 //   compiled `HashMap`; never re-read disk. `get_registry_snapshot`
 //   returns the canonical snapshot for `rpc.schemas`.
@@ -49,10 +49,11 @@ impl CompiledJsonSchema {
 /// One method's request + response schemas as they appear in the
 /// `rpc.schemas` registry snapshot.
 ///
-/// `aliases` lists every alternate spelling that resolves to `method`
-/// (AC-CLIROUTE-04). Empty (and elided from JSON) for methods with no
+/// `aliases` lists every alternate spelling that resolves to `method`.
+/// Empty (and elided from JSON) for methods with no
 /// aliases. Order matches `loom_shared::action_aliases::METHOD_ALIASES`
-/// for deterministic canonical-JSON output (BC §3 + AC-CLI-01.1).
+/// for deterministic canonical-JSON output (per the wire-spec's
+/// canonical-JSON ordering rules).
 /// Backward-compatible additive field — `serde(default)` means
 /// pre-rollout consumers that omit it still deserialize.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,9 +65,9 @@ pub struct MethodSchema {
     pub aliases: Vec<String>,
 }
 
-/// Snapshot returned by `rpc.schemas` (IC-RPC-02). `methods` is sorted
-/// by method name for deterministic canonical-JSON output (BC §3 +
-/// AC-CLI-01.1).
+/// Snapshot returned by `rpc.schemas`. `methods` is sorted
+/// by method name for deterministic canonical-JSON output (per the
+/// wire-spec's canonical-JSON ordering rules).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaRegistry {
     pub methods: Vec<MethodSchema>,
@@ -78,16 +79,16 @@ pub struct SchemaRegistry {
 pub trait SchemaProviderApi: Send + Sync {
     /// Look up the compiled request schema for a method. Returns
     /// `None` if the method is not in the registry — callers translate
-    /// to `LoomErrorCode::MethodNotFound` (SR-RPC-03).
+    /// to `LoomErrorCode::MethodNotFound`.
     fn lookup_request_schema(&self, method: &str) -> Option<Arc<CompiledJsonSchema>>;
 
     /// Look up the compiled response schema for a method.
     /// Used by `RpcHandlers` to validate vault.grant responses
-    /// (IC-RPC-10) before returning to client.
+    /// before returning to client.
     fn lookup_response_schema(&self, method: &str) -> Option<Arc<CompiledJsonSchema>>;
 
     /// Enumerate every registered method name. `RequestRouter` uses
-    /// this at startup to assert handler coverage (SR-RPC-03).
+    /// this at startup to assert handler coverage.
     fn registered_methods(&self) -> Vec<String>;
 
     /// Return the canonical `SchemaRegistry` snapshot for

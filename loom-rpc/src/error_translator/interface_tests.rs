@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/error_translator/interface_tests.rs` instead.
-// Interface tests for `ErrorTranslator`. Verifies IC-RPC-06 / BC-RPC-03
+// Interface tests for `ErrorTranslator`. Verifies the
 // 1:1 envelope shape, 280-char message cap, panic-to-envelope path.
 
 use super::error_translator::{
@@ -30,7 +30,7 @@ fn loom_error_code_serialises_as_snake_case_string() {
 
 #[test]
 fn loom_error_code_covers_protocol_layer_variants() {
-    // IC-RPC-05 / IC-RPC-03 / SR-RPC-03
+    // Protocol-layer variant coverage.
     let _ = LoomErrorCode::ProtocolAuthRequired;
     let _ = LoomErrorCode::ProtocolMalformed;
     let _ = LoomErrorCode::SchemaViolation;
@@ -39,7 +39,7 @@ fn loom_error_code_covers_protocol_layer_variants() {
 
 #[test]
 fn loom_error_code_mirrors_core_and_host_variants() {
-    // BC-RPC-03 1:1 enum
+    // 1:1 enum mirroring loom-core / loom-host variants.
     let _ = LoomErrorCode::SessionNotFound;
     let _ = LoomErrorCode::SessionAborted;
     let _ = LoomErrorCode::BudgetExceeded;
@@ -67,7 +67,7 @@ fn schema_violation_carries_field_expected_actual() {
 }
 
 #[test]
-fn message_cap_constant_is_280_per_ic_rpc_06() {
+fn message_cap_constant_is_280() {
     assert_eq!(MAX_MESSAGE_LEN, 280);
 }
 
@@ -79,7 +79,7 @@ fn panic_payload_converts_to_internal_error_envelope() {
     let _ = _ck;
 }
 
-// ===== AC-PROFVAL-01/02/03: typed validation envelopes =====
+// ===== Typed validation envelopes =====
 
 #[test]
 fn from_unknown_profile_serialises_correctly() {
@@ -134,7 +134,7 @@ fn typed_validation_variants_serialise_as_snake_case() {
 
 #[test]
 fn translator_is_stateless_function_namespace() {
-    // No constructor — pure function namespace (BC-RPC-03 single
+    // No constructor — pure function namespace (single
     // conversion point; no per-instance state).
     let _: fn(SchemaViolationDetail) -> JsonRpcError = ErrorTranslator::from_schema_violation;
     let _: fn(&str) -> String = ErrorTranslator::truncate_message;

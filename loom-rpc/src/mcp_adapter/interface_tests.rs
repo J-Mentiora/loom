@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/mcp_adapter/interface_tests.rs` instead.
-// Interface tests for `McpAdapter`. Verifies UX-13 / AC-PROTO-03.1
+// Interface tests for `McpAdapter`. Verifies the
 // 1:1 tool↔method mapping, ToolResult shape, no-bypass routing
 // through RequestRouter.
 
@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 #[test]
 fn constructor_takes_router_and_schemas_for_bit_equal_tool_list() {
-    // UX-13: McpAdapter reuses the RpcModule so MCP tools and JSON-RPC
+    // McpAdapter reuses the RpcModule so MCP tools and JSON-RPC
     // methods are bit-equal.
     fn _ck(r: Arc<dyn RequestRouterApi>, s: Arc<dyn SchemaProviderApi>) -> Arc<McpAdapter> {
         McpAdapter::new(r, s)
@@ -88,7 +88,7 @@ fn handle_tool_call_signature_async_returns_tool_result_or_error() {
 
 #[test]
 fn assert_tool_list_parity_catches_drift_at_startup() {
-    // UX-13 / AC-PROTO-03.1: refuse to start if drift detected.
+    // Refuse to start if drift detected.
     fn _ck(a: &McpAdapter) -> Result<(), ParityViolation> {
         a.assert_tool_list_parity()
     }

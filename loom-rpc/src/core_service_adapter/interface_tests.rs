@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/core_service_adapter/interface_tests.rs` instead.
-// Interface tests for `CoreServiceAdapter`. Verifies IC-RPC-09 split
-// (no `action.*` here), IC-RPC-10 GrantInfo shape (no secret-fields),
+// Interface tests for `CoreServiceAdapter`. Verifies the routing split
+// (no `action.*` here), GrantInfo shape (no secret-fields),
 // and that every contract method on `session.*` / `vault.*` has a
 // corresponding adapter signature.
 
@@ -22,7 +22,7 @@ fn constructor_takes_arc_dyn_core_facade_bridge() {
 
 #[test]
 fn grant_info_has_no_secret_token_or_value_fields() {
-    // IC-RPC-10: response schema explicitly omits secret-shaped fields.
+    // Response schema explicitly omits secret-shaped fields.
     fn _ck(g: &GrantInfo) {
         let _: &String = &g.grant_id;
         let _: &String = &g.origin;
@@ -78,7 +78,7 @@ fn close_session_signature() {
 }
 
 #[test]
-fn abort_session_signature_carries_reason_for_ac_core_08_1() {
+fn abort_session_signature_carries_reason() {
     fn _ck<A: CoreServiceAdapterApi>(a: &A, s: &str, r: &str) -> Result<SessionInfo, AdapterError> {
         a.abort_session(s, r)
     }
@@ -132,7 +132,7 @@ fn validate_session_signature() {
 
 #[test]
 fn vault_grant_signature_returns_grant_info_no_secret() {
-    // IC-RPC-10: response carries grant_id only.
+    // Response carries grant_id only.
     fn _ck<A: CoreServiceAdapterApi>(a: &A, p: GrantParams) -> Result<GrantInfo, AdapterError> {
         a.vault_grant(p)
     }
@@ -160,7 +160,7 @@ fn vault_list_grants_signature_supports_optional_session_filter() {
 
 #[test]
 fn vault_add_signature_returns_vault_add_info_no_secret() {
-    // AC-VAULTRPC-02 / IC-RPC-10 corollary: response is the typed
+    // Response is the typed
     // `VaultAddInfo { provider, label, status }` — no secret bytes,
     // no token, no value field. Compile-time enforced by the field
     // listing in `vault_add_info_has_no_secret_fields` below.
@@ -187,7 +187,7 @@ fn vault_add_info_has_no_secret_fields() {
 }
 
 #[test]
-fn adapter_does_not_expose_action_dispatch_per_ic_rpc_09() {
+fn adapter_does_not_expose_action_dispatch() {
     // Compile-time evidence: the trait surface contains NO method
     // returning `Receipt`. Adding one would require this test to be
     // updated, which is the trip-wire.

@@ -1,10 +1,10 @@
-//! Integration test — AC-RPCAD-05 / AC-RPCAD-04.
+//! Integration test.
 //!
 //! Verifies the full `request_router → rpc_handlers → HostServiceAdapter`
 //! dispatch chain for `web.*` action methods:
 //!
-//! - AC-RPCAD-04: `rpc.schemas` response includes all 10 web.* methods.
-//! - AC-RPCAD-05: `web.navigate` dispatches through the chain and returns
+//! - `rpc.schemas` response includes all 10 web.* methods.
+//! - `web.navigate` dispatches through the chain and returns
 //!   a canned `Receipt` via JSON-RPC, NOT "method not found".
 //!
 //! Uses a `WebSchemas` stub (all 10 web.* method schemas in-memory) and a
@@ -36,7 +36,7 @@ use tokio::net::UnixStream;
 //
 // Source: loom-cli/src/postinstall_runner/interfaces.rs (canonical schema spec).
 // Used inline here so the integration test is self-contained and doesn't
-// depend on a schema directory on disk (AC-RPCAD-04).
+// depend on a schema directory on disk.
 
 static WEB_SCHEMAS: &[(&str, &str, &str)] = &[
     (
@@ -167,7 +167,7 @@ impl SchemaProviderApi for WebSchemas {
 
 // ─── CannedHostBridge stub ────────────────────────────────────────────────────
 
-/// Returns a fixed Receipt for any action dispatch. Used by AC-RPCAD-05 to
+/// Returns a fixed Receipt for any action dispatch. Used to
 /// verify the chain returns the receipt rather than "method not found".
 struct CannedHostBridge;
 
@@ -448,9 +448,9 @@ async fn connect(
     FrameHandler::wrap_stream(stream)
 }
 
-// ─── Test 1: web.navigate returns canned Receipt (AC-RPCAD-05) ───────────────
+// ─── Test 1: web.navigate returns canned Receipt ───────────────
 
-/// AC-RPCAD-05: HELLO + rpc.schemas + web.navigate with stubbed HostServiceAdapter
+/// HELLO + rpc.schemas + web.navigate with stubbed HostServiceAdapter
 /// must return the canned Receipt, NOT "method not found".
 #[tokio::test(flavor = "multi_thread")]
 async fn test_action_routing_web_navigate_returns_receipt() {
@@ -504,9 +504,9 @@ async fn test_action_routing_web_navigate_returns_receipt() {
     );
 }
 
-// ─── Test 2: rpc.schemas includes all 10 web.* methods (AC-RPCAD-04) ─────────
+// ─── Test 2: rpc.schemas includes all 10 web.* methods ─────────
 
-/// AC-RPCAD-04: rpc.schemas response must list all 10 web.* methods.
+/// rpc.schemas response must list all 10 web.* methods.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_schemas_includes_all_web_methods() {
     let (srv, _bg) = start_action_server().await;
@@ -576,7 +576,7 @@ async fn test_rpc_schemas_includes_all_web_methods() {
 // ─── Test 3: web.navigate with "session" field (postinstall compat) ───────────
 
 /// Verify parse_action accepts "session" field as alias for "session_id"
-/// (postinstall schema compatibility — AC-RPCAD-02).
+/// (postinstall schema compatibility).
 #[tokio::test(flavor = "multi_thread")]
 async fn test_web_navigate_accepts_session_field_alias() {
     let (srv, _bg) = start_action_server().await;
@@ -610,9 +610,9 @@ async fn test_web_navigate_accepts_session_field_alias() {
     );
 }
 
-// ─── Test 4: AC-CLIROUTE-04 — rpc.schemas advertises aliases ─────────────────
+// ─── Test 4: — rpc.schemas advertises aliases ─────────────────
 
-/// AC-CLIROUTE-04: rpc.schemas reports the canonical method (`web.type`)
+/// rpc.schemas reports the canonical method (`web.type`)
 /// AND advertises `web.type_text` in the canonical's `aliases` array.
 /// Without this, downstream tools that enumerate verbs from rpc.schemas
 /// never discover the alias and break at runtime.
@@ -644,20 +644,20 @@ async fn test_ac_cliroute_04_rpc_schemas_advertises_alias_for_web_type() {
     let web_type = methods
         .iter()
         .find(|m| m.get("method").and_then(|v| v.as_str()) == Some("web.type"))
-        .expect("AC-CLIROUTE-04: rpc.schemas must list canonical method 'web.type'");
+        .expect("rpc.schemas must list canonical method 'web.type'");
 
     let aliases = web_type
         .get("aliases")
         .and_then(|a| a.as_array())
-        .expect("AC-CLIROUTE-04: web.type entry must have an 'aliases' array");
+        .expect("web.type entry must have an 'aliases' array");
     let alias_strs: Vec<&str> = aliases.iter().filter_map(|v| v.as_str()).collect();
     assert!(
         alias_strs.contains(&"web.type_text"),
-        "AC-CLIROUTE-04: aliases for web.type must include 'web.type_text'; got: {alias_strs:?}"
+        "aliases for web.type must include 'web.type_text'; got: {alias_strs:?}"
     );
 }
 
-// ─── Test 5: AC-CLIROUTE-02 — request_router accepts the alias ───────────────
+// ─── Test 5: — request_router accepts the alias ───────────────
 
 /// Sending the legacy `web.type_text` over the wire must reach the
 /// `Action::WebType` handler (no MethodNotFound). Defence-in-depth: even
@@ -691,13 +691,13 @@ async fn test_ac_cliroute_02_request_router_accepts_web_type_text_alias() {
         let msg = error.get("message").and_then(|v| v.as_str()).unwrap_or("");
         assert!(
             !msg.contains("method not found"),
-            "AC-CLIROUTE-02: web.type_text must not produce 'method not found'; got: {msg}"
+            "web.type_text must not produce 'method not found'; got: {msg}"
         );
     }
     // The canned host bridge returns action_id=42 for ALL action_dispatch
     // calls; if the alias resolved correctly, we get a successful result.
     assert!(
         resp.get("result").is_some(),
-        "AC-CLIROUTE-02: web.type_text alias must reach action_dispatch (got error: {resp})"
+        "web.type_text alias must reach action_dispatch (got error: {resp})"
     );
 }

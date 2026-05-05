@@ -1,27 +1,28 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/rpc_handlers/interfaces.rs` instead.
 // RpcHandlers — one handler function per canonical RPC method
 // (loom-rpc_contract.md). Each handler routes to either
 // `CoreServiceAdapter` (session.* / vault.*) or `HostServiceAdapter`
 // (action.<surface>.<verb>) and serialises the result via
-// `serde_jcs::to_string` (RFC 8785 canonical JSON, AC-CLI-01.1).
+// `serde_jcs::to_string` (RFC 8785 canonical JSON).
 //
 // # Contract semantics
 // - **Single dispatch table.** Every method in
 //   `loom-rpc_contract.md` maps to one `RpcHandlers::*` async
 //   function. The handler set is registered onto a `jsonrpsee::RpcModule`
 //   via `RequestRouter::register_methods` at startup.
-// - **IC-RPC-09 routing.** `action.*` handlers call
+// - **Routing.** `action.*` handlers call
 //   `HostServiceAdapter::dispatch_action`. `session.*` / `vault.*`
 //   handlers call `CoreServiceAdapter`. Misrouting will not type-check
 //   because the two adapters have incompatible return types.
-// - **Canonical JSON (AC-CLI-01.1).** All response bodies serialised
+// - **Canonical JSON.** All response bodies serialised
 //   via `serde_jcs::to_string`. Clippy lint `disallowed_methods` bans
-//   `serde_json::to_string` outside test code (BC-RPC-02).
+//   `serde_json::to_string` outside test code (per the wire-spec's
+//   schema-source-of-truth rule).
 // - **Errors.** Adapter `LoomError` results are converted via
 //   `ErrorTranslator::from_loom_error`. Schema-violation envelopes
 //   for vault.grant responses are produced via
-//   `SchemaValidator::validate_response` (IC-RPC-10 belt+braces).
+//   `SchemaValidator::validate_response` (belt+braces response check).
 
 use crate::core_service_adapter::core_service_adapter::CoreServiceAdapterApi;
 pub use crate::error_translator::error_translator::JsonRpcError;
