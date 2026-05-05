@@ -190,18 +190,12 @@ pub trait Vault: Send + Sync {
     /// `LoomErrorCode::VaultRejection` and structured context
     /// `{ code: "vault_credential_type_unsupported",
     ///    details.allowed_types: ["oauth2_authorization_code_pkce"] }`.
-    fn add_credential(
-        &self,
-        opts: AddCredentialOpts,
-    ) -> Result<AddCredentialReceipt, LoomError>;
+    fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError>;
 
     /// List alive grants, optionally filtered by `session`. "Alive" means
     /// `!revoked` AND `now <= issued_at_ms + ttl_ms`. Empty result is a
     /// valid outcome.
-    fn list_grants(
-        &self,
-        session: Option<SessionId>,
-    ) -> Result<Vec<GrantSnapshot>, LoomError>;
+    fn list_grants(&self, session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError>;
 }
 
 // impl Vault for LocalVault is in impl_local.rs.

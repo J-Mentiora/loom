@@ -179,10 +179,7 @@ async fn naverr_status_500_propagates_status_code() {
 
     let outcome = navigate(&mgr, id.clone(), "http://fake.test/status/500").await;
 
-    assert_eq!(
-        outcome.status_code, 500,
-        "status_code must be 500"
-    );
+    assert_eq!(outcome.status_code, 500, "status_code must be 500");
     let doc = outcome
         .network_events
         .iter()

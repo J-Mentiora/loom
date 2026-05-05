@@ -176,9 +176,7 @@ fn run_row(row: &Row, home: &PathBuf) -> (bool, String) {
         // Exception: --help / --version are NOT errors and write to stdout
         // intentionally — only enforced on error rows.
         if !stdout.is_empty() {
-            failures.push(format!(
-                "stdout not empty on error row; got: {stdout:?}"
-            ));
+            failures.push(format!("stdout not empty on error row; got: {stdout:?}"));
         }
     }
 

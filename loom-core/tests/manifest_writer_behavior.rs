@@ -195,11 +195,23 @@ fn test_validate_corrupt_error_has_structured_context() {
     assert_eq!(err.code, LoomErrorCode::ManifestCorrupt);
 
     // Context must carry failed_at_index, expected_hash, observed_hash.
-    let ctx = err.context.expect("ManifestCorrupt must include structured context");
-    assert!(ctx.get("failed_at_index").is_some(), "context must have 'failed_at_index'");
-    let expected = ctx["expected_hash"].as_str().expect("context must have 'expected_hash' string");
-    let observed = ctx["observed_hash"].as_str().expect("context must have 'observed_hash' string");
-    assert_ne!(expected, observed, "expected_hash must differ from observed_hash on tamper");
+    let ctx = err
+        .context
+        .expect("ManifestCorrupt must include structured context");
+    assert!(
+        ctx.get("failed_at_index").is_some(),
+        "context must have 'failed_at_index'"
+    );
+    let expected = ctx["expected_hash"]
+        .as_str()
+        .expect("context must have 'expected_hash' string");
+    let observed = ctx["observed_hash"]
+        .as_str()
+        .expect("context must have 'observed_hash' string");
+    assert_ne!(
+        expected, observed,
+        "expected_hash must differ from observed_hash on tamper"
+    );
 }
 
 // === AC-NFR-REL-01.1: manifest.json atomic write ===

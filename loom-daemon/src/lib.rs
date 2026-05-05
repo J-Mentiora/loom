@@ -61,9 +61,7 @@ fn check_vault_threat_model() -> Result<()> {
         "## Abuse Cases",
     ];
     if !VAULT_THREAT_MODEL.starts_with("# Vault Threat Model") {
-        anyhow::bail!(
-            "vault_threat_model.md must start with '# Vault Threat Model'"
-        );
+        anyhow::bail!("vault_threat_model.md must start with '# Vault Threat Model'");
     }
     for section in REQUIRED_SECTIONS {
         if !VAULT_THREAT_MODEL.contains(section) {

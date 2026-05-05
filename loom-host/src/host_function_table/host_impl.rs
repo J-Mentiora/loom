@@ -347,12 +347,11 @@ impl Host for HostState {
                     .map(|c| c.clone())
                 {
                     Some(mut config) => {
-                        let dir = std::env::temp_dir()
-                            .join(format!("loom-chromium-{}", session_id_str));
-                        config.env.push((
-                            "LOOM_SHIM_USER_DATA_DIR".into(),
-                            dir.display().to_string(),
-                        ));
+                        let dir =
+                            std::env::temp_dir().join(format!("loom-chromium-{}", session_id_str));
+                        config
+                            .env
+                            .push(("LOOM_SHIM_USER_DATA_DIR".into(), dir.display().to_string()));
                         // Same env-var contract as
                         // `shim_call`. The shim's CDP bootstrap reads these
                         // and sends Browser.setDownloadBehavior(allowAndName,

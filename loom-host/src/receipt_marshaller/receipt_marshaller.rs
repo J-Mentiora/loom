@@ -201,9 +201,7 @@ impl ReceiptMarshaller {
     /// When navigate tier-2 fields are present, builds a
     /// `loom_core::ReceiptPayload` to get canonical field names and the
     /// unified serialization path.
-    pub fn assemble_canonical_bytes(
-        builder: &ReceiptBuilder,
-    ) -> Result<Vec<u8>, LoomError> {
+    pub fn assemble_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
         use loom_core::error::LoomErrorCode;
 
         // A typed navigate error receipt (structured

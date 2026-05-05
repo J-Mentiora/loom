@@ -47,11 +47,7 @@ fn test_load_all_returns_component_after_compile() {
     let library = ModuleLibrary::new(rt, tmpdir.path().to_path_buf());
     let failures = library.load_all().expect("load_all returned Err");
 
-    assert!(
-        failures.is_empty(),
-        "load_all had failures: {:?}",
-        failures
-    );
+    assert!(failures.is_empty(), "load_all had failures: {:?}", failures);
 
     let name = SurfaceName("loom_surface_web".into());
     assert!(

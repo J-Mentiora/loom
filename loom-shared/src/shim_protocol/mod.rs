@@ -7,7 +7,7 @@
 //! `loom-shims`, which is forbidden — `loom-shims` is the only crate allowed
 //! to link `chromiumoxide` (cargo-deny enforced).
 //!
-//! # Wire format 
+//! # Wire format
 //! Length-prefixed CBOR. Every frame is `[4 bytes big-endian length][CBOR
 //! payload]`. JSON / unprefixed framing → KILL.
 //!

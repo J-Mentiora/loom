@@ -179,7 +179,11 @@ fn test_parse_extra_key_value_pairs() {
 
 #[test]
 fn test_parse_extra_boolean_flag() {
-    let extra = vec!["--verbose".to_string(), "--selector".to_string(), "#btn".to_string()];
+    let extra = vec![
+        "--verbose".to_string(),
+        "--selector".to_string(),
+        "#btn".to_string(),
+    ];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["verbose"], true);
     assert_eq!(val["selector"], "#btn");
@@ -187,7 +191,12 @@ fn test_parse_extra_boolean_flag() {
 
 #[test]
 fn test_parse_extra_repeated_key_last_wins() {
-    let extra = vec!["--k".to_string(), "a".to_string(), "--k".to_string(), "b".to_string()];
+    let extra = vec![
+        "--k".to_string(),
+        "a".to_string(),
+        "--k".to_string(),
+        "b".to_string(),
+    ];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["k"], "b");
 }

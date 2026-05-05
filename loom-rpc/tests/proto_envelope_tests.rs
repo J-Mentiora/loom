@@ -64,10 +64,7 @@ fn bind_error_on_read_only_directory() {
         return;
     }
 
-    assert!(
-        result.is_err(),
-        "bind must fail on non-writable directory"
-    );
+    assert!(result.is_err(), "bind must fail on non-writable directory");
     match result.unwrap_err() {
         BindError::PermissionDenied | BindError::Io { .. } => { /* both valid */ }
         BindError::AddressInUse => {

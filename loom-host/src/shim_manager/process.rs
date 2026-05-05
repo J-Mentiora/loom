@@ -358,10 +358,7 @@ pub async fn send_and_await(
     // Without this check we'd write to a dead socket, park a oneshot,
     // and time out at recv_timeout (~30s) — exactly the previously
     // observed hang.
-    if process
-        .crashed
-        .load(std::sync::atomic::Ordering::SeqCst)
-    {
+    if process.crashed.load(std::sync::atomic::Ordering::SeqCst) {
         let detail = process
             .exit_status_text
             .lock()

@@ -71,10 +71,7 @@ fn rpc_schemas_returns_per_method_schemas() {
     let names: Vec<&str> = snapshot.methods.iter().map(|m| m.method.as_str()).collect();
     let mut sorted = names.clone();
     sorted.sort();
-    assert_eq!(
-        names, sorted,
-        "methods must be sorted by name"
-    );
+    assert_eq!(names, sorted, "methods must be sorted by name");
 
     // Verify session.create is present.
     assert!(

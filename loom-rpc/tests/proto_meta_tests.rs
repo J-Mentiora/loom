@@ -27,10 +27,7 @@ fn socket_mode_is_0600_after_bind() {
     let meta =
         std::fs::metadata(&socket_path).expect("socket file must exist after SocketServer::new");
     let mode = meta.permissions().mode() & 0o777;
-    assert_eq!(
-        mode, 0o600,
-        "socket mode must be exactly 0600"
-    );
+    assert_eq!(mode, 0o600, "socket mode must be exactly 0600");
 
     // Ownership: socket must belong to the running user.
     use std::os::unix::fs::MetadataExt;

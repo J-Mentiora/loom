@@ -136,7 +136,11 @@ pub struct ReceiptPayload {
     // Truncation discriminator = return_value_blob_ref.is_some().
     // serde alias preserves backward-compat with on-disk receipts that
     // used the pre-rename `return_value` field.
-    #[serde(skip_serializing_if = "Option::is_none", default, alias = "return_value")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "return_value"
+    )]
     pub return_value_json: Option<String>,
     /// ContentRef when canonical-JSON bytes > 64KB.
     #[serde(skip_serializing_if = "Option::is_none", default)]

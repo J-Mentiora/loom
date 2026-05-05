@@ -151,7 +151,10 @@ impl ModuleLibrary {
 
     /// Read-lock lookup. Returns `LoomError::Unsupported` (surface unavailable)
     /// when the surface was not loaded — NEVER compiles on demand.
-    pub fn get(&self, name: &SurfaceName) -> Result<Arc<wasmtime::component::Component>, LoomError> {
+    pub fn get(
+        &self,
+        name: &SurfaceName,
+    ) -> Result<Arc<wasmtime::component::Component>, LoomError> {
         use loom_core::error::LoomErrorCode;
         self.inner.read().get(name).cloned().ok_or_else(|| {
             LoomError::new(

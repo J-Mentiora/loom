@@ -101,7 +101,10 @@ impl PlaywrightImporter {
 
         // --- 2. Count K = non-empty lines ---
         // Each non-empty line is one Playwright event.
-        let events: Vec<&str> = trace_content.lines().filter(|l| !l.trim().is_empty()).collect();
+        let events: Vec<&str> = trace_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
         let k = events.len() as u64;
 
         // --- 3. Generate session_id and create session directory ---

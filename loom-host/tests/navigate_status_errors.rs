@@ -236,7 +236,14 @@ fn navigate_error_receipt_has_stable_schema_shape() {
     let val = assemble_value(&builder);
 
     // Stable fields all present in the typed-error path.
-    for key in &["action_id", "status", "code", "details", "message", "surface"] {
+    for key in &[
+        "action_id",
+        "status",
+        "code",
+        "details",
+        "message",
+        "surface",
+    ] {
         assert!(
             val.get(key).is_some(),
             "stable key '{key}' must be present in typed-error receipt"

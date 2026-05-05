@@ -311,10 +311,7 @@ impl Vault for LocalVault {
         Ok(())
     }
 
-    fn add_credential(
-        &self,
-        opts: AddCredentialOpts,
-    ) -> Result<AddCredentialReceipt, LoomError> {
+    fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError> {
         // OAuth-only allowlist. Non-allowlisted providers
         // reject with the canonical `vault_credential_type_unsupported`
         // envelope (`details.allowed_types = ["oauth2_authorization_code_pkce"]`).
@@ -710,11 +707,17 @@ mod tests {
             .filter_map(|e| e["audit_kind"].as_str())
             .collect();
 
-        let issued_pos = kinds.iter().position(|&k| k == "grant_issued")
+        let issued_pos = kinds
+            .iter()
+            .position(|&k| k == "grant_issued")
             .expect("missing grant_issued audit entry");
-        let consumed_pos = kinds.iter().position(|&k| k == "grant_consumed")
+        let consumed_pos = kinds
+            .iter()
+            .position(|&k| k == "grant_consumed")
             .expect("missing grant_consumed audit entry");
-        let revoked_pos = kinds.iter().position(|&k| k == "grant_revoked")
+        let revoked_pos = kinds
+            .iter()
+            .position(|&k| k == "grant_revoked")
             .expect("missing grant_revoked audit entry");
 
         assert!(

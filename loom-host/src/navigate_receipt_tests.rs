@@ -340,10 +340,7 @@ fn assemble_value(builder: &ReceiptBuilder) -> serde_json::Value {
 
 #[test]
 fn test_naverr_404_emits_web_navigation_failed() {
-    let builder = navigate_error_builder(
-        r#"{"kind":"http_status","status_code":404}"#,
-        Some(404),
-    );
+    let builder = navigate_error_builder(r#"{"kind":"http_status","status_code":404}"#, Some(404));
     let val = assemble_value(&builder);
 
     assert_eq!(val["status"], "error", "status must be 'error'");
@@ -373,10 +370,7 @@ fn test_naverr_404_emits_web_navigation_failed() {
 
 #[test]
 fn test_naverr_500_emits_web_navigation_failed() {
-    let builder = navigate_error_builder(
-        r#"{"kind":"http_status","status_code":500}"#,
-        Some(500),
-    );
+    let builder = navigate_error_builder(r#"{"kind":"http_status","status_code":500}"#, Some(500));
     let val = assemble_value(&builder);
 
     assert_eq!(val["status"], "error");

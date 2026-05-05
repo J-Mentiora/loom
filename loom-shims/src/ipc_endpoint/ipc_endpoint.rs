@@ -82,7 +82,9 @@ pub trait IpcEndpoint: Send + Sync {
 impl IpcEndpoint for SocketpairEndpoint {
     fn spawn_read_loop(&self, _request_tx: mpsc::Sender<ShimRequest>) -> Result<(), IpcError> {
         // socketpair read-loop with CBOR framing
-        Err(IpcError::Io("socketpair read-loop not yet implemented".into()))
+        Err(IpcError::Io(
+            "socketpair read-loop not yet implemented".into(),
+        ))
     }
 
     fn spawn_write_loop(&self, _response_rx: mpsc::Receiver<ShimResponse>) -> Result<(), IpcError> {

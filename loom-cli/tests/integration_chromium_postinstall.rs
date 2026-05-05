@@ -166,9 +166,7 @@ async fn test_supply_chain_tampered_archive() {
                 "SupplyChain::actual_hash must differ from the wrong SHA"
             );
         }
-        other => panic!(
-            "expected CliError::SupplyChain, got: {other:?}"
-        ),
+        other => panic!("expected CliError::SupplyChain, got: {other:?}"),
     }
 
     // Binary must NOT exist after a failed ensure (archive not extracted).

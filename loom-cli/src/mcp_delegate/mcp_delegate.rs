@@ -22,7 +22,8 @@ use crate::CliError;
 /// be wired up in a future iteration.
 pub async fn run() -> Result<(), CliError> {
     Err(CliError::Internal(
-        "McpDelegate: loom-mcp linkage is not yet wired — run `loom-mcp serve` directly".to_string(),
+        "McpDelegate: loom-mcp linkage is not yet wired — run `loom-mcp serve` directly"
+            .to_string(),
     ))
 }
 

@@ -56,11 +56,7 @@ fn test_wasm32_build_produces_artifact() {
         .parent() // projects/loom/
         .unwrap()
         .join("src/target/wasm32-wasip2/release/loom_surface_web.wasm");
-    assert!(
-        artifact.exists(),
-        "artifact not found at {:?}",
-        artifact
-    );
+    assert!(artifact.exists(), "artifact not found at {:?}", artifact);
 }
 
 // ---------------------------------------------------------------------------

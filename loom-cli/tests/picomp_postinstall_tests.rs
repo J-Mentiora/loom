@@ -68,23 +68,15 @@ fn test_schema_step_creates_and_populates_dir() {
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
 
-    let outcome = schema_step(&v1_dir)
-        .expect("schema_step must not return Err");
+    let outcome = schema_step(&v1_dir).expect("schema_step must not return Err");
 
     // Dir must now exist.
-    assert!(
-        v1_dir.exists(),
-        "schema_step must create schemas_dir"
-    );
+    assert!(v1_dir.exists(), "schema_step must create schemas_dir");
 
     // Must report populated with at least the 10 web surface methods.
     match outcome {
         SchemaStepOutcome::Populated(count) => {
-            assert!(
-                count >= 10,
-                "expected >= 10 schema files, got {}",
-                count
-            );
+            assert!(count >= 10, "expected >= 10 schema files, got {}", count);
         }
         SchemaStepOutcome::Skipped => {
             panic!("schema_step returned Skipped on empty dir — expected Populated");
@@ -100,13 +92,8 @@ fn test_schema_step_creates_and_populates_dir() {
         }
         file_count += 1;
         let content = std::fs::read_to_string(&path).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|e| {
-            panic!(
-                "{} is not valid JSON: {}",
-                path.display(),
-                e
-            )
-        });
+        let json: serde_json::Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("{} is not valid JSON: {}", path.display(), e));
         assert!(
             json.get("request").is_some(),
             "{} missing 'request' key",
@@ -137,9 +124,8 @@ fn test_schema_cache_load_succeeds_after_postinstall() {
     schema_step(&v1_dir).expect("schema_step failed");
 
     // SchemaCache::load must succeed.
-    let cache = SchemaCache::load(&v1_dir).expect(
-        "SchemaCache::load must succeed after schema_step — 'schema dir missing' error",
-    );
+    let cache = SchemaCache::load(&v1_dir)
+        .expect("SchemaCache::load must succeed after schema_step — 'schema dir missing' error");
 
     // Cache must have at least the 10 web surface methods.
     assert!(
@@ -242,8 +228,7 @@ fn test_postinstall_action_roundtrip() {
     std::env::remove_var("LOOM_WASM_DIR");
 
     // Step 1: compile WASM.
-    let compile_outcomes = compile_step(surfaces_dir.path())
-        .expect("compile_step must succeed");
+    let compile_outcomes = compile_step(surfaces_dir.path()).expect("compile_step must succeed");
 
     // Restore env.
     match prev_wasm_dir {
@@ -254,10 +239,7 @@ fn test_postinstall_action_roundtrip() {
     let has_compiled = compile_outcomes
         .iter()
         .any(|o| matches!(o, StepOutcome::Compiled(_)));
-    assert!(
-        has_compiled,
-        "compile_step must produce Compiled outcome"
-    );
+    assert!(has_compiled, "compile_step must produce Compiled outcome");
 
     // Step 2: populate schemas.
     schema_step(&v1_dir).expect("schema_step must succeed");
@@ -265,10 +247,7 @@ fn test_postinstall_action_roundtrip() {
     // Step 3: SchemaCache::load succeeds.
     let cache = SchemaCache::load(&v1_dir)
         .expect("SchemaCache::load must succeed — no 'schema dir missing' error");
-    assert!(
-        cache.len() >= 10,
-        "cache must have >= 10 schemas"
-    );
+    assert!(cache.len() >= 10, "cache must have >= 10 schemas");
 
     // Step 4: args validation works for a known method.
     use loom_cli::action_commands::validate_args;

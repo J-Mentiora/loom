@@ -89,7 +89,10 @@ fn test_ac_aesf_01_missing_schemas_format_error_non_empty() {
     match SchemaCache::load(&nonexistent) {
         Err(e) => {
             let msg = format_error(&Err(e)).unwrap();
-            assert!(!msg.is_empty(), "format_error for missing schemas must be non-empty");
+            assert!(
+                !msg.is_empty(),
+                "format_error for missing schemas must be non-empty"
+            );
         }
         Ok(_) => panic!("expected Err from missing schemas dir"),
     }
@@ -140,7 +143,10 @@ fn test_ac_aesf_02_unknown_method_format_error_non_empty() {
     let args = json!({});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "bogus.method", &args).unwrap_err());
     let msg = format_error(&r).unwrap();
-    assert!(!msg.is_empty(), "format_error for unknown method must be non-empty");
+    assert!(
+        !msg.is_empty(),
+        "format_error for unknown method must be non-empty"
+    );
 }
 
 // ── malformed args error names failing param ────────────────────
@@ -177,7 +183,10 @@ fn test_ac_aesf_03_malformed_args_format_error_non_empty() {
     let args = json!({"session": "S1"});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "web.navigate", &args).unwrap_err());
     let msg = format_error(&r).unwrap();
-    assert!(!msg.is_empty(), "format_error for malformed args must be non-empty");
+    assert!(
+        !msg.is_empty(),
+        "format_error for malformed args must be non-empty"
+    );
 }
 
 // ── SurfaceUnavailable — exit 5 + clear message ─────────────────
@@ -231,11 +240,7 @@ fn test_ac_aesf_05_every_variant_has_display() {
     ];
     for v in &variants {
         let s = format_error(&Err(v.clone())).unwrap();
-        assert!(
-            !s.is_empty(),
-            "format_error for {:?} must be non-empty",
-            v
-        );
+        assert!(!s.is_empty(), "format_error for {:?} must be non-empty", v);
     }
 }
 

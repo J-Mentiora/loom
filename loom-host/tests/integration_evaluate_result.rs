@@ -139,11 +139,7 @@ async fn evalresult_integer_result_surfaces_in_outcome() {
     // The shim returns CBOR; integer 2 round-trips as Value::Integer.
     match result {
         ciborium::value::Value::Integer(i) => {
-            assert_eq!(
-                i128::from(i),
-                2,
-                "integer 1+1 must surface as the value 2"
-            );
+            assert_eq!(i128::from(i), 2, "integer 1+1 must surface as the value 2");
         }
         other => panic!("expected Value::Integer(2), got {other:?}"),
     }
@@ -191,9 +187,7 @@ async fn evalresult_js_throw_surfaces_as_exception() {
         .expect("send_evaluate must return Ok with exception inside");
 
     assert!(outcome.result.is_none(), "no result expected on throw");
-    let ex = outcome
-        .exception
-        .expect("exception must be Some");
+    let ex = outcome.exception.expect("exception must be Some");
     assert!(
         ex.message.contains('x'),
         "exception.message must contain 'x' (got {:?})",
