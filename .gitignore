@@ -1,4 +1,7 @@
+council/
+specs/
 target/
+.claude/
 .DS_Store
 *.swp
 .idea/
@@ -6,6 +9,7 @@ target/
 .envrc
 .env
 .env.local
+.env.dev.local
 
 # cargo-dist intermediates
 dist-manifest.json
