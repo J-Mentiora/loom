@@ -1,5 +1,3 @@
-// module_kind: wit-bindgen-generated
-//
 // HostBindings — `wit-bindgen` Rust guest-side import stubs for the
 // `host` interface declared in `wit/loom-surface.wit`. **This file is
 // machine-generated at build time.** The real surface crate's

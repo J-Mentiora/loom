@@ -1,5 +1,3 @@
-// module_kind: wit-bindgen-generated
-//
 // GuestBindings — `wit-bindgen` Rust guest-side export trait + impl
 // stub for the `web-surface` interface declared in
 // `wit/loom-surface.wit`. **This file is machine-generated at build time.**
