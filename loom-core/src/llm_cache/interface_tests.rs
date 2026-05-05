@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/llm_cache/interface_tests.rs` instead.
-// Interface tests for `LlmCache` — AC-DET-07.1 coverage.
+// Interface tests for `LlmCache`.
 
 use super::llm_cache::LlmCache;
 use loom_shared::llm_types::{LlmCacheKey, LlmMode, LlmResponse};
@@ -22,7 +22,7 @@ fn make_response(body: serde_json::Value) -> LlmResponse {
     LlmResponse { body_json: body }
 }
 
-/// AC-DET-07.1: cache hit in Recorded mode returns stored response + cache_hit=true.
+/// Cache hit in Recorded mode returns stored response + cache_hit=true.
 #[test]
 fn test_cache_hit_returns_stored_response_without_network_call() {
     let cache = LlmCache::new(LlmMode::Recorded);
@@ -35,7 +35,7 @@ fn test_cache_hit_returns_stored_response_without_network_call() {
     assert_eq!(result.response.body_json, body);
 }
 
-/// AC-DET-07.1: cache miss in Recorded mode returns LlmCacheMiss error.
+/// Cache miss in Recorded mode returns LlmCacheMiss error.
 #[test]
 fn test_cache_miss_in_recorded_mode_returns_error() {
     let cache = LlmCache::new(LlmMode::Recorded);

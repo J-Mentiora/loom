@@ -1,10 +1,11 @@
 // Budget enforcer behavior tests.
-// AC-BUDGET-01.1: session wall-clock total kill (600s session_walltime_ms).
-// AC-BUDGET-01.2: per-action wall-clock pre-check (60s action_walltime_ms).
-// AC-BUDGET-01.3: cumulative network bytes kill (50MB).
-// AC-BUDGET-01.4: DOM node gauge kill (50k).
-// AC-BUDGET-01.5: JS heap gauge kill (512MB).
-// AC-BUDGET-04.1: manifest Header stores budget overrides (tested via manifest_writer).
+// Coverage:
+//   - session wall-clock total kill (600s session_walltime_ms).
+//   - per-action wall-clock pre-check (60s action_walltime_ms).
+//   - cumulative network bytes kill (50MB).
+//   - DOM node gauge kill (50k).
+//   - JS heap gauge kill (512MB).
+//   - manifest Header stores budget overrides (tested via manifest_writer).
 
 use loom_core::budget_enforcer::{
     Action, BudgetEnforcer, BudgetLimits, KillCallback, KillReason, LocalBudgetEnforcer,
@@ -63,7 +64,7 @@ fn action_with_estimate(walltime_ms: u64) -> Action {
 }
 
 // ============================================================
-// AC-BUDGET-01.1 — session wall-clock total kill
+// session wall-clock total kill
 // ============================================================
 
 #[test]
@@ -145,7 +146,7 @@ fn ac_budget_01_1_check_rejects_if_session_already_at_limit() {
 }
 
 // ============================================================
-// AC-BUDGET-01.2 — per-action wall-clock pre-check
+// per-action wall-clock pre-check
 // ============================================================
 
 #[test]
@@ -185,7 +186,7 @@ fn ac_budget_01_2_session_remains_active_after_action_pre_rejection() {
 }
 
 // ============================================================
-// AC-BUDGET-01.3 — cumulative network bytes kill
+// cumulative network bytes kill
 // ============================================================
 
 #[test]
@@ -223,7 +224,7 @@ fn ac_budget_01_3_error_context_has_correct_keys() {
 }
 
 // ============================================================
-// AC-BUDGET-01.4 — DOM node gauge kill
+// DOM node gauge kill
 // ============================================================
 
 #[test]
@@ -265,7 +266,7 @@ fn ac_budget_01_4_dom_nodes_are_gauge_not_cumulative() {
 }
 
 // ============================================================
-// AC-BUDGET-01.5 — JS heap gauge kill
+// JS heap gauge kill
 // ============================================================
 
 #[test]
@@ -349,7 +350,7 @@ fn unregister_unknown_session_is_noop() {
 }
 
 // ============================================================
-// AC-BUDGET-04.1 — manifest Header stores budget overrides
+// manifest Header stores budget overrides
 // ============================================================
 
 #[test]

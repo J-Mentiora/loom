@@ -1,10 +1,10 @@
 // DeterminismHarness implementation.
 //
-// AC coverage:
-//   AC-DET-01.1: clock_now() returns frozen per-action ms value
-//   AC-DET-02.1: rng_next() draws from ChaCha20 seeded per-session
-//   IC-CORE-04/SR-CORE-17: canonicalize() uses serde_jcs (RFC 8785)
-//   IC-CORE-07: ReplayHostFnTable pop_{clock,rng,net}()
+// Behaviour:
+//   clock_now() returns frozen per-action ms value
+//   rng_next() draws from ChaCha20 seeded per-session
+//   canonicalize() uses serde_jcs (RFC 8785)
+//   ReplayHostFnTable pop_{clock,rng,net}() during replay
 
 use crate::determinism_harness::determinism_harness::{
     DeterminismHarness, ReplayHostFnTable, SideEffectTape, TapeFrame, TapeWriter,
@@ -16,7 +16,7 @@ use std::path::Path;
 
 impl DeterminismHarness {
     /// Canonicalize a serializable value to RFC 8785 JCS bytes.
-    /// THE ONLY canonicalizer in loom-core (IC-CORE-04 / SR-CORE-17).
+    /// THE ONLY canonicalizer in loom-core.
     /// Uses serde_jcs::to_string (the 0.1 crate does not expose to_vec).
     pub fn canonicalize<T: serde::Serialize>(&self, value: &T) -> Result<Vec<u8>, LoomError> {
         serde_jcs::to_string(value)
@@ -31,13 +31,13 @@ impl DeterminismHarness {
     }
 
     /// Virtual clock read — returns the frozen per-action millisecond value.
-    /// All calls within one action return the same value (AC-DET-01.1).
+    /// All calls within one action return the same value.
     /// `begin_action(delta_ms)` advances the clock between actions.
     pub fn clock_now(&self) -> u64 {
         *self.action_clock_ms.lock()
     }
 
-    /// Seeded ChaCha20 draw — deterministic given session seed (AC-DET-02.1).
+    /// Seeded ChaCha20 draw — deterministic given session seed.
     pub fn rng_next(&self) -> u64 {
         self.rng.lock().next_u64()
     }

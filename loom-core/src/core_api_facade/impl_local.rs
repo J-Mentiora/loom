@@ -16,7 +16,7 @@ use crate::manifest_writer::ManifestEntry;
 /// - Last WAL entry is `SessionTerminal { reason="close" }`     → `"closed"`
 /// - Last WAL entry is `SessionTerminal { reason=other }`       → `"aborted:<reason>"`
 ///   (bridge layer splits this back into status+reason
-///   for the `SessionInfo` wire shape — AC-ABORTREASON-01..03)
+///   for the `SessionInfo` wire shape)
 /// - No terminal entry                              → `"active"`
 pub fn list_sessions_info_from_dir(
     sessions_root: &std::path::Path,

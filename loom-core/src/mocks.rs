@@ -19,15 +19,15 @@ pub const MOCK_SESSION_ID: &str = "01HZTESTABC123";
 
 pub fn mock_session_id() -> SessionId {
     // SessionId is a transparent ULID newtype in the locked interface.
-    // Phase 6 may switch to `SessionId::from_str` once ManifestWriter
-    // stabilizes the constructor. For now, we stub via JSON round-trip
-    // through serde, which is locked.
+    // A future release may switch to `SessionId::from_str` once
+    // ManifestWriter stabilizes the constructor. For now, we stub via
+    // JSON round-trip through serde, which is locked.
     serde_json::from_str(&format!("\"{MOCK_SESSION_ID}\""))
         .expect("MOCK_SESSION_ID is a valid ULID string")
 }
 
 /// In-process facade implementing the SessionManager surface area with
-/// deterministic responses. Phase 6 may swap this for trait-based
+/// deterministic responses. A future release may swap this for trait-based
 /// dynamic dispatch once `LocalSessionManager` exposes a trait.
 pub struct MockSessionManager;
 

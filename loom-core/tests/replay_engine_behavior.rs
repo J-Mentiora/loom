@@ -1,23 +1,23 @@
-// Behavior tests for replay-engine — TDD phase.
+// Behavior tests for replay-engine.
 //
-// AC coverage:
-//   AC-REPLAY-01.1: test_replay_produces_bit_equal_receipt_bytes
-//   AC-REPLAY-01.1: test_replay_100x_produces_identical_receipt_bytes
-//   AC-REPLAY-01.2: test_replay_aborts_on_missing_non_screenshot_blob
-//   AC-REPLAY-01.2: test_replay_proceeds_on_missing_screenshot_blob
-//   AC-REPLAY-01.3: test_replay_installs_tape_driven_determinism
-//   AC-REPLAY-02.1: test_diff_action_count_delta_positive
-//   AC-REPLAY-02.1: test_diff_action_count_delta_zero_no_extras
-//   AC-REPLAY-02.2: test_diff_field_level_diff_on_dom_hash_mismatch
-//   AC-REPLAY-02.3: test_diff_screenshot_excluded_from_differences_count
-//   AC-REPLAY-02.3: test_diff_screenshot_in_screenshot_diffs_with_flag
-//   AC-REPLAY-03.1: test_inspect_at_action_5_returns_entries_0_to_5
-//   AC-REPLAY-03.1: test_inspect_does_not_mutate_manifest
-//   AC-PERF-03.1:   test_replay_throughput_structural_exceeds_5x
-//   Validate:       test_validate_passes_intact_chain_and_present_blobs
-//   Validate:       test_validate_fails_on_broken_hash_chain
-//   Validate:       test_validate_fails_on_missing_blob
-//   Tape:           test_tape_persisted_and_loaded
+// Coverage:
+//   test_replay_produces_bit_equal_receipt_bytes
+//   test_replay_100x_produces_identical_receipt_bytes
+//   test_replay_aborts_on_missing_non_screenshot_blob
+//   test_replay_proceeds_on_missing_screenshot_blob
+//   test_replay_installs_tape_driven_determinism
+//   test_diff_action_count_delta_positive
+//   test_diff_action_count_delta_zero_no_extras
+//   test_diff_field_level_diff_on_dom_hash_mismatch
+//   test_diff_screenshot_excluded_from_differences_count
+//   test_diff_screenshot_in_screenshot_diffs_with_flag
+//   test_inspect_at_action_5_returns_entries_0_to_5
+//   test_inspect_does_not_mutate_manifest
+//   test_replay_throughput_structural_exceeds_5x
+//   Validate: test_validate_passes_intact_chain_and_present_blobs
+//   Validate: test_validate_fails_on_broken_hash_chain
+//   Validate: test_validate_fails_on_missing_blob
+//   Tape:     test_tape_persisted_and_loaded
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
@@ -163,7 +163,7 @@ fn sha256_hex(input: &[u8]) -> String {
 }
 
 /// Extract (action_id, emitted_at_ms, receipt_canonical_bytes) tuples from WAL.
-/// These are the fields that replay() copies exactly (AC-REPLAY-01.1).
+/// These are the fields that replay() copies exactly.
 fn extract_action_receipts(
     sessions_root: &std::path::Path,
     id: &SessionId,
@@ -184,7 +184,7 @@ fn extract_action_receipts(
     out
 }
 
-// ---- AC-REPLAY-01.1: bit-equal receipt bytes ----
+// ---- bit-equal receipt bytes ----
 
 #[test]
 fn test_replay_produces_bit_equal_receipt_bytes() {
@@ -219,7 +219,7 @@ fn test_replay_produces_bit_equal_receipt_bytes() {
         .replay(source_id.clone(), ReplayOpts::default())
         .expect("replay should succeed");
 
-    // AC-REPLAY-01.1: receipt_canonical_bytes must be byte-for-byte identical.
+    // receipt_canonical_bytes must be byte-for-byte identical.
     // (emitted_at_ms is also copied from source to preserve hash-chain equality)
     let source_receipts = extract_action_receipts(&sessions_root, &source_id);
     let replay_receipts = extract_action_receipts(&sessions_root, &replay_id);
@@ -238,7 +238,7 @@ fn test_replay_produces_bit_equal_receipt_bytes() {
     }
 }
 
-// AC-REPLAY-01.1: 100 replays all produce identical receipt bytes
+// 100 replays all produce identical receipt bytes
 #[test]
 fn test_replay_100x_produces_identical_receipt_bytes() {
     let tmp = tmp_path();
@@ -281,7 +281,7 @@ fn test_replay_100x_produces_identical_receipt_bytes() {
     }
 }
 
-// ---- AC-REPLAY-01.2: replay refuses on missing non-screenshot blob ----
+// ---- replay refuses on missing non-screenshot blob ----
 
 #[test]
 fn test_replay_aborts_on_missing_non_screenshot_blob_with_correct_error() {
@@ -351,7 +351,7 @@ fn test_replay_aborts_on_missing_non_screenshot_blob_with_correct_error() {
     );
 }
 
-// AC-REPLAY-01.2: screenshot blobs missing → replay proceeds (not abort)
+// Screenshot blobs missing → replay proceeds (not abort)
 #[test]
 fn test_replay_proceeds_on_missing_screenshot_blob() {
     let tmp = tmp_path();
@@ -413,7 +413,7 @@ fn test_replay_proceeds_on_missing_screenshot_blob() {
     );
 }
 
-// ---- AC-REPLAY-01.3: tape-driven determinism installed ----
+// ---- tape-driven determinism installed ----
 
 #[test]
 fn test_replay_installs_tape_driven_determinism() {
@@ -481,7 +481,7 @@ fn test_replay_installs_tape_driven_determinism() {
     );
 }
 
-// ---- AC-REPLAY-02.1: diff action count delta ----
+// ---- diff action count delta ----
 
 #[test]
 fn test_diff_action_count_delta_positive() {
@@ -593,7 +593,7 @@ fn test_diff_action_count_delta_zero_no_extras() {
     );
 }
 
-// ---- AC-REPLAY-02.2: per-receipt field diff ----
+// ---- per-receipt field diff ----
 
 #[test]
 fn test_diff_field_level_diff_on_dom_hash_mismatch() {
@@ -656,7 +656,7 @@ fn test_diff_field_level_diff_on_dom_hash_mismatch() {
     );
 }
 
-// ---- AC-REPLAY-02.3: screenshots excluded from differences ----
+// ---- screenshots excluded from differences ----
 
 #[test]
 fn test_diff_screenshot_excluded_from_differences_count() {
@@ -862,7 +862,7 @@ fn test_diff_screenshot_in_screenshot_diffs_with_flag() {
     assert_eq!(report.action_count_delta, 0);
 }
 
-// ---- AC-REPLAY-03.1: time-travel inspect ----
+// ---- time-travel inspect ----
 
 #[test]
 fn test_inspect_at_action_5_returns_entries_0_to_5() {
@@ -950,7 +950,7 @@ fn test_inspect_does_not_mutate_manifest() {
     );
 }
 
-// ---- AC-PERF-03.1: replay speed >= 5x real-time ----
+// ---- replay speed >= 5x real-time ----
 
 #[test]
 fn test_replay_throughput_structural_exceeds_5x() {
@@ -1239,16 +1239,16 @@ fn test_tape_persisted_and_loaded() {
     }
 }
 
-// ---- AC-SHCRT-08: started_at_ms is propagated from source to replay ----
+// ---- started_at_ms is propagated from source to replay ----
 //
 // Verifies that the replay session's manifest Header carries the source
 // session's `started_at_ms` (not `now_ms()` at replay time). This is the
-// foundation for AC-SHCRT-08's hash-chain bit-equality goal: the chain
+// foundation for hash-chain bit-equality: the chain
 // hashes over the canonical Header bytes, so any divergence in the
 // Header poisons every subsequent prev_hash.
 
 #[test]
-fn test_ac_shcrt_08_replay_header_started_at_ms_matches_source() {
+fn test_replay_header_started_at_ms_matches_source() {
     let tmp = tmp_path();
     let obs = make_obs(&tmp);
     let sessions_root = tmp.path().join("sessions");
@@ -1288,7 +1288,7 @@ fn test_ac_shcrt_08_replay_header_started_at_ms_matches_source() {
 
     assert_eq!(
         source_started_at_ms, replay_started_at_ms,
-        "AC-SHCRT-08: replay Header started_at_ms must equal source's \
+        "replay Header started_at_ms must equal source's \
          (chain bit-equality requires deterministic Header bytes)"
     );
 
@@ -1296,12 +1296,12 @@ fn test_ac_shcrt_08_replay_header_started_at_ms_matches_source() {
     // chain hashes over the Header's canonical bytes, and with
     // started_at_ms now equal the only Header field that differs is
     // session_id. Confirm at least the receipt content is bit-equal
-    // (this is the existing AC-REPLAY-01.1 guarantee).
+    // (this is the existing bit-equal-receipt guarantee).
     let source_receipts = extract_action_receipts(&sessions_root, &source_id);
     let replay_receipts = extract_action_receipts(&sessions_root, &replay_id);
     assert_eq!(
         source_receipts, replay_receipts,
-        "AC-SHCRT-08: replay action_receipts must be bit-equal to source"
+        "replay action_receipts must be bit-equal to source"
     );
 }
 

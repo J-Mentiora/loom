@@ -1,9 +1,9 @@
-//! Behavior tests for AC-ACTID-01..03 — per-session monotonic action_id.
+//! Behavior tests for per-session monotonic action_id.
 //!
-//! AC-ACTID-01: receipts in a session monotonically increase action_id from 0
-//! AC-ACTID-02: `loom session inspect` entries[].action_id matches the action_id
-//!              returned in the receipt at the time of dispatch
-//! AC-ACTID-03: integration: 5 actions in one session yield action_id [0,1,2,3,4]
+//! - receipts in a session monotonically increase action_id from 0
+//! - `loom session inspect` entries[].action_id matches the action_id
+//!   returned in the receipt at the time of dispatch
+//! - integration: 5 actions in one session yield action_id [0,1,2,3,4]
 
 use loom_core::core_api_facade::{CoreApiFacade, CoreConfig};
 use loom_core::manifest_writer::ManifestEntry;
@@ -37,7 +37,7 @@ fn default_opts() -> SessionCreateOpts {
     }
 }
 
-// === AC-ACTID-01 ===
+// === monotonic increment ===
 
 #[test]
 fn session_allocate_action_id_starts_at_zero_and_increments_monotonically() {
@@ -55,7 +55,7 @@ fn session_allocate_action_id_starts_at_zero_and_increments_monotonically() {
     );
 }
 
-// === AC-ACTID-03 (and AC-ACTID-02 implicitly: same ids in WAL & inspect) ===
+// === five-action integration (also covers id parity in WAL & inspect) ===
 
 #[test]
 fn five_actions_in_one_session_yield_ids_zero_through_four() {
@@ -68,7 +68,7 @@ fn five_actions_in_one_session_yield_ids_zero_through_four() {
     // Simulate 5 dispatches: allocate id, persist a corresponding ActionReceipt
     // entry. This is the same pattern the daemon's receipt_marshaller uses
     // after a real host.dispatch — the id stamped on the WAL entry equals the
-    // receipt's action_id (AC-ACTID-02) because both come from the same
+    // receipt's action_id because both come from the same
     // `allocate_action_id()` call.
     let mut allocated_ids = Vec::new();
     for i in 0..5 {
@@ -92,7 +92,7 @@ fn five_actions_in_one_session_yield_ids_zero_through_four() {
         "5 dispatches must yield action_ids [0,1,2,3,4]"
     );
 
-    // AC-ACTID-02: inspect_session_json must report the same ids in entries[].
+    // inspect_session_json must report the same ids in entries[].
     let inspect = core.inspect_session_json(&id.0, None).unwrap();
     let entries = inspect["entries"]
         .as_array()
@@ -109,11 +109,11 @@ fn five_actions_in_one_session_yield_ids_zero_through_four() {
     );
     assert_eq!(
         inspect_ids, allocated_ids,
-        "AC-ACTID-02: inspect ids must match the receipt ids returned at dispatch"
+        "inspect ids must match the receipt ids returned at dispatch"
     );
 }
 
-// === AC-ACTID-02 (focused) ===
+// === inspect-id parity (focused) ===
 
 #[test]
 fn inspect_action_id_matches_allocated_action_id() {

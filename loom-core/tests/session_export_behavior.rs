@@ -1,9 +1,9 @@
-//! AC-driven integration tests for the `session-export` feature.
+//! Integration tests for the `session-export` feature.
 //!
-//! AC-CLI-03.1 — JSON export has manifest and content_blob_index
-//! AC-CLI-03.2 — HAR export has one entry per ActionReceipt
-//! AC-STORE-02.1 — Tarball export contains manifest.json and blob entries
-//! AC-INTEROP-02.1 — HAR output validates against HAR 1.2 schema
+//! - JSON export has manifest and content_blob_index
+//! - HAR export has one entry per ActionReceipt
+//! - Tarball export contains manifest.json and blob entries
+//! - HAR output validates against HAR 1.2 schema
 
 use loom_core::content_store::{ContentRef, ContentStore, LocalContentStore};
 use loom_core::exporters::Exporter;
@@ -96,7 +96,7 @@ fn content_store_fixture(tmp: &TempDir) -> Arc<dyn ContentStore> {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CLI-03.1 — JSON export
+// JSON export
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -149,7 +149,7 @@ fn ac_cli_03_1_json_export_is_valid_json() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-STORE-02.1 — Tarball export
+// Tarball export
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -233,7 +233,7 @@ fn ac_store_02_1_tarball_is_valid_gzip() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CLI-03.2 — HAR export
+// HAR export
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -279,7 +279,7 @@ fn ac_cli_03_2_har_entries_length_matches_network_event_count_across_navigate_re
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-02.1 — HAR 1.2 schema validation (5 network events example)
+// HAR 1.2 schema validation (5 network events example)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -334,7 +334,7 @@ fn ac_interop_02_1_har_schema_valid() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-HAREXPORT-01..05 — populated request/response fields per network event
+// Populated request/response fields per network event
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -555,7 +555,7 @@ fn ac_harexport_05_entries_length_matches_network_event_count_not_receipt_count(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// AC-HAREXPORT-04 — validate against the vendored HAR 1.2 JSON Schema
+// Validate against the vendored HAR 1.2 JSON Schema
 // (true Draft-04 schema validation via the `jsonschema` crate, in addition
 // to the manual `assert_har_12_valid` checker above). The vendored fixture
 // at tests/fixtures/har-1.2.schema.json carries provenance metadata in its
@@ -608,7 +608,7 @@ fn ac_harexport_04_validates_against_har12_schema() {
         .collect();
     assert!(
         errors.is_empty(),
-        "AC-HAREXPORT-04: HAR export must validate against vendored HAR 1.2 schema; \
+        "HAR export must validate against vendored HAR 1.2 schema; \
          got {} error(s):\n{}",
         errors.len(),
         errors.join("\n")
@@ -616,14 +616,14 @@ fn ac_harexport_04_validates_against_har12_schema() {
 }
 
 #[test]
-fn ac_harexport_04_fixture_is_valid_json_schema() {
+fn harexport_fixture_is_valid_json_schema() {
     // Defends against `jsonschema` crate upgrades silently breaking the
     // vendored schema fixture. If a future bump (0.46 → 0.50, …) refuses
     // the Draft-04 form, we want this test to fail loud rather than the
     // schema-validation test silently accepting any HAR shape.
     let schema = load_har_schema();
     jsonschema::validator_for(&schema).expect(
-        "AC-HAREXPORT-04 meta-schema check: the vendored HAR 1.2 schema must compile \
+        "meta-schema check: the vendored HAR 1.2 schema must compile \
          as a valid JSON Schema (Draft-04). If this fails after a `jsonschema` crate \
          upgrade, update the fixture to the form the new crate expects rather than \
          relaxing this test.",

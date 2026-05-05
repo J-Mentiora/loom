@@ -1,14 +1,14 @@
 // ManifestWriter — append-only WAL with hash-chained checkpoint.
 //
 // # Contract semantics
-// - Storage layout (BC-CORE-01): `sessions/<ulid>/manifest.jsonl`
+// - Storage layout: `sessions/<ulid>/manifest.jsonl`
 //   (checkpointed) + `sessions/<ulid>/manifest.wal` (WAL, fsynced on
 //   every append). Checkpoint cadence: 100 entries OR 1 second.
-// - Hash-chain (IC-CORE-04 / SR-CORE-17): every append computes
+// - Hash-chain: every append computes
 //   `prev_hash = sha256(serde_jcs::to_string(prev_entry))` over canonical
 //   JSON. **`serde_json::to_string` is BANNED in this module** (clippy
 //   `disallowed_methods`).
-// - Audit entries (BC-CORE-07): `Vault` and other modules write typed
+// - Audit entries: `Vault` and other modules write typed
 //   audit entries through `append_audit`; they share the SAME hash chain
 //   as action receipts.
 // - All `ManifestEntry` variants have integer-only fields per HARD #3.
@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Session ID. ULID, 26-char Crockford base32 lowercase. Defined in WIT
-/// (BC-CORE-05) but a Rust newtype is permitted as a thin wrapper.
+/// Session ID. ULID, 26-char Crockford base32 lowercase. Defined in WIT,
+/// but a Rust newtype is permitted as a thin wrapper.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SessionId(pub String);
 
@@ -35,11 +35,11 @@ pub enum ManifestEntry {
         session_id: String,
         started_at_ms: u64,
         prev_hash: Option<String>,
-        /// Session budget limits at creation time (AC-BUDGET-04.1).
+        /// Session budget limits at creation time.
         /// None means all defaults apply.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         budgets: Option<BudgetLimits>,
-        /// Operator's `--capture-policy` choice (AC-CAPPOL-03).
+        /// Operator's `--capture-policy` choice.
         /// Wire form: `"minimal" | "default" | "full"`. `None` means the
         /// server-default profile applied — kept skip-if-none so legacy
         /// (pre-feature) headers round-trip without schema churn.
@@ -54,7 +54,7 @@ pub enum ManifestEntry {
         receipt_canonical_bytes: Vec<u8>,
         prev_hash: String,
     },
-    /// An audit entry (Vault grant lifecycle, FSM transitions). BC-CORE-07.
+    /// An audit entry (Vault grant lifecycle, FSM transitions).
     AuditEntry {
         action_id_ref: Option<u64>,
         emitted_at_ms: u64,
@@ -86,9 +86,9 @@ pub enum AuditKind {
     GrantRevoked,
     GrantRejected,
     FsmTransition,
-    /// Sub-resource request blocked by the default network blocklist
-    /// (AC-DET-05.1, AC-BLOCKLIST-02). Canonical bytes carry
-    /// `{matched_pattern, reason, url}` (JCS sorts keys at encode).
+    /// Sub-resource request blocked by the default network blocklist.
+    /// Canonical bytes carry `{matched_pattern, reason, url}` (JCS sorts
+    /// keys at encode).
     BlockedUrl,
 }
 
@@ -123,7 +123,7 @@ impl LocalManifestWriter {
 pub trait ManifestWriter: Send + Sync {
     /// Open or create the WAL for a session. Writes the Header entry on
     /// first creation; opens in append mode for resumed sessions.
-    /// `budgets` is stored in the Header for AC-BUDGET-04.1; pass None for defaults.
+    /// `budgets` is stored in the Header; pass None for defaults.
     fn open_manifest(
         &self,
         session: SessionId,
@@ -133,8 +133,8 @@ pub trait ManifestWriter: Send + Sync {
     }
 
     /// Same as `open_manifest`, but lets the caller override the
-    /// Header's `started_at_ms`. Used by the replay path
-    /// (AC-SHCRT-08): replay reuses the original session's
+    /// Header's `started_at_ms`. Used by the replay path:
+    /// replay reuses the original session's
     /// `started_at_ms` so the manifest hash chain — which chains over
     /// the canonical Header bytes — is bit-equal to the source's
     /// chain. Pass `None` to use `now_ms()` (default behaviour).
@@ -151,7 +151,7 @@ pub trait ManifestWriter: Send + Sync {
     /// Pre: session is Active. Post: hash chain extended.
     fn append(&self, session: SessionId, entry: ManifestEntry) -> Result<(), LoomError>;
 
-    /// Append a Vault audit entry (BC-CORE-07). Same hash chain as
+    /// Append a Vault audit entry. Same hash chain as
     /// `append`; distinguished only by the `AuditEntry` variant tag.
     fn append_audit(
         &self,

@@ -3,8 +3,7 @@
 //!
 //! The single source of truth for the value sets accepted by
 //! `session.create`. Used by `loom-rpc::session_validation` to reject
-//! bogus inputs at the JSON-RPC boundary (AC-PROFVAL-01/02/03,
-//! parent AC-PROTO-02.1). Sets are sourced from
+//! bogus inputs at the JSON-RPC boundary. Sets are sourced from
 //! `foundation/glossary.md` L14-15 (profiles + network modes) and the
 //! existing `parse_budget_string` arms (budget keys).
 

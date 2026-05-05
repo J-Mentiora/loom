@@ -1,14 +1,14 @@
 // LocalReplayEngine implementation — bit-equal structural replay, diff, inspect, validate.
 //
-// AC coverage:
-//   AC-REPLAY-01.1: replay() copies receipt_canonical_bytes byte-for-byte
-//   AC-REPLAY-01.2: pre-flight checks non-screenshot content_refs in CAS
-//   AC-REPLAY-01.3: install_replay_mode(tape) called before replay writes
-//   AC-REPLAY-02.1: diff() computes action_count_delta
-//   AC-REPLAY-02.2: diff() compares receipt fields by key
-//   AC-REPLAY-02.3: screenshot fields routed to screenshot_diffs, not field_diffs
-//   AC-REPLAY-03.1: inspect() reads WAL 0..=at_action without mutation
-//   AC-PERF-03.1:   structural replay is disk I/O only (no WASM)
+// Behaviour:
+//   replay() copies receipt_canonical_bytes byte-for-byte
+//   pre-flight checks non-screenshot content_refs in CAS
+//   install_replay_mode(tape) called before replay writes
+//   diff() computes action_count_delta
+//   diff() compares receipt fields by key
+//   screenshot fields routed to screenshot_diffs, not field_diffs
+//   inspect() reads WAL 0..=at_action without mutation
+//   structural replay is disk I/O only (no WASM)
 
 use crate::content_store::ContentRef;
 use crate::determinism_harness::SideEffectTape;
@@ -226,7 +226,7 @@ impl ReplayEngine for LocalReplayEngine {
         // deny here surfaces a typed `SessionAborted` error; operators
         // who genuinely want to replay an abandoned trace can reopen
         // the source session's WAL and re-issue the actions explicitly.
-        // Phase 8 round-23 finding.
+        // Late-stage testing finding.
         let source_wal = self.sessions_root.join(&source.0).join("manifest.wal");
         if let Ok(content) = std::fs::read_to_string(&source_wal) {
             let mut terminal_kind: Option<String> = None;
@@ -304,7 +304,7 @@ impl ReplayEngine for LocalReplayEngine {
         // 4b. Extract the source session's Header started_at_ms so the
         // replay Header carries the same timestamp. The hash chain
         // chains over the Header's canonical bytes, so any divergence
-        // here poisons every subsequent prev_hash. AC-SHCRT-08.
+        // here poisons every subsequent prev_hash.
         let source_started_at_ms = entries.iter().find_map(|e| {
             if let ManifestEntry::Header { started_at_ms, .. } = e {
                 Some(*started_at_ms)
@@ -330,14 +330,15 @@ impl ReplayEngine for LocalReplayEngine {
         })?;
 
         // 6. Copy ActionReceipt + BlockedUrl AuditEntry entries with original
-        //    emitted_at_ms (AC-REPLAY-01.1, AC-BLOCKLIST-03). Source order is
+        //    emitted_at_ms. Source order is
         //    preserved so the replay manifest's prev_hash chain is bit-equal
         //    to the source's at every line index.
         //
         //    EXPLICIT ALLOWLIST — DO NOT replace with a fall-through that
         //    matches all `AuditEntry` variants. Vault grant audits, FSM
         //    transitions, etc. are intentionally NOT re-emitted; their
-        //    replay-chain behavior is unchanged from before AC-BLOCKLIST-03.
+        //    replay-chain behavior is unchanged from before BlockedUrl was
+        //    added to the replay-eligible set.
         for entry in &entries {
             match entry {
                 ManifestEntry::ActionReceipt {
@@ -456,7 +457,7 @@ impl ReplayEngine for LocalReplayEngine {
         }
 
         // When exclude_screenshots is true, screenshot diffs are still tracked in
-        // screenshot_diffs[] but never in field_diffs[] (AC-REPLAY-02.3).
+        // screenshot_diffs[] but never in field_diffs[].
         // When exclude_screenshots is false, screenshot diffs appear only in
         // screenshot_diffs[], never in field_diffs[] (same rule — screenshots are
         // always a separate bucket).

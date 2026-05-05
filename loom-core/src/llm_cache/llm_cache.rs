@@ -1,4 +1,4 @@
-// LlmCache — session-scoped in-memory LLM response cache (AC-DET-07.1).
+// LlmCache — session-scoped in-memory LLM response cache.
 // Live/Mixed modes are stubs; upstream proxy is a future integration concern.
 
 use loom_core::error::{LoomError, LoomErrorCode};
@@ -6,7 +6,7 @@ use loom_shared::llm_types::{LlmCacheKey, LlmCallResult, LlmMode, LlmResponse};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 
-/// Session-scoped in-memory LLM response cache (FR-DET-07, AC-DET-07.1).
+/// Session-scoped in-memory LLM response cache.
 pub struct LlmCache {
     pub(crate) mode: LlmMode,
     pub(crate) store: Mutex<HashMap<String, LlmResponse>>,

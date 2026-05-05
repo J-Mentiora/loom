@@ -1,6 +1,6 @@
 {
     "$schema": "http://json-schema.org/draft-04/schema#",
-    "$comment": "HAR 1.2 JSON Schema — vendored fixture for AC-HAREXPORT-04. Source: HTTP Archive 1.2 spec (http://www.softwareishard.com/blog/har-12-spec/) and the canonical npm `har-schema` package (ISC license; the loom project is internal — license-compatible). This schema is consulted by tests only; runtime exports are unaffected. Pinned to JSON Schema draft-04 to match the upstream `har-schema` declarations. Update procedure: when bumping `jsonschema = '0.46'` in workspace deps, re-run `cargo test -p loom-core ac_harexport_04_fixture_is_valid_json_schema` to confirm draft-04 still parses; the meta-schema check defends against drift.",
+    "$comment": "HAR 1.2 JSON Schema — vendored fixture for the HAR exporter tests. Source: HTTP Archive 1.2 spec (http://www.softwareishard.com/blog/har-12-spec/) and the canonical npm `har-schema` package (ISC license; the loom project is internal — license-compatible). This schema is consulted by tests only; runtime exports are unaffected. Pinned to JSON Schema draft-04 to match the upstream `har-schema` declarations. Update procedure: when bumping `jsonschema = '0.46'` in workspace deps, re-run `cargo test -p loom-core harexport_fixture_is_valid_json_schema` to confirm draft-04 still parses; the meta-schema check defends against drift.",
     "title": "HAR 1.2",
     "type": "object",
     "required": ["log"],

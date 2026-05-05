@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/content_store/interface_tests.rs` instead.
-// Interface tests for `ContentStore`. Verifies IC-CORE-03 verify-on-read,
-// SR-CORE-07 atomic writes, SR-CORE-18 CAS path layout, BC-CORE-01.
+// Interface tests for `ContentStore`. Verifies verify-on-read,
+// atomic writes, CAS path layout, storage layout.
 
 use super::content_store::{shard_path, ContentRef, ContentStore, LocalContentStore};
 use loom_core::error::{LoomError, LoomErrorCode};
@@ -15,7 +15,7 @@ fn fixture() -> LocalContentStore {
     LocalContentStore::new(root, obs)
 }
 
-// === SR-CORE-18 / BC-CORE-01: CAS path layout ===
+// === CAS path layout ===
 
 #[test]
 fn shard_path_uses_two_level_aa_bb_rest_layout() {
@@ -36,11 +36,11 @@ fn shard_path_root_is_cas_subdir_of_provided_root() {
     assert!(s.starts_with("/var/loom/cas/aa/aa/"));
 }
 
-// === IC-CORE-03: verify-on-read ===
+// === verify-on-read ===
 
 #[test]
 fn get_returns_result_vec_u8_loomerror_on_missing_blob() {
-    // IC-CORE-03: get() returns Err (not panic) for unknown sha256.
+    // get() returns Err (not panic) for unknown sha256.
     let cs = fixture();
     let result = cs.get(&ContentRef {
         sha256: "a".repeat(64),
@@ -60,7 +60,7 @@ fn get_returns_loomerror_on_integrity_failure() {
     let _expected: LoomErrorCode = LoomErrorCode::StoreIntegrityFailed;
 }
 
-// === SR-CORE-07: atomic writes ===
+// === atomic writes ===
 
 #[test]
 fn put_returns_content_ref_with_sha256_and_size() {

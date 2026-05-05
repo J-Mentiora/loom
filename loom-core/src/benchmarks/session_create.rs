@@ -1,4 +1,4 @@
-//! Session-create latency benchmark — AC-PERF-01.1.
+//! Session-create latency benchmark.
 //!
 //! Times `session_manager.create()` for `iterations` warm calls.
 //! Computes p50 and p99 percentiles; validates SLA thresholds.
@@ -8,7 +8,7 @@ use super::{BenchmarkConfig, BenchmarkError};
 use crate::session_manager::SessionCreateOpts;
 use serde::{Deserialize, Serialize};
 
-/// Result of the session-create latency benchmark (AC-PERF-01.1).
+/// Result of the session-create latency benchmark.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreateReport {
     /// p50 latency in milliseconds.
@@ -113,7 +113,7 @@ mod tests {
         }
     }
 
-    /// AC-PERF-01.1: p50 ≤ 500ms, p99 ≤ 1000ms on fast in-process mock.
+    /// p50 ≤ 500ms, p99 ≤ 1000ms on fast in-process mock.
     #[test]
     fn test_session_create_bench_pass() {
         let config = fast_config(10);
@@ -127,7 +127,7 @@ mod tests {
         assert_eq!(report.iterations, 10);
     }
 
-    /// AC-PERF-01.1: p99 > 1000ms triggers NFR-KILL flag.
+    /// p99 > 1000ms triggers NFR-KILL flag.
     #[test]
     fn test_session_create_bench_nfr_kill() {
         // Inject 1001ms delay on open_manifest (called inside create()) to push p99 over threshold.

@@ -1,4 +1,4 @@
-//! Binary-size budget check — AC-PERF-04.1.
+//! Binary-size budget check.
 //!
 //! Reads meta.json (strategy: bundled | downloaded), then checks
 //! the binary file size against the applicable budget.
@@ -6,7 +6,7 @@
 //! When meta.json is absent and the caller does not require it (e.g.
 //! a developer machine with `--binary` given explicitly), use
 //! `run_stat_fallback` which falls back to a conservative "downloaded"
-//! budget without requiring meta.json — AC-BENCH-02.
+//! budget without requiring meta.json.
 
 use super::BenchmarkError;
 use serde::{Deserialize, Serialize};
@@ -38,7 +38,7 @@ struct MetaJson {
     strategy: ChromiumStrategy,
 }
 
-/// Result of the binary-size check (AC-PERF-04.1).
+/// Result of the binary-size check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BinarySizeReport {
     pub binary_path: String,
@@ -85,7 +85,7 @@ pub fn run(binary_path: &Path, meta_json_path: &Path) -> Result<BinarySizeReport
     })
 }
 
-/// Run the binary-size check without meta.json (AC-BENCH-02).
+/// Run the binary-size check without meta.json.
 ///
 /// Uses filesystem stat for size and a conservative "downloaded" strategy
 /// (60 MB budget) when meta.json is absent. Sets `strategy_source =
@@ -131,7 +131,7 @@ mod tests {
         path
     }
 
-    /// AC-PERF-04.1: bundled, 100 MB binary → pass (budget = 150 MB).
+    /// bundled, 100 MB binary → pass (budget = 150 MB).
     #[test]
     fn test_binary_size_bundled_pass() {
         let dir = TempDir::new().unwrap();
@@ -143,7 +143,7 @@ mod tests {
         assert_eq!(report.strategy_source, "meta.json");
     }
 
-    /// AC-PERF-04.1: bundled, 151 MB binary → fail.
+    /// bundled, 151 MB binary → fail.
     #[test]
     fn test_binary_size_bundled_fail() {
         let dir = TempDir::new().unwrap();
@@ -153,7 +153,7 @@ mod tests {
         assert!(!report.pass, "151MB bundled should fail 150MB budget");
     }
 
-    /// AC-PERF-04.1: downloaded, 50 MB binary → pass (budget = 60 MB).
+    /// downloaded, 50 MB binary → pass (budget = 60 MB).
     #[test]
     fn test_binary_size_downloaded_pass() {
         let dir = TempDir::new().unwrap();
@@ -163,7 +163,7 @@ mod tests {
         assert!(report.pass, "50MB downloaded should pass 60MB budget");
     }
 
-    /// AC-PERF-04.1: downloaded, 61 MB binary → fail.
+    /// downloaded, 61 MB binary → fail.
     #[test]
     fn test_binary_size_downloaded_fail() {
         let dir = TempDir::new().unwrap();
@@ -198,7 +198,7 @@ mod tests {
         );
     }
 
-    /// AC-BENCH-02: --binary given, no meta.json → uses conservative fallback (≤ 60 MB pass).
+    /// --binary given, no meta.json → uses conservative fallback (≤ 60 MB pass).
     #[test]
     fn test_run_stat_fallback_pass() {
         let dir = TempDir::new().unwrap();
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(report.strategy_source, "inferred");
     }
 
-    /// AC-BENCH-02: binary exceeds conservative budget → fail reported.
+    /// Binary exceeds conservative budget → fail reported.
     #[test]
     fn test_run_stat_fallback_fail() {
         let dir = TempDir::new().unwrap();
@@ -220,7 +220,7 @@ mod tests {
         assert_eq!(report.strategy_source, "inferred");
     }
 
-    /// AC-BENCH-02: nonexistent binary → BinaryNotFound error.
+    /// Nonexistent binary → BinaryNotFound error.
     #[test]
     fn test_run_stat_fallback_binary_not_found() {
         let dir = TempDir::new().unwrap();

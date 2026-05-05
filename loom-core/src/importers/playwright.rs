@@ -1,7 +1,7 @@
 // PlaywrightImporter — reads a Playwright trace.zip and creates a non-replayable
 // Loom session on disk.
 //
-// # Contract semantics (AC-INTEROP-01.1)
+// # Contract semantics
 // - Opens the zip in-memory; locates the entry whose name ends with "trace.trace".
 // - Counts K = number of non-empty lines (NDJSON events) in that file.
 // - Generates a ULID session_id; creates `sessions_root/<session_id>/`.
@@ -100,11 +100,8 @@ impl PlaywrightImporter {
         })?;
 
         // --- 2. Count K = non-empty lines ---
-        // Each non-empty line is one Playwright event (AC-INTEROP-01.1 / D3).
-        let events: Vec<&str> = trace_content
-            .lines()
-            .filter(|l| !l.trim().is_empty())
-            .collect();
+        // Each non-empty line is one Playwright event.
+        let events: Vec<&str> = trace_content.lines().filter(|l| !l.trim().is_empty()).collect();
         let k = events.len() as u64;
 
         // --- 3. Generate session_id and create session directory ---
@@ -152,7 +149,7 @@ fn now_ms() -> u64 {
 /// Build NDJSON WAL lines: Header + K ActionReceipts + SessionTerminal.
 ///
 /// Uses `"0".repeat(64)` as `prev_hash` placeholder — import sessions are
-/// non-replayable so hash-chain integrity is not required (AC-INTEROP-01.1 caveat).
+/// non-replayable so hash-chain integrity is not required.
 /// `validate()` will return ManifestCorrupt on import sessions by design.
 fn build_wal_lines(session_id: &str, now_ms: u64, k: u64) -> Vec<String> {
     let zero_hash = "0".repeat(64);

@@ -1,5 +1,5 @@
 //! `replay_engine` — see `systems/loom-core/modules/replay_engine/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod replay_engine;
 pub use replay_engine::*;

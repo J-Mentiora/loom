@@ -1,5 +1,4 @@
 //! Performance benchmark harness — session create latency + receipt overhead + binary size.
-//! AC-PERF-01.1, AC-PERF-02.1, AC-PERF-04.1.
 //!
 //! Invoked by `loom benchmark` CLI subcommand. All benchmarks run in-process;
 //! no daemon required.
@@ -74,10 +73,10 @@ pub fn run_all(config: &BenchmarkConfig) -> Result<BenchmarkReport, BenchmarkErr
             .binary_path
             .clone()
             .ok_or(BenchmarkError::BinaryPathRequired)?;
-        // AC-BENCH-02: when --meta-json is NOT given, compute the default
+        // When --meta-json is NOT given, compute the default
         // sibling path and fall back to stat-only if it's absent.
         // When --meta-json IS given explicitly, honour the user's intent:
-        // hard-fail if the file is absent (AC-BENCH-04).
+        // hard-fail if the file is absent.
         let report = if let Some(explicit_meta) = config.meta_json_path.clone() {
             binary_size::run(&binary_path, &explicit_meta)?
         } else {

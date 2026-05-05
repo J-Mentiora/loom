@@ -1,9 +1,9 @@
 // BudgetEnforcer — per-session resource accounting.
 //
 // # Contract semantics
-// - **Two-phase (IC-CORE-06).** `check()` runs BEFORE host-fn dispatch;
+// - **Two-phase.** `check()` runs BEFORE host-fn dispatch;
 //   `account()` runs AFTER side-effect emission. Both can return Exceeded.
-// - **Per-session AtomicU64 (SR-CORE-16).** Each session owns its own
+// - **Per-session AtomicU64.** Each session owns its own
 //   counter struct; `account()` calls `fetch_add(Ordering::Relaxed)`.
 // - **Kill-callback breaks the structural cycle.** `BudgetEnforcer`
 //   does NOT depend on `SessionManager`. Instead, `SessionManager`
@@ -47,10 +47,10 @@ pub enum KillReason {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct BudgetLimits {
     /// Maximum cumulative wall-clock for the whole session (ms). Default 600 s.
-    /// AC-BUDGET-01.1: kill session when session total exceeds this.
+    /// Kills session when session total exceeds this.
     pub session_walltime_ms: u64,
     /// Maximum wall-clock for a single action (ms). Default 60 s.
-    /// AC-BUDGET-01.2: pre-reject action when estimated time exceeds this.
+    /// Pre-rejects action when estimated time exceeds this.
     pub action_walltime_ms: u64,
     pub network_bytes: u64,
     pub dom_nodes: u64,

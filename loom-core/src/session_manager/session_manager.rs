@@ -3,13 +3,13 @@
 // # Contract semantics
 // - **FSM:** `Created → Active → Closed | Aborted | Killed | Crashed`.
 //   Transitions guarded by per-session `Mutex<SessionStatus>`.
-// - **Per-session tokio task (BC-CORE-04).** Each session runs on a
+// - **Per-session tokio task.** Each session runs on a
 //   dedicated multi-threaded tokio task with its own arena.
-// - **Abort propagation (IC-CORE-02).** Each session owns
+// - **Abort propagation.** Each session owns
 //   `Arc<Notify>` + `Arc<AtomicBool>`. `abort()` flips the bool and
 //   calls `notify.notify_one()`. Host-fn entries check the bool;
 //   `tokio::select!` races real call vs notify.
-// - **Warm create budget (IC-CORE-01).** ULID gen + ensure_dir + WAL
+// - **Warm create budget.** ULID gen + ensure_dir + WAL
 //   header append + fsync + task spawn. NO WASM/Chromium/network on the
 //   sync path.
 // - **Kill-callback registration.** `create()` registers an
@@ -55,17 +55,17 @@ pub struct SessionCreateOpts {
     pub replay_of: Option<SessionId>,
     /// When set (replay path), forces the manifest Header's
     /// `started_at_ms` to this exact value instead of `now_ms()`.
-    /// Required for AC-SHCRT-08 hash-chain bit-equality: the chain
+    /// Required for hash-chain bit-equality: the chain
     /// hashes over the canonical Header bytes, so a divergent
     /// timestamp poisons every subsequent prev_hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms_override: Option<u64>,
-    /// Operator-supplied `--capture-policy` (AC-CAPPOL-01..04).
+    /// Operator-supplied `--capture-policy`.
     /// Wire form `"minimal" | "default" | "full"`; `None` means the
     /// server-default profile applies. Persisted in the manifest Header.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_policy: Option<String>,
-    /// Operator's `--no-blocklist` opt-out (AC-DET-05.1, AC-BLOCKLIST-04).
+    /// Operator's `--no-blocklist` opt-out.
     /// Default `false` (the analytics/ads/telemetry blocklist enforces
     /// sub-resource gating on every navigate). Persisted on per-session
     /// state so the host's `navigate_execute` can compute
@@ -74,8 +74,8 @@ pub struct SessionCreateOpts {
     pub no_blocklist: bool,
     /// Operator's `--profile` choice — `"safe" | "standard" | "full"`. Wire-default
     /// is `"safe"` (per `loom_rpc::core_service_adapter::CreateSessionParams::default_profile`).
-    /// Daemon's evaluate gate (AC-SAFEPROF-01..03) and shim's download confinement
-    /// (AC-SAFEPROF-04) both branch on this value.
+    /// Daemon's evaluate gate and shim's download confinement
+    /// both branch on this value.
     #[serde(default = "default_profile_string")]
     pub profile: String,
 }
@@ -116,7 +116,7 @@ pub enum SessionError {
     SessionKilled {
         reason: String,
     },
-    /// Profile fields are immutable after creation (AC-CORE-01.4).
+    /// Profile fields are immutable after creation.
     SessionProfileImmutable,
     SessionClosed {
         closed_at_ms: u64,
@@ -169,7 +169,7 @@ pub struct Session {
     pub tape_writer: Arc<tokio::sync::Mutex<TapeWriter>>,
     pub task_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Per-session monotonic action sequence, 0-based. Incremented atomically
-    /// at action dispatch via `allocate_action_id()`. AC-ACTID-01..03.
+    /// at action dispatch via `allocate_action_id()`.
     /// In-memory only — NOT persisted across daemon restarts (the daemon
     /// today doesn't resume Active sessions across restarts; sessions become
     /// Crashed on restart per startup_manager). See decisions.md Q3.
@@ -181,7 +181,6 @@ pub struct Session {
     /// executor's `tokio::select!` abort-arm reads this to distinguish
     /// budget-driven kills (→ `ActionOutcome::Trapped { BudgetExceeded }`)
     /// from user-initiated aborts (→ `ActionOutcome::Aborted`).
-    /// AC-BUDGETKILL-02.
     pub kill_reason: Arc<parking_lot::Mutex<Option<KillReason>>>,
     /// Handle to the per-session wall-clock timer task spawned at
     /// `create()`. Cancelled on `close()` / `abort()` so a closed session
@@ -191,12 +190,12 @@ pub struct Session {
     pub budget_timer: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Capture-policy wire-form ("minimal" / "default" / "full"), as
     /// passed in `SessionCreateOpts` and persisted to the manifest
-    /// header (AC-CAPPOL-03). The daemon reads this at dispatch time
+    /// header. The daemon reads this at dispatch time
     /// to apply per-receipt capture-policy via
-    /// `loom_rpc::host_service_adapter::wire_capture::apply_capture_profile_to_wire`
-    /// (AC-NAVRECEIPT2-05). `None` means default profile.
+    /// `loom_rpc::host_service_adapter::wire_capture::apply_capture_profile_to_wire`.
+    /// `None` means default profile.
     pub capture_policy: Option<String>,
-    /// Operator's `--no-blocklist` opt-out (AC-DET-05.1, AC-BLOCKLIST-04).
+    /// Operator's `--no-blocklist` opt-out.
     /// `false` by default (blocklist enforced). Read by the host's
     /// `navigate_execute` to compute the per-PageNavigate
     /// `blocklist_enabled` field.
@@ -205,7 +204,7 @@ pub struct Session {
     /// happens exactly once, at `LocalSessionManager::create` —
     /// `opts.seed.unwrap_or(default_seed)`. Downstream layers (HostState,
     /// shim wire, target_manager, determinism_injector, JS template)
-    /// carry concrete `Seed(u64)` only. AC-RNGDET-01..04.
+    /// carry concrete `Seed(u64)` only.
     pub seed: Seed,
     /// Per-session Unix epoch milliseconds. Substituted into the shim
     /// JS template's `Date.now` constant. Defaults to `now_ms()` at
@@ -215,15 +214,14 @@ pub struct Session {
     /// only determines RNG, not clock).
     pub epoch_ms: EpochMs,
     /// Operator's `--profile` choice persisted at create. Read by daemon's
-    /// WasmBridge for the evaluate gate (AC-SAFEPROF-01..03) AND by
+    /// WasmBridge for the evaluate gate AND by
     /// host_function_table when spawning the per-session shim (downloads
-    /// dir env var injection — AC-SAFEPROF-04). Immutable after create
-    /// per AC-CORE-01.4.
+    /// dir env var injection). Immutable after create.
     pub profile: String,
     /// Session-scoped downloads directory (`~/.loom/sessions/<ulid>/downloads/`).
     /// Populated only when `profile == "safe"` — Chromium uses this as the
     /// `downloadPath` for `Browser.setDownloadBehavior(allowAndName)` so all
-    /// downloads stay confined to the session dir (AC-WEB-07.2 / AC-SAFEPROF-04).
+    /// downloads stay confined to the session dir.
     /// `None` for non-safe profiles or pre-fix sessions.
     pub downloads_dir: Option<std::path::PathBuf>,
 }
@@ -233,7 +231,7 @@ impl Session {
     /// Returns the value the action should carry (0-based); the counter
     /// is then advanced to N+1. Relaxed ordering is sufficient: per-session
     /// dispatch is serialized today by the daemon's WasmBridge, and
-    /// `fetch_add` is atomic regardless of ordering. AC-ACTID-01.
+    /// `fetch_add` is atomic regardless of ordering.
     pub fn allocate_action_id(&self) -> u64 {
         self.next_action_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -255,7 +253,7 @@ pub struct LocalSessionManager {
     pub(crate) default_seed: u64,
     /// Sessions root directory (`<data_root>/sessions/`). Used by `create()`
     /// to build the per-session downloads directory under safe profile
-    /// (`<sessions_root>/<ulid>/downloads/`) for AC-WEB-07.2 / AC-SAFEPROF-04.
+    /// (`<sessions_root>/<ulid>/downloads/`).
     pub(crate) sessions_root: std::path::PathBuf,
     /// Weak self-pointer set at `new()` via `Arc::new_cyclic`. Used by
     /// `create()` to build the budget kill-callback closure without

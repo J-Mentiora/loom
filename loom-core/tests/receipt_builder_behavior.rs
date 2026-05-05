@@ -1,15 +1,15 @@
-//! AC-driven behavior tests for `receipt_builder` and `error_types`.
+//! Behaviour tests for `receipt_builder` and `error_types`.
 //!
-//! AC-CORE-04.1 — click default tier payload
-//! AC-CORE-04.2 — navigate default tier payload
-//! AC-CORE-04.3 — evaluate default tier payload
-//! AC-CORE-04.4 — capture-full override adds before-refs
-//! AC-CORE-04.5 — capture-minimal strips blob refs
-//! AC-CORE-05.1 — all errors have typed receipt
-//! AC-CORE-05.2 — stable 22-code error enum
-//! AC-NFR-DET-03.1 — no floats in receipt fields
-//! AC-NFR-DET-04.1 — canonical field ordering (serde_jcs)
-//! AC-NFR-DET-05.1 — timing_ticks is integer
+//! - click default tier payload
+//! - navigate default tier payload
+//! - evaluate default tier payload
+//! - capture-full override adds before-refs
+//! - capture-minimal strips blob refs
+//! - all errors have typed receipt
+//! - stable 22-code error enum
+//! - no floats in receipt fields
+//! - canonical field ordering (serde_jcs)
+//! - timing_ticks is integer
 
 use loom_core::content_store::ContentRef;
 use loom_core::error_types::{ReceiptCode, ReceiptSurface};
@@ -18,7 +18,7 @@ use loom_core::receipt_builder::{
 };
 
 // ---------------------------------------------------------------------------
-// AC-CORE-04.1 — click default tier
+// click default tier
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -82,7 +82,7 @@ fn ac_core_04_1_click_receipt_default_tier() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-04.2 — navigate default tier
+// navigate default tier
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -155,7 +155,7 @@ fn ac_core_04_2_navigate_receipt_default_tier() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-04.3 — evaluate default tier
+// evaluate default tier
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -196,7 +196,7 @@ fn ac_core_04_3_evaluate_receipt_default_tier() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-04.4 — capture-full adds before-refs (does NOT upgrade hash-after)
+// capture-full adds before-refs (does NOT upgrade hash-after)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -250,7 +250,7 @@ fn ac_core_04_4_capture_full_adds_before_refs() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-04.5 — capture-minimal strips blob refs
+// capture-minimal strips blob refs
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -346,7 +346,7 @@ fn ac_core_04_5_capture_minimal_strips_blobs() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-05.1 — error receipt shape
+// error receipt shape
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -397,7 +397,7 @@ fn ac_core_05_1_error_receipt_message_truncation() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-05.2 — stable 22-code enum (actual count is 21 per AC text)
+// stable 22-code enum (actual count is 21 per spec text)
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -426,8 +426,8 @@ fn ac_core_05_2_all_receipt_codes_have_wire_strings() {
         ReceiptCode::ManifestIntegrityFailed,
         ReceiptCode::RuntimeCrash,
     ];
-    // 22 codes per AC-CORE-05.2 (note: AC text lists 21 distinct codes despite saying "22")
-    assert_eq!(codes.len(), 22, "AC-CORE-05.2 enumerates exactly 22 codes");
+    // 22 codes (note: spec text lists 21 distinct codes despite saying "22")
+    assert_eq!(codes.len(), 22, "the enum enumerates exactly 22 codes");
     for code in &codes {
         let wire = code.as_wire();
         assert!(!wire.is_empty(), "as_wire() must return non-empty string");

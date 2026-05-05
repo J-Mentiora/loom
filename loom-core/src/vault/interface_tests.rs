@@ -1,8 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/vault/interface_tests.rs` instead.
-// Interface tests for `Vault`. Verifies IC-CORE-05 isolation,
-// BC-CORE-02 HARD vault placement, BC-CORE-03 OAuth-only, SR-CORE-15
-// 4-check sequence, BC-CORE-07 audit hash chain.
+// Interface tests for `Vault`. Verifies isolation,
+// HARD vault placement, OAuth-only,
+// 4-check sequence, audit hash chain.
 
 use super::vault::{
     CredentialType, GrantId, GrantOpts, KeychainAccess, LocalVault, NetRequest, NetResp,
@@ -58,7 +58,7 @@ fn req(origin: &str, scopes: Vec<&str>) -> NetRequest {
     }
 }
 
-// === BC-CORE-03: OAuth-only at v1 ===
+// === OAuth-only at v1 ===
 
 #[test]
 fn grant_rejects_apikey_with_credential_type_unsupported() {
@@ -105,7 +105,7 @@ fn grant_accepts_oauth_credential_type() {
     let _ = (opts, _ck::<LocalVault>);
 }
 
-// === IC-CORE-05 + BC-CORE-02 HARD: vault isolation ===
+// === Vault isolation ===
 
 #[test]
 fn substitute_signature_takes_mut_ref_to_net_request() {
@@ -136,7 +136,7 @@ fn substitute_writes_authorization_header_in_place_no_secret_in_response() {
     // the request — verified by structural inspection above.
 }
 
-// === SR-CORE-15: 4-check sequence (alive, origin, scope, ttl) ===
+// === 4-check sequence (alive, origin, scope, ttl) ===
 
 #[test]
 fn substitute_returns_vault_rejection_on_origin_mismatch() {
@@ -174,7 +174,7 @@ fn grant_returns_vault_rejection_if_threat_model_not_acknowledged() {
     let _ = opts;
 }
 
-// === BC-CORE-07: audit entries in same chain ===
+// === Audit entries in same chain ===
 
 #[test]
 fn revoke_signature_returns_unit_or_loomerror() {
@@ -189,7 +189,7 @@ fn revoke_signature_returns_unit_or_loomerror() {
     let _ = _ck::<LocalVault>;
 }
 
-// === BC-CORE-02 HARD: secret never persisted ===
+// === Secret never persisted ===
 
 #[test]
 fn keychain_access_returns_zeroizing_buffer() {

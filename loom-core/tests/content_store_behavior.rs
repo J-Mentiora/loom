@@ -1,9 +1,9 @@
-//! AC-driven integration tests for `ContentStore` / `LocalContentStore`.
+//! Integration tests for `ContentStore` / `LocalContentStore`.
 //!
-//! AC-CORE-02.1 — write idempotence
-//! AC-CORE-02.2 — integrity-on-read
-//! AC-STORE-01.1 — gc removes unreferenced blobs older than TTL
-//! AC-STORE-01.2 — max_bytes triggers auto-GC before write
+//! - write idempotence
+//! - integrity-on-read
+//! - gc removes unreferenced blobs older than TTL
+//! - max_bytes triggers auto-GC before write
 
 use loom_core::content_store::{ContentRef, ContentStore, LocalContentStore};
 use loom_core::error::LoomErrorCode;
@@ -39,7 +39,7 @@ fn fixture_with_limit(max_bytes: u64, ttl: Duration) -> (LocalContentStore, Temp
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-02.1 — Content-addressed write idempotence
+// Content-addressed write idempotence
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -85,7 +85,7 @@ fn ac_core_02_1_different_bytes_produce_different_refs() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-CORE-02.2 — Integrity-on-read
+// Integrity-on-read
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -138,7 +138,7 @@ fn ac_core_02_2_get_missing_blob_returns_store_not_found() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-STORE-01.1 — gc removes unreferenced blobs older than TTL
+// gc removes unreferenced blobs older than TTL
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -208,7 +208,7 @@ fn ac_store_01_1_gc_retains_blobs_within_ttl() {
     assert!(cs.get(&r).is_ok());
 }
 
-// Phase 8 round-23 regression: GC must protect blobs referenced by a
+// Late-stage regression: GC must protect blobs referenced by a
 // real-shape WAL entry, where receipt_canonical_bytes is a byte ARRAY
 // (not a string). The pre-fix `collect_referenced_blobs` only scanned
 // string values, so it missed every CAS reference baked into a real
@@ -293,7 +293,7 @@ fn ac_store_01_1_gc_report_counts_are_correct() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-STORE-01.2 — --store-max-bytes triggers auto-GC before write
+// --store-max-bytes triggers auto-GC before write
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -306,7 +306,7 @@ fn ac_store_01_2_put_at_limit_triggers_gc_and_succeeds() {
     fs::create_dir_all(tmp.path().join("sessions")).unwrap();
 
     let obs = Observability::new(store_root.join("loom.log"), false);
-    // Phase 1: write first blob with no limit.
+    // Step 1: write first blob with no limit.
     let cs_prep = LocalContentStore::new(store_root.clone(), obs.clone());
     let r1 = cs_prep.put(b"evictable blob").unwrap();
     let blob_path = loom_core::content_store::shard_path(&store_root, &r1.sha256, 2);
@@ -316,7 +316,7 @@ fn ac_store_01_2_put_at_limit_triggers_gc_and_succeeds() {
     let ft = filetime::FileTime::from_unix_time(0, 0);
     filetime::set_file_mtime(&blob_path, ft).unwrap();
 
-    // Phase 2: re-open with max_bytes = blob_size (exactly at limit).
+    // Step 2: re-open with max_bytes = blob_size (exactly at limit).
     let cs = LocalContentStore::new_with_config(
         store_root.clone(),
         obs,

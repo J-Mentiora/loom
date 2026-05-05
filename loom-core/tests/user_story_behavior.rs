@@ -1,19 +1,19 @@
 // User-story and parity acceptance tests — cross-cutting e2e behavior tests.
 //
-// AC coverage:
-//   AC-US-AGT-01.1: test_typed_receipt_drives_agent_control_flow
-//   AC-US-AGT-03.1: test_agent_never_sees_raw_secret_in_manifest
-//   AC-US-AGT-04.1: test_runaway_tab_killed_by_js_heap_budget
-//   AC-US-AGT-05.1: test_all_documented_error_codes_are_matchable
-//   AC-US-EVAL-01.1: test_replay_100x_zero_divergence
-//   AC-US-EVAL-02.1: test_diff_reports_dom_hash_change
-//   AC-US-EVAL-03.1: test_har_export_is_har_12_valid
-//   AC-US-EVAL-04.1: test_js_heap_budget_kills_within_60s
-//   AC-PARITY-01.1: test_timing_ticks_present_in_receipt
-//   AC-PARITY-02.1: test_json_manifest_readable_without_binary_blobs
-//   AC-PARITY-03.1: test_evaluate_receipt_return_value_is_typed_json
-//   AC-PARITY-04.1: test_inspect_at_action_5_returns_entries_0_to_5
-//   AC-PARITY-05.1: test_vault_audit_trail_covers_five_grants
+// Coverage:
+//   - test_typed_receipt_drives_agent_control_flow
+//   - test_agent_never_sees_raw_secret_in_manifest
+//   - test_runaway_tab_killed_by_js_heap_budget
+//   - test_all_documented_error_codes_are_matchable
+//   - test_replay_100x_zero_divergence
+//   - test_diff_reports_dom_hash_change
+//   - test_har_export_is_har_12_valid
+//   - test_js_heap_budget_kills_within_60s
+//   - test_timing_ticks_present_in_receipt
+//   - test_json_manifest_readable_without_binary_blobs
+//   - test_evaluate_receipt_return_value_is_typed_json
+//   - test_inspect_at_action_5_returns_entries_0_to_5
+//   - test_vault_audit_trail_covers_five_grants
 
 use loom_core::budget_enforcer::{
     BudgetEnforcer, BudgetLimits, KillCallback, KillReason, LocalBudgetEnforcer, ResourceKind,
@@ -691,7 +691,7 @@ fn test_js_heap_budget_kills_within_60s() {
     );
 }
 
-// ── AC-PARITY-01.1 — Auto-waiting parity with Playwright ─────────────────────
+// ── Auto-waiting parity with Playwright ─────────────────────
 
 #[test]
 fn test_timing_ticks_present_in_receipt() {
@@ -720,7 +720,7 @@ fn test_timing_ticks_present_in_receipt() {
     );
 }
 
-// ── AC-PARITY-02.1 — JSON-first trace consumability ──────────────────────────
+// ── JSON-first trace consumability ──────────────────────────
 
 #[test]
 fn test_json_manifest_readable_without_binary_blobs() {
@@ -754,7 +754,7 @@ fn test_json_manifest_readable_without_binary_blobs() {
     );
 }
 
-// ── AC-PARITY-03.1 — Typed extract parity with Stagehand ─────────────────────
+// ── Typed extract parity with Stagehand ─────────────────────
 
 #[test]
 fn test_evaluate_receipt_return_value_is_typed_json() {
@@ -789,7 +789,7 @@ fn test_evaluate_receipt_return_value_is_typed_json() {
     );
 }
 
-// ── AC-PARITY-04.1 — Time-travel parity with Replay.io (manifest scope) ──────
+// ── Time-travel parity with Replay.io (manifest scope) ──────
 
 #[test]
 fn test_inspect_at_action_5_returns_entries_0_to_5() {
@@ -837,7 +837,7 @@ fn test_inspect_at_action_5_returns_entries_0_to_5() {
     );
 }
 
-// ── AC-PARITY-05.1 — Receipt-mediated audit parity with vault ecosystem ───────
+// ── Receipt-mediated audit parity with vault ecosystem ───────
 
 #[test]
 fn test_vault_audit_trail_covers_five_grants() {
@@ -854,7 +854,7 @@ fn test_vault_audit_trail_covers_five_grants() {
     fs::create_dir_all(&session_dir).unwrap();
     mw.open_manifest(sid.clone(), None).unwrap();
 
-    // Exercise 5 grants (simulates the AC-PARITY-05.1 scenario)
+    // Exercise 5 grants (simulates the audit-parity scenario)
     for i in 0..5u32 {
         vault
             .grant(

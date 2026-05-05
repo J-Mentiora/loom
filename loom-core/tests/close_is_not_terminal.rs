@@ -1,4 +1,4 @@
-// Integration tests — AC-CLOSED-01, AC-CLOSED-02, AC-CLOSED-03, AC-CLOSED-04
+// Integration tests for closed/aborted session dispatch guards.
 //
 // Verifies the dispatch-guard behaviour: a closed or aborted session must be
 // rejected BEFORE any host/shim call is attempted.  The guard lives in
@@ -7,12 +7,12 @@
 // the right status is observable after close/abort and that an active session
 // is not incorrectly rejected.
 //
-// AC coverage:
-//   AC-CLOSED-01: closed_session_dispatch_returns_session_closed
-//   AC-CLOSED-02: aborted_session_dispatch_returns_session_aborted
-//   AC-CLOSED-03: create_close_dispatch_full_lifecycle (integration smoke)
-//   AC-CLOSED-04: shim_is_never_called_for_terminal_session
-//                 (verified structurally: guard fires before host.dispatch)
+// Coverage:
+//   closed_session_dispatch_returns_session_closed
+//   aborted_session_dispatch_returns_session_aborted
+//   create_close_dispatch_full_lifecycle (integration smoke)
+//   shim_is_never_called_for_terminal_session
+//   (verified structurally: guard fires before host.dispatch)
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
@@ -82,7 +82,7 @@ fn default_opts() -> SessionCreateOpts {
 /// `Err(SessionAborted)` for Aborted/Killed/Crashed,
 /// and `Ok(())` for Active/Created sessions.
 ///
-/// AC-CLOSED-04: the real guard executes this check BEFORE calling
+/// The real guard executes this check BEFORE calling
 /// `host.dispatch(...)` — so the shim is unreachable for terminal sessions.
 fn dispatch_guard(sm: &LocalSessionManager, session_id: &str) -> Result<(), LoomError> {
     use loom_core::manifest_writer::SessionId;
@@ -103,9 +103,9 @@ fn dispatch_guard(sm: &LocalSessionManager, session_id: &str) -> Result<(), Loom
     }
 }
 
-// ─── AC-CLOSED-01: closed session → session_already_closed ───────────────────
+// ─── closed session → session_already_closed ───────────────────
 
-/// AC-CLOSED-01: dispatching an action to a closed session returns
+/// Dispatching an action to a closed session returns
 /// `LoomErrorCode::SessionAlreadyClosed` (wire: `session-already-closed`).
 /// The daemon maps this to the RPC `session_closed` code (Change 3 in plan.md).
 #[test]
@@ -127,9 +127,9 @@ fn closed_session_dispatch_returns_session_closed() {
     );
 }
 
-// ─── AC-CLOSED-02: aborted session → session_aborted ─────────────────────────
+// ─── aborted session → session_aborted ─────────────────────────
 
-/// AC-CLOSED-02: dispatching an action to an aborted session returns
+/// Dispatching an action to an aborted session returns
 /// `LoomErrorCode::SessionAborted`.
 #[test]
 fn aborted_session_dispatch_returns_session_aborted() {
@@ -156,11 +156,11 @@ fn aborted_session_dispatch_returns_session_aborted() {
     );
 }
 
-// ─── AC-CLOSED-03: full lifecycle — create → close → dispatch → reject ───────
+// ─── full lifecycle — create → close → dispatch → reject ───────
 
-/// AC-CLOSED-03: integration smoke — creates a session, closes it, attempts an
+/// Integration smoke — creates a session, closes it, attempts an
 /// action dispatch, and asserts the rejection.  This is the regression path
-/// described in the feature description (AC-CORE-01.3 violation).
+/// described in the feature description.
 #[test]
 fn create_close_dispatch_full_lifecycle() {
     let sm = make_sm("/tmp/loom-test-close-terminal-03");
@@ -211,9 +211,9 @@ fn active_session_dispatch_is_not_rejected() {
     );
 }
 
-// ─── AC-CLOSED-04: structural proof — shim unreachable for terminal sessions ──
+// ─── structural proof — shim unreachable for terminal sessions ──
 
-/// AC-CLOSED-04: the dispatch guard fires BEFORE any host/shim call.
+/// The dispatch guard fires BEFORE any host/shim call.
 /// This is verified structurally: `dispatch_guard` returns `Err` for a closed
 /// session; the real `WasmBridge::dispatch_action_blocking` short-circuits on
 /// `Err` before building `HostAction` or calling `host.dispatch(...)`.

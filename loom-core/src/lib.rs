@@ -9,7 +9,7 @@
 //! ID/error types in `manifest_writer` + `error`.
 
 // Stub phase: fields declared in design-time interface files are not yet read
-// by the `unimplemented!()` bodies; suppress until Phase 5.4 fills them in.
+// by the `unimplemented!()` bodies; suppress until later releases fill them in.
 #![allow(dead_code)]
 
 // Allow `use loom_core::…` inside the `include!`-embedded systems/ interface
