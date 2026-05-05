@@ -172,9 +172,8 @@ pub struct Session {
     /// at action dispatch via `allocate_action_id()`.
     /// In-memory only — NOT persisted across daemon restarts (the daemon
     /// today doesn't resume Active sessions across restarts; sessions become
-    /// Crashed on restart per startup_manager). See decisions.md Q3.
-    /// TODO(action-id-resume): rebuild from last ActionReceipt.action_id+1
-    /// if a future feature adds session-resume across restarts.
+    /// Crashed on restart per startup_manager). If a future release adds
+    /// session-resume, rebuild this from the last ActionReceipt.action_id+1.
     pub next_action_id: AtomicU64,
     /// Budget kill metadata. Written by the kill-callback BEFORE the
     /// abort_flag is flipped + abort_notify is fired. The session

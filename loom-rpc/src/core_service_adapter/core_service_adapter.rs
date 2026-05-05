@@ -25,18 +25,13 @@
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-// Stub: in the full crate, `CoreApiFacade` is
-// `Arc<loom_core::CoreApiFacade>` — the locked single entry point.
-// We declare the dep abstractly here so the interface tests do not
-// require the full loom-core crate. The concrete `Arc` type binds
-// in v5.4 implementation.
-//
-// module_kind: cross-system-bridge
+// `CoreApiFacade` is `Arc<loom_core::CoreApiFacade>` — the single
+// entry point into loom-core. We declare the dep abstractly here so
+// interface tests don't have to pull the full loom-core crate in.
 
-/// Marker trait satisfied by `loom_core::CoreApiFacade` once the
-/// crate dep is wired in v5.4. Lets sibling modules write
-/// `Arc<dyn CoreFacadeBridge>` for testability without leaking the
-/// loom-core types.
+/// Marker trait satisfied by `loom_core::CoreApiFacade`. Lets sibling
+/// modules write `Arc<dyn CoreFacadeBridge>` for testability without
+/// leaking loom-core types.
 pub trait CoreFacadeBridge: Send + Sync {
     /// Export a closed session to the requested format. Stores output in CAS.
     /// Returns `ExportInfo` with `artifact_ref = SHA256` of export bytes.
@@ -269,8 +264,8 @@ pub struct VaultAddInfo {
     pub status: String,
 }
 
-// Stub LoomError reference — replaced by `loom_core::error::LoomError`
-// in v5.4 wiring.
+// `AdapterError` is the loom-rpc-local view of `LoomErrorCode`; the
+// canonical type lives in `loom_core::error`.
 pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode;
 
 /// Trait surface for `CoreServiceAdapter` so `RpcHandlers` can be

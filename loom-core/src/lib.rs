@@ -8,24 +8,21 @@
 //! the trait/types re-exported via `core_api_facade` plus the canonical
 //! ID/error types in `manifest_writer` + `error`.
 
-// Some struct fields exist for forthcoming features and aren't read yet;
-// silence the warning rather than scatter `#[allow(dead_code)]` per-item.
+// Some fields exist for forward-compatibility and are not read yet.
 #![allow(dead_code)]
 
-// Allow `use loom_core::…` inside crate-internal modules to resolve to
-// `crate::…` without churn at every import site.
+// Self-import so module bodies can reference `loom_core::*` paths.
 extern crate self as loom_core;
 
-// ---- Canonical error re-export ----
 // `loom_core::error::LoomError` is the universal error type referenced
 // by every other crate. The canonical definition lives in
-// `loom-shared` (cross-crate); we re-export here so the path
-// `loom_core::error::*` keeps working.
+// `loom-shared`; we re-export here so the path `loom_core::error::*`
+// keeps working.
 pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (12 + exporters) ----
+// ---- Module declarations ----
 pub mod budget_enforcer;
 pub mod content_store;
 pub mod core_api_facade;

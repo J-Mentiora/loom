@@ -107,7 +107,7 @@ fn dispatch_guard(sm: &LocalSessionManager, session_id: &str) -> Result<(), Loom
 
 /// Dispatching an action to a closed session returns
 /// `LoomErrorCode::SessionAlreadyClosed` (wire: `session-already-closed`).
-/// The daemon maps this to the RPC `session_closed` code (Change 3 in plan.md).
+/// The daemon maps this to the RPC `session_closed` code.
 #[test]
 fn closed_session_dispatch_returns_session_closed() {
     let sm = make_sm("/tmp/loom-test-close-terminal-01");

@@ -13,9 +13,9 @@
 //!   file additionally pins the wire-shape contract — wire form is
 //!   the lowercased enum variant ("minimal"/"default"/"full").
 //!
-//! Receipt-emission wiring through `CaptureProfile` is out of scope (see
-//! `decisions.md` "Scope boundary"); the integration test exercises the
-//! `apply_capture_profile` shape contract directly.
+//! Receipt-emission wiring through `CaptureProfile` is out of scope here;
+//! this integration test exercises the `apply_capture_profile` shape
+//! contract directly.
 
 use loom_core::content_store::ContentRef;
 use loom_core::receipt_builder::receipt_builder::{

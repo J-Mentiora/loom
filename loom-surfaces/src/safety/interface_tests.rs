@@ -81,8 +81,7 @@ fn safe_profile_blocks_console_log_of_window_location_intentional_defense_in_dep
     // acceptable defense-in-depth — operator opted into restrictions, and
     // exfiltrating `window.location.href` is itself a leak vector.
     //
-    // This test pins the broad-match behavior so it can't be silently
-    // relaxed (decisions.md Q10).
+    // This test pins the broad-match behavior so it can't be silently relaxed.
     let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "console.log(window.location)");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
@@ -98,11 +97,11 @@ fn safe_profile_blocks_service_worker_register() {
 
 #[test]
 fn safe_profile_allows_service_worker_feature_detect() {
-    // Deliberate carve-out (decisions.md Q11): tightening
-    // the pattern from `navigator.serviceWorker` to
-    // `navigator.serviceWorker.register` was specifically to leave this
-    // common defensive pattern working under safe profile. If this test
-    // breaks, the pattern was widened too far.
+    // Deliberate carve-out: tightening the denylist pattern from
+    // `navigator.serviceWorker` to `navigator.serviceWorker.register`
+    // was specifically to leave this common defensive pattern working
+    // under safe profile. If this test breaks, the pattern was widened
+    // too far.
     let result = SafetyPolicy::check_evaluate(
         SafetyProfile::Safe,
         "if ('serviceWorker' in navigator) { /* nothing */ }",

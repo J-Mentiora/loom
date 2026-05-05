@@ -292,8 +292,9 @@ impl Host for HostState {
 
     fn receipt_emit(&mut self, r: Receipt) -> impl ::core::future::Future<Output = ()> + Send {
         let _ = r;
-        // TODO(Gap-5): receipt_emit stub — navigate receipt fields are returned
-        // directly from navigate_execute; receipt_emit wiring is a separate task.
+        // receipt_emit is a no-op for now: navigate receipt fields are
+        // returned directly from navigate_execute. Surface-driven
+        // receipt emission lands in a follow-up.
         async move {}
     }
 

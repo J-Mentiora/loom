@@ -1,7 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/wit_type_marshaller/interfaces.rs` instead.
-// module_kind: wit-bindgen-generated
-//
 // WitTypeMarshaller — `wit-bindgen`-generated bidirectional WIT ↔ Rust
 // type conversion. WIT is the schema source of truth.
 //
