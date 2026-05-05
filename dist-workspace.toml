@@ -10,7 +10,7 @@ ci = "github"
 # The installers to generate for each app
 installers = ["shell", "homebrew"]
 # A GitHub repo to push Homebrew formulas to
-tap = "mentiora/homebrew-loom"
+tap = "mentiora-ai/homebrew-loom"
 # Publish jobs to run in CI
 publish-jobs = ["homebrew"]
 # Target platforms to build apps for (Rust target-triple syntax)

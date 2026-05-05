@@ -43,7 +43,7 @@ and AOT-compiles the WASM surfaces.
 ### Homebrew — macOS arm64/x64, Linux x64
 
 ```bash
-brew install mentiora/loom/loom
+brew install mentiora-ai/loom/loom
 loom postinstall
 loom doctor
 ```
