@@ -1,7 +1,7 @@
 //! `loom-daemon` — Loom daemon entry point.
 //!
 //! Wires `loom-core` + `loom-host` + `loom-rpc` into a running
-//! Unix-socket JSON-RPC server. Invoked by `loom serve` (IC-CLI-05).
+//! Unix-socket JSON-RPC server. Invoked by `loom serve` .
 //!
 //! Startup sequence:
 //!   1. Parse `--socket` / `--config` args.
@@ -12,7 +12,7 @@
 //!   4. Wire `ConnectionHandlerDeps` (adapters → handlers → router →
 //!      auth middleware → schema validator → observability).
 //!   5. Bind the Unix socket (`SocketServer::new`).
-//!   6. Print `HELLO_TOKEN=<hex>` to stdout (IC-CLI-05).
+//!   6. Print `HELLO_TOKEN=<hex>` to stdout .
 //!   7. Block on the accept loop until SIGINT / SIGTERM.
 
 use std::path::PathBuf;
@@ -40,7 +40,7 @@ use loom_rpc::schema_provider::schema_provider::SchemaProvider;
 use loom_rpc::schema_validator::schema_validator::SchemaValidator;
 use loom_rpc::socket_server::socket_server::{SocketServer, SocketServerConfig};
 
-// ─── Vault threat-model startup precondition (AC-VAULT-00.1 / F-S6) ─────────
+// ─── Vault threat-model startup precondition ─────────
 //
 // The file is embedded at compile time so the daemon binary cannot be built
 // without `security/vault_threat_model.md`. At runtime we also require the
@@ -62,13 +62,13 @@ fn check_vault_threat_model() -> Result<()> {
     ];
     if !VAULT_THREAT_MODEL.starts_with("# Vault Threat Model") {
         anyhow::bail!(
-            "AC-VAULT-00.1: vault_threat_model.md must start with '# Vault Threat Model'"
+            "vault_threat_model.md must start with '# Vault Threat Model'"
         );
     }
     for section in REQUIRED_SECTIONS {
         if !VAULT_THREAT_MODEL.contains(section) {
             anyhow::bail!(
-                "AC-VAULT-00.1: vault_threat_model.md missing required section heading: {}",
+                "vault_threat_model.md missing required section heading: {}",
                 section
             );
         }
@@ -86,7 +86,7 @@ struct CoreBridge {
     /// Optional WasmHost handle. When present, `close_session_raw` also
     /// fires a fire-and-forget `shutdown_session` on the host so any
     /// session-bound shim subprocesses (e.g. Chromium) get cooperatively
-    /// torn down (AC-SHCRT-03). None when modules haven't been compiled
+    /// torn down . None when modules haven't been compiled
     /// yet (matches StubHostBridge fallback).
     wasm_host: Option<Arc<loom_host::WasmHost>>,
 }
@@ -228,7 +228,7 @@ impl CoreFacadeBridge for CoreBridge {
             .map_err(|e| map_loom_error(&e));
 
         // Fire-and-forget shim teardown so any session-bound Chromium
-        // subprocess gets cooperatively reaped (AC-SHCRT-03). Best-effort —
+        // subprocess gets cooperatively reaped . Best-effort —
         // the user-visible close response doesn't wait for the shim to
         // exit, but the supervisor cleans up regardless.
         if let Some(host) = self.wasm_host.clone() {
@@ -262,7 +262,7 @@ impl CoreFacadeBridge for CoreBridge {
     // types (`GrantOpts`/`AddCredentialOpts`/`GrantSnapshot`). Errors
     // route through `map_loom_error` so the wire envelope carries the
     // distinct `vault_grant_revoked`/`vault_grant_expired`/`vault_rejection`
-    // codes (AC-VAULTRPC-04).
+    // codes .
 
     fn vault_grant(&self, p: GrantParams) -> Result<GrantInfo, AdapterError> {
         use loom_core::manifest_writer::SessionId;
@@ -352,10 +352,10 @@ impl CoreFacadeBridge for CoreBridge {
         _store_max_bytes: Option<u64>,
     ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, AdapterError>
     {
-        // AC-GCRPC-01..04: GC the content store. ttl_days defaults to 7
+        // GC the content store. ttl_days defaults to 7
         // when unset; the AC mandates the default is documented and
         // tested. Honor `store_max_bytes` later via auto-GC threshold
-        // (AC-STORE-01.2 — orthogonal to manual `loom gc`).
+        // (orthogonal to manual `loom gc`).
         let ttl_secs = ttl_days.unwrap_or(7).saturating_mul(24 * 3600);
         let ttl = std::time::Duration::from_secs(ttl_secs);
         let report = self
@@ -383,7 +383,7 @@ fn map_loom_error(e: &LoomError) -> AdapterError {
         CoreCode::SessionAborted => RpcCode::SessionAborted,
         CoreCode::BudgetExceeded | CoreCode::BudgetRateLimited => RpcCode::BudgetExceeded,
         CoreCode::StoreIntegrityFailed | CoreCode::ManifestCorrupt => RpcCode::StoreIntegrityFailed,
-        // AC-VAULTRPC-04 distinct kinds: revoke and expire must be
+        // Distinct kinds: revoke and expire must be
         // distinguishable on the wire. F-A2 / F-S1 / F-S2 fix —
         // previously these collapsed into VaultGrantNotFound.
         //
@@ -409,7 +409,7 @@ fn map_loom_error(e: &LoomError) -> AdapterError {
         | CoreCode::ShimFailure
         | CoreCode::ShimTimeout
         | CoreCode::ShimBreakerOpen => RpcCode::SurfaceTrap,
-        // AC-SAFEPROF-01..04: profile-restricted is a wire-stable kind
+        // profile-restricted is a wire-stable kind
         // that survives daemon → wire translation. Detail (matched_pattern,
         // profile, violation) is currently constructed at the daemon gate
         // site and lives in `Receipt.error.detail`, not in the LoomError
@@ -443,7 +443,7 @@ impl WasmHostBridge for StubHostBridge {
         Err(LoomErrorCode::SurfaceUnavailable)
     }
 
-    // AC-DIST-05: stub bridge means WASM host failed to load (no surfaces).
+    // stub bridge means WASM host failed to load (no surfaces).
     // Reporting false here doesn't change behavior — `dispatch_action`
     // already errors with SurfaceUnavailable — but it produces a clearer
     // BrowserNotFound message at session.create when the surfaces dir
@@ -459,7 +459,7 @@ impl WasmHostBridge for StubHostBridge {
 struct WasmBridge {
     host: Arc<loom_host::WasmHost>,
     core: Arc<CoreApiFacade>,
-    /// AC-DIST-05: was a `ShimChromiumConfig` registered at host boot?
+    /// was a `ShimChromiumConfig` registered at host boot?
     /// Set at `build_host_bridge` time from the resolver's outcome.
     has_chromium: bool,
 }
@@ -480,7 +480,7 @@ impl WasmHostBridge for WasmBridge {
             ))
             .map_err(|_| LoomErrorCode::SessionNotFound)?;
 
-        // AC-CLOSED-01/02/04: reject terminal sessions before any host dispatch.
+        // Reject terminal sessions before any host dispatch.
         // The check must precede host.dispatch() so the shim is never reached.
         {
             use loom_core::session_manager::SessionStatus;
@@ -494,7 +494,7 @@ impl WasmHostBridge for WasmBridge {
             }
         }
 
-        // AC-SAFEPROF-01..03: Safe profile blocks destructive evaluate.
+        // Safe profile blocks destructive evaluate.
         // Daemon-layer gate (NOT shim) — daemon has typed Action +
         // Session.profile in scope so we can short-circuit before
         // host.dispatch.
@@ -513,7 +513,7 @@ impl WasmHostBridge for WasmBridge {
                         session_id = %session_id_str,
                         profile = "safe",
                         matched_pattern = matched,
-                        "AC-SAFEPROF-01: blocked destructive evaluate"
+                        "blocked destructive evaluate"
                     );
                     return Ok(profile_restricted_evaluate_receipt(
                         session.allocate_action_id(),
@@ -536,7 +536,7 @@ impl WasmHostBridge for WasmBridge {
             seed: session.seed,
             epoch_ms: session.epoch_ms,
             no_blocklist: session.no_blocklist,
-            // AC-SAFEPROF-04: thread profile + downloads_dir into the
+            // thread profile + downloads_dir into the
             // SessionHandle so HostState can inject env vars at shim spawn.
             profile: session.profile.clone(),
             downloads_dir: session.downloads_dir.clone(),
@@ -564,8 +564,8 @@ impl WasmHostBridge for WasmBridge {
             // CdpMessage. Mismatch returns `HostError::Internal("payload
             // not valid UTF-8 ...")` from the guest, which surfaces as
             // `internal_error: action dispatch failed` to the CLI.
-            // (Bug seen in Phase 8 round-3 retest after the
-            // evaluate-result-not-surfaced feature landed.)
+            // (This regression was caught after the evaluate-result-not-surfaced
+            // feature landed.)
             Action::WebNavigate { url, .. } => url.as_bytes().to_vec(),
             Action::WebEvaluate { expression, .. } => expression.as_bytes().to_vec(),
             _ => build_chromium_args(&action).unwrap_or_else(|| {
@@ -574,7 +574,7 @@ impl WasmHostBridge for WasmBridge {
                     .into_bytes()
             }),
         };
-        // AC-ACTID-01..03: per-session monotonic action_id, allocated at
+        // per-session monotonic action_id, allocated at
         // dispatch time. The same id is plumbed through HostState →
         // ReceiptBuilder → ActionReceipt (WAL) → Receipt (RPC reply), so the
         // value the CLI sees matches `loom session inspect` entries[].action_id.
@@ -634,7 +634,7 @@ impl WasmHostBridge for WasmBridge {
     }
 }
 
-/// AC-SAFEPROF-01..03: synthesize an error Receipt for a safe-profile
+/// synthesize an error Receipt for a safe-profile
 /// evaluate that matched the denylist. Daemon-layer gate runs BEFORE
 /// host.dispatch, so we never touch the shim. The wire shape:
 ///
@@ -653,7 +653,7 @@ impl WasmHostBridge for WasmBridge {
 /// ```
 ///
 /// `action_id` comes from `session.allocate_action_id()` so the rejection
-/// counts against the per-session monotonic sequence (AC-ACTID-01..03).
+/// counts against the per-session monotonic sequence .
 fn profile_restricted_evaluate_receipt(
     action_id: u64,
     session_id: &str,
@@ -929,7 +929,7 @@ fn build_navigate_wire_receipt(
                 }
             });
 
-    // AC-EVALRESULT-01..04: surface the evaluate return value on the
+    // surface the evaluate return value on the
     // wire. The host's `evaluate_execute` populates
     // `evaluate_return_value_json` (inline-sized) OR
     // `evaluate_return_value_blob_ref` (offloaded to content store);
@@ -992,7 +992,7 @@ fn build_navigate_wire_receipt(
 /// 1. **Typed shim failure** — `error_code = "shim-failure"`,
 ///    `error_details = JSON {"kind": "...", "url": "...", ...}`.
 ///    Hoists the `kind` field to the wire `ReceiptError.kind` and puts
-///    the remaining fields into `detail`. AC-NAVERR-01..03.
+///    the remaining fields into `detail`..
 ///
 /// 2. **Untyped shim failure or other host error** — kind defaults to
 ///    the host's `error_code`; `detail` wraps the raw `error_details`
@@ -1101,7 +1101,7 @@ impl Default for DaemonArgs {
 }
 
 fn data_root_default() -> PathBuf {
-    // BC §1: macOS uses ~/Library/Application Support/loom; Linux uses $XDG_DATA_HOME/loom.
+    // Per the wire-spec's data-dir conventions: macOS uses ~/Library/Application Support/loom; Linux uses $XDG_DATA_HOME/loom.
     #[cfg(target_os = "macos")]
     {
         dirs::data_dir()
@@ -1118,11 +1118,11 @@ fn data_root_default() -> PathBuf {
 }
 
 /// Parse CLI args. Minimal: `--socket PATH` and `--config PATH` (config
-/// parsing NYI — uses env vars + defaults).
+/// parsing not yet implemented — uses env vars + defaults).
 fn parse_args(argv: &[String]) -> DaemonArgs {
     let mut args = DaemonArgs::default();
 
-    // Override from env vars (BC §1 precedence: CLI > env > config > defaults).
+    // Override from env vars (precedence: CLI > env > config > defaults).
     if let Ok(v) = std::env::var("LOOM_SOCKET_PATH") {
         args.socket_path = PathBuf::from(v);
     }
@@ -1160,7 +1160,7 @@ fn parse_args(argv: &[String]) -> DaemonArgs {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 //
-// AC-DIST-01: exposed as `pub fn run()` so the `loom-daemon` binary can live
+// exposed as `pub fn run()` so the `loom-daemon` binary can live
 // in `loom-cli/src/bin/loom-daemon.rs` (a thin shim) and cargo-dist 0.30+
 // ships all 4 loom binaries from one Cargo Package in one tarball — its docs
 // require all `[[bin]]` entries to be in one Package to bundle.
@@ -1174,7 +1174,7 @@ pub fn run() -> Result<()> {
 }
 
 async fn async_main() -> Result<()> {
-    // AC-VAULT-00.1 startup gate (F-S6): refuse to start without a
+    //.1 startup gate (F-S6): refuse to start without a
     // present, well-formed threat-model document.
     check_vault_threat_model().context("vault threat-model precondition failed")?;
 
@@ -1220,7 +1220,7 @@ async fn async_main() -> Result<()> {
         build_host_bridge(Arc::clone(&core));
 
     // 4. Build schema provider. The schema directory holds per-method
-    //    JSON Schema files emitted at build time (AC-PROTO-02.2).
+    //    JSON Schema files emitted at build time .
     //    If the directory is empty / missing, the daemon starts with an
     //    empty registry — `rpc.schemas` returns an empty method list
     //    and schema validation is bypassed (no method schemas = pass).
@@ -1299,7 +1299,7 @@ async fn async_main() -> Result<()> {
     let server = SocketServer::new(socket_config, deps)
         .map_err(|e| anyhow::anyhow!("SocketServer::new failed: {:?}", e))?;
 
-    // 7. Write auth artefacts for CLI (IC-CLI-05 / AuthManager contract):
+    // 7. Write auth artefacts for CLI (per the AuthManager contract):
     //    hello.token + daemon.pid in data_root/auth/.
     let auth_dir = args.data_root.join("auth");
     std::fs::create_dir_all(&auth_dir)
@@ -1311,7 +1311,7 @@ async fn async_main() -> Result<()> {
     std::fs::write(&pid_path, std::process::id().to_string().as_bytes())
         .with_context(|| format!("write daemon.pid to {}", pid_path.display()))?;
 
-    // 8. Print HELLO_TOKEN to stdout (IC-CLI-05).
+    // 8. Print HELLO_TOKEN to stdout .
     println!("HELLO_TOKEN={}", server.token.0);
 
     // 9. Signal handler for graceful shutdown.
@@ -1356,11 +1356,11 @@ fn build_host_bridge(
         .join("loom")
         .join("surfaces");
 
-    // AC-DIST-05: resolve Chromium across all install channels. Resolution
+    // resolve Chromium across all install channels. Resolution
     // chain: LOOM_CHROMIUM_PATH env override → pinned `~/.config/loom/chromium/...`
     // → PATH search (chromium / chromium-browser / chrome / google-chrome) →
     // macOS `/Applications/...` → typed `BrowserNotFound`. Pinned wins for
-    // replay-bit-equality (SR-SHIM-03); a `tracing::warn!` fires below when
+    // replay-bit-equality ; a `tracing::warn!` fires below when
     // the resolver picks a non-pinned source so users know they've lost
     // determinism.
     let chromium_dir = dirs::home_dir()
@@ -1464,9 +1464,9 @@ mod tests {
     use super::*;
     use loom_shared::shim_protocol::CdpMessage;
 
-    // ─── AC-SAFEPROF-01 daemon-layer evaluate gate (Layer B) ──────────
+    // ─── Daemon-layer evaluate gate (Layer B) ──────────
 
-    /// AC-SAFEPROF-01: receipt envelope shape after daemon-side rejection.
+    /// receipt envelope shape after daemon-side rejection.
     /// Pins the wire fields the operator's `loom action web.evaluate`
     /// reproducer reads from stdout JSON.
     #[test]
@@ -1492,7 +1492,7 @@ mod tests {
         assert_eq!(receipt.timing_ticks, 0);
     }
 
-    /// AC-SAFEPROF-01 — verify the operator's exact reproducer pattern
+    /// verify the operator's exact reproducer pattern
     /// matches the daemon's denylist BEFORE shim dispatch.
     #[test]
     fn evaluate_denylist_blocks_operator_reproducer_window_location_assignment() {
@@ -1503,7 +1503,7 @@ mod tests {
         assert_eq!(matched, Some(&"window.location"));
     }
 
-    /// AC-SAFEPROF-01 — service-worker registration is gated; feature
+    /// service-worker registration is gated; feature
     /// detection is allowed (tightened pattern per skeptic review).
     #[test]
     fn evaluate_denylist_gates_service_worker_register_not_feature_detect() {
@@ -1523,7 +1523,7 @@ mod tests {
         );
     }
 
-    /// AC-SAFEPROF-01 wire string — `LoomErrorCode::ProfileRestricted`
+    /// Wire string — `LoomErrorCode::ProfileRestricted`
     /// serializes as `"profile_restricted"`. Mirrors what the receipt's
     /// `error.kind` carries; if these drift, the operator's grep on
     /// the receipt JSON breaks.
@@ -1568,7 +1568,7 @@ mod tests {
         }
     }
 
-    /// AC-WEBVERBS-01 — every Web.* variant produces a decodable CdpMessage.
+    /// every Web.* variant produces a decodable CdpMessage.
     #[test]
     fn build_chromium_args_emits_valid_cdp_message_for_each_web_verb() {
         let session = s("sess-1");
@@ -1655,7 +1655,7 @@ mod tests {
         }
     }
 
-    /// AC-WEBVERBS-02 — evaluate carries the user expression verbatim.
+    /// evaluate carries the user expression verbatim.
     #[test]
     fn build_chromium_args_evaluate_emits_runtime_evaluate_with_expression() {
         let action = Action::WebEvaluate {
@@ -1667,7 +1667,7 @@ mod tests {
         assert_eq!(expr_of(&msg), "1+1");
     }
 
-    /// AC-WEBVERBS-03 — click selects + clicks via Runtime.evaluate.
+    /// click selects + clicks via Runtime.evaluate.
     #[test]
     fn build_chromium_args_click_emits_runtime_evaluate_with_query_selector_click() {
         let action = Action::WebClick {
@@ -1684,7 +1684,7 @@ mod tests {
         assert!(expr.contains(".click()"), "got: {expr}");
     }
 
-    /// AC-WEBVERBS-04 — type sets value AND dispatches input/change events.
+    /// type sets value AND dispatches input/change events.
     #[test]
     fn build_chromium_args_type_emits_runtime_evaluate_setting_value_and_dispatching_input_change()
     {
@@ -1707,7 +1707,7 @@ mod tests {
         );
     }
 
-    /// AC-WEBVERBS-05 — screenshot uses Page.captureScreenshot { format: "png" }.
+    /// screenshot uses Page.captureScreenshot { format: "png" }.
     #[test]
     fn build_chromium_args_screenshot_emits_page_capture_screenshot_png() {
         let action = Action::WebScreenshot {
@@ -1722,7 +1722,7 @@ mod tests {
         }
     }
 
-    // === build_wire_receipt_error: AC-NAVERR-01..03 wire shape ===
+    // === build_wire_receipt_error: wire shape ===
 
     #[test]
     fn build_wire_receipt_error_shim_failure_with_typed_http_status_detail() {
