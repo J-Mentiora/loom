@@ -20,7 +20,7 @@
 //   stores the manifest tarball SHA. Re-run with matching sentinel skips.
 // - **Version-pinned.** Caller passes `version` (typically
 //   `env!("CARGO_PKG_VERSION")`); we GET
-//   `https://github.com/J-Mentiora/loom/releases/download/v{version}/dist-manifest.json`.
+//   `https://github.com/mentiora-ai/loom/releases/download/v{version}/dist-manifest.json`.
 //   404 → typed `CliError::Internal` with the actionable correction
 //   ("install with --tag v{X}.{Y}.{Z}").
 // - **Internal-only.** Used by `PostinstallRunner::loom_binaries_step`.
@@ -31,7 +31,7 @@ use crate::CliError;
 
 /// Repository owner/name segment for the GH Release URL. Match the
 /// workspace `repository` metadata in Cargo.toml.
-const RELEASE_OWNER_REPO: &str = "J-Mentiora/loom";
+const RELEASE_OWNER_REPO: &str = "mentiora-ai/loom";
 
 /// The 3 sibling binaries cargo-install must acquire post-fact.
 /// (The `loom` binary itself was installed by `cargo install` already.)

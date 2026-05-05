@@ -7,7 +7,7 @@ typed error mode for any new failure path.
 ## Building
 
 ```bash
-git clone https://github.com/J-Mentiora/loom
+git clone https://github.com/mentiora-ai/loom
 cd loom
 rustup target add wasm32-wasip2
 cargo build --workspace
