@@ -1,6 +1,6 @@
 # Loom
 
-[![CI](https://github.com/J-Mentiora/loom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/J-Mentiora/loom/actions/workflows/ci.yml)
+[![CI](https://github.com/mentiora-ai/loom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mentiora-ai/loom/actions/workflows/ci.yml)
 
 **Agent-first browser automation runtime.** A local daemon + CLI + MCP server
 that drives a real Chromium subprocess through a deterministic action store.
@@ -55,7 +55,7 @@ loom doctor
 ### `cargo install` — any platform with Rust 1.92+
 
 ```bash
-cargo install --git https://github.com/J-Mentiora/loom --tag v0.9.0 loom-cli
+cargo install --git https://github.com/mentiora-ai/loom --tag v0.9.0 loom-cli
 loom postinstall
 loom doctor
 ```
@@ -68,7 +68,7 @@ release version for `v0.9.0`.)
 ### Manual download — pre-built tarball
 
 ```bash
-curl -fsSL https://github.com/J-Mentiora/loom/releases/latest/download/loom-cli-installer.sh | sh
+curl -fsSL https://github.com/mentiora-ai/loom/releases/latest/download/loom-cli-installer.sh | sh
 loom postinstall
 loom doctor
 ```
@@ -91,7 +91,7 @@ Notarization is tracked as a follow-up. Windows isn't supported — see
 ### Build from source
 
 ```bash
-git clone https://github.com/J-Mentiora/loom
+git clone https://github.com/mentiora-ai/loom
 cd loom
 rustup target add wasm32-wasip2
 cargo build --release
