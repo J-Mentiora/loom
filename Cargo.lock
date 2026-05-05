@@ -2414,7 +2414,7 @@ dependencies = [
 
 [[package]]
 name = "loom-cli"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "clap",
@@ -2444,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "loom-core"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "dashmap",
@@ -2474,7 +2474,7 @@ dependencies = [
 
 [[package]]
 name = "loom-daemon"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "ciborium",
@@ -2494,7 +2494,7 @@ dependencies = [
 
 [[package]]
 name = "loom-host"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "addr2line 0.24.2",
  "async-trait",
@@ -2526,14 +2526,14 @@ dependencies = [
 
 [[package]]
 name = "loom-keychain"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "zeroize",
 ]
 
 [[package]]
 name = "loom-mcp"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2555,7 +2555,7 @@ dependencies = [
 
 [[package]]
 name = "loom-rpc"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2582,7 +2582,7 @@ dependencies = [
 
 [[package]]
 name = "loom-shared"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "ciborium",
  "dirs",
@@ -2597,7 +2597,7 @@ dependencies = [
 
 [[package]]
 name = "loom-shims"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "async-trait",
  "chromiumoxide",
@@ -2623,7 +2623,7 @@ dependencies = [
 
 [[package]]
 name = "loom-surface-web"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "sha2",
  "wit-bindgen 0.40.0",
@@ -2631,7 +2631,7 @@ dependencies = [
 
 [[package]]
 name = "loom-surfaces"
-version = "1.0.0"
+version = "0.9.0"
 dependencies = [
  "ciborium",
  "loom-shared",
