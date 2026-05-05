@@ -1,6 +1,4 @@
-//! `core_service_adapter` — see `systems/loom-rpc/modules/core_service_adapter/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `core_service_adapter` — see crate root.
 pub mod core_service_adapter;
 pub use core_service_adapter::*;
 

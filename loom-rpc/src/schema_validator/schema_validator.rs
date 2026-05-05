@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/schema_validator/interfaces.rs` instead.
 // SchemaValidator — pre-dispatch JSON Schema validation as a
 // `jsonrpsee` request-extension middleware.
 //

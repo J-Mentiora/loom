@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/DoctorRunner/interfaces.rs` instead.
 // DoctorRunner — `loom doctor` 5-check health probe.
 //
 // # Contract semantics

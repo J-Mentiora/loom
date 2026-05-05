@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/host_service_adapter/interfaces.rs` instead.
 // HostServiceAdapter — routes `action.<surface>.<verb>` methods to
 // `loom-host::WasmHost::dispatch`.
 //

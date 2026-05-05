@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/trap_handler/interfaces.rs` instead.
 // TrapHandler — catches `wasmtime::Trap`, resolves `.dwp` debug info,
 // converts to `LoomErrorCode::SurfaceTrap` typed receipt.
 //

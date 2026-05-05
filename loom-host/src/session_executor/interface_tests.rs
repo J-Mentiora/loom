@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/session_executor/interface_tests.rs` instead.
 // Interface tests for `SessionExecutor`. Verifies the no-extra-spawns
 // invariant inside dispatch (caller's tokio handle is borrowed),
 // typed-receipt trap propagation, and per-dispatch

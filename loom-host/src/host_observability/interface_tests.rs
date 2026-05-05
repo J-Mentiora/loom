@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/host_observability/interface_tests.rs` instead.
 // Interface tests for `HostObservability`. Verifies the redaction
 // layer's blocklist (defense-in-depth on the vault-isolation invariant)
 // and the sink-module acyclicity invariant.

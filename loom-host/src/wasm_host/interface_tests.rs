@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/wasm_host/interface_tests.rs` instead.
 // Interface tests for `WasmHost`. Verifies the contract signatures
 // exactly (`loom-host_contract.md`), the dispatch order, SLA shape,
 // compile-off-hot-path invariant, and the API-exposed-only invariant.

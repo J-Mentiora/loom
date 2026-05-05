@@ -1,6 +1,4 @@
-//! `module_library` — see `systems/loom-host/modules/module_library/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `module_library` — see crate root.
 pub mod module_library;
 pub use module_library::*;
 

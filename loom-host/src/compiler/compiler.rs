@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/compiler/interfaces.rs` instead.
 // Compiler — Cranelift AOT compile `.wasm → .cwasm`.
 //
 // # Contract semantics

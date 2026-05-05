@@ -1,6 +1,4 @@
-//! `rpc_handlers` — see `systems/loom-rpc/modules/rpc_handlers/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `rpc_handlers` — see crate root.
 pub mod rpc_handlers;
 pub use rpc_handlers::*;
 

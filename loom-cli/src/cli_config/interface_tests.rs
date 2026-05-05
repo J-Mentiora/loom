@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/ConfigResolver/interface_tests.rs` instead.
 // Interface tests for `ConfigResolver`. Verifies precedence
 // signature, deny_unknown_fields posture, and the
 // schema-validation hook.

@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/ServeRunner/interface_tests.rs` instead.
 // Interface tests for `ServeRunner`. Verifies HELLO
 // disclosure shape and the no-persist contract.
 

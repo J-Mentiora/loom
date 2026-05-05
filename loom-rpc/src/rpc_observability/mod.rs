@@ -1,6 +1,4 @@
-//! `rpc_observability` — see `systems/loom-rpc/modules/rpc_observability/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `rpc_observability` — see crate root.
 pub mod rpc_observability;
 pub use rpc_observability::*;
 

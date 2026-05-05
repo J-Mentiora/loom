@@ -1,6 +1,4 @@
-//! `session_manager` — see `systems/loom-core/modules/session_manager/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `session_manager` — see crate root.
 pub mod session_manager;
 pub use session_manager::*;
 

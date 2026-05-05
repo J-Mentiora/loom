@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/wasm_host/interfaces.rs` instead.
 // WasmHost — public API facade implementing `loom-host_contract.md`.
 //
 // # Contract semantics

@@ -1,6 +1,4 @@
-//! `request_router` — see `systems/loom-rpc/modules/request_router/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `request_router` — see crate root.
 pub mod request_router;
 pub use request_router::*;
 
