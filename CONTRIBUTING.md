@@ -1,8 +1,8 @@
 # Contributing to loom
 
-Thanks for your interest. Loom is small, opinionated, and used in production
-by Mentiora's pipeline. We bias toward narrow, well-scoped changes with a
-typed error mode for any new failure path.
+Thanks for your interest. Loom is small and opinionated; we bias toward
+narrow, well-scoped changes with a typed error mode for any new failure
+path.
 
 ## Building
 

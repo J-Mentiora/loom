@@ -1,29 +1,44 @@
 # Credits
 
-Loom was built inside Mentiora's
-[code-pipeline](https://github.com/WhoIsJohannes/code-pipeline) project,
-a genetic-algorithm-driven software-generation harness. Its initial
-design was produced by the pipeline's GA exploration phase; subsequent
-hardening (security, determinism, MCP integration, crash detection,
-GC reference protection, runtime correctness) happened in 23 rounds
-of iterative testing + fix.
+Loom was incubated inside a private Mentiora development project before
+this open-source release. It was built with substantial AI-assisted
+authoring (Anthropic Claude — Sonnet 4.6 and Opus 4.7) under human
+review at every gate. Human stewardship + final design decisions by
+Johannes Rummel and the Mentiora team.
 
-This repository is the clean extraction — the original commit history
-is preserved in the source pipeline at `projects/loom/`. The
-code-pipeline repository now consumes loom as a regular Cargo
-dependency.
+The implementation went through many iterative rounds of testing and
+hardening — security, deterministic replay, MCP integration, Chromium
+crash detection, GC reference protection, runtime correctness — before
+the v0.9 public extraction.
 
-## Extraction provenance
+## v0.9.0 extraction
 
-- **Source repository:** https://github.com/WhoIsJohannes/code-pipeline
-- **Source path:** `projects/loom/src/`
-- **Extracted at:** 2026-05-04
-- **Source commit at extraction:** see git log of the source repo
-  for the commit dated 2026-05-04 that touches `projects/loom/`.
+This repository is a clean extraction. The git history visible here
+starts at the v0.9.0 ship; pre-extraction history lives in a private
+internal repo and is not published.
 
-## Contributors
+If you depend on a specific behavior and want to know how it was
+designed, the [README's "Status" matrix](README.md#status) flags what
+is stable vs beta, and the per-action documentation in
+[docs/actions.md](docs/actions.md) is the canonical wire-shape spec.
 
-The pipeline's GA generated, scored, and hybridized candidate designs;
-Claude (Sonnet 4.6, Opus 4.7) authored the implementation under
-human review at every phase gate. Human stewardship by Johannes
-Rummel + the Mentiora team.
+## Third-party crates
+
+`Cargo.lock` is the authoritative list. Notable load-bearing
+dependencies, with the role they fill:
+
+- **wasmtime** — host-side runtime for the WASM-isolated surface API
+- **chromiumoxide** — Chrome DevTools Protocol typed bindings (only in
+  `loom-shims`; out-of-process Chromium driver)
+- **tokio** — async runtime
+- **jsonrpsee** — Unix-socket JSON-RPC server for the daemon
+- **clap** — CLI parser
+- **ring** — vault crypto primitives
+- **serde / serde_jcs** — canonical-bytes serialization for manifest
+  hash chains and receipts
+- **wit-bindgen** — host/guest binding generation against the surface
+  ABI declared in `wit/loom-surface.wit`
+- **tokio-tungstenite** — WebSocket transport for raw CDP
+
+License audit (`cargo deny check licenses`) gates the release; see
+[deny.toml](deny.toml) for the allow-list.

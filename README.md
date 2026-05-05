@@ -1,6 +1,10 @@
 # Loom
 
 [![CI](https://github.com/mentiora-ai/loom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mentiora-ai/loom/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mentiora-ai/loom?include_prereleases&sort=semver)](https://github.com/mentiora-ai/loom/releases/latest)
+[![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue)](#license)
+[![Rust](https://img.shields.io/badge/rust-1.92%2B-orange)](https://www.rust-lang.org/)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#install)
 
 **Agent-first browser automation runtime.** A local daemon + CLI + MCP server
 that drives a real Chromium subprocess through a deterministic action store.
@@ -307,9 +311,7 @@ Dual-licensed under MIT or Apache-2.0 at your option. See
 
 ## Credits
 
-Loom was extracted from Mentiora's
-[code-pipeline](https://github.com/WhoIsJohannes/code-pipeline) project,
-where it was generated and hardened across 23 rounds of GA-driven
-testing. The source pipeline retains a pointer at `projects/loom/` and
-consumes loom as a regular Cargo dependency. See
-[CREDITS.md](CREDITS.md) for the extraction provenance.
+Loom was incubated inside a private Mentiora project and built with
+substantial AI-assisted authoring (Anthropic Claude) under human review
+at every gate. Stewardship by Johannes Rummel and the Mentiora team.
+See [CREDITS.md](CREDITS.md) for more.
