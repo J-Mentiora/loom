@@ -252,14 +252,14 @@ harness loom was extracted from).
 | Receipt schema (`ActionReceipt`, `SessionManifest` wire format) | **Stable** | Hash chain + canonical bytes frozen. Breaking changes bump major. |
 | Action / blob store (content-addressed SHA-256) | **Stable** | On-disk layout frozen; `loom gc` reference protection covers it. |
 | Determinism harness (`Math.random`, `Date.now`, `performance.now`) | **Stable** | Seeded at session-create; reproduced bit-for-bit on replay. |
-| Deterministic replay (manifest hash-chain bit-equality src ↔ replay) | **Beta** | Source/replay equality is not yet bulletproof — gated on **AC-SHCRT-08**. |
+| Deterministic replay (manifest hash-chain bit-equality src ↔ replay) | **Beta** | Source/replay equality is not yet bulletproof — gated on real-Chromium subprocess wiring. |
 | `web.navigate`, `web.evaluate`, `web.wait`, `web.type` | **Stable** | Covered by replay-equality tests. |
 | `web.click` | **Beta** | DOM coordinate edge cases — gated on **AC-CLICK-***. |
 | `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). |
 | CLI surface (`loom session`, `loom action`, `loom export`, `loom import`) | **Stable** | Flags pinned. `--version` format pinned: `loom <ver> (<sha> <date>)`. |
 | `import.playwright` RPC | **Stable** | End-to-end wired through facade, adapter, handlers, router. |
 
-**1.0 promotion criteria:** AC-SHCRT-08 + AC-CLICK-* land, matrix CI
+**1.0 promotion criteria:** real-Chromium subprocess wiring + the `web.click` hit-test refinements land, matrix CI
 green across the four release targets, no Beta rows remaining.
 
 ### Known limitations
