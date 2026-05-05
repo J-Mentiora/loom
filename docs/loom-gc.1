@@ -1,0 +1,19 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH loom-gc 1  "loom-gc " 
+.SH NAME
+loom\-gc \- Garbage collection (RPC)
+.SH SYNOPSIS
+\fBloom\-gc\fR [\fB\-\-ttl\fR] [\fB\-\-store\-max\-bytes\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Garbage collection (RPC)
+.SH OPTIONS
+.TP
+\fB\-\-ttl\fR \fI<TTL>\fR
+Time\-to\-live in days for completed sessions
+.TP
+\fB\-\-store\-max\-bytes\fR \fI<STORE_MAX_BYTES>\fR
+Maximum store size in bytes
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help

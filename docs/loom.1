@@ -1,0 +1,58 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH loom 1  "loom 1.0.0" 
+.SH NAME
+loom \- Loom command\-line interface
+.SH SYNOPSIS
+\fBloom\fR [\fB\-\-config\fR] [\fB\-\-pretty\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Loom command\-line interface
+.SH OPTIONS
+.TP
+\fB\-\-config\fR \fI<CONFIG>\fR
+Override config file path. Highest precedence after CLI flags
+.TP
+\fB\-\-pretty\fR
+Pretty\-print output via the schema\-driven tabular renderer (IC\-CLI\-02). Default is canonical JSON (IC\-CLI\-01)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+loom\-session(1)
+Session lifecycle commands (RPC)
+.TP
+loom\-action(1)
+Action invocation (RPC)
+.TP
+loom\-vault(1)
+Vault commands (RPC). Only `add` may prompt (IC\-CLI\-10)
+.TP
+loom\-gc(1)
+Garbage collection (RPC)
+.TP
+loom\-serve(1)
+Spawn the daemon. RPC\-free local action (IC\-CLI\-05)
+.TP
+loom\-postinstall(1)
+Idempotent installer. RPC\-free local action (IC\-CLI\-06)
+.TP
+loom\-doctor(1)
+Health checks. RPC\-free local action (IC\-CLI\-07)
+.TP
+loom\-mcp(1)
+MCP delegation entry. RPC\-free; delegates to loom\-mcp (SR\-CLI\-02)
+.TP
+loom\-import(1)
+Import external recordings as non\-replayable Loom sessions (RPC)
+.TP
+loom\-benchmark(1)
+Run performance benchmarks and validate SLAs. RPC\-free local action
+.TP
+loom\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v1.0.0

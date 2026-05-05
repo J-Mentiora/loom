@@ -1,0 +1,56 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH loom-action 1  "loom-action " 
+.SH NAME
+loom\-action \- Action invocation (RPC)
+.SH SYNOPSIS
+\fBloom\-action\fR <\fB\-\-session\fR> [\fB\-h\fR|\fB\-\-help\fR] <\fIMETHOD\fR> [\fIEXTRA\fR] 
+.SH DESCRIPTION
+Action invocation (RPC)
+.SH OPTIONS
+.TP
+\fB\-\-session\fR \fI<SESSION>\fR
+`\-\-session SID` is required by all action methods
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+<\fIMETHOD\fR>
+`<surface>.<verb>` (e.g. `web.click`)
+.TP
+[\fIEXTRA\fR]
+Remaining `\-\-key value` pairs gathered as raw strings; validated against the JSON\-Schema for `method` before RPC dispatch
+.SH SUPPORTED ACTIONS
+.PP
+Loom ships with the following registered actions. Run \fBloom action <name> --help\fR for the full per-action signature.
+.SS \fBweb.*\fR
+.TP
+\fBweb.click\fR
+Click an element by CSS selector.
+.TP
+\fBweb.evaluate\fR
+Run a JavaScript expression in the page and return the value.
+.TP
+\fBweb.hover\fR
+Dispatch a mouseover event at a CSS selector.
+.TP
+\fBweb.navigate\fR
+Load a URL, follow redirects, capture DOM and screenshot.
+.TP
+\fBweb.screenshot\fR
+Capture a PNG screenshot of the page or a selected element.
+.TP
+\fBweb.scroll\fR
+Scroll an element by a (delta_x, delta_y) offset.
+.TP
+\fBweb.select\fR
+Set the value of a `<select>` element and dispatch `change`.
+.TP
+\fBweb.snapshot\fR
+Capture a full DOM snapshot of the active page.
+.TP
+\fBweb.type\fR
+Focus an input and type text into it.
+.TP
+\fBweb.wait\fR
+Wait until a CSS selector resolves (or until timeout).
