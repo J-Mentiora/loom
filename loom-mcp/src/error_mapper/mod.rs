@@ -17,9 +17,9 @@ impl ErrorMapper {
         };
         ToolResult {
             is_error: true,
-            content: vec![McpContent::Json {
-                json: serde_json::to_value(&receipt).unwrap_or(serde_json::Value::Null),
-            }],
+            content: vec![McpContent::from_json(
+                serde_json::to_value(&receipt).unwrap_or(serde_json::Value::Null),
+            )],
         }
     }
 
