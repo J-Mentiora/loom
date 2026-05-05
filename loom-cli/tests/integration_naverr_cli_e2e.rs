@@ -57,6 +57,21 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+/// Mirror of `loom-daemon::data_root_default()` semantics applied to a custom
+/// HOME (we can't call `dirs::data_dir()` because it reads the test process's
+/// HOME, not the daemon-subprocess's). macOS: `Library/Application Support`;
+/// Linux: XDG `.local/share` (the test sets XDG_DATA_HOME below to match).
+fn auth_dir_for(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library/Application Support/loom/auth")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        home.join(".local/share/loom/auth")
+    }
+}
+
 // ─── Fixture: built-once-per-test-binary state ──────────────────────────────
 
 /// Cached AOT-compiled cwasm path + binary paths. Computed on first
@@ -175,8 +190,7 @@ impl Sandbox {
         std::fs::create_dir_all(cfg_loom.join("schemas/v1")).expect("mkdir schemas/v1");
         let chromium_bundle = cfg_loom.join("chromium/Chromium.app/Contents/MacOS");
         std::fs::create_dir_all(&chromium_bundle).expect("mkdir chromium bundle");
-        std::fs::create_dir_all(home.path().join("Library/Application Support/loom/auth"))
-            .expect("mkdir auth");
+        std::fs::create_dir_all(auth_dir_for(home.path())).expect("mkdir auth");
 
         // Symlink fake-chromium into the path the daemon's
         // `build_host_bridge` resolves to (~/.config/loom/chromium/...).
@@ -280,9 +294,7 @@ impl Daemon {
 
         // Wait for hello.token + daemon.pid files (AuthManager::daemon_alive
         // checks the pid via `kill -0`).
-        let auth_dir = sandbox
-            .home_path()
-            .join("Library/Application Support/loom/auth");
+        let auth_dir = auth_dir_for(sandbox.home_path());
         let token_path = auth_dir.join("hello.token");
         let pid_path = auth_dir.join("daemon.pid");
         let deadline = Instant::now() + Duration::from_secs(5);
