@@ -505,9 +505,7 @@ impl ChromiumCdpConnection {
         // console-collector subscribes to a handler that never receives
         // anything, and the receipt's console_count + console_lines come
         // back as 0 / empty even on pages that emit substantial console
-        // output. Found via a real-app probe (mirrors-v2 round-24): page
-        // emitted React StrictMode warnings + Next.js dev hints during
-        // mount; loom's navigate captured 0 console_lines.
+        // output (e.g. React StrictMode warnings, Next.js dev hints).
         for (method, params) in [
             ("Page.enable", json!({})),
             ("Network.enable", json!({})),

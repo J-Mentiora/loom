@@ -122,8 +122,8 @@ mod tests {
         assert_eq!(before, after);
     }
 
-    /// Full profile is also a no-op today (would change once
-    /// `dom_full_text` lands; tracked in plan v2 D6).
+    /// Full profile is also a no-op today; would change once
+    /// `dom_full_text` lands.
     #[test]
     fn full_profile_no_op_today() {
         let mut r = full_receipt();

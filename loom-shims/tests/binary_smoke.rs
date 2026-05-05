@@ -1,10 +1,8 @@
-//! L9 — Early E2E smoke test.
+//! End-to-end smoke test for the shim binary.
 //!
-//! Per practitioner / skeptic council review: catches FD-passing,
-//! binary main runtime, IpcEndpoint loops, dispatcher Shutdown handling,
-//! and supervisor::run orderly shutdown BEFORE the host-side wiring
-//! piles on. Costs ~1h to write; catches design flaws while the plan
-//! can still pivot.
+//! Catches FD-passing, binary main runtime, IpcEndpoint loops,
+//! dispatcher Shutdown handling, and supervisor::run orderly shutdown
+//! independently of the host-side wiring.
 //!
 //! Strategy:
 //! 1. From the test process, create an AF_UNIX SOCK_STREAM socketpair.

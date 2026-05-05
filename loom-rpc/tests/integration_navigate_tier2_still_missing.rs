@@ -1,5 +1,5 @@
-//! Integration tests for `navigate-receipt-tier2-still-missing`
-//! (AC-NAVRECEIPT2-01..05) — v8 round-2 retest follow-up.
+//! Integration tests for the navigate receipt tier-2 fields
+//! (AC-NAVRECEIPT2-01..05).
 //!
 //! Brief mapping (the brief used the older AC-NAVRECEIPT-* numbering;
 //! the registry tracks AC-NAVRECEIPT2-* — both refer to the same
@@ -26,7 +26,7 @@
 //! suite. The opt-in subprocess E2E test in
 //! `loom-cli/tests/integration_navigate_tier2_e2e.rs` (`#[ignore]`)
 //! drives the actual `loom session navigate` binary against
-//! fake-chromium — that's the anti-Potemkin spine test.
+//! fake-chromium for an end-to-end check.
 
 use loom_core::content_store::{ContentStore, LocalContentStore};
 use loom_core::observability::Observability;
