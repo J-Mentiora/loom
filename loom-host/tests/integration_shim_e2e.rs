@@ -65,7 +65,7 @@ async fn host_to_shim_to_fake_chromium_round_trip() {
         );
     }
     if !std::path::Path::new(&shim_path).exists() {
-        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-shims --bin loom-shim-chromium` first");
+        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-cli --bin loom-shim-chromium` first");
     }
     let user_data_dir = tempfile::tempdir().expect("tempdir");
 
@@ -170,7 +170,7 @@ async fn host_to_shim_to_fake_chromium_round_trip_per_verb() {
         );
     }
     if !std::path::Path::new(&shim_path).exists() {
-        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-shims --bin loom-shim-chromium` first");
+        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-cli --bin loom-shim-chromium` first");
     }
     let user_data_dir = tempfile::tempdir().expect("tempdir");
 

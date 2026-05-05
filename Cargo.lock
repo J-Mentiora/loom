@@ -2416,6 +2416,7 @@ dependencies = [
 name = "loom-cli"
 version = "0.9.0"
 dependencies = [
+ "anyhow",
  "async-trait",
  "clap",
  "dirs",
@@ -2423,8 +2424,11 @@ dependencies = [
  "humantime",
  "jsonschema",
  "loom-core",
+ "loom-daemon",
  "loom-host",
+ "loom-mcp",
  "loom-shared",
+ "loom-shims",
  "parking_lot",
  "serde",
  "serde_jcs",

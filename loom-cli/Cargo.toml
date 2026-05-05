@@ -15,6 +15,15 @@ categories.workspace = true
 loom-shared = { workspace = true }
 loom-core = { workspace = true }
 loom-host = { workspace = true, optional = true }
+# AC-DIST-01: loom-daemon, loom-mcp, loom-shims are added as deps so the
+# `[[bin]]` entries for loom-daemon, loom-mcp, loom-shim-chromium (in
+# `src/bin/`) can call into their library code. cargo-dist 0.30+ requires
+# all `[[bin]]` entries to live in one Cargo Package to bundle them into
+# one tarball / one brew formula.
+loom-daemon = { workspace = true }
+loom-mcp = { workspace = true }
+loom-shims = { workspace = true }
+anyhow = { workspace = true }
 
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -70,3 +79,17 @@ path = "src/lib.rs"
 [[bin]]
 name = "loom"
 path = "src/bin/loom.rs"
+
+# AC-DIST-01: 3 sibling binaries co-located in this package so cargo-dist
+# 0.30+ ships them in one tarball + one brew formula.
+[[bin]]
+name = "loom-daemon"
+path = "src/bin/loom-daemon.rs"
+
+[[bin]]
+name = "loom-mcp"
+path = "src/bin/loom-mcp.rs"
+
+[[bin]]
+name = "loom-shim-chromium"
+path = "src/bin/loom-shim-chromium.rs"

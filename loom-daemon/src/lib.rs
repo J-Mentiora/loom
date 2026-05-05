@@ -1158,9 +1158,14 @@ fn parse_args(argv: &[String]) -> DaemonArgs {
     args
 }
 
-// ─── Main ────────────────────────────────────────────────────────────────────
+// ─── Public entry point ──────────────────────────────────────────────────────
+//
+// AC-DIST-01: exposed as `pub fn run()` so the `loom-daemon` binary can live
+// in `loom-cli/src/bin/loom-daemon.rs` (a thin shim) and cargo-dist 0.30+
+// ships all 4 loom binaries from one Cargo Package in one tarball — its docs
+// require all `[[bin]]` entries to be in one Package to bundle.
 
-fn main() -> Result<()> {
+pub fn run() -> Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
