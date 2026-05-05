@@ -291,12 +291,13 @@ jobs:
           LOOM_VERIFY_CHROMIUM_PINS: '1'
         run: cargo test -p loom-cli verify_url_head -- --nocapture
 
-  # cargo-deny — license + advisory + supply-chain audit on the workspace.
+  # cargo-deny — license + advisory + supply-chain + ban audit on the workspace.
   # Scope per AC-CI-03 ("license + duplicate-dep audit. Fail on any GPL /
-  # unknown licenses."): runs `licenses advisories sources`. The `bans`
-  # group is intentionally omitted — the existing `[[bans.deny]]` rules in
-  # `deny.toml` are architectural documentation that cargo-deny v2's
-  # wrapper-matching semantics flag as unmatched; repair is a follow-up PR.
+  # unknown licenses.") plus the architectural bans encoded in `deny.toml`
+  # (no chromiumoxide outside loom-shims; no platform keychain crates outside
+  # loom-keychain; getrandom audit trail). The `bans` wrappers were rewritten
+  # to enumerate direct dep-graph parents — cargo-deny v2 doesn't treat
+  # transitive ancestors as wrappers.
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -305,7 +306,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check licenses advisories sources
+          command: check licenses advisories sources bans
 
   # AC-DIST-01: vendored-wasm staleness check. The committed
   # `loom-cli/vendor/loom_surface_web.wasm` makes `cargo install --git`
