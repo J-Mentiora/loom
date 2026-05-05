@@ -1,5 +1,5 @@
-// Interface tests for `ResourceTracker`. Verifies IC-MCP-06 URI scheme
-// and round-trip, TTL knob, and the active-session filter shape.
+// Interface tests for `ResourceTracker`. Verifies URI-scheme round-trip,
+// TTL knob, and the active-session filter shape.
 
 use super::resource_tracker::{
     Resource, ResourceContents, ResourceTracker, SessionInfo, DEFAULT_TTL, SESSION_URI_PREFIX,
@@ -8,7 +8,7 @@ use super::resource_tracker::{
 use std::path::PathBuf;
 use std::time::Duration;
 
-// === IC-MCP-06: URI scheme + round-trip ===
+// === URI scheme + round-trip ===
 
 #[test]
 fn uri_scheme_is_loom_session_manifest() {

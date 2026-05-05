@@ -1,6 +1,5 @@
-// Interface tests for `RpcClient`. Verifies IC-MCP-10 token-acquisition
-// path, FSM shape, exp-backoff envelope, and BC-MCP-04 single
-// reconnect-task discipline.
+// Interface tests for `RpcClient`. Verifies the token-acquisition path,
+// FSM shape, exp-backoff envelope, and single-reconnect-task discipline.
 
 use super::rpc_client::{ConnectionState, JsonRpcCaller, OnConnected, RpcClient, RpcClientConfig};
 use crate::mcp_observability::McpObservability;
@@ -9,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-// === IC-MCP-10: HELLO token from daemon auth artefact ===
+// === HELLO token from daemon auth artefact ===
 
 #[test]
 fn defaults_point_at_application_support_hello_token_on_macos() {
@@ -93,7 +92,7 @@ fn next_backoff_starts_at_initial_for_first_failure() {
     assert_eq!(d, cfg.backoff_initial);
 }
 
-// === IC-MCP-09 / BC-MCP-04: socket path is daemon-owned, no extra spawns visible at API ===
+// === socket path is daemon-owned, no extra spawns visible at API ===
 
 #[test]
 fn defaults_socket_path_is_loom_sock() {

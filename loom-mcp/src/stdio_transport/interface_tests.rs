@@ -1,12 +1,12 @@
-// Interface tests for `StdioTransport`. Verifies IC-MCP-09 (stdio
-// exclusively, no socket binding) and BC-MCP-04 single-task discipline.
+// Interface tests for `StdioTransport`. Verifies stdio-exclusive
+// transport (no socket binding) and single-task discipline.
 
 use super::stdio_transport::{
     Dispatch, McpProtocolError, McpRequest, McpResponse, StdioTransport, ERROR_INTERNAL,
     ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND, ERROR_PARSE,
 };
 
-// === IC-MCP-09: stdio-only constructor ===
+// === stdio-only constructor ===
 
 #[test]
 fn stdio_constructor_wires_process_streams() {
