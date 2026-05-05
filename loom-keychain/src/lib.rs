@@ -2,12 +2,12 @@
 //!
 //! Implements the `KeychainAccess` trait declared by
 //! `loom_core::vault::KeychainAccess`. Loom-core never imports
-//! platform-specific symbols; this crate is the seam (BC-CORE-02 +
-//! SR-CORE-01).
+//! platform-specific symbols; this crate is the seam.
 //!
-//! Phase 5.4: stub `LoomError`-aware error type + a passphrase-backed
-//! placeholder impl that Phase 6 replaces with macOS Security Framework
-//! / Linux Secret Service / Windows Credential Manager backends.
+//! Currently provides a `LoomError`-aware error type and a
+//! passphrase-backed placeholder impl. Real macOS Security Framework /
+//! Linux Secret Service / Windows Credential Manager backends will be
+//! wired in later.
 
 use zeroize::Zeroizing;
 
@@ -34,13 +34,13 @@ impl std::fmt::Display for KeychainError {
 impl std::error::Error for KeychainError {}
 
 /// External keychain interface. The IMPL of this trait is provided by
-/// Phase 6 platform backends; loom-core's `Vault` constructs an
+/// platform-specific backends; loom-core's `Vault` constructs an
 /// `Arc<dyn KeychainAccess>` from one of these backends at startup.
 pub trait KeychainAccess: Send + Sync {
     fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError>;
 }
 
-/// Stub backend used until Phase 6 wires real platform stores. Always
+/// Stub backend used until real platform stores are wired in. Always
 /// returns `NotFound`. Useful in tests + scaffold smoke runs.
 pub struct StubKeychain;
 
@@ -48,7 +48,7 @@ impl KeychainAccess for StubKeychain {
     fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         Err(KeychainError {
             kind: KeychainErrorKind::NotFound,
-            message: format!("StubKeychain has no entry for label='{label}' (Phase 5.4 stub)"),
+            message: format!("StubKeychain has no entry for label='{label}' (stub backend)"),
         })
     }
 }
