@@ -7,10 +7,10 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 ///
 /// `redaction_enabled=true` installs a layer that strips known
 /// secret-bearing field names from log records (vault labels, raw
-/// secrets, hello-token bytes). Phase 6 implementations replace the
-/// stub redactor with the vault-aware variant.
+/// secrets, hello-token bytes). The real vault-aware redactor will
+/// replace this stub later.
 pub fn init_tracing(redaction_enabled: bool) {
-    let _ = redaction_enabled; // Phase 6 wires the redaction layer.
+    let _ = redaction_enabled; // The redaction layer is wired in later.
 
     let filter = EnvFilter::try_from_env("LOOM_LOG")
         .or_else(|_| EnvFilter::try_new("info"))
@@ -26,7 +26,7 @@ pub fn init_tracing(redaction_enabled: bool) {
         .try_init();
 }
 
-/// Field names that the redaction layer (Phase 6) will strip.
+/// Field names that the redaction layer will strip.
 pub const REDACTED_FIELDS: &[&str] = &[
     "secret",
     "vault_secret",

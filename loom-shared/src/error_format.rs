@@ -40,7 +40,7 @@ pub enum LoomErrorCode {
     ReplayMissingBlob,
 
     // ---- LLM cache ----
-    /// AC-DET-07.1: Recorded-mode cache miss — no stored response for key.
+    /// Recorded-mode cache miss — no stored response for key.
     LlmCacheMiss,
 
     // ---- Shim / transport ----
@@ -55,7 +55,7 @@ pub enum LoomErrorCode {
     Io,
 
     // ---- Safety profile ----
-    /// AC-WEB-07.1 (now superseded): evaluate expression matched the
+    ///.1 (now superseded): evaluate expression matched the
     /// safe-profile denylist. **DEPRECATED for the safe-profile evaluate
     /// path** — production now emits `LoomErrorCode::ProfileRestricted`
     /// (wire kind `"profile_restricted"`) from the daemon-layer gate at
@@ -70,16 +70,16 @@ pub enum LoomErrorCode {
     /// emission path is the only deprecated use.
     #[serde(rename = "schema_violation")]
     SchemaViolation,
-    /// AC-WEB-07.2: download target outside session-scoped downloads directory.
+    /// download target outside session-scoped downloads directory.
     /// **DEPRECATED in favor of the `Browser.setDownloadBehavior(allowAndName)`
-    /// model plus visibility handler** (AC-SAFEPROF-04). Chromium now
+    /// model plus visibility handler** . Chromium now
     /// confines downloads to the session dir; rejection events route through
     /// `LoomErrorCode::ProfileRestricted` if the policy gains explicit-reject
     /// semantics later. Schedule for removal alongside `EvaluateVerb::execute`
     /// cleanup.
     #[serde(rename = "safe_profile_download_blocked")]
     SafeProfileDownloadBlocked,
-    /// AC-SAFEPROF-01..04: action rejected because the active session profile
+    /// action rejected because the active session profile
     /// (e.g. `"safe"`) forbids it. Wire string: `"profile_restricted"`.
     /// `LoomError.context` carries `{matched_pattern, profile, violation}`
     /// so callers distinguish evaluate-denylist hits (violation =
@@ -93,7 +93,7 @@ pub enum LoomErrorCode {
     ProfileRestricted,
 
     // ---- Browser / launch ----
-    /// AC-DIST-05: chromium binary could not be located by any of the
+    /// chromium binary could not be located by any of the
     /// resolver's search paths (env override, pinned `~/.config/loom/chromium/...`,
     /// PATH lookup for `chromium`/`chromium-browser`/`chrome`/`google-chrome`,
     /// macOS `/Applications/...`). Wire string: `"browser-not-found"`.
