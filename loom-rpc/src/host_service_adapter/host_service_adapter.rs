@@ -26,35 +26,31 @@ use loom_shared::navigate_outcome::ShimConsoleLine;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-// Stub: in the full crate, `WasmHost` is the locked
-// `loom-host::WasmHost`. We reference it through a bridge trait to
-// keep this module testable without the loom-host crate present.
-//
-// module_kind: cross-system-bridge
+// We reference `loom_host::WasmHost` through a bridge trait so this
+// module is testable without pulling the loom-host crate into unit
+// tests.
 
 /// Marker trait satisfied by `loom_host::WasmHost`. The adapter holds
-/// `Arc<dyn WasmHostBridge>` for testability; in v5.4 wiring
-/// this becomes `Arc<loom_host::WasmHost>` directly.
+/// `Arc<dyn WasmHostBridge>` for testability; production wiring
+/// resolves to `Arc<loom_host::WasmHost>` directly.
 pub trait WasmHostBridge: Send + Sync {
     /// Dispatch an action to the WASM surface. Returns a typed
     /// `Receipt` (CDP-free, per the contract). This is the one and only
     /// host-side entry point.
     fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, AdapterError>;
 
-    /// true iff a chromium template was registered at host
-    /// boot. False when the chromium_resolver returned `BrowserNotFound`
-    /// at daemon boot. Default `true` keeps stub bridges (tests, mocks)
-    /// behaving as today; production impls (`WasmBridge`, `StubHostBridge`)
-    /// override.
+    /// true iff a chromium template was registered at host boot. False
+    /// when the chromium_resolver returned `BrowserNotFound` at daemon
+    /// boot. The default `true` keeps unit-test bridges working;
+    /// production impls (`WasmBridge`, `StubHostBridge`) override.
     fn has_chromium(&self) -> bool {
         true
     }
 }
 
-/// WIT-derived action type (`wit/loom-surface.wit`). In v5.4 the
-/// concrete fields are emitted by `wit-bindgen rust`; the variant
-/// names here mirror the contract's `action.<surface>.<verb>`
-/// canonical method-list block.
+/// WIT-derived action type. The variant names mirror the
+/// `action.<surface>.<verb>` method-list block from
+/// `wit/loom-surface.wit`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {

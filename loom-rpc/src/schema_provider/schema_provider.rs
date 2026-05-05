@@ -25,14 +25,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-// Stub: in the full crate, `CompiledJsonSchema` is the
-// `jsonschema::JSONSchema` type. We name the bridge here so trait
-// surfaces are testable without pulling the full crate in.
-//
-// module_kind: registry
-
-/// Opaque compiled-schema handle. Real impl is
-/// `jsonschema::JSONSchema`; the wrapper keeps the struct nominal so
+/// Opaque compiled-schema handle. The real implementation defers to
+/// `jsonschema::JSONSchema`; this wrapper keeps the struct nominal so
 /// we can swap implementations without breaking callers.
 pub struct CompiledJsonSchema {
     pub inner: serde_json::Value,

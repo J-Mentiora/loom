@@ -9,7 +9,7 @@
 // selector — their docstrings claimed "the shim resolves the selector
 // and returns the centre", but no such resolution ever happened. The
 // click landed at page origin (0,0) and React's synthetic-event system
-// never fired the form's `onSubmit`. See `specs/2026-05-04-web-click-fidelity/`.
+// never fired the form's `onSubmit`.
 //
 // # Sequence (pure CDP)
 //

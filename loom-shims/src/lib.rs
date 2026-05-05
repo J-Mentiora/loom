@@ -1,14 +1,14 @@
 //! `loom-shims` — out-of-process surface drivers (Chromium for v1).
 //! Reachable from `loom-host::shim_manager` over a private IPC.
-// Suppress WASM-compat boilerplate and stub struct fields in test builds.
-// Stub fields will be read once the real implementations fill in the methods.
+
+// Some fields exist for forward-compatibility and are not read yet.
 #![allow(unused_extern_crates, unused_imports, dead_code)]
 
 pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (10 + pure helpers) ----
+// ---- Module declarations ----
 pub mod action_executor;
 pub mod cdp_connection;
 pub mod determinism_injector;

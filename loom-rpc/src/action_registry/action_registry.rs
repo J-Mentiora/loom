@@ -9,10 +9,6 @@
 //! metadata. The unit test `registry_required_flags_match_router`
 //! enforces equality of the required-param sets between this registry
 //! and the router so the two cannot silently diverge.
-//!
-//! See [the design notes](specs/2026-05-04-action-catalogue/plan.md)
-//! for the rationale and the four cross-model review iterations that
-//! shaped the shape of `ActionMeta`.
 
 use std::fmt;
 

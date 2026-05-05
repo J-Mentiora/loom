@@ -136,8 +136,10 @@ fn different_seeds_produce_different_session_seed() {
 
 #[test]
 fn seed_zero_is_not_a_sentinel_for_default() {
-    // The architectural invariant from decisions.md Q2/Q7:
-    // `Seed(0)` is a real value distinct from "use default seed".
+    // Architectural invariant: `Seed(0)` is a real value distinct from
+    // "use default seed". An `Option<Seed>` carries that distinction —
+    // collapsing to a sentinel would silently break determinism for
+    // callers who explicitly want zero.
     let tmp = tempfile::tempdir().unwrap();
     let sm = make_sm(tmp.path().to_str().unwrap(), 99);
     let id = sm.create(opts(Some(0))).unwrap();
