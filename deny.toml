@@ -40,6 +40,10 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
+    # MIT-0 (MIT No Attribution): same terms as MIT minus the
+    # attribution requirement. Transitively via
+    # jsonschema -> referencing -> fluent-uri -> borrow-or-share.
+    "MIT-0",
     "BSD-3-Clause",
     "BSD-2-Clause",
     "ISC",
@@ -47,6 +51,11 @@ allow = [
     "Unicode-3.0",
     "MPL-2.0",
     "Zlib",
+    # CDLA-Permissive-2.0 (Community Data License Agreement):
+    # permissive data license, OSI-equivalent terms for our use.
+    # Transitively via jsonrpsee -> rustls-platform-verifier ->
+    # webpki-root-certs.
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.8
 
@@ -67,20 +76,45 @@ wrappers = ["loom-shims"]
 
 # 2. WASM guests (loom-surfaces) MUST NOT depend on `getrandom` —
 #    randomness comes from the host's `host::rng-next-u64` only.
+#    `wrappers` enumerates the DIRECT parents of `getrandom` in the
+#    current dep graph (cargo-deny v2 semantics: direct parent must
+#    appear in the list). Update when new transitive intermediates
+#    appear; loom-surfaces must never be added.
 [[bans.deny]]
 name = "getrandom"
-wrappers = ["loom-host", "loom-rpc", "loom-mcp", "loom-cli", "loom-shims", "loom-core"]
-# (loom-surfaces deliberately omitted from wrappers — i.e. forbidden there.)
+wrappers = [
+    "ring",          # rustls / TLS crypto
+    "rand_core",     # widely-used randomness trait crate
+    "redox_users",   # dirs / config-dir resolver on redox targets
+    "tempfile",      # dev-deps in several workspace crates
+    "ahash",         # transitive via hashbrown
+    "zip",           # loom-cli (chromium download extraction)
+    "referencing",   # transitive via jsonschema
+    "jsonschema",    # loom-cli, loom-rpc (schema validation)
+    "jobserver",     # cargo build-script tooling
+]
+# (loom-surfaces deliberately not in any chain — i.e. forbidden there.)
 
 # 3. Forbid platform-specific keychain crates outside loom-keychain
-#    (BC-CORE-02 / SR-CORE-01).
+#    (BC-CORE-02 / SR-CORE-01). Same v2 wrapper semantics: direct
+#    parents only. `rustls-*` parents are accepted because they pull
+#    `security-framework` for TLS certificate validation, not for
+#    keychain access — orthogonal to BC-CORE-02's intent.
 [[bans.deny]]
 name = "security-framework"
-wrappers = ["loom-keychain"]
+wrappers = [
+    "loom-keychain",
+    "rustls-platform-verifier",
+    "rustls-native-certs",
+]
 
 [[bans.deny]]
 name = "security-framework-sys"
-wrappers = ["loom-keychain"]
+wrappers = [
+    "loom-keychain",
+    "security-framework",
+    "rustls-platform-verifier",
+]
 
 [[bans.deny]]
 name = "secret-service"
