@@ -572,7 +572,7 @@ fn parse_fake_url_pattern(url: &str) -> FakeUrlPattern {
 /// Local copy of the browser-scope classifier so fake-chromium doesn't
 /// need to depend on loom-shims' library code (it's a separate bin
 /// target). Stays in sync with `is_browser_scope_method` in
-/// `loom-shims/src/cdp_connection/interfaces.rs`.
+/// `loom-shims/src/cdp_connection/cdp_connection.rs`.
 fn is_browser_scope_method_local(method: &str) -> bool {
     matches!(
         method.split('.').next().unwrap_or(""),

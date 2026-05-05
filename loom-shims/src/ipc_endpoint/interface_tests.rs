@@ -200,7 +200,7 @@ fn ipc_endpoint_trait_object_is_send_sync() {
 }
 
 #[test]
-#[should_panic(expected = "v5.4 implementation")]
+#[should_panic(expected = "ipc shutdown not yet implemented")]
 fn shutdown_panics_until_implemented() {
     let ep = SocketpairEndpoint::from_inherited_fd(0);
     let _ = ep.shutdown();

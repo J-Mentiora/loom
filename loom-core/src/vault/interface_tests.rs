@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/vault/interface_tests.rs` instead.
 // Interface tests for `Vault`. Verifies isolation,
 // HARD vault placement, OAuth-only,
 // 4-check sequence, audit hash chain.

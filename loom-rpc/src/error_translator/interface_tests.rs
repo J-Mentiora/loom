@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/error_translator/interface_tests.rs` instead.
 // Interface tests for `ErrorTranslator`. Verifies the
 // 1:1 envelope shape, 280-char message cap, panic-to-envelope path.
 

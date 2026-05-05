@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/AuthManager/interfaces.rs` instead.
 // AuthManager — reads the daemon HELLO token from the per-startup
 // artefact.
 //

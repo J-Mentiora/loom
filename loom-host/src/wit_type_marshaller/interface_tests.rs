@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/wit_type_marshaller/interface_tests.rs` instead.
 // Interface tests for `WitTypeMarshaller`. The module itself is
 // `wit-bindgen`-generated at build time, so the tests pin invariants
 // that the generation step must satisfy: WIT is the schema source of
@@ -40,10 +38,8 @@ fn marshaller_is_a_pub_type() {
 
 #[test]
 fn module_kind_marker_present_in_file() {
-    // The first line of `interfaces.rs` is `// module_kind: wit-bindgen-generated`.
-    // The convention check is a doc invariant — the lint
-    // `tools/lint-pipeline-conventions.py` walks the loom-host modules
-    // tree and asserts the marker is present on this exact module.
+    // The first line of `wit_type_marshaller.rs` is
+    // `// module_kind: wit-bindgen-generated` — a doc invariant marker.
     let pin = "module_kind: wit-bindgen-generated";
     assert!(pin.contains("wit-bindgen-generated"));
 }
@@ -52,7 +48,7 @@ fn module_kind_marker_present_in_file() {
 
 #[test]
 fn the_eight_host_fns_are_enumerated_in_doc() {
-    // Doc-pin: the rustdoc on `interfaces.rs` enumerates exactly:
+    // Doc-pin: the rustdoc on `wit_type_marshaller.rs` enumerates exactly:
     // clock_now, rng_next_u64, blob_put, blob_get, net_request,
     // shim_call, log_emit, receipt_emit. Any future host-fn requires a
     // WIT change AND a verification-criteria update.

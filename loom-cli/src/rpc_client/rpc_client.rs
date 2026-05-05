@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/RpcClient/interfaces.rs` instead.
 // RpcClient — jsonrpsee Unix-socket client owned by `loom-cli`.
 //
 // Separate from loom-mcp's RpcClient — the CLI carries its own client

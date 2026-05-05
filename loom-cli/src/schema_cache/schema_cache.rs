@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/SchemaCache/interfaces.rs` instead.
 // SchemaCache — in-memory `HashMap<method_name, JsonSchema>`.
 //
 // # Contract semantics

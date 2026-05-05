@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/budget_enforcer/interface_tests.rs` instead.
 // Interface tests for `BudgetEnforcer`. Verifies the two-phase contract,
 // atomic counters, kill-callback cycle break.
 

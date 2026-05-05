@@ -34,7 +34,7 @@ use tokio::net::UnixStream;
 
 // ─── Web schema definitions (all 10 web.* methods) ───────────────────────────
 //
-// Source: loom-cli/src/postinstall_runner/interfaces.rs (canonical schema spec).
+// Source: loom-cli/src/postinstall_runner/postinstall_runner.rs (canonical schema spec).
 // Used inline here so the integration test is self-contained and doesn't
 // depend on a schema directory on disk.
 

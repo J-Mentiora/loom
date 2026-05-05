@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/connection_handler/interface_tests.rs` instead.
 // Interface tests for `ConnectionHandler`. Verifies FSM
 // states, single-task hot path signature,
 // deps-injection (no fresh runtime constructed inside).

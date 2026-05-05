@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/connection_handler/interfaces.rs` instead.
 // ConnectionHandler — per-connection tokio task running the
 // `AwaitingHello → Authenticated` FSM.
 //

@@ -1,6 +1,4 @@
-//! `schema_cache` — see `systems/loom-cli/modules/SchemaCache/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `schema_cache` — re-exports the implementation submodule.
 pub mod schema_cache;
 pub use schema_cache::*;
 

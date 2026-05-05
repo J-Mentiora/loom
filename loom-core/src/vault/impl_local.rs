@@ -1,6 +1,6 @@
 // LocalVault implementation — vault-core feature.
 //
-// Implements `Vault` for `LocalVault` declared in `interfaces.rs`.
+// Implements `Vault` for `LocalVault` declared in `vault.rs`.
 //
 // Invariants enforced here:
 //   - raw secret bytes appear ONLY in substitute(),

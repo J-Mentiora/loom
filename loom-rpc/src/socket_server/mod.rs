@@ -1,6 +1,4 @@
-//! `socket_server` — see `systems/loom-rpc/modules/socket_server/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `socket_server` — re-exports the implementation submodule.
 pub mod socket_server;
 pub use socket_server::*;
 

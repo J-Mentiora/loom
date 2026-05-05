@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/host_function_table/interfaces.rs` instead.
 // HostFunctionTable — `wit-bindgen`-generated `impl host::Host for HostState`.
 //
 // # Contract semantics

@@ -1,6 +1,4 @@
-//! `host_function_table` — see `systems/loom-host/modules/host_function_table/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `host_function_table` — re-exports the implementation submodule.
 pub mod host_function_table;
 pub use host_function_table::*;
 

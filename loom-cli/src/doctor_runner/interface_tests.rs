@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/DoctorRunner/interface_tests.rs` instead.
 // Interface tests for `DoctorRunner`. Verifies the exactly-5
 // check enumeration in stable order.
 

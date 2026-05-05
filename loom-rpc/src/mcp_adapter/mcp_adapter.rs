@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/mcp_adapter/interfaces.rs` instead.
 // McpAdapter — MCP wire-protocol translator .
 //
 // # Contract semantics

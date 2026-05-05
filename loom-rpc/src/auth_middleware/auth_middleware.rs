@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/auth_middleware/interfaces.rs` instead.
 // AuthMiddleware — HELLO-token handshake.
 //
 // # Contract semantics

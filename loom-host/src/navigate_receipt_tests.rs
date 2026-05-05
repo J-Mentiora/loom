@@ -677,7 +677,7 @@ fn harexport_marshaller_preserves_network_events_when_tier2_unset() {
     // Asymmetry assertions — these prove the navigate path was taken
     // WITHOUT the tier-2 fields, defeating the silent
     // `#[serde(default)]` masking that ReceiptPayload.network_events
-    // would otherwise hide. (See receipt_builder/interfaces.rs:111.)
+    // would otherwise hide. (See receipt_builder/receipt_builder.rs:111.)
     assert!(
         payload.url.is_none(),
         "tier-2 url must be None to prove the regression scenario"

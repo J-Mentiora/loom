@@ -115,7 +115,7 @@ fn loom_surface_web_satisfies_live_linker_imports() {
 //
 // Pin that textually so a future change cannot silently widen the
 // sandbox without failing CI. The pin scans the source body of
-// `build_sandboxed_wasi_ctx` in `host_function_table/interfaces.rs`.
+// `build_sandboxed_wasi_ctx` in `host_function_table/host_function_table.rs`.
 #[test]
 fn build_sandboxed_wasi_ctx_uses_only_safe_defaults() {
     let src = include_str!("host_function_table/host_function_table.rs");
@@ -183,7 +183,7 @@ fn fresh_host_state_resource_table_is_empty() {
 // ---------------------------------------------------------------------------
 //
 // The wasmtime engine is built with `Config::async_support(true)` (see
-// wasm_runtime/interfaces.rs). Wasmtime requires every store-touching call
+// wasm_runtime/wasm_runtime.rs). Wasmtime requires every store-touching call
 // to use the `*_async` variant on async-config'd engines; the sync
 // `Linker::instantiate` errors at runtime with
 //
@@ -207,12 +207,12 @@ fn fresh_host_state_resource_table_is_empty() {
 #[test]
 fn async_instantiate_doc_pin() {
     // Doc-anchor only. The actual constraint is enforced by:
-    //   1. session_executor/interfaces.rs:`async fn instantiate_surface`
+    //   1. session_executor/session_executor.rs:`async fn instantiate_surface`
     //      → returns a Future and calls `linker.instantiate_async(...).await`
     //   2. session_executor/interface_tests.rs:`_ck` signature pin returning
     //      `impl Future<Output = Result<Instance, LoomError>>`
     //   3. The wasmtime engine built with `Config::async_support(true)` in
-    //      wasm_runtime/interfaces.rs
+    //      wasm_runtime/wasm_runtime.rs
     // All three must change together; reverting any one alone fails to
     // compile or fails the smoke runbook.
 }

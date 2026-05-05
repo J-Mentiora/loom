@@ -1,6 +1,4 @@
-//! `launchd_plist_writer` — see `systems/loom-cli/modules/LaunchdPlistWriter/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `launchd_plist_writer` — re-exports the implementation submodule.
 pub mod launchd_plist_writer;
 pub use launchd_plist_writer::*;
 

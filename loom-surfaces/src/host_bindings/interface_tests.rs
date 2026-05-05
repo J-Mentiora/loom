@@ -129,7 +129,7 @@ fn host_bindings_have_no_mode_argument() {
 fn fallible_host_fns_return_host_error_typed_result() {
     // The `Result<T, HostError>` variant is the WIT-mapped output that
     // `ErrorMapper::map` consumes inside the verb. ErrorMapper is the
-    // only translator (see error_mapper/interfaces.rs).
+    // only translator (see error_mapper/error_mapper.rs).
     fn assert_returns_host_error<T>(_f: fn(&[u8]) -> Result<T, HostError>) {}
     assert_returns_host_error(host::blob_put);
 }

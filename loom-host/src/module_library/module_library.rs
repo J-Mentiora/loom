@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/module_library/interfaces.rs` instead.
 // ModuleLibrary — preloaded `Arc<wasmtime::component::Component>` per
 // surface. Populated at `WasmHost::new`; never mutated on the dispatch
 // hot path.

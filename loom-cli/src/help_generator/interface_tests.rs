@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/HelpGenerator/interface_tests.rs` instead.
 // Interface tests for `HelpGenerator`. Verifies mechanical
 // field-name conversion (round-trip) and the parity-test data shape.
 

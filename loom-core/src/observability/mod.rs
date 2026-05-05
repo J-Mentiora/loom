@@ -1,6 +1,4 @@
-//! `observability` — see `systems/loom-core/modules/observability/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `observability` — re-exports the implementation submodule.
 pub mod observability;
 pub use observability::*;
 

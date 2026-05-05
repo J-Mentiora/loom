@@ -1,6 +1,4 @@
-//! `shim_manager` — see `systems/loom-host/modules/shim_manager/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `shim_manager` — re-exports the implementation submodule.
 pub mod process;
 pub mod shim_manager;
 pub use shim_manager::*;

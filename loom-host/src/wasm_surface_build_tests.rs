@@ -77,7 +77,7 @@ fn test_web_navigate_dispatches_into_surface() {
     //   1. SessionExecutor::run now passes the action's
     //      `args_canonical_bytes` as the WIT `action.payload` and
     //      decodes the typed `result<receipt, host-error>` return.
-    //      See session_executor/interfaces.rs (build_action_val,
+    //      See session_executor/session_executor.rs (build_action_val,
     //      decode_typed_receipt). Pure-function unit tests pin the
     //      Val::Record / Val::Result shape in
     //      session_executor/interface_tests.rs.
@@ -104,7 +104,7 @@ fn test_web_navigate_dispatches_into_surface() {
 // Uses `load_one_with_expected_sha` (a testability shim that lets us pass the
 // expected SHA directly rather than relying on the compile-time env!() macro).
 // This test FAILS at compile time until load_one_with_expected_sha is added
-// to ModuleLibrary in module_library/interfaces.rs.
+// to ModuleLibrary in module_library/module_library.rs.
 #[test]
 fn test_load_one_rejects_wrong_sha() {
     use loom_core::error::LoomErrorCode;

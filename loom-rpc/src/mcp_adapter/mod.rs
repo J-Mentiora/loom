@@ -1,6 +1,4 @@
-//! `mcp_adapter` — see `systems/loom-rpc/modules/mcp_adapter/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `mcp_adapter` — re-exports the implementation submodule.
 pub mod mcp_adapter;
 pub use mcp_adapter::*;
 

@@ -1,6 +1,4 @@
-//! `session_executor` — see `systems/loom-host/modules/session_executor/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `session_executor` — re-exports the implementation submodule.
 pub mod session_executor;
 pub use session_executor::*;
 

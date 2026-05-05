@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/host_function_registry/interfaces.rs` instead.
 // HostFunctionRegistry — builds two pre-baked `wasmtime::component::Linker<HostState>`
 // instances at startup; selects per-session linker by `Mode`.
 //

@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/host_service_adapter/interfaces.rs` instead.
 // HostServiceAdapter — routes `action.<surface>.<verb>` methods to
 // `loom-host::WasmHost::dispatch`.
 //
@@ -33,8 +31,8 @@ use std::sync::Arc;
 // module_kind: cross-system-bridge
 
 /// Marker trait satisfied by `loom_host::WasmHost`. The adapter holds
-/// `Arc<dyn WasmHostBridge>` for testability; in v5.4 wiring
-/// this becomes `Arc<loom_host::WasmHost>` directly.
+/// `Arc<dyn WasmHostBridge>` for testability; once the loom-host dep
+/// is wired in this becomes `Arc<loom_host::WasmHost>` directly.
 pub trait WasmHostBridge: Send + Sync {
     /// Dispatch an action to the WASM surface. Returns a typed
     /// `Receipt` (CDP-free, per the contract). This is the one and only
@@ -51,10 +49,10 @@ pub trait WasmHostBridge: Send + Sync {
     }
 }
 
-/// WIT-derived action type (`wit/loom-surface.wit`). In v5.4 the
-/// concrete fields are emitted by `wit-bindgen rust`; the variant
-/// names here mirror the contract's `action.<surface>.<verb>`
-/// canonical method-list block.
+/// WIT-derived action type (`wit/loom-surface.wit`). The concrete
+/// fields will be emitted by `wit-bindgen rust`; the variant names
+/// here mirror the contract's `action.<surface>.<verb>` canonical
+/// method-list block.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Action {

@@ -1,6 +1,4 @@
-//! `error_translator` — see `systems/loom-rpc/modules/error_translator/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `error_translator` — re-exports the implementation submodule.
 pub mod error_translator;
 pub use error_translator::*;
 

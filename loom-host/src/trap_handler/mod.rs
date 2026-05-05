@@ -1,6 +1,4 @@
-//! `trap_handler` — see `systems/loom-host/modules/trap_handler/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `trap_handler` — re-exports the implementation submodule.
 pub mod trap_handler;
 pub use trap_handler::*;
 

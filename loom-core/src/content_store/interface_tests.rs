@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/content_store/interface_tests.rs` instead.
 // Interface tests for `ContentStore`. Verifies verify-on-read,
 // atomic writes, CAS path layout, storage layout.
 

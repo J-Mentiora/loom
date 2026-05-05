@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/ChromiumDownloader/interfaces.rs` instead.
 // ChromiumDownloader — pinned-URL Chromium download with sha256
 // verification.
 //

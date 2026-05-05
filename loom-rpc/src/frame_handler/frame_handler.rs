@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/frame_handler/interfaces.rs` instead.
 // FrameHandler — `tokio_util::codec::LengthDelimitedCodec` wrapper
 // per. 4-byte big-endian length prefix; 16 MB payload cap.
 //

@@ -16,7 +16,7 @@
 //!
 //! 1. Append a row to `METHOD_ALIASES`.
 //! 2. Confirm the `canonical` half exists in
-//!    `loom-cli/src/postinstall_runner/interfaces.rs::BUILTIN_SCHEMAS`.
+//!    `loom-cli/src/postinstall_runner/postinstall_runner.rs::BUILTIN_SCHEMAS`.
 //!    The `every_alias_target_appears_in_builtin_schemas` integration test
 //!    will fail the build otherwise.
 

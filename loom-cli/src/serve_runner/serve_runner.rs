@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/ServeRunner/interfaces.rs` instead.
 // ServeRunner — `loom serve` local action.
 //
 // # Contract semantics

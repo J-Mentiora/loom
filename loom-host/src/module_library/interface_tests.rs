@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/module_library/interface_tests.rs` instead.
 // Interface tests for `ModuleLibrary`. Verifies the no-lazy-JIT-on-
 // dispatch contract, recovery semantics, and the read-lock-by-default
 // invariant.

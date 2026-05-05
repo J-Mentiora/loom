@@ -1,6 +1,4 @@
-//! `host_service_adapter` — see `systems/loom-rpc/modules/host_service_adapter/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `host_service_adapter` — re-exports the implementation submodule.
 pub mod host_service_adapter;
 pub use host_service_adapter::*;
 

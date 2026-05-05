@@ -1,6 +1,4 @@
-//! `schema_provider` — see `systems/loom-rpc/modules/schema_provider/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `schema_provider` — re-exports the implementation submodule.
 pub mod schema_provider;
 pub use schema_provider::*;
 

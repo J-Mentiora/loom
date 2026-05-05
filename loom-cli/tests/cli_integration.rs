@@ -277,11 +277,6 @@ fn test_columns_from_schema_no_properties() {
 
 /// No leftover `unimplemented!(...)` stubs remain in
 /// CommandRouter::dispatch. This test scans the source text statically.
-///
-/// Reads from `src/` rather than `systems/` so the src tree is self-contained
-/// (enforced by `ga/flatten_includes.py`). Once flatten_includes runs,
-/// `command_router/interfaces.rs` carries the real dispatch body verbatim,
-/// so the same scan still works.
 #[test]
 fn test_no_unimplemented_stubs_in_dispatch() {
     let dispatch_src = include_str!("../src/command_router/command_router.rs");

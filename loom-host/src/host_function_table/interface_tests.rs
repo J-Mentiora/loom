@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/host_function_table/interface_tests.rs` instead.
 // Interface tests for `HostFunctionTable`. Verifies the sole WASM↔core
 // bridge, the no-secret-in-WASM-linear-memory invariant, that every
 // host-fn writes to tape, the WIT-derived signatures, and the no-audit-
@@ -62,7 +60,7 @@ fn net_resp_struct_has_no_authorization_specific_field() {
 
 #[test]
 fn doc_pin_every_host_fn_writes_tape_before_side_effect() {
-    // The interfaces.rs doc string asserts: "Every host-fn appends to
+    // The host_function_table.rs doc string asserts: "Every host-fn appends to
     // the DeterminismHarness tape BEFORE invoking its side effect."
     let pin =
         "Every host-fn appends to the `DeterminismHarness` tape BEFORE invoking its side effect";

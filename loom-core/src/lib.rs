@@ -12,8 +12,7 @@
 // by the `unimplemented!()` bodies; suppress until later releases fill them in.
 #![allow(dead_code)]
 
-// Allow `use loom_core::…` inside the `include!`-embedded systems/ interface
-// files to resolve to `crate::…` without edits to the design-artifact sources.
+// Allow `use loom_core::…` inside submodule files to resolve to `crate::…`.
 extern crate self as loom_core;
 
 // ---- Canonical error re-export (binding-constraints §5) ----

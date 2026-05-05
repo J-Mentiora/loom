@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/socket_server/interfaces.rs` instead.
 // SocketServer — owns the `tokio::net::UnixListener` at the platform
 // socket path; mode 0600; stale-socket recovery; graceful shutdown
 //.

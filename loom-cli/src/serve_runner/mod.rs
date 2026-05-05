@@ -1,6 +1,4 @@
-//! `serve_runner` — see `systems/loom-cli/modules/ServeRunner/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `serve_runner` — re-exports the implementation submodule.
 pub mod serve_runner;
 pub use serve_runner::*;
 

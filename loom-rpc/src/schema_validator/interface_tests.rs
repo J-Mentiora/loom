@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/schema_validator/interface_tests.rs` instead.
 // Interface tests for `SchemaValidator`. Verifies pre-dispatch
 // position, strict-mode violation kinds, response-side
 // validation for.

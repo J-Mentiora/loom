@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/request_router/interfaces.rs` instead.
 // RequestRouter — `jsonrpsee::RpcModule` mapping method names to
 // `RpcHandlers::*` functions .
 //

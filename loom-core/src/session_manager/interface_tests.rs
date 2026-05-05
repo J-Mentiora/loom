@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/session_manager/interface_tests.rs` instead.
 // Interface tests for `SessionManager`. Verifies the warm-path
 // budget shape, abort propagation primitives, FSM transitions,
 // per-session tokio task isolation.

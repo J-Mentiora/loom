@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/session_executor/interfaces.rs` instead.
 // SessionExecutor — builds per-dispatch `wasmtime::Store<HostState>`
 // and runs the surface invocation on the caller's tokio task.
 //
@@ -278,7 +276,7 @@ impl SessionExecutor {
     /// Helper: instantiate the surface against the linker. Pure setup.
     ///
     /// Async because `wasm_runtime::WasmRuntime` builds the engine with
-    /// `Config::async_support(true)` (loom-host/src/wasm_runtime/interfaces.rs).
+    /// `Config::async_support(true)` (loom-host/src/wasm_runtime/wasm_runtime.rs).
     /// Wasmtime requires `Linker::instantiate_async` (NOT `instantiate`)
     /// when the engine is async-config'd; calling the sync variant raises
     /// `store configuration requires that *_async functions are used

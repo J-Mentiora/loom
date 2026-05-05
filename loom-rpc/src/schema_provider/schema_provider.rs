@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/schema_provider/interfaces.rs` instead.
 // SchemaProvider — loads WIT-derived JSON Schemas at startup; serves
 // the in-memory registry to `SchemaValidator` and to clients via
 // `rpc.schemas`.

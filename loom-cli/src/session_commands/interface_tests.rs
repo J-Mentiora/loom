@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/SessionCommands/interface_tests.rs` instead.
 // Interface tests for `SessionCommands`. Verifies subcommand coverage,
 // flag-name parity, and receipt pass-through shape.
 

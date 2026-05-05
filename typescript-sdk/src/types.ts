@@ -1,11 +1,6 @@
 /**
  * TypeScript types for the loom SDK.
  *
- * Types mirror wire shapes in:
- *   - systems/loom-rpc/modules/core_service_adapter/interfaces.rs
- *   - systems/loom-rpc/modules/host_service_adapter/interfaces.rs
- *   - systems/loom-rpc/modules/error_translator/interfaces.rs
- *
  * camelCase property names are used for TypeScript idiom; wire uses snake_case
  * (transformation happens in transport/session layers).
  */

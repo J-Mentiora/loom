@@ -1,6 +1,4 @@
-//! `manifest_writer` — see `systems/loom-core/modules/manifest_writer/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `manifest_writer` — re-exports the implementation submodule.
 pub mod manifest_writer;
 pub use manifest_writer::*;
 

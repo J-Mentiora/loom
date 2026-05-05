@@ -1,5 +1,5 @@
 //! `profile_registry` — canonical session profile / network-mode / budget
-//! key sets. See `interfaces.rs` for documentation.
+//! key sets. See `profile_registry.rs` for documentation.
 pub mod profile_registry;
 pub use profile_registry::*;
 

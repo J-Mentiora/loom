@@ -1047,7 +1047,7 @@ fn action_session_id(action: &Action) -> &str {
 
 fn action_surface(_action: &Action) -> &str {
     // Must match the file-stem used by `ModuleLibrary::load_all`
-    // (loom-host/src/module_library/interfaces.rs:80) which keys
+    // (loom-host/src/module_library/module_library.rs:80) which keys
     // surfaces by the .cwasm file stem. `loom postinstall` produces
     // `loom_surface_web.cwasm`, so the lookup is `SurfaceName("loom_surface_web")`.
     "loom_surface_web"
@@ -1346,7 +1346,7 @@ fn build_host_bridge(
     // Resolve surfaces dir the same way `loom postinstall` writes them
     // (~/.config/loom/surfaces/) so AOT-compiled .cwasm modules are found.
     // The CLI's compiled_defaults() hardcodes `home.join(".config").join("loom")`
-    // (cli_config/interfaces.rs), so the daemon MUST mirror that path verbatim.
+    // (cli_config/cli_config.rs), so the daemon MUST mirror that path verbatim.
     // dirs::config_dir() returns ~/Library/Application Support on macOS — wrong.
     let surfaces_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))

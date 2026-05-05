@@ -26,15 +26,13 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 // Stub: in the full crate, `CoreApiFacade` is
-// `Arc<loom_core::CoreApiFacade>` — the locked single entry point.
+// `Arc<loom_core::CoreApiFacade>` — the single entry point.
 // We declare the dep abstractly here so the interface tests do not
 // require the full loom-core crate. The concrete `Arc` type binds
-// in v5.4 implementation.
-//
-// module_kind: cross-system-bridge
+// once the loom-core dep is wired in.
 
 /// Marker trait satisfied by `loom_core::CoreApiFacade` once the
-/// crate dep is wired in v5.4. Lets sibling modules write
+/// crate dep is wired in. Lets sibling modules write
 /// `Arc<dyn CoreFacadeBridge>` for testability without leaking the
 /// loom-core types.
 pub trait CoreFacadeBridge: Send + Sync {
@@ -143,7 +141,7 @@ pub struct GcRunReport {
 }
 
 // === Wire types (WIT-derived; mirrored here for adapter return
-// shapes). In v5.4 these are replaced by the wit-bindgen output
+// shapes). These will be replaced by the wit-bindgen output
 // in `loom-rpc/src/types/`. ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -270,7 +268,7 @@ pub struct VaultAddInfo {
 }
 
 // Stub LoomError reference — replaced by `loom_core::error::LoomError`
-// in v5.4 wiring.
+// once the loom-core dep is wired in.
 pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode;
 
 /// Trait surface for `CoreServiceAdapter` so `RpcHandlers` can be

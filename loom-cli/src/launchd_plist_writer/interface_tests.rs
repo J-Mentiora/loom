@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/LaunchdPlistWriter/interface_tests.rs` instead.
 // Interface tests for `LaunchdPlistWriter`. Verifies
 // plist constants and the cfg gating.
 

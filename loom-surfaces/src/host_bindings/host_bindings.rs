@@ -172,8 +172,8 @@ pub mod mock_host {
         /// Decoded `Input.dispatchMouseEvent` payloads, in dispatch order.
         /// Lets verb tests assert exact (x, y) coordinates rather than
         /// trusting "no error" as proof the click landed at the centre.
-        /// Per Phase-4 council reviewer R2.STEAL: prevents the original
-        /// (0,0) bug from regressing silently.
+        /// Prevents the original (0,0) click-coordinate bug from
+        /// regressing silently.
         static MOUSE_DISPATCHES: RefCell<Vec<MouseDispatch>> = const { RefCell::new(Vec::new()) };
         /// Emitted receipt captured by receipt_emit.
         static EMITTED: RefCell<Option<Receipt>> = const { RefCell::new(None) };
@@ -319,7 +319,7 @@ pub mod mock_host {
             });
             // Capture Input.dispatchMouseEvent payloads so verb tests
             // can directly assert (x, y) — converts bug-fix verification
-            // from circumstantial to direct (Phase-4 council R2.STEAL).
+            // from circumstantial to direct.
             if method.as_deref() == Some("Input.dispatchMouseEvent") {
                 if let Some(params) = env.as_map().and_then(|m| {
                     m.iter().find_map(|(k, v)| {

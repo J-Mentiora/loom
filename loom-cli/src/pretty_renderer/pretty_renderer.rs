@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/PrettyRenderer/interfaces.rs` instead.
 // PrettyRenderer — schema-driven tabular renderer for `--pretty`.
 //
 // # Contract semantics
