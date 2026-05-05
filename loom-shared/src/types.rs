@@ -32,7 +32,9 @@ pub struct EpochMs(pub u64);
 /// resolves to a file outside `sessions_root`, leaking arbitrary
 /// readable file content as receipt entries.
 pub fn is_valid_session_id(s: &str) -> bool {
-    s.len() == 26 && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    s.len() == 26
+        && s.chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
 }
 
 #[cfg(test)]

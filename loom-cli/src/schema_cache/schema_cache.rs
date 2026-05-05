@@ -48,11 +48,11 @@ impl SchemaCache {
             )));
         }
         let mut schemas = HashMap::new();
-        for entry in std::fs::read_dir(schemas_dir).map_err(|e| {
-            CliError::Internal(format!("cannot read schema dir: {}", e))
-        })? {
-            let entry = entry
-                .map_err(|e| CliError::Internal(format!("schema dir entry error: {}", e)))?;
+        for entry in std::fs::read_dir(schemas_dir)
+            .map_err(|e| CliError::Internal(format!("cannot read schema dir: {}", e)))?
+        {
+            let entry =
+                entry.map_err(|e| CliError::Internal(format!("schema dir entry error: {}", e)))?;
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;

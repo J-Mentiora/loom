@@ -91,16 +91,20 @@ fn test_navigate_receipt_emitted_at_ms_monotonic() {
     let b1 = make_builder(1, 1_000);
     let b2 = make_builder(2, 2_000);
 
-    let bytes1 = ReceiptMarshaller::assemble_canonical_bytes(&b1)
-        .expect("assemble 1 must not fail");
-    let bytes2 = ReceiptMarshaller::assemble_canonical_bytes(&b2)
-        .expect("assemble 2 must not fail");
+    let bytes1 =
+        ReceiptMarshaller::assemble_canonical_bytes(&b1).expect("assemble 1 must not fail");
+    let bytes2 =
+        ReceiptMarshaller::assemble_canonical_bytes(&b2).expect("assemble 2 must not fail");
 
     let v1: serde_json::Value = serde_json::from_slice(&bytes1).unwrap();
     let v2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
 
-    let ms1 = v1["emitted_at_ms"].as_u64().expect("emitted_at_ms must be u64");
-    let ms2 = v2["emitted_at_ms"].as_u64().expect("emitted_at_ms must be u64");
+    let ms1 = v1["emitted_at_ms"]
+        .as_u64()
+        .expect("emitted_at_ms must be u64");
+    let ms2 = v2["emitted_at_ms"]
+        .as_u64()
+        .expect("emitted_at_ms must be u64");
 
     assert!(
         ms2 >= ms1,
@@ -184,8 +188,8 @@ fn test_navigate_receipt_side_effects_contains_network_events() {
     }
 
     // network_count in receipt matches event count
-    let bytes = ReceiptMarshaller::assemble_canonical_bytes(&builder)
-        .expect("assemble must not fail");
+    let bytes =
+        ReceiptMarshaller::assemble_canonical_bytes(&builder).expect("assemble must not fail");
     let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(val["network_count"], 3u64);
 }
@@ -225,8 +229,8 @@ fn test_navigate_receipt_hashes_match_content_store() {
         ..Default::default()
     };
 
-    let bytes = ReceiptMarshaller::assemble_canonical_bytes(&builder)
-        .expect("assemble must not fail");
+    let bytes =
+        ReceiptMarshaller::assemble_canonical_bytes(&builder).expect("assemble must not fail");
     let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
     // Assert receipt hashes == ContentStore-computed hashes (AC-NAVRECEIPT-04)
@@ -243,7 +247,10 @@ fn test_navigate_receipt_hashes_match_content_store() {
 
     // Round-trip: ContentStore.get(dom_ref) returns the original bytes
     let retrieved = store.get(&dom_ref).expect("get must succeed");
-    assert_eq!(retrieved, dom_bytes, "ContentStore round-trip must preserve dom bytes");
+    assert_eq!(
+        retrieved, dom_bytes,
+        "ContentStore round-trip must preserve dom bytes"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -333,13 +340,13 @@ fn assemble_value(builder: &ReceiptBuilder) -> serde_json::Value {
 
 #[test]
 fn test_ac_naverr_01_404_emits_web_navigation_failed() {
-    let builder = navigate_error_builder(
-        r#"{"kind":"http_status","status_code":404}"#,
-        Some(404),
-    );
+    let builder = navigate_error_builder(r#"{"kind":"http_status","status_code":404}"#, Some(404));
     let val = assemble_value(&builder);
 
-    assert_eq!(val["status"], "error", "AC-NAVERR-01: status must be 'error'");
+    assert_eq!(
+        val["status"], "error",
+        "AC-NAVERR-01: status must be 'error'"
+    );
     assert_eq!(
         val["code"], "web_navigation_failed",
         "AC-NAVERR-01: code must be 'web_navigation_failed'"
@@ -366,10 +373,7 @@ fn test_ac_naverr_01_404_emits_web_navigation_failed() {
 
 #[test]
 fn test_ac_naverr_02_500_emits_web_navigation_failed() {
-    let builder = navigate_error_builder(
-        r#"{"kind":"http_status","status_code":500}"#,
-        Some(500),
-    );
+    let builder = navigate_error_builder(r#"{"kind":"http_status","status_code":500}"#, Some(500));
     let val = assemble_value(&builder);
 
     assert_eq!(val["status"], "error");
@@ -387,7 +391,10 @@ fn test_ac_naverr_03_dns_failure_emits_web_navigation_failed() {
     );
     let val = assemble_value(&builder);
 
-    assert_eq!(val["status"], "error", "AC-NAVERR-03: status must be 'error'");
+    assert_eq!(
+        val["status"], "error",
+        "AC-NAVERR-03: status must be 'error'"
+    );
     assert_eq!(val["code"], "web_navigation_failed");
     assert_eq!(
         val["details"]["kind"], "dns_failure",
@@ -541,10 +548,7 @@ fn test_ac_timing_04_navigate_timing_ticks_nonzero_after_determinism_driven_disp
     // Reuse the stock LocalManifestWriter fixture — clock_now/begin_action
     // don't actually exercise ManifestWriter, but DeterminismHarness::new
     // requires an Arc<dyn ManifestWriter>.
-    let obs = Observability::new(
-        PathBuf::from("/tmp/loom-test-timing-ticks/loom.log"),
-        false,
-    );
+    let obs = Observability::new(PathBuf::from("/tmp/loom-test-timing-ticks/loom.log"), false);
     let mw: Arc<dyn ManifestWriter> = Arc::new(LocalManifestWriter::new(
         PathBuf::from("/tmp/loom-test-timing-ticks/sessions"),
         obs,
@@ -657,10 +661,11 @@ fn ac_harexport_marshaller_preserves_network_events_when_tier2_unset() {
         ..Default::default()
     };
 
-    let bytes = ReceiptMarshaller::assemble_canonical_bytes(&builder)
-        .expect("assemble_canonical_bytes must succeed for navigate_side_effects_json-only builder");
-    let payload: ReceiptPayload = serde_json::from_slice(&bytes)
-        .expect("canonical bytes must deserialize as ReceiptPayload");
+    let bytes = ReceiptMarshaller::assemble_canonical_bytes(&builder).expect(
+        "assemble_canonical_bytes must succeed for navigate_side_effects_json-only builder",
+    );
+    let payload: ReceiptPayload =
+        serde_json::from_slice(&bytes).expect("canonical bytes must deserialize as ReceiptPayload");
 
     assert_eq!(
         payload.network_events.len(),
@@ -670,14 +675,26 @@ fn ac_harexport_marshaller_preserves_network_events_when_tier2_unset() {
     assert_eq!(payload.network_events[0].url, "https://example.com/");
     assert_eq!(payload.network_events[0].status_code, 200);
     assert_eq!(payload.network_events[0].response_body_size_bytes, 1234);
-    assert_eq!(payload.network_events[1].url, "https://example.com/style.css");
+    assert_eq!(
+        payload.network_events[1].url,
+        "https://example.com/style.css"
+    );
     assert_eq!(payload.network_events[1].response_body_size_bytes, 567);
 
     // Asymmetry assertions — these prove the navigate path was taken
     // WITHOUT the tier-2 fields, defeating the silent
     // `#[serde(default)]` masking that ReceiptPayload.network_events
     // would otherwise hide. (See receipt_builder/interfaces.rs:111.)
-    assert!(payload.url.is_none(), "tier-2 url must be None to prove the regression scenario");
-    assert!(payload.status_code.is_none(), "tier-2 status_code must be None to prove the regression scenario");
-    assert!(payload.title.is_none(), "tier-2 title must be None to prove the regression scenario");
+    assert!(
+        payload.url.is_none(),
+        "tier-2 url must be None to prove the regression scenario"
+    );
+    assert!(
+        payload.status_code.is_none(),
+        "tier-2 status_code must be None to prove the regression scenario"
+    );
+    assert!(
+        payload.title.is_none(),
+        "tier-2 title must be None to prove the regression scenario"
+    );
 }

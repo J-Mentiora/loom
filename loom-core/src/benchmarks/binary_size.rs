@@ -60,7 +60,9 @@ pub struct BinarySizeReport {
 pub fn run(binary_path: &Path, meta_json_path: &Path) -> Result<BinarySizeReport, BenchmarkError> {
     // Read + parse meta.json.
     if !meta_json_path.exists() {
-        return Err(BenchmarkError::MetaJsonNotFound(meta_json_path.to_path_buf()));
+        return Err(BenchmarkError::MetaJsonNotFound(
+            meta_json_path.to_path_buf(),
+        ));
     }
     let meta_raw = std::fs::read_to_string(meta_json_path)
         .map_err(|e| BenchmarkError::MetaJsonParseError(e.to_string()))?;

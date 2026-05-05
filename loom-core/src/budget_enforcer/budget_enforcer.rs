@@ -34,7 +34,11 @@ pub enum ResourceKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KillReason {
-    BudgetExceeded { kind: ResourceKind, observed: u64, limit: u64 },
+    BudgetExceeded {
+        kind: ResourceKind,
+        observed: u64,
+        limit: u64,
+    },
     UserAbort,
     StoreFailure,
 }
@@ -167,12 +171,7 @@ pub trait BudgetEnforcer: Send + Sync {
     /// Post-effect accounting. Atomic `fetch_add(Ordering::Relaxed)`.
     /// On Exceeded, the registered kill-callback fires synchronously.
     /// Errors: BudgetExceeded* (same set as check).
-    fn account(
-        &self,
-        session: SessionId,
-        kind: ResourceKind,
-        delta: u64,
-    ) -> Result<(), LoomError>;
+    fn account(&self, session: SessionId, kind: ResourceKind, delta: u64) -> Result<(), LoomError>;
 
     /// Register a session's counters + limits + kill-callback.
     /// Called by `SessionManager::create`.

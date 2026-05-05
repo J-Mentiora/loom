@@ -101,11 +101,13 @@ fn test_ac_cliroute_03_web_type_kebab_rejected_with_hint_for_alias() {
 fn test_ac_cliroute_03_kebab_rejection_exit_code_is_2() {
     let (schemas, _dir) = schema_cache_with_web_type();
     let args = well_formed_args();
-    let r: Result<(), CliError> =
-        Err(validate_args(&schemas, "web.type-text", &args).unwrap_err());
+    let r: Result<(), CliError> = Err(validate_args(&schemas, "web.type-text", &args).unwrap_err());
     assert_eq!(map_exit_code(&r), EXIT_USAGE);
     let msg = format_error(&r).unwrap();
-    assert!(!msg.is_empty(), "format_error for kebab rejection must be non-empty");
+    assert!(
+        !msg.is_empty(),
+        "format_error for kebab rejection must be non-empty"
+    );
 }
 
 // ── AC-CLIROUTE-03 negative control: still errors on a totally-unrelated method

@@ -82,7 +82,9 @@ fn cli_error_variant_set_locked() {
 // === AC-AESF-04: SurfaceUnavailable exits 5 ===
 #[test]
 fn surface_unavailable_maps_to_exit_5() {
-    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable("web surface not loaded".into()));
+    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
+        "web surface not loaded".into(),
+    ));
     assert_eq!(map_exit_code(&r), EXIT_SURFACE_UNAVAILABLE);
     assert_eq!(map_exit_code(&r), 5);
 }
@@ -103,14 +105,18 @@ fn format_error_usage_returns_error_prefix() {
 
 #[test]
 fn format_error_internal_returns_message() {
-    let r: Result<(), CliError> = Err(CliError::Internal("schemas not found at /tmp/x — run loom postinstall".into()));
+    let r: Result<(), CliError> = Err(CliError::Internal(
+        "schemas not found at /tmp/x — run loom postinstall".into(),
+    ));
     let msg = format_error(&r).unwrap();
     assert!(msg.contains("schemas not found"), "got: {msg}");
 }
 
 #[test]
 fn format_error_surface_unavailable_names_surface() {
-    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable("web surface not loaded".into()));
+    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
+        "web surface not loaded".into(),
+    ));
     let msg = format_error(&r).unwrap();
     assert!(
         msg.to_lowercase().contains("surface"),
@@ -136,7 +142,10 @@ fn format_error_receipt_error_returns_message() {
         "message": "web surface not loaded"
     })));
     let msg = format_error(&r).unwrap();
-    assert!(!msg.is_empty(), "Receipt error must produce non-empty format_error output");
+    assert!(
+        !msg.is_empty(),
+        "Receipt error must produce non-empty format_error output"
+    );
     assert!(
         msg.contains("surface_unavailable"),
         "Receipt format_error must surface the wire `code`; got: {msg}"
@@ -157,8 +166,14 @@ fn format_error_receipt_includes_data_when_present() {
     })));
     let msg = format_error(&r).unwrap();
     assert!(msg.contains("surface_trap"), "code must appear; got: {msg}");
-    assert!(msg.contains("action dispatch failed"), "message must appear; got: {msg}");
-    assert!(msg.contains("out_of_gas"), "data payload must appear; got: {msg}");
+    assert!(
+        msg.contains("action dispatch failed"),
+        "message must appear; got: {msg}"
+    );
+    assert!(
+        msg.contains("out_of_gas"),
+        "data payload must appear; got: {msg}"
+    );
     assert!(msg.contains("module"), "data keys must appear; got: {msg}");
 }
 
@@ -204,14 +219,20 @@ fn all_variants_have_display_impl() {
             actual_hash: "def".into(),
             url: "https://example.com".into(),
         },
-        CliError::DoctorFailed(DoctorReport { checks: vec![], failures: vec!["bad".into()] }),
+        CliError::DoctorFailed(DoctorReport {
+            checks: vec![],
+            failures: vec!["bad".into()],
+        }),
         CliError::Internal("bug".into()),
         CliError::PermissionDenied("no root".into()),
         CliError::SurfaceUnavailable("web not loaded".into()),
     ];
     for v in variants {
         let s = v.to_string();
-        assert!(!s.is_empty(), "Display for CliError variant must be non-empty");
+        assert!(
+            !s.is_empty(),
+            "Display for CliError variant must be non-empty"
+        );
     }
 }
 

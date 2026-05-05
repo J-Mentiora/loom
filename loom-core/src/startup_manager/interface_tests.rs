@@ -81,9 +81,7 @@ fn sweep_orphan_tmpfiles_returns_count_of_removed_files() {
 #[test]
 fn sweep_manifests_returns_recovered_crashed_failed_tuple() {
     let sm = fixture();
-    fn _ck(
-        s: &StartupManager,
-    ) -> Result<(u64, u64, Vec<FailedSession>), LoomError> {
+    fn _ck(s: &StartupManager) -> Result<(u64, u64, Vec<FailedSession>), LoomError> {
         s.sweep_manifests()
     }
     let _ = _ck;

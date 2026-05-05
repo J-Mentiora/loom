@@ -75,4 +75,3 @@ impl AuthMiddleware {
         Arc::new(Self { daemon_token })
     }
 }
-

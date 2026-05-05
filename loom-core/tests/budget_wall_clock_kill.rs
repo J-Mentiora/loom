@@ -53,7 +53,16 @@ fn make_env() -> Env {
     let be_concrete = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = be_concrete.clone();
     let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
-    let sm = LocalSessionManager::new(cs, mw, v, be.clone(), dh, obs, 0, std::path::PathBuf::from("/tmp/loom-test/sessions"));
+    let sm = LocalSessionManager::new(
+        cs,
+        mw,
+        v,
+        be.clone(),
+        dh,
+        obs,
+        0,
+        std::path::PathBuf::from("/tmp/loom-test/sessions"),
+    );
     Env { sm, be, _tmp: tmp }
 }
 

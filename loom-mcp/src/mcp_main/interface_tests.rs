@@ -38,15 +38,20 @@ fn serve_args_help_does_not_require_daemon() {
 #[test]
 fn defaults_require_no_arguments() {
     let args = ServeArgs::try_parse_from(["serve"]).unwrap();
-    assert!(args.hello_token_path.is_none(), "zero-config: no token path required");
-    assert!(args.socket_path.is_none(), "zero-config: no socket path required");
+    assert!(
+        args.hello_token_path.is_none(),
+        "zero-config: no token path required"
+    );
+    assert!(
+        args.socket_path.is_none(),
+        "zero-config: no socket path required"
+    );
     assert!(!args.no_vault_redaction, "vault redaction default is on");
 }
 
 #[test]
 fn hello_token_path_overridable_via_env() {
-    let args =
-        ServeArgs::try_parse_from(["serve", "--hello-token-path", "/tmp/h.token"]).unwrap();
+    let args = ServeArgs::try_parse_from(["serve", "--hello-token-path", "/tmp/h.token"]).unwrap();
     assert_eq!(args.hello_token_path, Some(PathBuf::from("/tmp/h.token")));
 }
 
@@ -82,10 +87,7 @@ fn run_is_async_function() {
 
 #[test]
 fn install_signal_handler_signature() {
-    fn _ck(
-        f: Arc<AtomicBool>,
-        o: Arc<McpObservability>,
-    ) -> Result<(), loom_rpc::error::LoomError> {
+    fn _ck(f: Arc<AtomicBool>, o: Arc<McpObservability>) -> Result<(), loom_rpc::error::LoomError> {
         install_signal_handler(f, o)
     }
     let _ = _ck;

@@ -100,7 +100,9 @@ pub struct RedactionLayer {
 
 impl RedactionLayer {
     pub fn new() -> Self {
-        Self { extra_redacted_keys: Vec::new() }
+        Self {
+            extra_redacted_keys: Vec::new(),
+        }
     }
 
     pub fn with_extra(mut self, key: impl Into<String>) -> Self {

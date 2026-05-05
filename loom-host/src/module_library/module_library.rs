@@ -19,8 +19,8 @@
 //     macOS: `~/Library/Application Support/loom/surfaces/<name>.cwasm`
 //     Linux: `$XDG_DATA_HOME/loom/surfaces/<name>.cwasm`
 
-use loom_core::error::LoomError;
 use crate::wasm_runtime::WasmRuntime;
+use loom_core::error::LoomError;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -45,7 +45,8 @@ pub struct LoadFailure {
 pub struct ModuleLibrary {
     pub(crate) runtime: Arc<WasmRuntime>,
     pub(crate) surfaces_dir: PathBuf,
-    pub(crate) inner: parking_lot::RwLock<BTreeMap<SurfaceName, Arc<wasmtime::component::Component>>>,
+    pub(crate) inner:
+        parking_lot::RwLock<BTreeMap<SurfaceName, Arc<wasmtime::component::Component>>>,
     pub(crate) failed: parking_lot::RwLock<Vec<LoadFailure>>,
 }
 
@@ -149,14 +150,20 @@ impl ModuleLibrary {
 
     /// Read-lock lookup. Returns `LoomError::Unsupported` (surface unavailable)
     /// when the surface was not loaded — NEVER compiles on demand (IC-HOST-07).
-    pub fn get(&self, name: &SurfaceName) -> Result<Arc<wasmtime::component::Component>, LoomError> {
+    pub fn get(
+        &self,
+        name: &SurfaceName,
+    ) -> Result<Arc<wasmtime::component::Component>, LoomError> {
         use loom_core::error::LoomErrorCode;
-        self.inner
-            .read()
-            .get(name)
-            .cloned()
-            .ok_or_else(|| LoomError::new(LoomErrorCode::Unsupported,
-                format!("surface '{}' not loaded — use compile_module to install first", name.0)))
+        self.inner.read().get(name).cloned().ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::Unsupported,
+                format!(
+                    "surface '{}' not loaded — use compile_module to install first",
+                    name.0
+                ),
+            )
+        })
     }
 
     /// Check whether a surface is loaded. Used by `WasmHost` for the

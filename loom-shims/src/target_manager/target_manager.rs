@@ -191,7 +191,10 @@ impl TargetManager for ChromiumTargetManager {
     }
 
     fn close_target(&self, target_id: TargetId) -> Result<(), TargetError> {
-        let session_id = self.by_target.write().remove(&target_id)
+        let session_id = self
+            .by_target
+            .write()
+            .remove(&target_id)
             .map(|s| s.session_id);
         if let Some(sid) = session_id {
             self.by_session.write().remove(&sid);

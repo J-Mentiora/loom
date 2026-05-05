@@ -111,22 +111,35 @@ pub fn resolve(
         let text = std::fs::read_to_string(&config_path).map_err(|e| {
             CliError::Usage(format!("cannot read {}: {}", config_path.display(), e))
         })?;
-        let file: FileConfig = toml::from_str(&text).map_err(|e| {
-            CliError::Usage(format!("config.toml parse error: {e}"))
-        })?;
-        if let Some(v) = file.socket_path { cfg.socket_path = v; }
-        if let Some(v) = file.schemas_dir { cfg.schemas_dir = v; }
-        if let Some(v) = file.auth_dir { cfg.auth_dir = v; }
-        if let Some(v) = file.surfaces_dir { cfg.surfaces_dir = v; }
-        if let Some(v) = file.chromium_dir { cfg.chromium_dir = v; }
-        if let Some(v) = file.pretty { cfg.pretty = v; }
+        let file: FileConfig = toml::from_str(&text)
+            .map_err(|e| CliError::Usage(format!("config.toml parse error: {e}")))?;
+        if let Some(v) = file.socket_path {
+            cfg.socket_path = v;
+        }
+        if let Some(v) = file.schemas_dir {
+            cfg.schemas_dir = v;
+        }
+        if let Some(v) = file.auth_dir {
+            cfg.auth_dir = v;
+        }
+        if let Some(v) = file.surfaces_dir {
+            cfg.surfaces_dir = v;
+        }
+        if let Some(v) = file.chromium_dir {
+            cfg.chromium_dir = v;
+        }
+        if let Some(v) = file.pretty {
+            cfg.pretty = v;
+        }
         if let Some(s) = file.connect_timeout_secs {
             cfg.connect_timeout = Duration::from_secs(s);
         }
         if let Some(s) = file.request_timeout_secs {
             cfg.request_timeout = Duration::from_secs(s);
         }
-        if let Some(p) = file.default_profile { cfg.default_profile = Some(p); }
+        if let Some(p) = file.default_profile {
+            cfg.default_profile = Some(p);
+        }
     }
 
     // Step 3: apply LOOM_* env vars.
@@ -202,21 +215,17 @@ fn is_default_output_mode(m: &OutputMode) -> bool {
 
 /// Pure helper: validate a `CliConfig` against the loom-rpc JSON
 /// Schema. Returns `CliError::Usage` on schema violations.
-pub fn validate_against_schema(
-    config: &CliConfig,
-    schemas: &SchemaCache,
-) -> Result<(), CliError> {
+pub fn validate_against_schema(config: &CliConfig, schemas: &SchemaCache) -> Result<(), CliError> {
     let schema = match schemas.request_schema("loom-cli-config") {
         Some(s) => s,
         None => return Ok(()),
     };
-    let value = serde_json::to_value(config).map_err(|e| {
-        CliError::Internal(format!("config serialization failed: {e}"))
-    })?;
-    let compiled = jsonschema::validator_for(schema).map_err(|e| {
-        CliError::Internal(format!("schema compile error: {e}"))
-    })?;
-    let errors: Vec<String> = compiled.iter_errors(&value)
+    let value = serde_json::to_value(config)
+        .map_err(|e| CliError::Internal(format!("config serialization failed: {e}")))?;
+    let compiled = jsonschema::validator_for(schema)
+        .map_err(|e| CliError::Internal(format!("schema compile error: {e}")))?;
+    let errors: Vec<String> = compiled
+        .iter_errors(&value)
         .map(|e| e.to_string())
         .collect();
     if errors.is_empty() {

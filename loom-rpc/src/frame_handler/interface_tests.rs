@@ -3,9 +3,7 @@
 // Interface tests for `FrameHandler`. Verifies IC-RPC-04 codec
 // configuration: 4-byte big-endian length prefix + 16 MB cap.
 
-use super::frame_handler::{
-    FrameHandler, FramedUnixStream, LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES,
-};
+use super::frame_handler::{FrameHandler, FramedUnixStream, LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES};
 use tokio::net::UnixStream;
 use tokio_util::codec::LengthDelimitedCodec;
 
@@ -41,10 +39,7 @@ fn wrap_stream_takes_unix_stream_returns_framed() {
 fn framed_unix_stream_alias_is_framed_over_unix_stream() {
     // Compile-time check that the alias resolves to the right concrete
     // type — guards IC-RPC-04 transport identity.
-    fn _ck(f: FramedUnixStream) -> tokio_util::codec::Framed<
-        UnixStream,
-        LengthDelimitedCodec,
-    > {
+    fn _ck(f: FramedUnixStream) -> tokio_util::codec::Framed<UnixStream, LengthDelimitedCodec> {
         f
     }
     let _ = _ck;

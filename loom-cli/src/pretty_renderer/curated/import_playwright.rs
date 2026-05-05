@@ -9,7 +9,10 @@ pub struct ImportPlaywright;
 
 impl CuratedRenderer for ImportPlaywright {
     fn render(&self, value: &Value, cfg: &CliConfig) -> Result<RenderedReceipt, CliError> {
-        let id = value.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
+        let id = value
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         let text = ansi::paint(
             &format!("imported session={}", id),
             ansi::GREEN,

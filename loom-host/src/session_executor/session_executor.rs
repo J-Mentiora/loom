@@ -576,9 +576,7 @@ fn extract_opt_bytes(opt: &Option<Box<Val>>) -> Option<Vec<u8>> {
 /// Extract `Option<ContentRef>` from a WIT `option<content-ref>` Val::Option.
 /// `content-ref` is a record `{ sha256: string, size: u64 }`; we map to
 /// loom-core's host-side `ContentRef { sha256, size_bytes }`.
-fn extract_opt_content_ref(
-    opt: &Option<Box<Val>>,
-) -> Option<loom_core::content_store::ContentRef> {
+fn extract_opt_content_ref(opt: &Option<Box<Val>>) -> Option<loom_core::content_store::ContentRef> {
     match opt.as_deref() {
         Some(Val::Record(fields)) => {
             let mut sha = String::new();
@@ -587,13 +585,22 @@ fn extract_opt_content_ref(
             let mut have_size = false;
             for (name, v) in fields {
                 match (name.as_str(), v) {
-                    ("sha256", Val::String(s)) => { sha = s.clone(); have_sha = true; }
-                    ("size", Val::U64(n)) => { size = *n; have_size = true; }
+                    ("sha256", Val::String(s)) => {
+                        sha = s.clone();
+                        have_sha = true;
+                    }
+                    ("size", Val::U64(n)) => {
+                        size = *n;
+                        have_size = true;
+                    }
                     _ => {}
                 }
             }
             if have_sha && have_size {
-                Some(loom_core::content_store::ContentRef { sha256: sha, size_bytes: size })
+                Some(loom_core::content_store::ContentRef {
+                    sha256: sha,
+                    size_bytes: size,
+                })
             } else {
                 None
             }

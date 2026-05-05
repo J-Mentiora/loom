@@ -76,12 +76,10 @@ fn ac_tty_03_json_and_pretty_conflict_exits_2() {
 
 #[test]
 fn ac_tty_03_color_and_no_color_conflict_exits_2() {
-    let argv: Vec<String> = [
-        "loom", "--color", "always", "--no-color", "session", "list",
-    ]
-    .iter()
-    .map(|s| s.to_string())
-    .collect();
+    let argv: Vec<String> = ["loom", "--color", "always", "--no-color", "session", "list"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     let code = loom_cli::cli_main::run(argv);
     assert_eq!(code, 2, "--color X --no-color must exit 2 (Usage)");
 }

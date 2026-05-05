@@ -171,9 +171,21 @@ pub fn resolve_centre_for_selector(selector: &str) -> Result<(i64, i64), HostErr
         &CdpMessageEncoder::encode(&CdpMessage::DomGetBoxModel(DomGetBoxModel { node_id })),
     ) {
         Ok(b) => b,
-        Err(e @ HostError::ShimFailure { kind: ShimFailureKind::Timeout })
-        | Err(e @ HostError::ShimFailure { kind: ShimFailureKind::Crashed })
-        | Err(e @ HostError::ShimFailure { kind: ShimFailureKind::PermissionDenied { .. } })
+        Err(
+            e @ HostError::ShimFailure {
+                kind: ShimFailureKind::Timeout,
+            },
+        )
+        | Err(
+            e @ HostError::ShimFailure {
+                kind: ShimFailureKind::Crashed,
+            },
+        )
+        | Err(
+            e @ HostError::ShimFailure {
+                kind: ShimFailureKind::PermissionDenied { .. },
+            },
+        )
         | Err(e @ HostError::Internal { .. })
         | Err(e @ HostError::BudgetExceeded { .. })
         | Err(e @ HostError::VaultRejection { .. })

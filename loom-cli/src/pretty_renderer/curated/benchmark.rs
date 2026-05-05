@@ -12,8 +12,16 @@ impl CuratedRenderer for Benchmark {
         let mut consumed = HashSet::new();
         let mut lines = Vec::new();
         if let Some(s) = value.get("status").and_then(|v| v.as_str()) {
-            let code = if s == "pass" || s == "ok" { ansi::GREEN } else { ansi::YELLOW };
-            lines.push(ansi::paint(&format!("status: {}", s), code, cfg.stdout_color_enabled));
+            let code = if s == "pass" || s == "ok" {
+                ansi::GREEN
+            } else {
+                ansi::YELLOW
+            };
+            lines.push(ansi::paint(
+                &format!("status: {}", s),
+                code,
+                cfg.stdout_color_enabled,
+            ));
             consumed.insert("status".to_string());
         }
         if let Some(results) = value.get("results").and_then(|v| v.as_object()) {

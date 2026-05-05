@@ -71,7 +71,11 @@ impl CuratedRenderer for SessionList {
         }
         let ids: Vec<String> = sessions
             .iter()
-            .filter_map(|s| s.get("session_id").and_then(|v| v.as_str()).map(str::to_string))
+            .filter_map(|s| {
+                s.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            })
             .collect();
         if ids.is_empty() {
             None

@@ -18,7 +18,6 @@
 // - `std::time`, `std::net`, `std::fs::write`, `getrandom`,
 //   `std::panic::catch_unwind`. Pure `match` over closed enums only.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -41,7 +40,9 @@ use alloc::string::String;
 pub enum ShimFailureKind {
     Timeout,
     SelectorNotFound,
-    PermissionDenied { permission: String },
+    PermissionDenied {
+        permission: String,
+    },
     Crashed,
     NavigationFailed,
     /// Guest-internal: target exists but has no usable hit-test geometry.
@@ -101,10 +102,14 @@ pub enum LoomErrorCode {
     /// `DOM.querySelector` succeeds. Wire string: `"web_hit_test_failed"`
     /// (snake_case at the receipt level).
     WebHitTestFailed,
-    TccPermissionDenied { permission: String },
+    TccPermissionDenied {
+        permission: String,
+    },
     SurfaceShimFailed,
     StoreIntegrityFailed,
-    HostInternalError { reason: String },
+    HostInternalError {
+        reason: String,
+    },
     /// AC-WEB-07.1: evaluate expression matched the safe-profile denylist.
     /// Wire string: "schema_violation" (matches AC spec).
     SchemaViolation,

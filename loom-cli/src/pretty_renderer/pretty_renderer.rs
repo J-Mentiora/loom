@@ -102,7 +102,10 @@ impl<'a> PrettyRenderer<'a> {
 /// **non-empty** value. The previous implementation's `is_ok()` check
 /// treated `NO_COLOR=""` as a disable signal, contrary to spec.
 pub fn detect_color_enabled() -> bool {
-    if std::env::var("NO_COLOR").map(|s| !s.is_empty()).unwrap_or(false) {
+    if std::env::var("NO_COLOR")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
+    {
         return false;
     }
     if std::env::var("TERM").ok().as_deref() == Some("dumb") {

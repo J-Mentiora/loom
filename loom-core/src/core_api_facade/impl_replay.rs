@@ -31,10 +31,7 @@ impl CoreApiFacade {
         // session directory is missing, instead of letting the generic
         // io::Error → LoomErrorCode::Io conversion bubble up as
         // `internal_error: session.replay failed`.
-        let wal_path = self
-            .sessions_root
-            .join(session_id)
-            .join("manifest.wal");
+        let wal_path = self.sessions_root.join(session_id).join("manifest.wal");
         if !wal_path.exists() {
             return Err(LoomError::new(
                 LoomErrorCode::SessionNotFound,
@@ -83,8 +80,7 @@ impl CoreApiFacade {
                 include_audit_entries: false,
             },
         )?;
-        serde_json::to_value(&report)
-            .map_err(|e| LoomError::internal(e.to_string()))
+        serde_json::to_value(&report).map_err(|e| LoomError::internal(e.to_string()))
     }
 
     /// Inspect a session WAL up to (and including) `at_action`. Read-only.
@@ -181,7 +177,10 @@ impl CoreApiFacade {
         let mut reasons = Vec::new();
 
         // 1. Hash chain check
-        if let Err(e) = self.manifest_writer.validate(SessionId(session_id.to_string())) {
+        if let Err(e) = self
+            .manifest_writer
+            .validate(SessionId(session_id.to_string()))
+        {
             reasons.push(format!("chain: {}", e.message));
         }
 
@@ -192,15 +191,15 @@ impl CoreApiFacade {
                 if line.is_empty() {
                     continue;
                 }
-                if let Ok(ManifestEntry::ActionReceipt { receipt_canonical_bytes, .. }) =
-                    serde_json::from_str::<ManifestEntry>(line)
+                if let Ok(ManifestEntry::ActionReceipt {
+                    receipt_canonical_bytes,
+                    ..
+                }) = serde_json::from_str::<ManifestEntry>(line)
                 {
                     if let Ok(val) =
                         serde_json::from_slice::<serde_json::Value>(&receipt_canonical_bytes)
                     {
-                        if let Some(refs) =
-                            val.get("content_refs").and_then(|r| r.as_array())
-                        {
+                        if let Some(refs) = val.get("content_refs").and_then(|r| r.as_array()) {
                             for r in refs {
                                 let sha256 = r
                                     .get("sha256")
@@ -213,8 +212,10 @@ impl CoreApiFacade {
                                     .unwrap_or("")
                                     .to_string();
                                 if kind != "screenshot" && !sha256.is_empty() {
-                                    let cr =
-                                        ContentRef { sha256: sha256.clone(), size_bytes: 0 };
+                                    let cr = ContentRef {
+                                        sha256: sha256.clone(),
+                                        size_bytes: 0,
+                                    };
                                     if self.content_store.get(&cr).is_err() {
                                         reasons.push(format!(
                                             "StoreNotFound: missing blob {sha256} (kind: {kind})"

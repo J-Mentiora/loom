@@ -49,9 +49,7 @@ impl AuthManager {
         }
         std::fs::read_to_string(&self.paths.token_path)
             .map(|s| s.trim().to_string())
-            .map_err(|_| {
-                CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed)
-            })
+            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed))
     }
 
     /// Returns the absolute token path. Used by `DoctorRunner` for

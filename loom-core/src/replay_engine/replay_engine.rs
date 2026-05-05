@@ -33,7 +33,10 @@ pub struct ReplayOpts {
 
 impl Default for ReplayOpts {
     fn default() -> Self {
-        Self { exclude_screenshots: true, action_walltime_budget_ms: 5_000 }
+        Self {
+            exclude_screenshots: true,
+            action_walltime_budget_ms: 5_000,
+        }
     }
 }
 
@@ -99,7 +102,14 @@ impl LocalReplayEngine {
         session_manager: Arc<LocalSessionManager>,
         sessions_root: PathBuf,
     ) -> Self {
-        Self { content_store, manifest_writer, determinism, obs, session_manager, sessions_root }
+        Self {
+            content_store,
+            manifest_writer,
+            determinism,
+            obs,
+            session_manager,
+            sessions_root,
+        }
     }
 }
 
@@ -114,12 +124,7 @@ pub trait ReplayEngine: Send + Sync {
 
     /// Diff two session manifests. Screenshots excluded from `differences`
     /// count by default (Hard binding 5).
-    fn diff(
-        &self,
-        a: SessionId,
-        b: SessionId,
-        opts: DiffOpts,
-    ) -> Result<DiffReport, LoomError>;
+    fn diff(&self, a: SessionId, b: SessionId, opts: DiffOpts) -> Result<DiffReport, LoomError>;
 }
 
 // ReplayEngine impl is in src/loom-core/src/replay_engine/impl_replay.rs

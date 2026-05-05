@@ -3,7 +3,6 @@
 // IC-SURF-09 (sole receipt_emit path), and SR-SURF-05 (no replay-mode
 // branching).
 
-
 extern crate alloc;
 
 use super::navigate_verb::{NavigateAction, NavigateStep, NavigateVerb};
@@ -58,7 +57,10 @@ fn navigate_brackets_action_with_two_clock_reads() {
         .count();
     assert_eq!(starts, 1, "exactly one t_start clock_now read");
     assert_eq!(ends, 1, "exactly one t_end clock_now read");
-    let s_pos = steps.iter().position(|s| matches!(s, NavigateStep::ClockNow)).unwrap();
+    let s_pos = steps
+        .iter()
+        .position(|s| matches!(s, NavigateStep::ClockNow))
+        .unwrap();
     let e_pos = steps
         .iter()
         .position(|s| matches!(s, NavigateStep::ClockNowEnd))
@@ -162,7 +164,9 @@ fn navigate_execute_returns_receipt_with_dom_and_screenshot_refs() {
     assert_eq!(dom_ref.sha256_hex.len(), 64);
     assert!(dom_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
+    let ss_ref = receipt
+        .screenshot_after_ref
+        .expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 }

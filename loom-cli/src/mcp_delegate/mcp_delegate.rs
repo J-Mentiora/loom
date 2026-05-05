@@ -23,7 +23,8 @@ use crate::CliError;
 /// the delegate path is wired up in Phase 6.
 pub async fn run() -> Result<(), CliError> {
     Err(CliError::Internal(
-        "McpDelegate: loom-mcp linkage is wired in Phase 6 — run `loom-mcp serve` directly".to_string(),
+        "McpDelegate: loom-mcp linkage is wired in Phase 6 — run `loom-mcp serve` directly"
+            .to_string(),
     ))
 }
 

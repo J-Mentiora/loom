@@ -44,7 +44,16 @@ fn make_sm(tmp: &str, default_seed: u64) -> Arc<LocalSessionManager> {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let dh = Arc::new(DeterminismHarness::new(default_seed, mw.clone()));
-    LocalSessionManager::new(cs, mw, v, be, dh, obs, default_seed, std::path::PathBuf::from("/tmp/loom-test/sessions"))
+    LocalSessionManager::new(
+        cs,
+        mw,
+        v,
+        be,
+        dh,
+        obs,
+        default_seed,
+        std::path::PathBuf::from("/tmp/loom-test/sessions"),
+    )
 }
 
 fn opts(seed: Option<u64>) -> SessionCreateOpts {

@@ -15,12 +15,12 @@
 use clap::{Parser, Subcommand};
 
 use crate::action_commands::ActionArgs;
-use crate::cli_config::ColorChoice;
 use crate::admin_commands::{GcArgs, McpArgs, PostinstallArgs, ServeArgs};
 use crate::benchmark_commands::BenchmarkArgs;
 use crate::chromium_downloader::{ChromiumDownloader, ChromiumDownloaderConfig};
 use crate::chromium_pin;
 use crate::cli_config::CliConfig;
+use crate::cli_config::ColorChoice;
 use crate::doctor_runner::{DoctorArgs, DoctorPaths};
 use crate::import_commands::ImportPlaywrightArgs;
 use crate::postinstall_runner::PostinstallOptions;

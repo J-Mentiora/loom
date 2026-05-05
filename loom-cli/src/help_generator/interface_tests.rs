@@ -3,9 +3,7 @@
 // Interface tests for `HelpGenerator`. Verifies IC-CLI-09 mechanical
 // field-name conversion (round-trip) and the parity-test data shape.
 
-use super::help_generator::{
-    clap_arg_to_json_field, generate, json_field_to_clap_arg, MethodHelp,
-};
+use super::help_generator::{clap_arg_to_json_field, generate, json_field_to_clap_arg, MethodHelp};
 use crate::schema_cache::SchemaCache;
 use crate::CliError;
 

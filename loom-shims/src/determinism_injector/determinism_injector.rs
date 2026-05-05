@@ -153,7 +153,11 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
             m.iter()
                 .find(|(k, _)| k == &ciborium::value::Value::Text("identifier".into()))
                 .and_then(|(_, v)| {
-                    if let ciborium::value::Value::Text(s) = v { Some(s.clone()) } else { None }
+                    if let ciborium::value::Value::Text(s) = v {
+                        Some(s.clone())
+                    } else {
+                        None
+                    }
                 })
                 .unwrap_or_default()
         } else {
@@ -194,7 +198,9 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
             );
         }
         tracing::info!(target_id, identifier = %identifier, "determinism: inject ok");
-        self.per_target_identifiers.write().insert(target_id, identifier);
+        self.per_target_identifiers
+            .write()
+            .insert(target_id, identifier);
         Ok(())
     }
 
@@ -214,8 +220,14 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
 pub fn build_inject_params(source: &str) -> ciborium::value::Value {
     use ciborium::value::Value;
     Value::Map(vec![
-        (Value::Text("source".into()), Value::Text(source.to_string())),
-        (Value::Text("runImmediately".into()), Value::Bool(RUN_IMMEDIATELY)),
+        (
+            Value::Text("source".into()),
+            Value::Text(source.to_string()),
+        ),
+        (
+            Value::Text("runImmediately".into()),
+            Value::Bool(RUN_IMMEDIATELY),
+        ),
     ])
 }
 

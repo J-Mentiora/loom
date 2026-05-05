@@ -108,7 +108,10 @@ fn cdp_connection_command_takes_timeout_and_returns_future() {
     ) -> impl std::future::Future<Output = Result<CborValue, CdpError>> + '_ {
         c.command(
             1,
-            CdpMessage { method: "Browser.getVersion".into(), params: CborValue::Null },
+            CdpMessage {
+                method: "Browser.getVersion".into(),
+                params: CborValue::Null,
+            },
             Some(Duration::from_millis(50)),
         )
     }

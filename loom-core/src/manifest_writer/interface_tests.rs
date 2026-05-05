@@ -3,7 +3,9 @@
 // Interface tests for `ManifestWriter`. Verifies IC-CORE-04 hash chain,
 // BC-CORE-07 audit-in-same-chain, BC HARD #3 integer-only fields.
 
-use super::manifest_writer::{AuditKind, LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId};
+use super::manifest_writer::{
+    AuditKind, LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId,
+};
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_core::observability::Observability;
 use std::path::PathBuf;

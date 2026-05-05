@@ -41,7 +41,9 @@ fn test_cache_miss_in_recorded_mode_returns_error() {
     let cache = LlmCache::new(LlmMode::Recorded);
     let key = make_key("claude-opus-4", HASH_B, "v1");
 
-    let err = cache.call(&key).expect_err("must error on miss in recorded mode");
+    let err = cache
+        .call(&key)
+        .expect_err("must error on miss in recorded mode");
     assert_eq!(err.code, LoomErrorCode::LlmCacheMiss);
 }
 
@@ -70,7 +72,13 @@ fn test_tape_frame_llm_response_roundtrips() {
     let json = serde_json::to_string(&frame).expect("serialize");
     let back: TapeFrame = serde_json::from_str(&json).expect("deserialize");
 
-    if let TapeFrame::LlmResponse { model, prompt_hash, tool_schema_version, body_json } = back {
+    if let TapeFrame::LlmResponse {
+        model,
+        prompt_hash,
+        tool_schema_version,
+        body_json,
+    } = back
+    {
         assert_eq!(model, "claude-opus-4");
         assert_eq!(prompt_hash, HASH_A);
         assert_eq!(tool_schema_version, "v1");

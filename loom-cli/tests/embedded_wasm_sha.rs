@@ -142,7 +142,8 @@ fn embedded_matches_convention_path_in_release() {
     let convention_sha = format!("{:x}", Sha256::digest(&convention_bytes));
 
     assert_eq!(
-        embedded_sha, convention_sha,
+        embedded_sha,
+        convention_sha,
         "AC-WASMB-05: embedded loom_surface_web.wasm bytes diverge from the \
          convention-path artifact at {}. loom-host's integrity SHA will not \
          match the bytes loom-cli embedded. Check loom-cli/build.rs \

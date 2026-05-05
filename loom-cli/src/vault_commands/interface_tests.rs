@@ -3,7 +3,9 @@
 // Interface tests for `VaultCommands`. Verifies IC-CLI-03 coverage
 // and IC-CLI-10 prompt discipline.
 
-use super::vault_commands::{VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs, SUBCOMMAND_RPC_MAP};
+use super::vault_commands::{
+    VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs, SUBCOMMAND_RPC_MAP,
+};
 
 // === IC-CLI-03 ===
 #[test]
@@ -113,5 +115,8 @@ fn parse_ttl_rejects_garbage() {
 #[test]
 fn parse_ttl_rejects_empty_string() {
     let err = parse_ttl("").expect_err("must reject empty");
-    assert!(err.contains("invalid"), "error must mention 'invalid'; got: {err}");
+    assert!(
+        err.contains("invalid"),
+        "error must mention 'invalid'; got: {err}"
+    );
 }

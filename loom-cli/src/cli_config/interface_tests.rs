@@ -4,7 +4,9 @@
 // signature, AC-CFG-03.1 deny_unknown_fields posture, and the
 // schema-validation hook.
 
-use super::cli_config::{compiled_defaults, resolve, validate_against_schema, CliConfig, ResolveInputs};
+use super::cli_config::{
+    compiled_defaults, resolve, validate_against_schema, CliConfig, ResolveInputs,
+};
 use crate::schema_cache::SchemaCache;
 use crate::CliError;
 use std::io::Write as _;
@@ -61,7 +63,10 @@ fn cli_config_rejects_unknown_fields() {
         "extraneous_field": "should_fail"
     });
     let r: Result<CliConfig, _> = serde_json::from_value(bad);
-    assert!(r.is_err(), "deny_unknown_fields must reject extraneous keys");
+    assert!(
+        r.is_err(),
+        "deny_unknown_fields must reject extraneous keys"
+    );
 }
 
 // === AC-CFG-02.1: zero-config startup ===
@@ -72,21 +77,42 @@ fn test_zero_config_no_dir_succeeds() {
     let inputs = ResolveInputs {
         cli_overrides: vec![],
         env_vars: vec![],
-        config_path: Some(std::path::PathBuf::from("/tmp/does_not_exist_loom_test/config.toml")),
+        config_path: Some(std::path::PathBuf::from(
+            "/tmp/does_not_exist_loom_test/config.toml",
+        )),
     };
     let result = resolve(inputs, None);
-    assert!(result.is_ok(), "zero-config startup must succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "zero-config startup must succeed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
 fn test_zero_config_defaults_have_sensible_values() {
     // AC-CFG-02.1: compiled defaults are non-empty and have valid structure.
     let cfg = compiled_defaults();
-    assert!(!cfg.socket_path.as_os_str().is_empty(), "socket_path must not be empty");
-    assert!(!cfg.schemas_dir.as_os_str().is_empty(), "schemas_dir must not be empty");
-    assert!(!cfg.auth_dir.as_os_str().is_empty(), "auth_dir must not be empty");
-    assert!(cfg.connect_timeout.as_secs() > 0, "connect_timeout must be positive");
-    assert!(cfg.request_timeout.as_secs() > 0, "request_timeout must be positive");
+    assert!(
+        !cfg.socket_path.as_os_str().is_empty(),
+        "socket_path must not be empty"
+    );
+    assert!(
+        !cfg.schemas_dir.as_os_str().is_empty(),
+        "schemas_dir must not be empty"
+    );
+    assert!(
+        !cfg.auth_dir.as_os_str().is_empty(),
+        "auth_dir must not be empty"
+    );
+    assert!(
+        cfg.connect_timeout.as_secs() > 0,
+        "connect_timeout must be positive"
+    );
+    assert!(
+        cfg.request_timeout.as_secs() > 0,
+        "request_timeout must be positive"
+    );
     assert!(!cfg.pretty, "pretty defaults to false");
 }
 
@@ -106,7 +132,11 @@ fn test_precedence_cli_wins_over_env_over_file() {
         config_path: Some(config_path),
     };
     let cfg = resolve(inputs, None).expect("resolve must succeed");
-    assert_eq!(cfg.default_profile.as_deref(), Some("full"), "CLI flag must win");
+    assert_eq!(
+        cfg.default_profile.as_deref(),
+        Some("full"),
+        "CLI flag must win"
+    );
 }
 
 #[test]
@@ -123,7 +153,11 @@ fn test_precedence_env_wins_over_file_when_no_cli() {
         config_path: Some(config_path),
     };
     let cfg = resolve(inputs, None).expect("resolve must succeed");
-    assert_eq!(cfg.default_profile.as_deref(), Some("standard"), "env var must win over file");
+    assert_eq!(
+        cfg.default_profile.as_deref(),
+        Some("standard"),
+        "env var must win over file"
+    );
 }
 
 #[test]
@@ -140,7 +174,11 @@ fn test_precedence_file_wins_when_no_env_no_cli() {
         config_path: Some(config_path),
     };
     let cfg = resolve(inputs, None).expect("resolve must succeed");
-    assert_eq!(cfg.default_profile.as_deref(), Some("safe"), "file must win when no overrides");
+    assert_eq!(
+        cfg.default_profile.as_deref(),
+        Some("safe"),
+        "file must win when no overrides"
+    );
 }
 
 // === AC-CFG-03.1: startup validation ===
@@ -215,7 +253,11 @@ fn test_empty_config_file_uses_defaults() {
         config_path: Some(config_path),
     };
     let result = resolve(inputs, None);
-    assert!(result.is_ok(), "empty config file must succeed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "empty config file must succeed: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -224,8 +266,13 @@ fn test_env_empty_profile_treated_as_none() {
     let inputs = ResolveInputs {
         cli_overrides: vec![],
         env_vars: vec![("LOOM_DEFAULT_PROFILE".to_string(), String::new())],
-        config_path: Some(std::path::PathBuf::from("/tmp/does_not_exist_loom_test/config.toml")),
+        config_path: Some(std::path::PathBuf::from(
+            "/tmp/does_not_exist_loom_test/config.toml",
+        )),
     };
     let cfg = resolve(inputs, None).expect("empty env var must succeed");
-    assert!(cfg.default_profile.is_none(), "empty LOOM_DEFAULT_PROFILE must produce None");
+    assert!(
+        cfg.default_profile.is_none(),
+        "empty LOOM_DEFAULT_PROFILE must produce None"
+    );
 }

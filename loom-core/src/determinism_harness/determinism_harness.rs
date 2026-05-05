@@ -29,8 +29,12 @@ use std::sync::Arc;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TapeFrame {
-    ClockRead { observed_ns: u64 },
-    RngDraw { value_u64: u64 },
+    ClockRead {
+        observed_ns: u64,
+    },
+    RngDraw {
+        value_u64: u64,
+    },
     NetResponse {
         request_id: u64,
         status: u16,
@@ -66,7 +70,6 @@ pub struct ReplayHostFnTable {
     pub(crate) cursor: parking_lot::Mutex<usize>,
 }
 
-
 /// Per-session tape writer (recording mode). Borrowed by host-functions.
 pub struct TapeWriter {
     pub(crate) frames: Vec<TapeFrame>,
@@ -80,12 +83,16 @@ impl TapeWriter {
         self.frames.push(frame);
     }
     pub fn snapshot(&self) -> SideEffectTape {
-        SideEffectTape { frames: self.frames.clone() }
+        SideEffectTape {
+            frames: self.frames.clone(),
+        }
     }
 }
 
 impl Default for TapeWriter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// The DeterminismHarness module. Held by `CoreApiFacade` as

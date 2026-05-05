@@ -59,10 +59,9 @@ impl LocalSessionManager {
                 // Surfaced via tracing so an operator notices if the
                 // process umask blocks 0700 and downloads land in a
                 // world-readable dir.
-                if let Err(e) = std::fs::set_permissions(
-                    &dir,
-                    std::fs::Permissions::from_mode(0o700),
-                ) {
+                if let Err(e) =
+                    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                {
                     tracing::warn!(
                         path = %dir.display(),
                         error = %e,

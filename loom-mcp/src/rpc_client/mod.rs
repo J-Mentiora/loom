@@ -34,8 +34,8 @@ impl JsonRpcCaller for FramedCaller {
             "params": params,
             "id": id,
         });
-        let req_bytes = serde_json::to_vec(&req)
-            .map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
+        let req_bytes =
+            serde_json::to_vec(&req).map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
         let mut stream = self.stream.lock().await;
         stream
             .send(bytes::Bytes::from(req_bytes))
@@ -46,14 +46,17 @@ impl JsonRpcCaller for FramedCaller {
             .await
             .ok_or_else(|| ErrorMapper::from_rpc_io("connection closed"))?
             .map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
-        let resp: serde_json::Value = serde_json::from_slice(&frame)
-            .map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
+        let resp: serde_json::Value =
+            serde_json::from_slice(&frame).map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
         if let Some(err_val) = resp.get("error") {
             let loom_err: LoomError = serde_json::from_value(err_val.clone())
                 .unwrap_or_else(|_| ErrorMapper::from_rpc_io("malformed error response"));
             return Err(loom_err);
         }
-        Ok(resp.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(resp
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 }
 
@@ -83,7 +86,10 @@ impl RpcClientConfig {
 // ---------------------------------------------------------------------------
 
 impl RpcClient {
-    pub fn new(cfg: RpcClientConfig, obs: Arc<crate::mcp_observability::McpObservability>) -> Arc<Self> {
+    pub fn new(
+        cfg: RpcClientConfig,
+        obs: Arc<crate::mcp_observability::McpObservability>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             state: Arc::new(tokio::sync::RwLock::new(ConnectionState::Connecting)),
             inner: Arc::new(tokio::sync::RwLock::new(None)),
@@ -139,9 +145,7 @@ impl RpcClient {
                 return Err(ErrorMapper::from_rpc_io(&format!("hello recv: {e}")));
             }
             Ok(Some(Ok(_frame))) => {
-                return Err(ErrorMapper::from_hello_mismatch(
-                    "server rejected HELLO",
-                ));
+                return Err(ErrorMapper::from_hello_mismatch("server rejected HELLO"));
             }
         }
 

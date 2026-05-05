@@ -4,8 +4,8 @@
 // load, IC-RPC-02 in-memory snapshot, BC-RPC-02 WIT-source-of-truth.
 
 use super::schema_provider::{
-    CompiledJsonSchema, MethodSchema, SchemaLoadError, SchemaProvider,
-    SchemaProviderApi, SchemaRegistry,
+    CompiledJsonSchema, MethodSchema, SchemaLoadError, SchemaProvider, SchemaProviderApi,
+    SchemaRegistry,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -55,10 +55,7 @@ fn schema_load_error_distinguishes_missing_dir_invalid_schema_empty() {
 
 #[test]
 fn lookup_request_schema_signature() {
-    fn _ck<P: SchemaProviderApi>(
-        p: &P,
-        method: &str,
-    ) -> Option<Arc<CompiledJsonSchema>> {
+    fn _ck<P: SchemaProviderApi>(p: &P, method: &str) -> Option<Arc<CompiledJsonSchema>> {
         p.lookup_request_schema(method)
     }
     let _ = _ck::<SchemaProvider>;
@@ -67,10 +64,7 @@ fn lookup_request_schema_signature() {
 #[test]
 fn lookup_response_schema_signature() {
     // IC-RPC-10: response-side validation for vault.grant.
-    fn _ck<P: SchemaProviderApi>(
-        p: &P,
-        method: &str,
-    ) -> Option<Arc<CompiledJsonSchema>> {
+    fn _ck<P: SchemaProviderApi>(p: &P, method: &str) -> Option<Arc<CompiledJsonSchema>> {
         p.lookup_response_schema(method)
     }
     let _ = _ck::<SchemaProvider>;

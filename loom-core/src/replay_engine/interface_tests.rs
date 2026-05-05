@@ -5,8 +5,7 @@
 // Hard binding 5 screenshots excluded.
 
 use super::replay_engine::{
-    DiffOpts, DiffReport, FieldDiff, LocalReplayEngine, ReplayEngine, ReplayOpts,
-    ReplayReport,
+    DiffOpts, DiffReport, FieldDiff, LocalReplayEngine, ReplayEngine, ReplayOpts, ReplayReport,
 };
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
@@ -41,7 +40,16 @@ fn fixture() -> LocalReplayEngine {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
-    let sm = LocalSessionManager::new(cs.clone(), mw.clone(), v, be, dh.clone(), obs.clone(), 0, std::path::PathBuf::from("/tmp/loom-test/sessions"));
+    let sm = LocalSessionManager::new(
+        cs.clone(),
+        mw.clone(),
+        v,
+        be,
+        dh.clone(),
+        obs.clone(),
+        0,
+        std::path::PathBuf::from("/tmp/loom-test/sessions"),
+    );
     let sessions_root = PathBuf::from("/tmp/loom-test/sessions");
     LocalReplayEngine::new(cs, mw, dh, obs, sm, sessions_root)
 }
@@ -113,7 +121,10 @@ fn diff_signature_takes_two_session_ids_and_opts() {
         r.diff(
             SessionId("a".into()),
             SessionId("b".into()),
-            DiffOpts { exclude_screenshots: true, include_audit_entries: true },
+            DiffOpts {
+                exclude_screenshots: true,
+                include_audit_entries: true,
+            },
         )
     }
     let _ = _ck::<LocalReplayEngine>;

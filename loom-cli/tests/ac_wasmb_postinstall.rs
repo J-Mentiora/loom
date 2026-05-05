@@ -33,20 +33,30 @@ fn test_ac_wasmb_01_wasm32_build_produces_artifact() {
     // Find workspace root (CARGO_MANIFEST_DIR = .../loom-cli)
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let workspace_src = std::path::Path::new(&manifest_dir)
-        .parent()   // src/
+        .parent() // src/
         .unwrap()
         .to_path_buf();
 
     let status = std::process::Command::new("cargo")
-        .args(["build", "--target", "wasm32-wasip2", "-p", "loom-surface-web", "--release"])
+        .args([
+            "build",
+            "--target",
+            "wasm32-wasip2",
+            "-p",
+            "loom-surface-web",
+            "--release",
+        ])
         .current_dir(&workspace_src)
         .status()
         .expect("failed to spawn cargo build");
 
-    assert!(status.success(), "AC-WASMB-01: cargo build for wasm32-wasip2 failed");
+    assert!(
+        status.success(),
+        "AC-WASMB-01: cargo build for wasm32-wasip2 failed"
+    );
 
     let artifact = workspace_src
-        .parent()   // projects/loom/
+        .parent() // projects/loom/
         .unwrap()
         .join("src/target/wasm32-wasip2/release/loom_surface_web.wasm");
     assert!(
@@ -90,7 +100,9 @@ fn test_ac_wasmb_02_compile_step_writes_cwasm() {
     let outcomes = result.expect("compile_step returned Err");
 
     // Assert: at least one Compiled outcome (not just Skipped).
-    let has_compiled = outcomes.iter().any(|o| matches!(o, StepOutcome::Compiled(_)));
+    let has_compiled = outcomes
+        .iter()
+        .any(|o| matches!(o, StepOutcome::Compiled(_)));
     assert!(
         has_compiled,
         "AC-WASMB-02: expected StepOutcome::Compiled, got: {:?}",

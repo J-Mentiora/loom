@@ -43,9 +43,7 @@ pub const ERROR_INTERNAL: i32 = -32603;
 
 /// Dispatch closure invoked once per inbound frame.
 pub type Dispatch = Arc<
-    dyn Fn(McpRequest) -> futures::future::BoxFuture<'static, Option<McpResponse>>
-        + Send
-        + Sync,
+    dyn Fn(McpRequest) -> futures::future::BoxFuture<'static, Option<McpResponse>> + Send + Sync,
 >;
 
 /// Transport over generic AsyncRead/AsyncWrite.

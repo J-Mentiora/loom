@@ -191,18 +191,12 @@ pub trait Vault: Send + Sync {
     /// `{ code: "vault_credential_type_unsupported",
     ///    details.allowed_types: ["oauth2_authorization_code_pkce"] }`
     /// (AC-VAULT-04.1 envelope).
-    fn add_credential(
-        &self,
-        opts: AddCredentialOpts,
-    ) -> Result<AddCredentialReceipt, LoomError>;
+    fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError>;
 
     /// List alive grants, optionally filtered by `session`. "Alive" means
     /// `!revoked` AND `now <= issued_at_ms + ttl_ms`. Empty result is a
     /// valid outcome (AC-VAULTRPC-01 admits the "possibly empty" case).
-    fn list_grants(
-        &self,
-        session: Option<SessionId>,
-    ) -> Result<Vec<GrantSnapshot>, LoomError>;
+    fn list_grants(&self, session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError>;
 }
 
 // impl Vault for LocalVault is in impl_local.rs (Phase 6 feature-DAG impl).

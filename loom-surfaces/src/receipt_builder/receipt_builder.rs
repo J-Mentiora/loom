@@ -24,7 +24,6 @@
 // - `std::time`, `std::net`, `std::fs::write`, `getrandom`, `f32`, `f64`,
 //   `HashMap`, `serde_json` (all denied at crate level).
 
-
 extern crate alloc;
 
 use alloc::collections::BTreeMap;

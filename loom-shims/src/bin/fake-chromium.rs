@@ -587,19 +587,12 @@ fn canned_response(method: &str, params: &Value) -> Value {
                 .get("selector")
                 .and_then(|s| s.as_str())
                 .unwrap_or("");
-            let node_id = dom_fixture()
-                .ids_by_selector
-                .get(sel)
-                .copied()
-                .unwrap_or(0);
+            let node_id = dom_fixture().ids_by_selector.get(sel).copied().unwrap_or(0);
             json!({ "nodeId": node_id })
         }
         "DOM.scrollIntoViewIfNeeded" => json!({}),
         "DOM.getBoxModel" => {
-            let nid = params
-                .get("nodeId")
-                .and_then(|n| n.as_u64())
-                .unwrap_or(0);
+            let nid = params.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);
             let fixture = dom_fixture();
             match fixture
                 .selectors_by_id

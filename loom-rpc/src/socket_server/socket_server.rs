@@ -62,4 +62,3 @@ pub struct SocketServer {
     pub(crate) deps: Arc<ConnectionHandlerDeps>,
     pub token: Arc<Token>,
 }
-

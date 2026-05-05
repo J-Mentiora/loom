@@ -46,8 +46,12 @@ fn monitor_counters_are_atomic() {
     c.consecutive_timeouts.store(2, Ordering::Relaxed);
     assert_eq!(c.consecutive_timeouts.load(Ordering::Relaxed), 2);
 
-    c.last_ping_unix_ms.store(1_700_000_000_000u64, Ordering::Relaxed);
-    assert_eq!(c.last_ping_unix_ms.load(Ordering::Relaxed), 1_700_000_000_000u64);
+    c.last_ping_unix_ms
+        .store(1_700_000_000_000u64, Ordering::Relaxed);
+    assert_eq!(
+        c.last_ping_unix_ms.load(Ordering::Relaxed),
+        1_700_000_000_000u64
+    );
 }
 
 #[test]

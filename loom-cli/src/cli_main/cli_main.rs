@@ -124,8 +124,7 @@ async fn async_run(argv: Vec<String>) -> i32 {
     config.pretty = cli.pretty;
     let stdout_is_tty = std::io::stdout().is_terminal();
     let stderr_is_tty = std::io::stderr().is_terminal();
-    config.output_mode =
-        OutputMode::resolve(cli.quiet, cli.json, cli.pretty, stdout_is_tty);
+    config.output_mode = OutputMode::resolve(cli.quiet, cli.json, cli.pretty, stdout_is_tty);
     let color_choice = if cli.no_color {
         ColorChoice::Never
     } else {

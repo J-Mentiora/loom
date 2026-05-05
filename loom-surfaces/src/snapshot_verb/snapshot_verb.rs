@@ -11,7 +11,6 @@
 //   → `ContentRef`; the ref populates `Receipt.dom_after_ref`. Same for
 //   screenshot.
 
-
 extern crate alloc;
 
 use alloc::string::String;

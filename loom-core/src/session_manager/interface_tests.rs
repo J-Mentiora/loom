@@ -40,7 +40,16 @@ fn fixture() -> Arc<LocalSessionManager> {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
-    LocalSessionManager::new(cs, mw, v, be, dh, obs, 0, PathBuf::from("/tmp/loom-test/sessions"))
+    LocalSessionManager::new(
+        cs,
+        mw,
+        v,
+        be,
+        dh,
+        obs,
+        0,
+        PathBuf::from("/tmp/loom-test/sessions"),
+    )
 }
 
 // === IC-CORE-01: warm-path shape ===

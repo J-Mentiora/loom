@@ -20,11 +20,11 @@
 //   `HostObservability::record_trap_event` with the resolved frames
 //   before the receipt is queued.
 
-use loom_core::error::LoomError;
-use loom_core::manifest_writer::SessionId;
 use crate::error_mapper::TrapFrame;
 use crate::host_observability::HostObservability;
 use crate::receipt_marshaller::ReceiptMarshaller;
+use loom_core::error::LoomError;
+use loom_core::manifest_writer::SessionId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,15 +63,19 @@ impl TrapHandler {
         ctx: TrapContext,
         pool: TokioHandle,
     ) -> LoomError {
-        let frames = self.resolve_frames(ctx.dwp_path.as_ref(), &[]).unwrap_or_default();
-        let _ = self.obs.record_trap_event(crate::host_observability::TrapEvent {
-            session_id: ctx.session_id.0.clone(),
-            action_id: ctx.action_id,
-            surface: ctx.surface.clone(),
-            trap_code: format!("{trap:?}"),
-            frames_count: frames.len() as u32,
-            debug_info_unavailable: !self.debug_info_available(ctx.dwp_path.as_ref()),
-        });
+        let frames = self
+            .resolve_frames(ctx.dwp_path.as_ref(), &[])
+            .unwrap_or_default();
+        let _ = self
+            .obs
+            .record_trap_event(crate::host_observability::TrapEvent {
+                session_id: ctx.session_id.0.clone(),
+                action_id: ctx.action_id,
+                surface: ctx.surface.clone(),
+                trap_code: format!("{trap:?}"),
+                frames_count: frames.len() as u32,
+                debug_info_unavailable: !self.debug_info_available(ctx.dwp_path.as_ref()),
+            });
         let err = crate::error_mapper::wasmtime_trap_to_loom_error(
             trap,
             ctx.surface.clone(),
@@ -85,8 +89,12 @@ impl TrapHandler {
         let pool2 = pool.clone();
         pool.spawn(async move {
             let _ = this.receipts.emit_trap_receipt(
-                session_id, action_id, surface, err_code,
-                frames.len() as u32, pool2,
+                session_id,
+                action_id,
+                surface,
+                err_code,
+                frames.len() as u32,
+                pool2,
             );
         });
         err
@@ -103,19 +111,25 @@ impl TrapHandler {
         // Full addr2line resolution is Phase 6.
         // Phase 5.4: return raw-address-only frames.
         if dwp_path.map(|p| !p.exists()).unwrap_or(true) {
-            return Ok(pcs.iter().map(|&pc| TrapFrame {
+            return Ok(pcs
+                .iter()
+                .map(|&pc| TrapFrame {
+                    pc,
+                    source_file: None,
+                    source_line: None,
+                    func_name: None,
+                })
+                .collect());
+        }
+        Ok(pcs
+            .iter()
+            .map(|&pc| TrapFrame {
                 pc,
                 source_file: None,
                 source_line: None,
                 func_name: None,
-            }).collect());
-        }
-        Ok(pcs.iter().map(|&pc| TrapFrame {
-            pc,
-            source_file: None,
-            source_line: None,
-            func_name: None,
-        }).collect())
+            })
+            .collect())
     }
 
     /// True iff resolution happened with full debug info.

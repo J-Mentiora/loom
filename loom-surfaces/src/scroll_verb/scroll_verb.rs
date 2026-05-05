@@ -16,7 +16,6 @@
 //     branch dispatched at (0,0); viewport centre is consistent with
 //     the selector-Some case and avoids edge effects in some pages.)
 
-
 extern crate alloc;
 
 use alloc::string::String;

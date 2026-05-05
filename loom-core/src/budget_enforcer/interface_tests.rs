@@ -4,8 +4,8 @@
 // SR-CORE-16 atomic counters, kill-callback cycle break.
 
 use super::budget_enforcer::{
-    Action, BudgetEnforcer, BudgetLimits, KillCallback, KillReason,
-    LocalBudgetEnforcer, ResourceKind, SessionCounters,
+    Action, BudgetEnforcer, BudgetLimits, KillCallback, KillReason, LocalBudgetEnforcer,
+    ResourceKind, SessionCounters,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_core::manifest_writer::SessionId;
@@ -125,7 +125,12 @@ fn kill_reason_carries_resource_kind_observed_limit_for_audit() {
         observed: 60_500,
         limit: 60_000,
     };
-    if let KillReason::BudgetExceeded { kind, observed, limit } = r {
+    if let KillReason::BudgetExceeded {
+        kind,
+        observed,
+        limit,
+    } = r
+    {
         assert_eq!(kind, ResourceKind::Walltime);
         assert_eq!(observed, 60_500);
         assert_eq!(limit, 60_000);

@@ -36,7 +36,11 @@ impl CuratedRenderer for WebEvaluate {
         if let Some(blob) = value.get("return_value_blob_ref") {
             let sha = blob.get("sha256").and_then(|v| v.as_str()).unwrap_or("?");
             let size = blob.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0);
-            lines.push(format!("blob_ref: sha256={}.. ({} bytes)", &sha[..sha.len().min(12)], size));
+            lines.push(format!(
+                "blob_ref: sha256={}.. ({} bytes)",
+                &sha[..sha.len().min(12)],
+                size
+            ));
             consumed.insert("return_value_blob_ref".to_string());
         }
 

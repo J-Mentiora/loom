@@ -2,9 +2,8 @@
 // exclusively, no socket binding) and BC-MCP-04 single-task discipline.
 
 use super::stdio_transport::{
-    Dispatch, McpProtocolError, McpRequest, McpResponse, StdioTransport,
-    ERROR_INTERNAL, ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST,
-    ERROR_METHOD_NOT_FOUND, ERROR_PARSE,
+    Dispatch, McpProtocolError, McpRequest, McpResponse, StdioTransport, ERROR_INTERNAL,
+    ERROR_INVALID_PARAMS, ERROR_INVALID_REQUEST, ERROR_METHOD_NOT_FOUND, ERROR_PARSE,
 };
 
 // === IC-MCP-09: stdio-only constructor ===
@@ -109,9 +108,8 @@ fn read_frame_returns_option_for_eof() {
     fn _ck<R: tokio::io::AsyncRead + Unpin + Send + 'static>(
         r: &mut R,
     ) -> Box<
-        dyn std::future::Future<
-                Output = Result<Option<McpRequest>, loom_rpc::error::LoomError>,
-            > + '_,
+        dyn std::future::Future<Output = Result<Option<McpRequest>, loom_rpc::error::LoomError>>
+            + '_,
     > {
         Box::new(async move { StdioTransport::<R, tokio::io::Stdout>::read_frame(r).await })
     }
@@ -123,8 +121,7 @@ fn write_frame_returns_result_unit() {
     fn _ck<'a, W: tokio::io::AsyncWrite + Unpin + Send + 'static>(
         w: &'a mut W,
         resp: &'a McpResponse,
-    ) -> Box<dyn std::future::Future<Output = Result<(), loom_rpc::error::LoomError>> + 'a>
-    {
+    ) -> Box<dyn std::future::Future<Output = Result<(), loom_rpc::error::LoomError>> + 'a> {
         Box::new(async move { StdioTransport::<tokio::io::Stdin, W>::write_frame(w, resp).await })
     }
     let _ = _ck::<tokio::io::Stdout>;

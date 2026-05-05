@@ -77,9 +77,7 @@ pub fn json_to_cbor(v: &JsonValue) -> CborValue {
             }
         }
         JsonValue::String(s) => CborValue::Text(s.clone()),
-        JsonValue::Array(arr) => {
-            CborValue::Array(arr.iter().map(json_to_cbor).collect())
-        }
+        JsonValue::Array(arr) => CborValue::Array(arr.iter().map(json_to_cbor).collect()),
         JsonValue::Object(obj) => {
             let entries = obj
                 .iter()

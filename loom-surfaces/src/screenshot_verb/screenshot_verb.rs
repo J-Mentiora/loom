@@ -12,7 +12,6 @@
 //   via canonical JSON, but the screenshot bytes themselves are not in
 //   the hash chain.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -60,12 +59,14 @@ impl ScreenshotVerb {
             )?;
             let ss_ref = host::blob_put(&ss_bytes)?;
             let t_end = host::clock_now();
-            Ok(ReceiptBuilder::build_screenshot_only_receipt(ReceiptInputs {
-                action_id: action.action_id.clone(),
-                timing_ticks: t_end.ticks.saturating_sub(t_start.ticks),
-                screenshot_after_ref: Some(ss_ref),
-                ..Default::default()
-            }))
+            Ok(ReceiptBuilder::build_screenshot_only_receipt(
+                ReceiptInputs {
+                    action_id: action.action_id.clone(),
+                    timing_ticks: t_end.ticks.saturating_sub(t_start.ticks),
+                    screenshot_after_ref: Some(ss_ref),
+                    ..Default::default()
+                },
+            ))
         };
 
         match inner() {

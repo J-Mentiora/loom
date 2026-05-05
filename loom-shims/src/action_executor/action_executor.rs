@@ -562,12 +562,10 @@ pub(super) fn extract_console_line(params: &CborValue) -> Option<ShimConsoleLine
             _ => None,
         })
         .unwrap_or_else(|| "log".to_string());
-    let args = map
-        .iter()
-        .find_map(|(k, v)| match k {
-            CborValue::Text(s) if s == "args" => Some(v),
-            _ => None,
-        })?;
+    let args = map.iter().find_map(|(k, v)| match k {
+        CborValue::Text(s) if s == "args" => Some(v),
+        _ => None,
+    })?;
     let args_arr = match args {
         CborValue::Array(a) => a,
         _ => return None,

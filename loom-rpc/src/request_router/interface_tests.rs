@@ -4,9 +4,7 @@
 // enumeration, IC-RPC-03 pre-dispatch validation wiring, FR-PROTO-01
 // refuse-to-start on missing handler/schema.
 
-use super::request_router::{
-    RegistrationError, RequestRouter, RequestRouterApi, RouterContext,
-};
+use super::request_router::{RegistrationError, RequestRouter, RequestRouterApi, RouterContext};
 use crate::rpc_handlers::rpc_handlers::RpcHandlers;
 use crate::schema_provider::schema_provider::SchemaProviderApi;
 use crate::schema_validator::schema_validator::SchemaValidatorApi;
@@ -60,11 +58,7 @@ fn methods_accessor_returns_registered_method_names() {
 #[test]
 fn dispatch_signature_takes_method_and_params_returns_bytes() {
     fn _ck() {
-        async fn _go<R: RequestRouterApi>(
-            r: &R,
-            m: &str,
-            p: serde_json::Value,
-        ) -> Vec<u8> {
+        async fn _go<R: RequestRouterApi>(r: &R, m: &str, p: serde_json::Value) -> Vec<u8> {
             r.dispatch(m, p).await
         }
         let _ = _go::<RequestRouter>;

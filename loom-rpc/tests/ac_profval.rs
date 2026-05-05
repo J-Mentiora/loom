@@ -16,7 +16,9 @@ use loom_rpc::{
         CoreFacadeBridge, CoreServiceAdapter, CreateSessionParams, ExportInfo,
     },
     error_translator::error_translator::LoomErrorCode,
-    host_service_adapter::host_service_adapter::{Action, HostServiceAdapter, Receipt, WasmHostBridge},
+    host_service_adapter::host_service_adapter::{
+        Action, HostServiceAdapter, Receipt, WasmHostBridge,
+    },
     rpc_handlers::rpc_handlers::RpcHandlers,
     rpc_observability::rpc_observability::RpcObservability,
     schema_provider::schema_provider::{CompiledJsonSchema, SchemaProviderApi, SchemaRegistry},
@@ -63,8 +65,10 @@ impl CoreFacadeBridge for NoopCoreBridge {
     fn import_playwright_from_bytes(
         &self,
         _: &[u8],
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::PlaywrightImportInfo, LoomErrorCode>
-    {
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::PlaywrightImportInfo,
+        LoomErrorCode,
+    > {
         Err(LoomErrorCode::InternalError)
     }
     fn create_session_raw(
@@ -87,7 +91,8 @@ impl CoreFacadeBridge for NoopCoreBridge {
     fn vault_grant(
         &self,
         _: loom_rpc::core_service_adapter::core_service_adapter::GrantParams,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GrantInfo, LoomErrorCode> {
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GrantInfo, LoomErrorCode>
+    {
         Err(LoomErrorCode::InternalError)
     }
     fn vault_revoke(&self, _: &str, _: &str) -> Result<(), LoomErrorCode> {
@@ -96,20 +101,23 @@ impl CoreFacadeBridge for NoopCoreBridge {
     fn vault_list_grants(
         &self,
         _: Option<&str>,
-    ) -> Result<Vec<loom_rpc::core_service_adapter::core_service_adapter::GrantInfo>, LoomErrorCode> {
+    ) -> Result<Vec<loom_rpc::core_service_adapter::core_service_adapter::GrantInfo>, LoomErrorCode>
+    {
         Ok(vec![])
     }
     fn vault_add(
         &self,
         _: loom_rpc::core_service_adapter::core_service_adapter::VaultAddParams,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::VaultAddInfo, LoomErrorCode> {
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::VaultAddInfo, LoomErrorCode>
+    {
         Err(LoomErrorCode::InternalError)
     }
     fn gc_run(
         &self,
         _: Option<u64>,
         _: Option<u64>,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, LoomErrorCode> {
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::GcRunReport, LoomErrorCode>
+    {
         Ok(loom_rpc::core_service_adapter::core_service_adapter::GcRunReport::default())
     }
 }

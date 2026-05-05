@@ -8,9 +8,9 @@
 use super::host_function_table::{
     HostFnsTrait, HostState, LiveHostFns, LogLevel, ReplayHostFns, WitReceipt,
 };
+use crate::error_mapper::HostError;
 use loom_core::content_store::ContentRef;
 use loom_core::vault::{NetRequest, NetResp};
-use crate::error_mapper::HostError;
 
 // === IC-HOST-03: enumerate exactly 8 host fns from the trait ===
 
@@ -64,7 +64,8 @@ fn net_resp_struct_has_no_authorization_specific_field() {
 fn doc_pin_every_host_fn_writes_tape_before_side_effect() {
     // The interfaces.rs doc string asserts: "Every host-fn appends to
     // the DeterminismHarness tape BEFORE invoking its side effect."
-    let pin = "Every host-fn appends to the `DeterminismHarness` tape BEFORE invoking its side effect";
+    let pin =
+        "Every host-fn appends to the `DeterminismHarness` tape BEFORE invoking its side effect";
     assert!(pin.contains("BEFORE"));
 }
 

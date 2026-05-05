@@ -95,8 +95,7 @@ fn build_fixture() -> Fixture {
     }
 
     let workspace_root = workspace_root();
-    let wasm_path = workspace_root
-        .join("target/wasm32-wasip2/release/loom_surface_web.wasm");
+    let wasm_path = workspace_root.join("target/wasm32-wasip2/release/loom_surface_web.wasm");
     if !wasm_path.exists() {
         panic!(
             "wasm32-wasip2 surface artifact not built at {}; run \
@@ -107,16 +106,14 @@ fn build_fixture() -> Fixture {
 
     // AOT-compile to a shared cwasm under the test target dir. Per-test
     // HOME setup symlinks this into <HOME>/.config/loom/surfaces/.
-    let cwasm_path = workspace_root
-        .join("target/loom-naverr-e2e-cwasm/loom_surface_web.cwasm");
+    let cwasm_path = workspace_root.join("target/loom-naverr-e2e-cwasm/loom_surface_web.cwasm");
     std::fs::create_dir_all(cwasm_path.parent().unwrap()).expect("create cwasm cache dir");
     if !cwasm_path.exists() {
         // Use loom-host's Compiler to ensure compatibility with the runtime
         // the daemon will use (same wasmtime version, same engine settings).
         use loom_host::compiler::Compiler;
         use loom_host::wasm_runtime::{WasmRuntime, WasmRuntimeConfig};
-        let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
-            .expect("WasmRuntime::new");
+        let runtime = WasmRuntime::new(WasmRuntimeConfig::default()).expect("WasmRuntime::new");
         let compiler = Compiler::new(runtime);
         compiler
             .compile_module(&wasm_path, &cwasm_path)
@@ -198,8 +195,7 @@ impl Sandbox {
         // succeeds on the CLI side and the daemon's RequestRouter registers
         // them. This is what `loom postinstall` does at step 2.
         let schemas_dir = cfg_loom.join("schemas/v1");
-        loom_cli::postinstall_runner::schema_step(&schemas_dir)
-            .expect("schema_step");
+        loom_cli::postinstall_runner::schema_step(&schemas_dir).expect("schema_step");
 
         // BUILTIN_SCHEMAS doesn't include session.* / vault.* / etc. — the
         // daemon's SchemaValidator gates those as MethodNotFound when the
@@ -209,11 +205,8 @@ impl Sandbox {
         // `RequestRouter::dispatch`.
         let permissive = r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#;
         for method in ["session.create", "session.list", "session.close"] {
-            std::fs::write(
-                schemas_dir.join(format!("{method}.json")),
-                permissive,
-            )
-            .expect("write permissive schema");
+            std::fs::write(schemas_dir.join(format!("{method}.json")), permissive)
+                .expect("write permissive schema");
         }
 
         Sandbox { home, socket }
@@ -244,7 +237,10 @@ impl Daemon {
             .env("XDG_CACHE_HOME", sandbox.home_path().join(".cache"))
             // Stream daemon stderr to a file in the sandbox; we drain it
             // into the panic message when something fails downstream.
-            .env("RUST_LOG", "loom_host=debug,loom_rpc=info,loom_daemon=info,warn")
+            .env(
+                "RUST_LOG",
+                "loom_host=debug,loom_rpc=info,loom_daemon=info,warn",
+            )
             .stdout(Stdio::piped())
             .stderr(
                 std::fs::File::create(sandbox.home_path().join("daemon.stderr"))
@@ -315,7 +311,6 @@ impl Daemon {
         self._sandbox.home_path()
     }
 
-
     fn cli(&self, args: &[&str]) -> CliOutput {
         // No --socket flag: not all subcommands accept it. Both daemon
         // and CLI compute the same default socket path from HOME.
@@ -343,13 +338,9 @@ impl Daemon {
                 out.status, out.stdout, out.stderr, self.daemon_stderr()
             );
         }
-        let value: serde_json::Value = serde_json::from_str(&out.stdout)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "session create stdout not JSON: {e}; raw={:?}",
-                    out.stdout
-                )
-            });
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
+            panic!("session create stdout not JSON: {e}; raw={:?}", out.stdout)
+        });
         value
             .get("session_id")
             .and_then(|v| v.as_str())
@@ -363,8 +354,7 @@ impl Daemon {
     }
 
     fn daemon_stderr(&self) -> String {
-        std::fs::read_to_string(self.home_path().join("daemon.stderr"))
-            .unwrap_or_default()
+        std::fs::read_to_string(self.home_path().join("daemon.stderr")).unwrap_or_default()
     }
 
     fn navigate(&self, session_id: &str, url: &str) -> serde_json::Value {
@@ -467,7 +457,8 @@ fn ac_naverr_04_status_200_through_cli() {
                 h.len()
             );
             assert!(
-                h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                h.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                 "AC-SHA-01: {field} must be lowercase hex only, got {h}"
             );
         }
@@ -547,7 +538,10 @@ fn ac_naverr_02_status_500_through_cli() {
         let sid = daemon.create_session();
         let receipt = daemon.navigate(&sid, "http://fake.test/status/500");
 
-        assert_eq!(receipt["status"], "error", "AC-NAVERR-02: status must be 'error' for 500");
+        assert_eq!(
+            receipt["status"], "error",
+            "AC-NAVERR-02: status must be 'error' for 500"
+        );
         assert_eq!(receipt["error"]["kind"], "http_status");
         assert_eq!(receipt["error"]["detail"]["status_code"], 500u64);
         assert_eq!(receipt["status_code"], 500u64);
@@ -596,7 +590,10 @@ fn ac_naverr_03_connect_refused_through_cli() {
         let url = "http://fake.test/error/ERR_CONNECTION_REFUSED";
         let receipt = daemon.navigate(&sid, url);
 
-        assert_eq!(receipt["status"], "error", "AC-NAVERR-03 (ext): status must be 'error'");
+        assert_eq!(
+            receipt["status"], "error",
+            "AC-NAVERR-03 (ext): status must be 'error'"
+        );
         assert_eq!(
             receipt["error"]["kind"], "connect_refused",
             "AC-NAVERR-03 (ext): connect-refused must classify as 'connect_refused'"

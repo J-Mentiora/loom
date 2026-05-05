@@ -33,7 +33,14 @@ fn make_trace_zip(events: &[&str]) -> Vec<u8> {
 
 fn sample_events(k: usize) -> Vec<String> {
     (0..k)
-        .map(|i| format!(r#"{{"type":"action","callId":"pw:api:{}","startTime":{},"endTime":{}}}"#, i, i * 10, i * 10 + 5))
+        .map(|i| {
+            format!(
+                r#"{{"type":"action","callId":"pw:api:{}","startTime":{},"endTime":{}}}"#,
+                i,
+                i * 10,
+                i * 10 + 5
+            )
+        })
         .collect()
 }
 
@@ -109,9 +116,13 @@ fn ac_interop_01_1_each_action_source_is_playwright_import() {
 
     let entries = read_wal_entries(&sessions_root, &result.session_id);
     for entry in &entries {
-        if let ManifestEntry::ActionReceipt { receipt_canonical_bytes, .. } = entry {
-            let val: serde_json::Value =
-                serde_json::from_slice(receipt_canonical_bytes).expect("receipt bytes must be valid JSON");
+        if let ManifestEntry::ActionReceipt {
+            receipt_canonical_bytes,
+            ..
+        } = entry
+        {
+            let val: serde_json::Value = serde_json::from_slice(receipt_canonical_bytes)
+                .expect("receipt bytes must be valid JSON");
             assert_eq!(
                 val["source"].as_str(),
                 Some("playwright_import"),
@@ -138,7 +149,9 @@ fn ac_interop_01_1_session_replayable_false() {
     let importer = PlaywrightImporter::new(sessions_root.clone());
     let result = importer.import(&trace_zip).unwrap();
 
-    let meta_path = sessions_root.join(&result.session_id).join("session_meta.json");
+    let meta_path = sessions_root
+        .join(&result.session_id)
+        .join("session_meta.json");
     assert!(meta_path.exists(), "session_meta.json must be written");
 
     let meta: serde_json::Value =
@@ -174,15 +187,23 @@ fn ac_interop_01_1_empty_trace_creates_zero_action_session() {
 
     let entries = read_wal_entries(&sessions_root, &result.session_id);
     let receipts = action_receipts(&entries);
-    assert_eq!(receipts.len(), 0, "K=0 trace must produce 0 ActionReceipt entries");
+    assert_eq!(
+        receipts.len(),
+        0,
+        "K=0 trace must produce 0 ActionReceipt entries"
+    );
 
     // WAL must still have a Header and a SessionTerminal.
     assert!(
-        entries.iter().any(|e| matches!(e, ManifestEntry::Header { .. })),
+        entries
+            .iter()
+            .any(|e| matches!(e, ManifestEntry::Header { .. })),
         "WAL must have Header even for K=0"
     );
     assert!(
-        entries.iter().any(|e| matches!(e, ManifestEntry::SessionTerminal { .. })),
+        entries
+            .iter()
+            .any(|e| matches!(e, ManifestEntry::SessionTerminal { .. })),
         "WAL must have SessionTerminal even for K=0"
     );
 }

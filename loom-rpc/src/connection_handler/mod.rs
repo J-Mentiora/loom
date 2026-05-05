@@ -18,7 +18,10 @@ use tokio::net::UnixStream;
 
 impl ConnectionHandler {
     pub fn new(deps: Arc<ConnectionHandlerDeps>) -> Self {
-        Self { deps, state: ConnectionState::AwaitingHello }
+        Self {
+            deps,
+            state: ConnectionState::AwaitingHello,
+        }
     }
 
     /// Run the AwaitingHello → Authenticated FSM for one connection.
@@ -54,11 +57,11 @@ impl ConnectionHandler {
 
         // Authenticated: request dispatch loop
         loop {
-            let frame =
-                match tokio::time::timeout(AUTHENTICATED_IDLE_TIMEOUT, framed.next()).await {
-                    Ok(Some(Ok(f))) => f,
-                    _ => break,
-                };
+            let frame = match tokio::time::timeout(AUTHENTICATED_IDLE_TIMEOUT, framed.next()).await
+            {
+                Ok(Some(Ok(f))) => f,
+                _ => break,
+            };
             let response = handle_request(&frame, &deps).await;
             if framed.send(Bytes::from(response)).await.is_err() {
                 break;
@@ -76,18 +79,27 @@ async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
     let request: serde_json::Value = match serde_json::from_slice(frame) {
         Ok(v) => v,
         Err(_) => {
-            return jsonrpc_err(serde_json::Value::Null, LoomErrorCode::ProtocolMalformed,
-                "invalid JSON in request frame");
+            return jsonrpc_err(
+                serde_json::Value::Null,
+                LoomErrorCode::ProtocolMalformed,
+                "invalid JSON in request frame",
+            );
         }
     };
 
-    let id = request.get("id").cloned().unwrap_or(serde_json::Value::Null);
+    let id = request
+        .get("id")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
 
     let method = match request["method"].as_str() {
         Some(m) => m,
         None => {
-            return jsonrpc_err(id, LoomErrorCode::ProtocolMalformed,
-                "request missing 'method' field");
+            return jsonrpc_err(
+                id,
+                LoomErrorCode::ProtocolMalformed,
+                "request missing 'method' field",
+            );
         }
     };
 
@@ -107,8 +119,8 @@ async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
     // Wrap the router's raw payload in a JSON-RPC 2.0 envelope.
     // The router tags errors with `__loom_rpc_error: true` so we can
     // distinguish them from success payloads without heuristics.
-    let payload: serde_json::Value = serde_json::from_slice(&raw)
-        .unwrap_or(serde_json::Value::Null);
+    let payload: serde_json::Value =
+        serde_json::from_slice(&raw).unwrap_or(serde_json::Value::Null);
     if payload.get("__loom_rpc_error").and_then(|v| v.as_bool()) == Some(true) {
         let mut err_obj = payload.clone();
         if let serde_json::Value::Object(ref mut m) = err_obj {
@@ -131,7 +143,11 @@ async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
 }
 
 fn jsonrpc_err(id: serde_json::Value, code: LoomErrorCode, message: &str) -> Vec<u8> {
-    let err = JsonRpcError { code, message: message.to_string(), data: None };
+    let err = JsonRpcError {
+        code,
+        message: message.to_string(),
+        data: None,
+    };
     jsonrpc_error_envelope(id, &err)
 }
 

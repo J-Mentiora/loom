@@ -73,7 +73,11 @@ fn test_ac_aesf_01_missing_schemas_exit_code_is_2() {
     match SchemaCache::load(&nonexistent) {
         Err(e) => {
             let r: Result<(), CliError> = Err(e);
-            assert_eq!(map_exit_code(&r), EXIT_USAGE, "missing schemas dir must exit 2");
+            assert_eq!(
+                map_exit_code(&r),
+                EXIT_USAGE,
+                "missing schemas dir must exit 2"
+            );
         }
         Ok(_) => panic!("expected Err from missing schemas dir"),
     }
@@ -86,7 +90,10 @@ fn test_ac_aesf_01_missing_schemas_format_error_non_empty() {
     match SchemaCache::load(&nonexistent) {
         Err(e) => {
             let msg = format_error(&Err(e)).unwrap();
-            assert!(!msg.is_empty(), "format_error for missing schemas must be non-empty (AC-AESF-06 (b))");
+            assert!(
+                !msg.is_empty(),
+                "format_error for missing schemas must be non-empty (AC-AESF-06 (b))"
+            );
         }
         Ok(_) => panic!("expected Err from missing schemas dir"),
     }
@@ -137,7 +144,10 @@ fn test_ac_aesf_02_unknown_method_format_error_non_empty() {
     let args = json!({});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "bogus.method", &args).unwrap_err());
     let msg = format_error(&r).unwrap();
-    assert!(!msg.is_empty(), "AC-AESF-06 (b): format_error for unknown method must be non-empty");
+    assert!(
+        !msg.is_empty(),
+        "AC-AESF-06 (b): format_error for unknown method must be non-empty"
+    );
 }
 
 // ── AC-AESF-03: malformed args error names failing param ────────────────────
@@ -174,21 +184,28 @@ fn test_ac_aesf_03_malformed_args_format_error_non_empty() {
     let args = json!({"session": "S1"});
     let r: Result<(), CliError> = Err(validate_args(&schemas, "web.navigate", &args).unwrap_err());
     let msg = format_error(&r).unwrap();
-    assert!(!msg.is_empty(), "AC-AESF-06 (b): format_error for malformed args must be non-empty");
+    assert!(
+        !msg.is_empty(),
+        "AC-AESF-06 (b): format_error for malformed args must be non-empty"
+    );
 }
 
 // ── AC-AESF-04: SurfaceUnavailable — exit 5 + clear message ─────────────────
 
 #[test]
 fn test_ac_aesf_04_surface_unavailable_exit_code_is_5() {
-    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable("web surface not loaded".into()));
+    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
+        "web surface not loaded".into(),
+    ));
     assert_eq!(map_exit_code(&r), EXIT_SURFACE_UNAVAILABLE);
     assert_eq!(map_exit_code(&r), 5);
 }
 
 #[test]
 fn test_ac_aesf_04_surface_unavailable_format_error_mentions_surface() {
-    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable("web surface not loaded".into()));
+    let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
+        "web surface not loaded".into(),
+    ));
     let msg = format_error(&r).unwrap();
     assert!(
         msg.to_lowercase().contains("surface"),

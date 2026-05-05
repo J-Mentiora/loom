@@ -4,8 +4,7 @@
 // 1:1 envelope shape, 280-char message cap, panic-to-envelope path.
 
 use super::error_translator::{
-    ErrorTranslator, JsonRpcError, LoomErrorCode, SchemaViolationDetail,
-    MAX_MESSAGE_LEN,
+    ErrorTranslator, JsonRpcError, LoomErrorCode, SchemaViolationDetail, MAX_MESSAGE_LEN,
 };
 use std::any::Any;
 
@@ -84,10 +83,7 @@ fn panic_payload_converts_to_internal_error_envelope() {
 
 #[test]
 fn from_unknown_profile_serialises_correctly() {
-    let env = ErrorTranslator::from_unknown_profile(
-        "nonexistent",
-        &["safe", "standard", "full"],
-    );
+    let env = ErrorTranslator::from_unknown_profile("nonexistent", &["safe", "standard", "full"]);
     let s = serde_json::to_string(&env).unwrap();
     assert!(
         s.contains("\"code\":\"unknown_profile\""),
@@ -101,12 +97,12 @@ fn from_unknown_profile_serialises_correctly() {
 
 #[test]
 fn from_invalid_network_mode_serialises_correctly() {
-    let env = ErrorTranslator::from_invalid_network_mode(
-        "bogus",
-        &["live", "recorded", "mixed"],
-    );
+    let env = ErrorTranslator::from_invalid_network_mode("bogus", &["live", "recorded", "mixed"]);
     let s = serde_json::to_string(&env).unwrap();
-    assert!(s.contains("\"code\":\"invalid_network_mode\""), "envelope: {s}");
+    assert!(
+        s.contains("\"code\":\"invalid_network_mode\""),
+        "envelope: {s}"
+    );
     assert!(s.contains("\"provided\":\"bogus\""), "envelope: {s}");
     assert_eq!(env.code, LoomErrorCode::InvalidNetworkMode);
 }
@@ -118,7 +114,10 @@ fn from_invalid_budget_key_serialises_correctly() {
         &["network", "wall_clock", "dom_nodes", "js_heap"],
     );
     let s = serde_json::to_string(&env).unwrap();
-    assert!(s.contains("\"code\":\"invalid_budget_key\""), "envelope: {s}");
+    assert!(
+        s.contains("\"code\":\"invalid_budget_key\""),
+        "envelope: {s}"
+    );
     assert!(s.contains("\"provided\":\"garbage\""), "envelope: {s}");
     assert_eq!(env.code, LoomErrorCode::InvalidBudgetKey);
 }
@@ -137,7 +136,6 @@ fn typed_validation_variants_serialise_as_snake_case() {
 fn translator_is_stateless_function_namespace() {
     // No constructor — pure function namespace (BC-RPC-03 single
     // conversion point; no per-instance state).
-    let _: fn(SchemaViolationDetail) -> JsonRpcError =
-        ErrorTranslator::from_schema_violation;
+    let _: fn(SchemaViolationDetail) -> JsonRpcError = ErrorTranslator::from_schema_violation;
     let _: fn(&str) -> String = ErrorTranslator::truncate_message;
 }

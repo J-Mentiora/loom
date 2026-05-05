@@ -122,12 +122,17 @@ fn test_ac_wasmb_05_load_one_rejects_wrong_sha() {
     let cwasm_dest = tmpdir.path().join("loom_surface_web.cwasm");
 
     std::fs::write(&wasm_src, MINIMAL_COMPONENT_BYTES).expect("write minimal wasm");
-    compiler.compile_module(&wasm_src, &cwasm_dest).expect("compile_module");
+    compiler
+        .compile_module(&wasm_src, &cwasm_dest)
+        .expect("compile_module");
 
     // Write a WRONG sha256 sidecar next to the .cwasm.
     let sidecar = tmpdir.path().join("loom_surface_web.sha256");
-    std::fs::write(&sidecar, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
-        .expect("write sidecar");
+    std::fs::write(
+        &sidecar,
+        "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    )
+    .expect("write sidecar");
 
     let library = ModuleLibrary::new(rt, tmpdir.path().to_path_buf());
     let name = SurfaceName("loom_surface_web".into());
@@ -135,7 +140,8 @@ fn test_ac_wasmb_05_load_one_rejects_wrong_sha() {
     // The correct SHA of MINIMAL_COMPONENT_BYTES (not "deadbeef").
     // Any non-matching expected SHA causes StoreIntegrityFailed.
     let correct_sha = "a_sha_that_matches_the_sidecar_would_pass_but_we_use_deadbeef_here";
-    let result = library.load_one_with_expected_sha(&name, &cwasm_dest, "some_expected_sha_that_differs");
+    let result =
+        library.load_one_with_expected_sha(&name, &cwasm_dest, "some_expected_sha_that_differs");
 
     assert!(
         result.is_err(),

@@ -56,7 +56,8 @@ fn assert_is_sha256_hex(label: &str, h: &str) {
         len = h.len()
     );
     assert!(
-        h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        h.chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
         "{label}: expected lowercase hex only, got {h:?}"
     );
 }
@@ -187,7 +188,13 @@ fn ac_navreceipt2_01_wire_receipt_carries_all_brief_keys() {
     }
 
     // Identity fields too:
-    for key in ["action_id", "session_id", "status", "timing_ticks", "side_effects"] {
+    for key in [
+        "action_id",
+        "session_id",
+        "status",
+        "timing_ticks",
+        "side_effects",
+    ] {
         assert!(json.get(key).is_some(), "missing identity field {key}");
     }
 }
@@ -198,7 +205,8 @@ fn ac_navreceipt2_01_wire_receipt_carries_all_brief_keys() {
 fn ac_navreceipt2_02_dom_and_screenshot_hashes_are_sha256_hex_with_blob_present() {
     let (cs, _tmp) = fresh_content_store();
 
-    let dom_bytes: Vec<u8> = b"<html><head><title>Example</title></head><body>hi</body></html>".to_vec();
+    let dom_bytes: Vec<u8> =
+        b"<html><head><title>Example</title></head><body>hi</body></html>".to_vec();
     let ss_bytes: Vec<u8> = (0u8..=255).chain(0u8..=255).collect(); // 512 bytes of fake PNG
 
     let dom_ref = cs.put(&dom_bytes).expect("cs.put(dom)");
@@ -216,7 +224,10 @@ fn ac_navreceipt2_02_dom_and_screenshot_hashes_are_sha256_hex_with_blob_present(
 
     // AC-02 — wire receipt carries the same hashes.
     let r = full_navigate_receipt(dom_ref.sha256.clone(), ss_ref.sha256.clone());
-    assert_eq!(r.dom_snapshot_hash.as_deref(), Some(dom_ref.sha256.as_str()));
+    assert_eq!(
+        r.dom_snapshot_hash.as_deref(),
+        Some(dom_ref.sha256.as_str())
+    );
     assert_eq!(
         r.screenshot_after_hash.as_deref(),
         Some(ss_ref.sha256.as_str())

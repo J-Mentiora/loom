@@ -25,12 +25,7 @@ fn redact_vault_flag_persists() {
 
 #[test]
 fn span_request_start_signature() {
-    fn _ck(
-        o: &McpObservability,
-        rid: String,
-        m: &'static str,
-        t: Option<String>,
-    ) -> RequestSpan {
+    fn _ck(o: &McpObservability, rid: String, m: &'static str, t: Option<String>) -> RequestSpan {
         o.span_request_start(rid, m, t)
     }
     let _ = _ck;
@@ -78,11 +73,7 @@ fn redacted_tool_names_includes_vault_grant_and_revoke() {
 
 #[test]
 fn redact_arguments_signature() {
-    fn _ck(
-        o: &McpObservability,
-        tool: &str,
-        v: serde_json::Value,
-    ) -> serde_json::Value {
+    fn _ck(o: &McpObservability, tool: &str, v: serde_json::Value) -> serde_json::Value {
         o.redact_arguments(tool, v)
     }
     let _ = _ck;
@@ -105,11 +96,7 @@ fn info_warn_error_signatures_take_msg_and_json_fields() {
 #[test]
 fn request_span_holds_request_id_and_mcp_method() {
     fn _ck(s: &RequestSpan) -> (&str, &'static str, Option<&str>) {
-        (
-            s.request_id.as_str(),
-            s.mcp_method,
-            s.tool_name.as_deref(),
-        )
+        (s.request_id.as_str(), s.mcp_method, s.tool_name.as_deref())
     }
     let _ = _ck;
 }

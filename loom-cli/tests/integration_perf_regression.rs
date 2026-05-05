@@ -28,7 +28,11 @@ fn session_list_1000_items_under_threshold() {
     let elapsed = start.elapsed();
 
     // Local <100ms; CI <500ms (D-33).
-    let limit_ms = if std::env::var("CI").is_ok() { 500 } else { 100 };
+    let limit_ms = if std::env::var("CI").is_ok() {
+        500
+    } else {
+        100
+    };
     assert!(
         elapsed.as_millis() < limit_ms,
         "session.list 1000-item render took {}ms (limit {}ms)",

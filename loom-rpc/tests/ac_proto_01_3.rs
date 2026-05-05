@@ -27,7 +27,10 @@ fn bind_error_on_missing_parent_directory() {
     );
     match result.unwrap_err() {
         BindError::Io { reason } => {
-            assert!(!reason.is_empty(), "BindError::Io must carry a non-empty reason");
+            assert!(
+                !reason.is_empty(),
+                "BindError::Io must carry a non-empty reason"
+            );
         }
         BindError::PermissionDenied => { /* also acceptable */ }
         BindError::AddressInUse => {

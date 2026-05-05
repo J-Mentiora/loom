@@ -1,6 +1,5 @@
 // Interface tests for `HoverVerb`. Verifies IC-SURF-07 hash-only tier.
 
-
 extern crate alloc;
 
 use super::hover_verb::{HoverAction, HoverVerb};
@@ -42,7 +41,9 @@ fn hover_execute_returns_hash_only_receipt() {
     assert_eq!(dom_ref.sha256_hex.len(), 64);
     assert!(dom_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
-    let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
+    let ss_ref = receipt
+        .screenshot_after_ref
+        .expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
 
@@ -50,7 +51,11 @@ fn hover_execute_returns_hash_only_receipt() {
     // assert one mouseMoved at the box centre. Box (200,300)–(250,350)
     // → centre (225, 325).
     let dispatches = mock_host::mouse_dispatches();
-    assert_eq!(dispatches.len(), 1, "hover dispatches exactly one mouseMoved");
+    assert_eq!(
+        dispatches.len(),
+        1,
+        "hover dispatches exactly one mouseMoved"
+    );
     assert_eq!(dispatches[0].event_type, "mouseMoved");
     assert_eq!((dispatches[0].x, dispatches[0].y), (225, 325));
     assert_eq!(dispatches[0].button, "none");

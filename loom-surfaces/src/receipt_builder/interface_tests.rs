@@ -3,7 +3,6 @@
 // capture-mode boundary (surface emits at default tier; SessionExecutor
 // post-processes).
 
-
 extern crate alloc;
 
 use super::receipt_builder::{
@@ -44,7 +43,10 @@ fn navigate_uses_full_blob_tier_carrying_dom_and_screenshot() {
     let r = ReceiptBuilder::build_full_blob_receipt(VerbKind::Navigate, fixture_inputs());
     assert_eq!(r.verb, VerbKind::Navigate);
     assert_eq!(r.status, ReceiptStatus::Ok);
-    assert!(r.dom_after_ref.is_some(), "navigate must carry dom_after_ref");
+    assert!(
+        r.dom_after_ref.is_some(),
+        "navigate must carry dom_after_ref"
+    );
     assert!(
         r.screenshot_after_ref.is_some(),
         "navigate must carry screenshot_after_ref"
@@ -187,8 +189,7 @@ fn receipt_builder_has_no_capture_mode_argument() {
     // Compilation evidence: the four `build_*` methods take only
     // (verb, ReceiptInputs) — no `capture_mode: CaptureMode` parameter.
     // If a future change added one, this test would fail to compile.
-    let _r: Receipt =
-        ReceiptBuilder::build_full_blob_receipt(VerbKind::Navigate, fixture_inputs());
+    let _r: Receipt = ReceiptBuilder::build_full_blob_receipt(VerbKind::Navigate, fixture_inputs());
     let _r: Receipt = ReceiptBuilder::build_hash_only_receipt(VerbKind::Click, fixture_inputs());
     let _r: Receipt = ReceiptBuilder::build_screenshot_only_receipt(fixture_inputs());
     let _r: Receipt = ReceiptBuilder::build_console_only_receipt(fixture_inputs());

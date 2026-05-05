@@ -97,7 +97,10 @@ pub type ForceRestartCallback = Arc<dyn Fn() + Send + Sync>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CrashReason {
     /// SIGCHLD observed.
-    ChildExited { exit_code: Option<i32>, signal: Option<i32> },
+    ChildExited {
+        exit_code: Option<i32>,
+        signal: Option<i32>,
+    },
     /// `ProcessMonitor` invoked the force-restart callback after 3
     /// consecutive `Browser.getVersion` timeouts.
     HangDetected,
@@ -204,7 +207,10 @@ impl Supervisor for ChromiumSupervisor {
             "--disable-component-update",
             "--remote-debugging-port=0",
         ]);
-        cmd.arg(format!("--user-data-dir={}", self.config.user_data_dir.display()));
+        cmd.arg(format!(
+            "--user-data-dir={}",
+            self.config.user_data_dir.display()
+        ));
         for f in &self.config.extra_flags {
             cmd.arg(f);
         }
@@ -248,12 +254,8 @@ impl Supervisor for ChromiumSupervisor {
             .take()
             .ok_or_else(|| SupervisorError::SpawnFailed("stderr unavailable".into()))?;
 
-        let ws_url = parse_devtools_url(
-            stderr,
-            &self.config.user_data_dir,
-            Duration::from_secs(10),
-        )
-        .await?;
+        let ws_url =
+            parse_devtools_url(stderr, &self.config.user_data_dir, Duration::from_secs(10)).await?;
 
         self.cdp
             .connect(&ws_url)

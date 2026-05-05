@@ -86,10 +86,7 @@ impl LaunchdPlistWriter {
         if let Some(parent) = self.config.plist_path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    CliError::PermissionDenied(format!(
-                        "create plist dir: {}",
-                        parent.display()
-                    ))
+                    CliError::PermissionDenied(format!("create plist dir: {}", parent.display()))
                 } else {
                     CliError::Internal(format!("create plist dir: {e}"))
                 }
@@ -111,7 +108,9 @@ impl LaunchdPlistWriter {
     /// Non-macOS stub. Returns `CliError::Internal`.
     #[cfg(not(target_os = "macos"))]
     pub fn write(&self) -> Result<WriteOutcome, CliError> {
-        Err(CliError::Internal("launchd plist is macOS-only".to_string()))
+        Err(CliError::Internal(
+            "launchd plist is macOS-only".to_string(),
+        ))
     }
 
     /// Pure helper: render the plist XML for a given config. Used by

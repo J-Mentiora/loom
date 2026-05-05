@@ -9,8 +9,8 @@ mod interface_tests;
 
 use crate::core_service_adapter::core_service_adapter::{
     ContentData, CoreServiceAdapterApi, CreateSessionParams, DiffReport, ExportInfo, GcRunReport,
-    GrantInfo, GrantParams, PlaywrightImportInfo, SessionInfo, SessionInspection,
-    ValidationResult, VaultAddInfo, VaultAddParams,
+    GrantInfo, GrantParams, PlaywrightImportInfo, SessionInfo, SessionInspection, ValidationResult,
+    VaultAddInfo, VaultAddParams,
 };
 use crate::error_translator::error_translator::LoomErrorCode;
 use crate::host_service_adapter::host_service_adapter::{Action, HostServiceAdapterApi, Receipt};
@@ -27,7 +27,13 @@ impl RpcHandlers {
         validator: Arc<dyn SchemaValidatorApi>,
         observability: Arc<dyn RpcObservabilityApi>,
     ) -> Arc<Self> {
-        Arc::new(Self { core, host, schemas, validator, observability })
+        Arc::new(Self {
+            core,
+            host,
+            schemas,
+            validator,
+            observability,
+        })
     }
 
     /// `rpc.schemas` — AC-PROTO-02.2. Returns the in-memory schema registry.
@@ -78,11 +84,13 @@ impl RpcHandlers {
         s: String,
         at: Option<u64>,
     ) -> HandlerResult<SessionInspection> {
-        self.core.inspect_session(&s, at).map_err(|code| JsonRpcError {
-            code,
-            message: format!("session.inspect failed for session {s}"),
-            data: None,
-        })
+        self.core
+            .inspect_session(&s, at)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: format!("session.inspect failed for session {s}"),
+                data: None,
+            })
     }
 
     pub async fn session_list(&self) -> HandlerResult<Vec<SessionInfo>> {
@@ -102,11 +110,13 @@ impl RpcHandlers {
     }
 
     pub async fn session_abort(&self, s: String, r: String) -> HandlerResult<SessionInfo> {
-        self.core.abort_session(&s, &r).map_err(|code| JsonRpcError {
-            code,
-            message: format!("session.abort failed for session {s}"),
-            data: None,
-        })
+        self.core
+            .abort_session(&s, &r)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: format!("session.abort failed for session {s}"),
+                data: None,
+            })
     }
 
     pub async fn session_replay(
@@ -131,43 +141,45 @@ impl RpcHandlers {
         i: bool,
         d: bool,
     ) -> HandlerResult<DiffReport> {
-        self.core.diff_sessions(&a, &b, i, d).map_err(|code| JsonRpcError {
-            code,
-            message: format!("session.diff failed for sessions {a} vs {b}"),
-            data: None,
-        })
-    }
-
-    pub async fn session_export(&self, s: String, f: String) -> HandlerResult<ExportInfo> {
         self.core
-            .export_session(&s, &f)
-            .map_err(|code| {
-                // For SchemaViolation (mapped from
-                // LoomErrorCode::InvalidArgument when the daemon
-                // rejects an unsupported format), surface a more
-                // actionable message that names the format the user
-                // tried to export to. Other codes use the generic
-                // "session.export failed" template.
-                let message = match code {
-                    crate::error_translator::error_translator::LoomErrorCode::SchemaViolation => {
-                        format!("session.export rejected format '{f}' (supported: json, tarball, har)")
-                    }
-                    _ => format!("session.export failed for session {s}"),
-                };
-                JsonRpcError {
-                    code,
-                    message,
-                    data: None,
-                }
+            .diff_sessions(&a, &b, i, d)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: format!("session.diff failed for sessions {a} vs {b}"),
+                data: None,
             })
     }
 
-    pub async fn content_get(&self, artifact_ref: String) -> HandlerResult<ContentData> {
-        self.core.content_get(&artifact_ref).map_err(|code| JsonRpcError {
-            code,
-            message: format!("content.get failed for ref {artifact_ref}"),
-            data: None,
+    pub async fn session_export(&self, s: String, f: String) -> HandlerResult<ExportInfo> {
+        self.core.export_session(&s, &f).map_err(|code| {
+            // For SchemaViolation (mapped from
+            // LoomErrorCode::InvalidArgument when the daemon
+            // rejects an unsupported format), surface a more
+            // actionable message that names the format the user
+            // tried to export to. Other codes use the generic
+            // "session.export failed" template.
+            let message = match code {
+                crate::error_translator::error_translator::LoomErrorCode::SchemaViolation => {
+                    format!("session.export rejected format '{f}' (supported: json, tarball, har)")
+                }
+                _ => format!("session.export failed for session {s}"),
+            };
+            JsonRpcError {
+                code,
+                message,
+                data: None,
+            }
         })
+    }
+
+    pub async fn content_get(&self, artifact_ref: String) -> HandlerResult<ContentData> {
+        self.core
+            .content_get(&artifact_ref)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: format!("content.get failed for ref {artifact_ref}"),
+                data: None,
+            })
     }
 
     pub async fn session_validate(&self, s: String) -> HandlerResult<ValidationResult> {
@@ -213,11 +225,14 @@ impl RpcHandlers {
     // === Action method stub — implemented by wasm-host features ===
 
     pub async fn action_dispatch(&self, a: Action) -> HandlerResult<Receipt> {
-        self.host.dispatch_action(a).await.map_err(|code| JsonRpcError {
-            code,
-            message: "action dispatch failed".to_string(),
-            data: None,
-        })
+        self.host
+            .dispatch_action(a)
+            .await
+            .map_err(|code| JsonRpcError {
+                code,
+                message: "action dispatch failed".to_string(),
+                data: None,
+            })
     }
 
     // === Vault methods — wired through CoreServiceAdapter to loom-core ===

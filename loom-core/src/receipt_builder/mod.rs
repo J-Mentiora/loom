@@ -3,8 +3,8 @@
 pub mod receipt_builder;
 pub use receipt_builder::*;
 
-mod impl_capture;
 pub mod capture_policy;
+mod impl_capture;
 
 #[cfg(test)]
 mod interface_tests;

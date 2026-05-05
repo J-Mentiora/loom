@@ -63,24 +63,37 @@ impl RpcClient {
     /// Open the Unix-socket connection and complete the HELLO
     /// handshake. Single connect retry on `ECONNREFUSED`.
     pub async fn connect(&self) -> Result<(), CliError> {
-        let auth = crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
+        let auth =
+            crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
         let token = auth.read_hello_token()?;
         let mut stream = match tokio::net::UnixStream::connect(&self.config.socket_path).await {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                tokio::net::UnixStream::connect(&self.config.socket_path).await
-                    .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning))?
+                tokio::net::UnixStream::connect(&self.config.socket_path)
+                    .await
+                    .map_err(|_| {
+                        CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
+                    })?
             }
-            Err(_) => return Err(CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)),
+            Err(_) => {
+                return Err(CliError::Connection(
+                    crate::error_mapper::ConnectionError::DaemonNotRunning,
+                ))
+            }
         };
-        send_frame(&mut stream, format!("HELLO {token}").as_bytes()).await
-            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning))?;
+        send_frame(&mut stream, format!("HELLO {token}").as_bytes())
+            .await
+            .map_err(|_| {
+                CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
+            })?;
         // Timeout = accepted; any frame or EOF before timeout = rejected.
         let hello = tokio::time::timeout(Duration::from_millis(50), recv_frame(&mut stream)).await;
         match hello {
             Err(_timeout) => Ok(()),
-            Ok(_) => Err(CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed)),
+            Ok(_) => Err(CliError::Connection(
+                crate::error_mapper::ConnectionError::AuthFailed,
+            )),
         }
     }
 
@@ -92,22 +105,35 @@ impl RpcClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, CliError> {
-        let auth = crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
+        let auth =
+            crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
         let token = auth.read_hello_token()?;
         let mut stream = match tokio::net::UnixStream::connect(&self.config.socket_path).await {
             Ok(s) => s,
             Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
                 tokio::time::sleep(Duration::from_millis(100)).await;
-                tokio::net::UnixStream::connect(&self.config.socket_path).await
-                    .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning))?
+                tokio::net::UnixStream::connect(&self.config.socket_path)
+                    .await
+                    .map_err(|_| {
+                        CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
+                    })?
             }
-            Err(_) => return Err(CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)),
+            Err(_) => {
+                return Err(CliError::Connection(
+                    crate::error_mapper::ConnectionError::DaemonNotRunning,
+                ))
+            }
         };
-        send_frame(&mut stream, format!("HELLO {token}").as_bytes()).await
-            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning))?;
+        send_frame(&mut stream, format!("HELLO {token}").as_bytes())
+            .await
+            .map_err(|_| {
+                CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
+            })?;
         let hello = tokio::time::timeout(Duration::from_millis(50), recv_frame(&mut stream)).await;
         if hello.is_ok() {
-            return Err(CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed));
+            return Err(CliError::Connection(
+                crate::error_mapper::ConnectionError::AuthFailed,
+            ));
         }
         let request = serde_json::json!({
             "jsonrpc": "2.0",
@@ -115,26 +141,37 @@ impl RpcClient {
             "params": params,
             "id": 1,
         });
-        let req_bytes = serde_json::to_vec(&request).map_err(|e| CliError::Internal(e.to_string()))?;
-        send_frame(&mut stream, &req_bytes).await
-            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout))?;
+        let req_bytes =
+            serde_json::to_vec(&request).map_err(|e| CliError::Internal(e.to_string()))?;
+        send_frame(&mut stream, &req_bytes).await.map_err(|_| {
+            CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout)
+        })?;
         let resp_bytes = tokio::time::timeout(self.config.request_timeout, recv_frame(&mut stream))
             .await
-            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout))?
-            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning))?;
-        let response: serde_json::Value = serde_json::from_slice(&resp_bytes)
-            .map_err(|e| CliError::Internal(e.to_string()))?;
+            .map_err(|_| {
+                CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout)
+            })?
+            .map_err(|_| {
+                CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
+            })?;
+        let response: serde_json::Value =
+            serde_json::from_slice(&resp_bytes).map_err(|e| CliError::Internal(e.to_string()))?;
         if let Some(error) = response.get("error") {
             let rpc_error: RpcError = serde_json::from_value(error.clone())
                 .map_err(|e| CliError::Internal(e.to_string()))?;
             return Err(rpc_error.into());
         }
-        Ok(response.get("result").cloned().unwrap_or(serde_json::Value::Null))
+        Ok(response
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// Daemon-ping helper used by `DoctorRunner` (check 2).
     pub async fn ping(&self) -> Result<(), CliError> {
-        self.call("health.ping", serde_json::json!({})).await.map(|_| ())
+        self.call("health.ping", serde_json::json!({}))
+            .await
+            .map(|_| ())
     }
 }
 
@@ -143,8 +180,12 @@ impl RpcClient {
 impl From<RpcError> for CliError {
     fn from(e: RpcError) -> Self {
         match e.code.as_str() {
-            "rpc-auth-failed" => CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed),
-            "rpc-schema-violation" => CliError::Connection(crate::error_mapper::ConnectionError::SchemaVersionSkew),
+            "rpc-auth-failed" => {
+                CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed)
+            }
+            "rpc-schema-violation" => {
+                CliError::Connection(crate::error_mapper::ConnectionError::SchemaVersionSkew)
+            }
             "io" => CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning),
             // AC-AESF-04: surface_unavailable is a distinct error class (exit 5).
             "surface_unavailable" => CliError::SurfaceUnavailable(e.message.clone()),

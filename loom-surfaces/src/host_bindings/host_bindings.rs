@@ -38,7 +38,6 @@
 //   point of HostBindings is that it is the SOLE legitimate path to time,
 //   net, RNG, and storage from inside WASM.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -220,17 +219,10 @@ pub mod mock_host {
     /// with a viewport of (vw, vh).
     pub fn install_hit_test_box(x1: f64, y1: f64, x2: f64, y2: f64, vw: u64, vh: u64) {
         let mut buf_doc = Vec::new();
-        ciborium::ser::into_writer(
-            &serde_json::json!({"root": {"nodeId": 1}}),
-            &mut buf_doc,
-        )
-        .unwrap();
+        ciborium::ser::into_writer(&serde_json::json!({"root": {"nodeId": 1}}), &mut buf_doc)
+            .unwrap();
         let mut buf_qs = Vec::new();
-        ciborium::ser::into_writer(
-            &serde_json::json!({"nodeId": 100}),
-            &mut buf_qs,
-        )
-        .unwrap();
+        ciborium::ser::into_writer(&serde_json::json!({"nodeId": 100}), &mut buf_qs).unwrap();
         let mut buf_siv = Vec::new();
         ciborium::ser::into_writer(&serde_json::json!({}), &mut buf_siv).unwrap();
         let mut buf_bm = Vec::new();
@@ -299,14 +291,19 @@ pub mod mock_host {
         h.update(bytes);
         let hash_bytes = h.finalize();
         let sha256_hex = hex_encode(&hash_bytes);
-        Ok(ContentRef { sha256_hex, size_bytes: bytes.len() as u64 })
+        Ok(ContentRef {
+            sha256_hex,
+            size_bytes: bytes.len() as u64,
+        })
     }
 
     pub fn shim_call_impl(shim_id: &str, msg: &[u8]) -> Result<Vec<u8>, HostError> {
-        CALLS.with(|c| c.borrow_mut().push(HostCall::ShimCall {
-            shim_id: shim_id.to_string(),
-            msg_len: msg.len(),
-        }));
+        CALLS.with(|c| {
+            c.borrow_mut().push(HostCall::ShimCall {
+                shim_id: shim_id.to_string(),
+                msg_len: msg.len(),
+            })
+        });
         // Decode the CBOR envelope once: needed for per-method response
         // routing AND for capturing Input.dispatchMouseEvent payloads
         // (used by verb tests to assert exact dispatched coordinates).
@@ -339,9 +336,7 @@ pub mod mock_host {
                 }
             }
             if let Some(m) = method {
-                if let Some(resp) =
-                    SHIM_RESP_BY_METHOD.with(|map| map.borrow().get(&m).cloned())
-                {
+                if let Some(resp) = SHIM_RESP_BY_METHOD.with(|map| map.borrow().get(&m).cloned()) {
                     return Ok(resp);
                 }
             }
@@ -367,15 +362,9 @@ pub mod mock_host {
                 "x" => x = v.as_integer().and_then(|i| i64::try_from(i).ok()),
                 "y" => y = v.as_integer().and_then(|i| i64::try_from(i).ok()),
                 "button" => button = v.as_text().map(String::from),
-                "click_count" => {
-                    click_count = v.as_integer().and_then(|i| u32::try_from(i).ok())
-                }
-                "delta_x" => {
-                    delta_x = v.as_integer().and_then(|i| i64::try_from(i).ok())
-                }
-                "delta_y" => {
-                    delta_y = v.as_integer().and_then(|i| i64::try_from(i).ok())
-                }
+                "click_count" => click_count = v.as_integer().and_then(|i| u32::try_from(i).ok()),
+                "delta_x" => delta_x = v.as_integer().and_then(|i| i64::try_from(i).ok()),
+                "delta_y" => delta_y = v.as_integer().and_then(|i| i64::try_from(i).ok()),
                 _ => {}
             }
         }

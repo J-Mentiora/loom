@@ -11,6 +11,9 @@ impl CuratedRenderer for SessionReplay {
         verb_session(value, cfg, "replayed")
     }
     fn quiet_id(&self, value: &Value) -> Option<String> {
-        value.get("session_id").and_then(|v| v.as_str()).map(str::to_string)
+        value
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
     }
 }

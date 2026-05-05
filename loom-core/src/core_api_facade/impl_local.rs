@@ -97,9 +97,7 @@ pub fn list_sessions_info_from_dir(
     // hash-based and varies across boots, making `loom session list`
     // non-deterministic and a poor citizen for scripts that compare
     // adjacent invocations.
-    result.sort_by(|(a_id, _, a_ts), (b_id, _, b_ts)| {
-        b_ts.cmp(a_ts).then_with(|| a_id.cmp(b_id))
-    });
+    result.sort_by(|(a_id, _, a_ts), (b_id, _, b_ts)| b_ts.cmp(a_ts).then_with(|| a_id.cmp(b_id)));
 
     Ok(result)
 }

@@ -79,9 +79,9 @@ impl PlaywrightImporter {
         })?;
 
         // Re-open by name; check decompressed size before reading.
-        let mut trace_file = archive.by_name(&trace_entry_name).map_err(|e| {
-            LoomError::new(LoomErrorCode::Io, format!("zip entry open error: {e}"))
-        })?;
+        let mut trace_file = archive
+            .by_name(&trace_entry_name)
+            .map_err(|e| LoomError::new(LoomErrorCode::Io, format!("zip entry open error: {e}")))?;
 
         if trace_file.size() > MAX_TRACE_BYTES {
             return Err(LoomError::new(
@@ -101,7 +101,10 @@ impl PlaywrightImporter {
 
         // --- 2. Count K = non-empty lines ---
         // Each non-empty line is one Playwright event (AC-INTEROP-01.1 / D3).
-        let events: Vec<&str> = trace_content.lines().filter(|l| !l.trim().is_empty()).collect();
+        let events: Vec<&str> = trace_content
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .collect();
         let k = events.len() as u64;
 
         // --- 3. Generate session_id and create session directory ---
@@ -121,12 +124,16 @@ impl PlaywrightImporter {
             "source": "playwright_import",
             "action_count": k,
         });
-        let meta_bytes = serde_json::to_vec(&meta).map_err(|e| LoomError::internal(e.to_string()))?;
+        let meta_bytes =
+            serde_json::to_vec(&meta).map_err(|e| LoomError::internal(e.to_string()))?;
         let meta_tmp = session_dir.join("session_meta.json.tmp");
         std::fs::write(&meta_tmp, &meta_bytes)?;
         std::fs::rename(&meta_tmp, session_dir.join("session_meta.json"))?;
 
-        Ok(ImportResult { session_id, action_count: k })
+        Ok(ImportResult {
+            session_id,
+            action_count: k,
+        })
     }
 }
 
@@ -175,7 +182,9 @@ fn build_wal_lines(session_id: &str, now_ms: u64, k: u64) -> Vec<String> {
             receipt_canonical_bytes: receipt_bytes,
             prev_hash: zero_hash.clone(),
         };
-        lines.push(serde_json::to_string(&entry).expect("ActionReceipt serialisation must not fail"));
+        lines.push(
+            serde_json::to_string(&entry).expect("ActionReceipt serialisation must not fail"),
+        );
     }
 
     // SessionTerminal

@@ -5,11 +5,11 @@
 // signature.
 
 use super::trap_handler::{TrapContext, TrapHandler};
-use loom_core::error::{LoomError, LoomErrorCode};
-use loom_core::manifest_writer::SessionId;
 use crate::error_mapper::TrapFrame;
 use crate::host_observability::HostObservability;
 use crate::receipt_marshaller::ReceiptMarshaller;
+use loom_core::error::{LoomError, LoomErrorCode};
+use loom_core::manifest_writer::SessionId;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::runtime::Handle as TokioHandle;

@@ -17,11 +17,26 @@ mod tests {
             (ReceiptCode::VaultGrantExpired, "vault_grant_expired"),
             (ReceiptCode::VaultOriginMismatch, "vault_origin_mismatch"),
             (ReceiptCode::VaultGrantRevoked, "vault_grant_revoked"),
-            (ReceiptCode::VaultSecretUnavailable, "vault_secret_unavailable"),
-            (ReceiptCode::VaultThreatModelMissing, "vault_threat_model_missing"),
-            (ReceiptCode::BudgetExceededWalltime, "budget_exceeded_walltime"),
-            (ReceiptCode::BudgetExceededNetwork, "budget_exceeded_network"),
-            (ReceiptCode::BudgetExceededDomNodes, "budget_exceeded_dom_nodes"),
+            (
+                ReceiptCode::VaultSecretUnavailable,
+                "vault_secret_unavailable",
+            ),
+            (
+                ReceiptCode::VaultThreatModelMissing,
+                "vault_threat_model_missing",
+            ),
+            (
+                ReceiptCode::BudgetExceededWalltime,
+                "budget_exceeded_walltime",
+            ),
+            (
+                ReceiptCode::BudgetExceededNetwork,
+                "budget_exceeded_network",
+            ),
+            (
+                ReceiptCode::BudgetExceededDomNodes,
+                "budget_exceeded_dom_nodes",
+            ),
             (ReceiptCode::BudgetExceededJsHeap, "budget_exceeded_js_heap"),
             (ReceiptCode::SchemaViolation, "schema_violation"),
             (ReceiptCode::SessionUnknown, "session_unknown"),
@@ -29,15 +44,26 @@ mod tests {
             (ReceiptCode::SessionClosed, "session_closed"),
             (ReceiptCode::SurfaceUnavailable, "surface_unavailable"),
             (ReceiptCode::StoreIntegrityFailed, "store_integrity_failed"),
-            (ReceiptCode::ManifestIntegrityFailed, "manifest_integrity_failed"),
+            (
+                ReceiptCode::ManifestIntegrityFailed,
+                "manifest_integrity_failed",
+            ),
             (ReceiptCode::RuntimeCrash, "runtime_crash"),
         ];
-        assert_eq!(pairs.len(), 23, "must cover all 23 receipt codes (22 → 23 with WebHitTestFailed)");
+        assert_eq!(
+            pairs.len(),
+            23,
+            "must cover all 23 receipt codes (22 → 23 with WebHitTestFailed)"
+        );
         for (code, expected_wire) in &pairs {
             assert_eq!(code.as_wire(), *expected_wire);
             let serde_out = serde_json::to_string(code).unwrap();
-            assert_eq!(serde_out, format!("\"{}\"", expected_wire),
-                "serde output must match as_wire for {:?}", code);
+            assert_eq!(
+                serde_out,
+                format!("\"{}\"", expected_wire),
+                "serde output must match as_wire for {:?}",
+                code
+            );
         }
     }
 

@@ -21,7 +21,10 @@ fn compute_response_hash_returns_64_char_hex() {
 fn compute_response_hash_known_value_matches_sha256_of_input() {
     // SHA-256("") is e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     let h = compute_response_hash(b"");
-    assert_eq!(h, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    assert_eq!(
+        h,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
 }
 
 #[test]
@@ -44,7 +47,9 @@ fn strip_content_encoding_removes_the_header_case_insensitive() {
     ];
     let stripped = strip_content_encoding(headers);
     assert_eq!(stripped.len(), 2);
-    assert!(stripped.iter().all(|(k, _)| !k.eq_ignore_ascii_case("content-encoding")));
+    assert!(stripped
+        .iter()
+        .all(|(k, _)| !k.eq_ignore_ascii_case("content-encoding")));
 }
 
 #[test]
@@ -245,11 +250,11 @@ fn parse_response_received_extracts_document_status_code() {
         (
             Value::Text("response".into()),
             Value::Map(vec![
-                (Value::Text("url".into()), Value::Text("http://fake.test/x".into())),
                 (
-                    Value::Text("status".into()),
-                    Value::Integer(404i64.into()),
+                    Value::Text("url".into()),
+                    Value::Text("http://fake.test/x".into()),
                 ),
+                (Value::Text("status".into()), Value::Integer(404i64.into())),
                 (
                     Value::Text("mimeType".into()),
                     Value::Text("text/html".into()),

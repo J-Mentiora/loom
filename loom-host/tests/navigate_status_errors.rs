@@ -86,7 +86,10 @@ fn dns_failure_navigate_emits_typed_error_receipt() {
     assert_eq!(val["status"], "error");
     assert_eq!(val["code"], "web_navigation_failed");
     assert_eq!(val["details"]["kind"], "dns_failure");
-    assert_eq!(val["details"]["chromium_error"], "net::ERR_NAME_NOT_RESOLVED");
+    assert_eq!(
+        val["details"]["chromium_error"],
+        "net::ERR_NAME_NOT_RESOLVED"
+    );
     let msg = val["message"].as_str().expect("message must be string");
     assert!(msg.to_lowercase().contains("dns") || msg.to_lowercase().contains("network"));
 }
@@ -139,7 +142,10 @@ fn connect_refused_navigate_emits_typed_error_receipt() {
     assert_eq!(val["status"], "error");
     assert_eq!(val["code"], "web_navigation_failed");
     assert_eq!(val["details"]["kind"], "connect_refused");
-    assert_eq!(val["details"]["chromium_error"], "net::ERR_CONNECTION_REFUSED");
+    assert_eq!(
+        val["details"]["chromium_error"],
+        "net::ERR_CONNECTION_REFUSED"
+    );
     let msg = val["message"].as_str().expect("message must be string");
     assert!(
         msg.to_lowercase().contains("connection") || msg.to_lowercase().contains("refused"),
@@ -170,7 +176,10 @@ fn tls_error_navigate_emits_typed_error_receipt() {
     assert_eq!(val["status"], "error");
     assert_eq!(val["code"], "web_navigation_failed");
     assert_eq!(val["details"]["kind"], "tls_error");
-    assert_eq!(val["details"]["chromium_error"], "net::ERR_CERT_DATE_INVALID");
+    assert_eq!(
+        val["details"]["chromium_error"],
+        "net::ERR_CERT_DATE_INVALID"
+    );
     let msg = val["message"].as_str().expect("message must be string");
     assert!(
         msg.to_lowercase().contains("tls") || msg.to_lowercase().contains("certificate"),
@@ -227,7 +236,14 @@ fn navigate_error_receipt_has_stable_schema_shape() {
     let val = assemble_value(&builder);
 
     // AC-CORE-05.2 stable fields all present in the typed-error path.
-    for key in &["action_id", "status", "code", "details", "message", "surface"] {
+    for key in &[
+        "action_id",
+        "status",
+        "code",
+        "details",
+        "message",
+        "surface",
+    ] {
         assert!(
             val.get(key).is_some(),
             "AC-NAVERR-05: stable key '{key}' must be present in typed-error receipt"

@@ -6,10 +6,10 @@
 // API-exposed-only invariant.
 
 use super::wasm_host::{HostConfig, WasmHost};
-use loom_core::core_api_facade::CoreApiFacade;
-use loom_core::error::{LoomError, LoomErrorCode};
 use crate::session_executor::{Action, ActionOutcome, SessionHandle};
 use crate::wit_type_marshaller::Mode;
+use loom_core::core_api_facade::CoreApiFacade;
+use loom_core::error::{LoomError, LoomErrorCode};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -108,8 +108,7 @@ fn dispatch_returns_surface_unavailable_for_missing_artifact_not_lazy_compile() 
 fn wasmhost_is_the_only_pub_type_in_loom_host() {
     // Verified structurally — every module declares `pub(crate)` for
     // its non-WasmHost types. This test is a doc pin.
-    let pin =
-        "**API-exposed.** Only `WasmHost` is `pub` outside the crate. \
+    let pin = "**API-exposed.** Only `WasmHost` is `pub` outside the crate. \
          All other modules are `pub(crate)`.";
     assert!(pin.contains("`pub` outside the crate"));
 }
