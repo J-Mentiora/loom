@@ -44,7 +44,7 @@ tokio-tungstenite = { workspace = true }
 # Async stream helpers for the WS sink/stream split.
 tokio-stream = "0.1"
 
-# URL parsing for the blocklist gate (AC-DET-05.1) — host-only matching
+# URL parsing for the blocklist gate — host-only matching
 # avoids false positives from `str::contains` on path/query strings.
 # Already in workspace lockfile via chromiumoxide; declared here as a
 # direct dep so the network_interceptor module can import `url::Url`.
@@ -68,7 +68,7 @@ name = "fake-chromium"
 path = "src/bin/fake-chromium.rs"
 required-features = ["fake-chromium-bin"]
 
-# AC-DIST-01: The `loom-shim-chromium` binary now lives in `loom-cli` so
+# The `loom-shim-chromium` binary lives in `loom-cli` so
 # cargo-dist 0.30+ can ship all 4 loom binaries in a single tarball —
 # cargo-dist's docs require all `[[bin]]` entries to be in one Cargo
 # Package to bundle. `fake-chromium` is a test-only stub gated behind the

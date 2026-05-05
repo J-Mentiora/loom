@@ -122,7 +122,7 @@ class ValidationResult:
 
 @dataclass
 class GrantInfo:
-    """Response type for vault.grant. Contains grant_id only — no secrets (IC-RPC-10)."""
+    """Response type for vault.grant. Contains grant_id only — no secrets."""
 
     grant_id: str
     origin: str

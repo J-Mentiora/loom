@@ -17,13 +17,12 @@
 //! - `LOOM_FAKE_CHROMIUM_LOG` — append a JSON line per received method
 //!   (used by integration tests to assert what the daemon sent).
 //! - `LOOM_FAKE_CHROMIUM_FAIL_AFTER_N` — close WS after N requests
-//!   (used to test AC-SHCRT-05 surface_unavailable).
+//!   (used to test surface_unavailable).
 //! - `LOOM_FAKE_CHROMIUM_FIXTURE` — path to a JSON file containing a
 //!   tiny DOM model used to answer `DOM.querySelector`, `DOM.getBoxModel`,
 //!   `DOM.scrollIntoViewIfNeeded`, and `Page.getLayoutMetrics`. Shape:
 //!   `{ "boxes": { "<selector>": [x1, y1, x2, y2] }, "viewport": [w, h] }`.
-//!   Used by the Click/Hover/Scroll hit-test integration tests
-//!   (AC-CLICK/HOVER/SCROLL-01..03).
+//!   Used by the Click/Hover/Scroll hit-test integration tests.
 
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -105,7 +104,7 @@ async fn handle_connection(
     log_path: Option<PathBuf>,
     fail_after: Option<usize>,
 ) {
-    // AC-CDPATT-03: when LOOM_FAKE_CHROMIUM_REQUIRE_SESSION_ID=1, validate
+    // When LOOM_FAKE_CHROMIUM_REQUIRE_SESSION_ID=1, validate
     // that every page-scope CDP request carries a top-level `sessionId`
     // field. Real Chromium rejects page-scope methods without sessionId
     // with `{code:-32601, message:"'<method>' wasn't found"}`; this flag
@@ -168,7 +167,7 @@ async fn handle_connection(
 
         request_count += 1;
 
-        // Optional crash injection (AC-SHCRT-05).
+        // Optional crash injection.
         if let Some(n) = fail_after {
             if request_count > n {
                 eprintln!("fake-chromium: closing WS after {n} requests");
@@ -189,7 +188,7 @@ async fn handle_connection(
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        // AC-CDPATT-03 enforcement: page-scope methods MUST carry sessionId.
+        // Enforcement: page-scope methods MUST carry sessionId.
         if require_session_id && session_id.is_none() && !is_browser_scope_method_local(&method) {
             let err = json!({
                 "id": id,
@@ -205,7 +204,7 @@ async fn handle_connection(
         // For Page.navigate, derive a per-URL response shape so integration
         // tests can drive the receipt across success / 4xx / 5xx /
         // transport-error branches without touching real Chromium.
-        // Conventions (AC-NAVERR-01..05):
+        // Conventions:
         //   http://fake.test/status/<N>  → emit Network.responseReceived
         //                                   with type=Document, status=N
         //   http://fake.test/error/<CDP> → set errorText=<CDP> in the
@@ -225,7 +224,7 @@ async fn handle_connection(
 
         // Runtime.evaluate is driven by an expression-pattern convention
         // (parallels Page.navigate's URL-pattern scheme above) so
-        // integration tests can drive every AC-EVALRESULT branch
+        // integration tests can drive every evaluate-result branch
         // synthetically. See `parse_fake_evaluate_pattern` for the
         // sentinel grammar.
         let evaluate_response = if method == "Runtime.evaluate" {
@@ -261,7 +260,7 @@ async fn handle_connection(
         // `{"__cdp_error__": {"code": ..., "message": ...}}` to signal
         // that this method should respond with a JSON-RPC error envelope
         // instead of `{result: ...}`. Used by `DOM.getBoxModel` on
-        // hidden / zero-area / unknown nodes (AC-CLICK-03).
+        // hidden / zero-area / unknown nodes.
         let mut response = if let Some(err) = result.get("__cdp_error__").cloned() {
             json!({ "id": id, "error": err })
         } else {
@@ -323,7 +322,7 @@ async fn handle_connection(
                     let _ = write.send(Message::Text(evt.to_string())).await;
                 }
                 FakeUrlPattern::PageWithTracker => {
-                    // AC-BLOCKLIST-05 — emit two `Fetch.requestPaused`
+                    // Emit two `Fetch.requestPaused`
                     // events synthetically, mirroring chromium's CDP
                     // wire shape. ONLY when the host has issued
                     // `Fetch.enable` (real Chromium gates emission the
@@ -409,7 +408,7 @@ async fn handle_connection(
     }
 }
 
-/// URL-driven test scaffolding (AC-NAVERR-01..05, AC-BLOCKLIST-05).
+/// URL-driven test scaffolding for navigate-error and blocklist behaviours.
 /// Real Chromium would fetch the URL from the network; fake-chromium
 /// pattern-matches the URL string and emits the corresponding CDP events
 /// synthetically.
@@ -420,7 +419,7 @@ enum FakeUrlPattern {
     /// `http://fake.test/error/<CDP>` → emit Network.loadingFailed AND
     /// set errorText=<CDP> in the Page.navigate response.
     Error(String),
-    /// `http://fake.test/page-with-tracker` (AC-BLOCKLIST-05) → after
+    /// `http://fake.test/page-with-tracker` → after
     /// Page.navigate, emit `Fetch.requestPaused` events for the
     /// document AND for a hard-coded analytics sub-resource
     /// (`https://www.google-analytics.com/analytics.js`). The document
@@ -439,7 +438,7 @@ enum FakeUrlPattern {
 /// expression sentinel. The fake-chromium does NOT execute JS — it
 /// pattern-matches the expression string and constructs the same shape
 /// real Chromium would return for the equivalent successful or thrown
-/// evaluation (AC-EVALRESULT-01..05).
+/// evaluation.
 ///
 /// Sentinels (all start with `__loom_test_`):
 ///   `__loom_test_int__`              → result.value = 2 (integer)
@@ -682,7 +681,7 @@ fn canned_response(method: &str, params: &Value) -> Value {
         "Network.enable" => json!({}),
         "DOM.enable" => json!({}),
         "Runtime.enable" => json!({}),
-        // AC-DET-05.1 / AC-BLOCKLIST-05 — Fetch domain methods used by
+        // Fetch domain methods used by
         // the network_interceptor's blocklist gate. All return empty
         // success per CDP convention.
         "Fetch.enable" => json!({}),
@@ -696,8 +695,7 @@ fn canned_response(method: &str, params: &Value) -> Value {
     }
 }
 
-/// Tiny DOM model used by the hit-test integration tests
-/// (AC-CLICK/HOVER/SCROLL-01..03). Read once from
+/// Tiny DOM model used by the hit-test integration tests. Read once from
 /// `LOOM_FAKE_CHROMIUM_FIXTURE` (a path to a JSON file). Empty when
 /// unset.
 #[derive(Debug, Clone, Default)]

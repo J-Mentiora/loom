@@ -10,8 +10,8 @@ Usage::
 
 When ``--output`` is omitted, writes to ``loom/types.py`` relative to this file's directory.
 
-Run this whenever the daemon schema changes (AC-NFR-MAINT-02.1). The generated file must
-be committed to the repository. No hand-editing of types.py is permitted.
+Run this whenever the daemon schema changes. The generated file must be
+committed to the repository. No hand-editing of `types.py` is permitted.
 """
 
 from __future__ import annotations

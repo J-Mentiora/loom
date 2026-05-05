@@ -11,11 +11,11 @@ description.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Phase 5.4: surfaces compile to host-side `lib` for unit tests; the
-# wasm32-wasi-preview2 target gets wired in Phase 6 with proper
-# build.rs + wit-bindgen invocations against `../wit/loom-surface.wit`.
-# v1 ships only the WEB surface; shell/fs/api/native are deferred to
-# v1.5 (interfaces declared in WIT but not built).
+# Surfaces compile to a host-side `lib` for unit tests; the
+# wasm32-wasi-preview2 target wiring (proper build.rs + wit-bindgen
+# against `../wit/loom-surface.wit`) is future work. The v0.9 release
+# ships only the WEB surface; shell / fs / api / native are declared
+# in WIT but not built.
 
 [dependencies]
 loom-shared = { workspace = true }
@@ -26,9 +26,9 @@ serde_jcs = { workspace = true }
 ciborium = { workspace = true }
 thiserror = { workspace = true }
 
-# wit-bindgen guest bindings — loaded at compile time from
-# ../wit/loom-surface.wit. Phase 6 wires the build.rs + wit_bindgen!
-# macro invocation. Stub for now.
+# wit-bindgen guest bindings — declared at compile time from
+# ../wit/loom-surface.wit. The build.rs + wit_bindgen! macro invocation
+# is future work. Stub for now.
 wit-bindgen = { workspace = true }
 
 [dev-dependencies]
@@ -40,8 +40,8 @@ mock = []
 
 [lib]
 path = "src/lib.rs"
-# Phase 6 will set crate-type = ["cdylib"] for the wasm32-wasi-preview2
-# build profile; left as default `lib` here so host-side tests work.
+# `crate-type = ["cdylib"]` for wasm32-wasi-preview2 will land alongside
+# the build.rs wiring; left as default `lib` here so host-side tests work.
 
 [lints]
 workspace = true

@@ -1,7 +1,5 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/PostinstallRunner/interface_tests.rs` instead.
-// Interface tests for `PostinstallRunner`. Verifies IC-CLI-06 step
-// enumeration, IC-CLI-08 pre-warm flow, and the cfg-feature gating.
+// Interface tests for `PostinstallRunner`. Verifies step
+// enumeration, pre-warm flow, and the cfg-feature gating.
 
 use super::postinstall_runner::{PostinstallOptions, PostinstallReceipt, StepOutcome, STEP_LABELS};
 
@@ -72,7 +70,7 @@ fn postinstall_receipt_carries_steps_and_outcomes() {
     assert_eq!(r.steps.len(), 5);
 }
 
-// === BC-CLI-01: loom-host gated behind cfg(feature = "postinstall") ===
+// === loom-host gated behind cfg(feature = "postinstall") ===
 //
 // On non-postinstall builds the `run` symbol still exists (so callers
 // compile) but returns `CliError::Internal`. The compile_step symbol
@@ -84,7 +82,7 @@ fn cfg_feature_postinstall_documented() {
     assert!(s.contains("postinstall"));
 }
 
-// IC-CLI-06 & IC-CLI-08: pre-warm step has its own idempotence guard.
+// Pre-warm step has its own idempotence guard.
 #[test]
 fn chromium_step_signature_takes_url_and_expected_sha() {
     use super::postinstall_runner::*;
@@ -107,7 +105,7 @@ fn plist_step_signature() {
     let _ = _ck;
 }
 
-// === AC-CHPIN-05: idempotency — Skipped when binary present + sentinel matches ===
+// === Idempotency — Skipped when binary present + sentinel matches ===
 #[tokio::test]
 async fn chromium_step_skips_when_sha_matches() {
     use tempfile::TempDir;
@@ -115,7 +113,7 @@ async fn chromium_step_skips_when_sha_matches() {
     // Binary must exist for idempotence check.
     std::fs::write(dir.path().join("Chromium"), b"fake-chromium-content").unwrap();
     // The downloader checks the sentinel (.archive_sha256), not the binary SHA,
-    // for idempotence (AC-CHPLUMB-02). Write the sentinel with the expected SHA.
+    // for idempotence. Write the sentinel with the expected SHA.
     let expected_sha = "cafebabe00000000cafebabe00000000cafebabe00000000cafebabe00000000";
     std::fs::write(dir.path().join(".archive_sha256"), expected_sha).unwrap();
     let downloader = crate::chromium_downloader::ChromiumDownloader::new(
@@ -136,7 +134,7 @@ async fn chromium_step_skips_when_sha_matches() {
     );
 }
 
-// === AC-CHPIN-06: SupplyChain error when downloaded sha mismatches pin ===
+// === SupplyChain error when downloaded sha mismatches pin ===
 #[tokio::test]
 async fn chromium_step_supply_chain_on_sha_mismatch() {
     use tempfile::TempDir;
@@ -161,7 +159,7 @@ async fn chromium_step_supply_chain_on_sha_mismatch() {
     );
 }
 
-// === AC-CHPIN-08: PermissionDenied on plist write degrades to Skipped ===
+// === PermissionDenied on plist write degrades to Skipped ===
 // `LaunchdPlistWriter::write` is `#[cfg(target_os = "macos")]`; the non-macOS
 // stub returns `CliError::Internal`, not the `PermissionDenied` path this
 // test exercises. Gating on `unix` would otherwise fail on Linux runners.

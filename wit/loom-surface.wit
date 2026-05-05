@@ -1,7 +1,5 @@
-// Phase 5.4 placeholder copied from
-// architecture/contracts/loom-surfaces_contract.md §"WIT Interface".
-// Phase 6 wires wit-bindgen invocations against this file in
-// loom-host (host bindings) + loom-surfaces (guest bindings).
+// Loom WASM surface ABI. wit-bindgen consumes this file to generate
+// host bindings (loom-host) and guest bindings (loom-surfaces).
 
 package loom:surface@1.0.0;
 
@@ -16,7 +14,7 @@ interface types {
         action-hash: string,
         outcome-hash: string,
         emitted-at-ms: u64,
-        // Navigate tier-2 optional fields (AC-NAVRECEIPT-01)
+        // Navigate-tier optional fields.
         url: option<string>,
         final-url: option<string>,
         title: option<string>,
@@ -25,17 +23,16 @@ interface types {
         screenshot-after-hash: option<string>,
         console-count: option<u64>,
         network-count: option<u64>,
-        // JSON-serialized Vec<LoomNetworkEvent> (AC-NAVRECEIPT-03)
+        // JSON-serialized Vec<LoomNetworkEvent>.
         side-effects-json: option<list<u8>>,
-        // AC-NAVRECEIPT2-01 brief extension: JSON-serialized Vec<ShimConsoleLine>
-        // {level, message}; brief lists `console_lines` on the wire receipt.
+        // JSON-serialized Vec<ShimConsoleLine> {level, message}; surfaces
+        // as `console_lines` on the wire receipt.
         console-lines-json: option<list<u8>>,
-        // AC-NAVRECEIPT2-01 brief extension: JSON-serialized NetworkSummary
-        // {total_count, total_bytes, error_count}.
+        // JSON-serialized NetworkSummary {total_count, total_bytes, error_count}.
         network-summary-json: option<list<u8>>,
-        // Evaluate tier optional fields (AC-EVALRESULT-01..04).
-        // Truncation discriminator: return-value-blob-ref.is_some()
-        // ↔ value > 64KB and offloaded to content store.
+        // Evaluate-tier optional fields. Truncation discriminator:
+        // return-value-blob-ref.is_some() ↔ value > 64KB and offloaded to
+        // the content store.
         return-value-json: option<string>,
         return-value-blob-ref: option<content-ref>,
     }
@@ -50,25 +47,25 @@ interface types {
         dom-snapshot-hash: string,
         /// SHA-256 hex of the screenshot blob stored in ContentStore.
         screenshot-after-hash: string,
-        /// Phase 6 stub: always 0.
+        /// Stub: always 0 (real shim console-capture is future work).
         console-count: u64,
         network-count: u64,
-        /// UTF-8 JSON bytes of Vec<LoomNetworkEvent> (AC-NAVRECEIPT-03).
+        /// UTF-8 JSON bytes of Vec<LoomNetworkEvent>.
         side-effects-json: list<u8>,
-        /// Session-monotonic ms timestamp (DeterminismHarness; AC-NAVRECEIPT-02).
+        /// Session-monotonic ms timestamp from DeterminismHarness.
         emitted-at-ms: u64,
-        /// UTF-8 JSON bytes of Vec<ShimConsoleLine> (brief AC-NAVRECEIPT2-01
-        /// extension). Empty list today (Phase 6 shim console-capture stub).
+        /// UTF-8 JSON bytes of Vec<ShimConsoleLine>. Empty list today
+        /// (real shim console-capture is future work).
         console-lines-json: list<u8>,
-        /// UTF-8 JSON bytes of loom_core NetworkSummary {total_count,
-        /// total_bytes, error_count} (brief AC-NAVRECEIPT2-01 extension).
+        /// UTF-8 JSON bytes of loom_core NetworkSummary
+        /// {total_count, total_bytes, error_count}.
         network-summary-json: list<u8>,
     }
 
-    /// Result returned by the evaluate-execute host function (AC-EVALRESULT-01..04).
-    /// Exactly one of return-value-json / return-value-blob-ref is Some on success.
-    /// Exception path returns Err(host-error::shim-failure(detail-json)) — see
-    /// host_impl.rs::evaluate_execute for the detail-json shape (AC-EVALRESULT-03).
+    /// Result returned by the evaluate-execute host function. Exactly one
+    /// of return-value-json / return-value-blob-ref is Some on success.
+    /// Exception path returns Err(host-error::shim-failure(detail-json)) —
+    /// see host_impl.rs::evaluate_execute for the detail-json shape.
     record evaluate-result {
         /// Canonical-JSON of the evaluated value. None when value > 64KB
         /// (offloaded to content store; see return-value-blob-ref).
@@ -133,7 +130,7 @@ interface host {
 
     // Navigate-execute: typed replacement for shim-call on the navigate path.
     // Host handles ShimManager::send_navigate + ContentStore.put; returns
-    // a typed navigate-result (AC-NAVRECEIPT-01..05).
+    // a typed navigate-result.
     // action-id propagates the WASM-guest-computed action_hash (= sha256 of
     // action.payload) for receipt correlation in the host.
     navigate-execute: func(action-id: string, url: string, budget-ms: u64) -> result<navigate-result, host-error>;
@@ -141,7 +138,7 @@ interface host {
     // Evaluate-execute: typed replacement for shim-call on the web.evaluate
     // path. Host handles ShimManager::send_evaluate, CDP Runtime.evaluate
     // dispatch, exceptionDetails handling (→ shim-failure), CBOR→canonical-JSON
-    // conversion, and 64KB content-store offload (AC-EVALRESULT-01..04).
+    // conversion, and 64KB content-store offload.
     evaluate-execute: func(action-id: string, expression: string, budget-ms: u64) -> result<evaluate-result, host-error>;
 
     // Logging + receipt emission

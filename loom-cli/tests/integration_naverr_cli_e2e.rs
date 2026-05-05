@@ -1,4 +1,4 @@
-//! End-to-end integration test for AC-NAVERR-01..05 through the
+//! End-to-end integration test for navigate-error receipts through the
 //! loom CLI binary, with a real loom-daemon subprocess.
 //!
 //! Complementary to the (lighter) shim-level test at
@@ -403,8 +403,8 @@ impl Daemon {
             "--url",
             url,
         ]);
-        // status=0 for success receipts; status=1 for status="error" receipts
-        // (per AC-CLIEXIT-01). Both are valid — we want to inspect the JSON.
+        // status=0 for success receipts; status=1 for status="error" receipts.
+        // Both are valid — we want to inspect the JSON.
         if out.status != 0 && out.status != 1 {
             panic!(
                 "loom action web.navigate exited with unexpected status={}: stdout={:?} stderr={:?}",
@@ -459,7 +459,7 @@ fn run_with_daemon<F: FnOnce(&Daemon)>(f: F) {
     f(&daemon);
 }
 
-// ─── AC-NAVERR-04: 200 → success path with status_code populated ────────────
+// ─── 200 → success path with status_code populated ──────────────────────────
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
@@ -470,41 +470,34 @@ fn ac_naverr_04_status_200_through_cli() {
 
         assert_eq!(
             receipt["status"], "success",
-            "AC-NAVERR-04: status must be 'success' for 200 — got receipt: {receipt}"
+            "status must be 'success' for 200 — got receipt: {receipt}"
         );
-        assert_eq!(
-            receipt["status_code"], 200u64,
-            "AC-NAVERR-04: status_code must be 200"
-        );
-        assert!(
-            receipt["error"].is_null(),
-            "AC-NAVERR-04: error must be null on success"
-        );
+        assert_eq!(receipt["status_code"], 200u64, "status_code must be 200");
+        assert!(receipt["error"].is_null(), "error must be null on success");
 
-        // AC-SHA-01: action_hash + outcome_hash are 64-char lowercase hex
-        // SHA-256 (not the 16-char FNV-64a from the pre-86276dde7 stub).
+        // action_hash + outcome_hash are 64-char lowercase hex SHA-256.
         for field in ["action_hash", "outcome_hash"] {
             let h = receipt[field]
                 .as_str()
-                .unwrap_or_else(|| panic!("AC-SHA-01: {field} must be a string in {receipt}"));
+                .unwrap_or_else(|| panic!("{field} must be a string in {receipt}"));
             assert_eq!(
                 h.len(),
                 64,
-                "AC-SHA-01: {field} must be 64 hex chars (SHA-256), got {} chars: {h}",
+                "{field} must be 64 hex chars (SHA-256), got {} chars: {h}",
                 h.len()
             );
             assert!(
                 h.chars()
                     .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
-                "AC-SHA-01: {field} must be lowercase hex only, got {h}"
+                "{field} must be lowercase hex only, got {h}"
             );
         }
     });
 }
 
-// ─── AC-SHA-02: action_hash byte-equivalent to hashlib.sha256 over canonical bytes ─
+// ─── action_hash byte-equivalent to hashlib.sha256 over canonical bytes ─
 
-/// AC-SHA-02: for `web.navigate`, the daemon canonicalizes the action's
+/// For `web.navigate`, the daemon canonicalizes the action's
 /// payload as the raw UTF-8 URL bytes (see loom-daemon/src/main.rs:451).
 /// The guest's `hex_sha256(&a.payload)` must therefore equal
 /// `hashlib.sha256(url.encode()).hexdigest()` byte-for-byte.
@@ -527,18 +520,18 @@ fn ac_sha_action_hash_matches_sha256_of_url_for_navigate() {
         let expected = format!("{:x}", Sha256::digest(url.as_bytes()));
         let action_hash = receipt["action_hash"]
             .as_str()
-            .expect("AC-SHA-02: action_hash must be a string");
+            .expect("action_hash must be a string");
 
         assert_eq!(
             action_hash, expected,
-            "AC-SHA-02: action_hash for web.navigate must equal \
+            "action_hash for web.navigate must equal \
              SHA-256(url.as_bytes()) (=hashlib.sha256(url.encode()).hexdigest()). \
              url={url} expected={expected} got={action_hash}"
         );
     });
 }
 
-// ─── AC-NAVERR-01: 404 surfaces typed-error receipt through CLI ─────────────
+// ─── 404 surfaces typed-error receipt through CLI ───────────────────────────
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
@@ -549,24 +542,24 @@ fn ac_naverr_01_status_404_through_cli() {
 
         assert_eq!(
             receipt["status"], "error",
-            "AC-NAVERR-01: status must be 'error' for 404 — got receipt: {receipt}"
+            "status must be 'error' for 404 — got receipt: {receipt}"
         );
         assert_eq!(
             receipt["error"]["kind"], "http_status",
-            "AC-NAVERR-01: error.kind must be 'http_status'"
+            "error.kind must be 'http_status'"
         );
         assert_eq!(
             receipt["error"]["detail"]["status_code"], 404u64,
-            "AC-NAVERR-01: error.detail.status_code must be 404"
+            "error.detail.status_code must be 404"
         );
         assert_eq!(
             receipt["status_code"], 404u64,
-            "AC-NAVERR-01: top-level status_code mirrors detail.status_code"
+            "top-level status_code mirrors detail.status_code"
         );
     });
 }
 
-// ─── AC-NAVERR-02: 500 surfaces typed-error receipt through CLI ─────────────
+// ─── 500 surfaces typed-error receipt through CLI ───────────────────────────
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
@@ -575,17 +568,14 @@ fn ac_naverr_02_status_500_through_cli() {
         let sid = daemon.create_session();
         let receipt = daemon.navigate(&sid, "http://fake.test/status/500");
 
-        assert_eq!(
-            receipt["status"], "error",
-            "AC-NAVERR-02: status must be 'error' for 500"
-        );
+        assert_eq!(receipt["status"], "error", "status must be 'error' for 500");
         assert_eq!(receipt["error"]["kind"], "http_status");
         assert_eq!(receipt["error"]["detail"]["status_code"], 500u64);
         assert_eq!(receipt["status_code"], 500u64);
     });
 }
 
-// ─── AC-NAVERR-03: DNS-fail surfaces typed-error receipt with chromium_error ─
+// ─── DNS-fail surfaces typed-error receipt with chromium_error ──────────────
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
@@ -597,27 +587,27 @@ fn ac_naverr_03_dns_failure_through_cli() {
 
         assert_eq!(
             receipt["status"], "error",
-            "AC-NAVERR-03: status must be 'error' for DNS-fail — got receipt: {receipt}"
+            "status must be 'error' for DNS-fail — got receipt: {receipt}"
         );
         assert_eq!(
             receipt["error"]["kind"], "dns_failure",
-            "AC-NAVERR-03: error.kind must be 'dns_failure'"
+            "error.kind must be 'dns_failure'"
         );
         assert_eq!(
             receipt["error"]["detail"]["url"], url,
-            "AC-NAVERR-03: detail.url must match navigate target"
+            "detail.url must match navigate target"
         );
         let chromium_error = receipt["error"]["detail"]["chromium_error"]
             .as_str()
-            .expect("AC-NAVERR-03: detail.chromium_error must be a string");
+            .expect("detail.chromium_error must be a string");
         assert!(
             chromium_error.contains("ERR_NAME_NOT_RESOLVED"),
-            "AC-NAVERR-03: detail.chromium_error must carry the chromium code (got {chromium_error:?})"
+            "detail.chromium_error must carry the chromium code (got {chromium_error:?})"
         );
     });
 }
 
-// ─── AC-NAVERR-03 (extension): connect-refused classifies separately ────────
+// ─── connect-refused classifies separately ──────────────────────────────────
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
@@ -629,18 +619,18 @@ fn ac_naverr_03_connect_refused_through_cli() {
 
         assert_eq!(
             receipt["status"], "error",
-            "AC-NAVERR-03 (ext): status must be 'error'"
+            "connect-refused: status must be 'error'"
         );
         assert_eq!(
             receipt["error"]["kind"], "connect_refused",
-            "AC-NAVERR-03 (ext): connect-refused must classify as 'connect_refused'"
+            "connect-refused must classify as 'connect_refused'"
         );
         let chromium_error = receipt["error"]["detail"]["chromium_error"]
             .as_str()
-            .expect("AC-NAVERR-03 (ext): detail.chromium_error must be a string");
+            .expect("detail.chromium_error must be a string");
         assert!(
             chromium_error.contains("ERR_CONNECTION_REFUSED"),
-            "AC-NAVERR-03 (ext): chromium_error must name the chromium code"
+            "chromium_error must name the chromium code"
         );
     });
 }

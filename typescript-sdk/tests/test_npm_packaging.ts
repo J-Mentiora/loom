@@ -1,16 +1,16 @@
 /**
- * Tests for AC-SDK-02.1 — TypeScript SDK ships on npm.
+ * Smoke test for the published TypeScript SDK.
  *
- * Given Node >= 20 with `npm install @loom/sdk`,
- * When a TS file imports and calls `await Session.create()`,
- * Then the call returns a Session object whose `sessionId` matches.
+ * After `npm install @loom/sdk` on Node >= 20, importing `Session`
+ * and calling `await Session.create()` should round-trip through the
+ * daemon and return a Session whose `sessionId` matches.
  */
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { Session, LoomRPCError } from "../src/index.js";
 import { MockDaemon } from "./helpers/mock_daemon.js";
 
-describe("AC-SDK-02.1: Session.create() returns matching sessionId", () => {
+describe("Session.create() returns a Session with matching sessionId", () => {
   let daemon: MockDaemon;
 
   before(async () => {

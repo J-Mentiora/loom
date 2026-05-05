@@ -1,6 +1,6 @@
-//! `wasm_host` — see `systems/loom-host/modules/wasm_host/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `wasm_host` module: hosts the wasmtime engine + component
+//! pre-compilation, exposes platform-version checks the daemon runs at
+//! startup, and drives WIT-bound surface bindings.
 pub mod wasm_host;
 pub use wasm_host::*;
 

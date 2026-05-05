@@ -3,7 +3,7 @@
 #
 # Prerequisites: https://just.systems — `brew install just`
 
-# Generate target/release/meta.json for the binary-size benchmark (AC-BENCH-03).
+# Generate target/release/meta.json for the binary-size benchmark.
 # The "strategy" field controls which size budget is enforced:
 #   "downloaded" — Chromium downloaded on first use; binary budget ≤ 60 MB.
 #   "bundled"    — Chromium bundled in the release tarball; binary budget ≤ 150 MB.
@@ -13,7 +13,7 @@ gen-meta:
     echo '{"strategy":"downloaded"}' > target/release/meta.json
     @echo "Wrote target/release/meta.json (strategy: downloaded)"
 
-# AC-DIST-01: regenerate the committed loom_surface_web.wasm artifact.
+# Regenerate the committed loom_surface_web.wasm artifact.
 # Run after editing anything under loom-surface-web/ — CI's
 # vendored-wasm-check job will fail PRs where this is stale.
 vendor-wasm:

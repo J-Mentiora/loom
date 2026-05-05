@@ -10,7 +10,7 @@
 // release, verifying SHA-256 against the release's `dist-manifest.json`.
 //
 // # Contract semantics
-// - **AC-DIST-01.** Single-binary cargo-install gets the 3 siblings via
+// - **Single-binary parity.** Single-binary cargo-install gets the 3 siblings via
 //   postinstall — same final state as brew/manual.
 // - **SHA verify.** Every downloaded tarball is recomputed and compared
 //   against `artifact.checksums["sha256"]` from the release manifest.
