@@ -209,7 +209,7 @@ impl CdpConnection for ChromiumCdpConnection {
 
         let writer = tokio::spawn(async move {
             while let Some(text) = send_rx.recv().await {
-                if let Err(e) = sink.send(Message::Text(text)).await {
+                if let Err(e) = sink.send(Message::Text(text.into())).await {
                     tracing::error!("cdp ws send: {e}");
                     break;
                 }
