@@ -53,6 +53,11 @@ fn scroll_execute_returns_result_receipt_host_error() {
 fn scroll_execute_returns_hash_only_receipt() {
     use crate::host_bindings::host_bindings::mock_host;
     mock_host::setup(vec![0u8; 32]);
+    // selector=None → hit_test::resolve_viewport_centre uses
+    // Page.getLayoutMetrics. Install a 1024×768 viewport so the centre
+    // is (512, 384). Box-model entries are unused on this branch but
+    // installed to keep `install_hit_test_box`'s simple signature.
+    mock_host::install_hit_test_box(0.0, 0.0, 1.0, 1.0, 1024, 768);
 
     let action = ScrollAction {
         action_id: "act_scroll".to_string(),
@@ -71,4 +76,17 @@ fn scroll_execute_returns_hash_only_receipt() {
     let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
+
+    // AC-SCROLL-02 (regression guard, None branch): with no selector,
+    // the wheel is dispatched at the viewport centre via
+    // Page.getLayoutMetrics. 1024×768 viewport → centre (512, 384).
+    // Pre-fix this dispatched at (0,0); the assertion below catches
+    // any regression to that.
+    let dispatches = mock_host::mouse_dispatches();
+    assert_eq!(dispatches.len(), 1, "scroll dispatches exactly one mouseWheel");
+    assert_eq!(dispatches[0].event_type, "mouseWheel");
+    assert_eq!((dispatches[0].x, dispatches[0].y), (512, 384));
+    assert_eq!(dispatches[0].delta_y, Some(300));
+    assert_eq!(dispatches[0].delta_x, Some(0));
+    assert_eq!(dispatches[0].button, "none");
 }

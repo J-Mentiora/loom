@@ -3,9 +3,12 @@
 // # Contract semantics
 // - **Tier:** hash-only (IC-SURF-07 row `hover`).
 // - **CDP method:** `Input.dispatchMouseEvent` with
-//   `event_type: "mouseMoved"` to the element's bounding-box centre.
+//   `event_type: "mouseMoved"` at the element's bounding-box centre,
+//   resolved via `hit_test::resolve_centre_for_selector`.
 // - **No tooltip-wait built in.** Hover is synchronous; if the agent
 //   wants tooltip text, follow with a `wait` verb.
+// - **Failure modes:** selector missing → `WebSelectorNotFound`;
+//   element has no usable geometry → `WebHitTestFailed`.
 
 
 extern crate alloc;
@@ -39,14 +42,18 @@ impl HoverVerb {
         let action_id = action.action_id.clone();
 
         let inner = || -> Result<Receipt, HostError> {
-            // mouseMoved at element bounding-box centre (shim resolves selector)
+            // Resolve selector → bounding-box centre.
+            let (centre_x, centre_y) =
+                crate::hit_test::hit_test::resolve_centre_for_selector(&action.selector)?;
+
+            // mouseMoved at the centre.
             host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::InputDispatchMouseEvent(
                     InputDispatchMouseEvent {
                         event_type: "mouseMoved".into(),
-                        x: 0,
-                        y: 0,
+                        x: centre_x,
+                        y: centre_y,
                         button: "none".into(),
                         click_count: 0,
                         delta_x: None,

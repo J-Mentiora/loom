@@ -27,6 +27,8 @@ fn hover_execute_returns_result_receipt_host_error() {
 fn hover_execute_returns_hash_only_receipt() {
     use crate::host_bindings::host_bindings::mock_host;
     mock_host::setup(vec![0u8; 32]);
+    // hit_test sequence: 50×50 box at (200,300)–(250,350); centre (225, 325).
+    mock_host::install_hit_test_box(200.0, 300.0, 250.0, 350.0, 1024, 768);
 
     let action = HoverAction {
         action_id: "act_hover".to_string(),
@@ -43,4 +45,13 @@ fn hover_execute_returns_hash_only_receipt() {
     let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
+
+    // AC-HOVER-02 (regression guard against the original (0,0) bug):
+    // assert one mouseMoved at the box centre. Box (200,300)–(250,350)
+    // → centre (225, 325).
+    let dispatches = mock_host::mouse_dispatches();
+    assert_eq!(dispatches.len(), 1, "hover dispatches exactly one mouseMoved");
+    assert_eq!(dispatches[0].event_type, "mouseMoved");
+    assert_eq!((dispatches[0].x, dispatches[0].y), (225, 325));
+    assert_eq!(dispatches[0].button, "none");
 }

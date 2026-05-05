@@ -6,9 +6,10 @@
 extern crate alloc;
 
 use super::cdp_message_encoder::{
-    CdpMessage, CdpMessageEncoder, CHROMIUM_SHIM_ID, DET_INIT_JS_NAME, DomGetDocument,
-    DomQuerySelector, InputDispatchKeyEvent, InputDispatchMouseEvent, PageAddScriptToEvaluateOnNewDocument,
-    PageCaptureScreenshot, PageNavigate, RuntimeCallFunctionOn, RuntimeEvaluate,
+    CdpMessage, CdpMessageEncoder, CHROMIUM_SHIM_ID, DET_INIT_JS_NAME, DomGetBoxModel,
+    DomGetDocument, DomQuerySelector, DomScrollIntoViewIfNeeded, InputDispatchKeyEvent,
+    InputDispatchMouseEvent, PageAddScriptToEvaluateOnNewDocument, PageCaptureScreenshot,
+    PageGetLayoutMetrics, PageNavigate, RuntimeCallFunctionOn, RuntimeEvaluate,
 };
 use alloc::string::ToString;
 
@@ -88,6 +89,19 @@ fn method_names_match_cdp_wire_namespace() {
     assert_eq!(
         CdpMessage::DomGetDocument(DomGetDocument { depth: -1, pierce: false }).method_name(),
         "DOM.getDocument"
+    );
+    assert_eq!(
+        CdpMessage::DomGetBoxModel(DomGetBoxModel { node_id: 7 }).method_name(),
+        "DOM.getBoxModel"
+    );
+    assert_eq!(
+        CdpMessage::DomScrollIntoViewIfNeeded(DomScrollIntoViewIfNeeded { node_id: 7 })
+            .method_name(),
+        "DOM.scrollIntoViewIfNeeded"
+    );
+    assert_eq!(
+        CdpMessage::PageGetLayoutMetrics(PageGetLayoutMetrics {}).method_name(),
+        "Page.getLayoutMetrics"
     );
     assert_eq!(
         CdpMessage::PageCaptureScreenshot(PageCaptureScreenshot {

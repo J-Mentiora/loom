@@ -29,6 +29,14 @@ use alloc::string::String;
 // types; the variant names are identical.
 
 /// Reason discriminator inside `host-error::shim-failure`.
+///
+/// `HitTestFailed` is **guest-internal**: it is constructed inside the
+/// WASM guest by `loom-surfaces::hit_test::resolve_centre_for_selector`
+/// when the target element gives no box model (e.g. `display:none`,
+/// `visibility:hidden`, zero-area, off-tree) or returns a malformed CDP
+/// response. The host wire layer never produces this variant; it
+/// originates entirely from the surface's CDP-response parsing. The
+/// existing `SelectorNotFound` variant follows the same pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ShimFailureKind {
     Timeout,
@@ -36,6 +44,10 @@ pub enum ShimFailureKind {
     PermissionDenied { permission: String },
     Crashed,
     NavigationFailed,
+    /// Guest-internal: target exists but has no usable hit-test geometry.
+    /// Emitted by `hit_test::resolve_centre_for_selector` for missing
+    /// box models, malformed quads, or collapsed/zero-area parallelograms.
+    HitTestFailed,
 }
 
 /// Reason discriminator inside `host-error::vault-rejection`.
@@ -82,6 +94,13 @@ pub enum LoomErrorCode {
     WebActionTimeout,
     WebSelectorNotFound,
     WebNavigationFailed,
+    /// Selector resolved but the element provided no usable hit-test
+    /// geometry — `display:none`, `visibility:hidden`, zero-area,
+    /// off-tree, or otherwise occluded. Emitted by Click/Hover/Scroll
+    /// when `hit_test::resolve_centre_for_selector` fails after
+    /// `DOM.querySelector` succeeds. Wire string: `"web_hit_test_failed"`
+    /// (snake_case at the receipt level).
+    WebHitTestFailed,
     TccPermissionDenied { permission: String },
     SurfaceShimFailed,
     StoreIntegrityFailed,
@@ -137,6 +156,7 @@ impl ErrorMapper {
                 }
                 ShimFailureKind::Crashed => LoomErrorCode::SurfaceShimFailed,
                 ShimFailureKind::NavigationFailed => LoomErrorCode::WebNavigationFailed,
+                ShimFailureKind::HitTestFailed => LoomErrorCode::WebHitTestFailed,
             },
             HostError::StoreIntegrityFailed => LoomErrorCode::StoreIntegrityFailed,
             HostError::Internal { reason } => LoomErrorCode::HostInternalError { reason },

@@ -5,8 +5,16 @@
 // - **CDP method:** `Input.dispatchMouseEvent` with
 //   `event_type: "mouseWheel"` and signed integer `deltaX` / `deltaY`
 //   in CSS pixels (BC-SURF-05 — no floats).
-// - **Scope:** scrolls the element matched by `selector` into view if
-//   provided; otherwise scrolls the root document by the given delta.
+// - **Scope:**
+//   - `Some(selector)` → resolve to the element's bounding-box centre
+//     via `hit_test::resolve_centre_for_selector` and dispatch the
+//     wheel there. A wheel dispatched on a particular element scrolls
+//     the nearest ancestor scroll container (matches user-input
+//     semantics). Errors: `WebSelectorNotFound`, `WebHitTestFailed`.
+//   - `None` → scroll the root document. Wheel dispatched at the
+//     viewport centre via `Page.getLayoutMetrics`. (Previously this
+//     branch dispatched at (0,0); viewport centre is consistent with
+//     the selector-Some case and avoids edge effects in some pages.)
 
 
 extern crate alloc;
@@ -44,14 +52,23 @@ impl ScrollVerb {
         let action_id = action.action_id.clone();
 
         let inner = || -> Result<Receipt, HostError> {
-            // mouseWheel with signed integer CSS-pixel deltas (BC-SURF-05)
+            // Pick coordinates: selector centre, or viewport centre when
+            // no selector is provided (preserves the existing "scroll
+            // the root document" semantic without dispatching at 0,0).
+            let (centre_x, centre_y) = match action.selector.as_deref() {
+                Some(sel) => crate::hit_test::hit_test::resolve_centre_for_selector(sel)?,
+                None => crate::hit_test::hit_test::resolve_viewport_centre()?,
+            };
+
+            // mouseWheel at the chosen point with signed integer CSS-pixel
+            // deltas (BC-SURF-05).
             host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::InputDispatchMouseEvent(
                     InputDispatchMouseEvent {
                         event_type: "mouseWheel".into(),
-                        x: 0,
-                        y: 0,
+                        x: centre_x,
+                        y: centre_y,
                         button: "none".into(),
                         click_count: 0,
                         delta_x: Some(action.delta_x),

@@ -12,12 +12,13 @@ pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (16) ----
+// ---- Module declarations (17) ----
 pub mod cdp_message_encoder;
 pub mod click_verb;
 pub mod error_mapper;
 pub mod evaluate_verb;
 pub mod guest_bindings;
+pub mod hit_test;
 pub mod host_bindings;
 pub mod hover_verb;
 pub mod navigate_verb;

@@ -145,6 +145,7 @@ pub mod host {
 pub mod mock_host {
     use super::*;
     use std::cell::RefCell;
+    use std::collections::HashMap;
 
     /// Recorded host-fn invocations (in order).
     #[derive(Debug, Clone, PartialEq)]
@@ -160,23 +161,120 @@ pub mod mock_host {
         static CALLS: RefCell<Vec<HostCall>> = const { RefCell::new(Vec::new()) };
         /// Monotonic counter for clock_now ticks.
         static TICKS: RefCell<u64> = const { RefCell::new(1000) };
-        /// CBOR response bytes returned by the next shim_call.
+        /// Default CBOR response bytes returned by `shim_call` when no
+        /// method-specific override is set in `SHIM_RESP_BY_METHOD`.
         static SHIM_RESP: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+        /// Per-method CBOR responses. Keyed by CDP method name decoded
+        /// from the request's `method` field. Set via
+        /// `setup_method_responses` for tests that exercise the
+        /// `hit_test::resolve_centre_for_selector` sequence (which makes
+        /// 4+ distinct shim_call invocations per click/hover/scroll).
+        static SHIM_RESP_BY_METHOD: RefCell<HashMap<String, Vec<u8>>> = RefCell::new(HashMap::new());
+        /// Decoded `Input.dispatchMouseEvent` payloads, in dispatch order.
+        /// Lets verb tests assert exact (x, y) coordinates rather than
+        /// trusting "no error" as proof the click landed at the centre.
+        /// Per Phase-4 council reviewer R2.STEAL: prevents the original
+        /// (0,0) bug from regressing silently.
+        static MOUSE_DISPATCHES: RefCell<Vec<MouseDispatch>> = const { RefCell::new(Vec::new()) };
         /// Emitted receipt captured by receipt_emit.
         static EMITTED: RefCell<Option<Receipt>> = const { RefCell::new(None) };
     }
 
+    /// One decoded `Input.dispatchMouseEvent` request.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct MouseDispatch {
+        pub event_type: String,
+        pub x: i64,
+        pub y: i64,
+        pub button: String,
+        pub click_count: u32,
+        pub delta_x: Option<i64>,
+        pub delta_y: Option<i64>,
+    }
+
     /// Set up the mock for a test. Call at the start of each test.
+    /// `shim_response` is used as the default for any shim_call whose
+    /// method isn't in `SHIM_RESP_BY_METHOD`.
     pub fn setup(shim_response: Vec<u8>) {
         CALLS.with(|c| c.borrow_mut().clear());
         TICKS.with(|t| *t.borrow_mut() = 1000);
         SHIM_RESP.with(|r| *r.borrow_mut() = shim_response);
+        SHIM_RESP_BY_METHOD.with(|m| m.borrow_mut().clear());
+        MOUSE_DISPATCHES.with(|m| m.borrow_mut().clear());
         EMITTED.with(|e| *e.borrow_mut() = None);
+    }
+
+    /// Set per-method CBOR responses. Call AFTER `setup`. Each entry maps
+    /// a CDP method name (e.g. `"DOM.querySelector"`) to the CBOR bytes
+    /// that `shim_call` should return when the request carries that
+    /// method. Used by Click/Hover/Scroll verb tests to mock the new
+    /// `hit_test::resolve_centre_for_selector` 4-call sequence.
+    pub fn setup_method_responses(map: HashMap<String, Vec<u8>>) {
+        SHIM_RESP_BY_METHOD.with(|m| *m.borrow_mut() = map);
+    }
+
+    /// Convenience: register CBOR responses that satisfy the
+    /// `hit_test::resolve_centre_for_selector` sequence for an
+    /// axis-aligned box `[x1, y1, x2, y2]`. Synthetic nodeId is 100.
+    /// Also wires `Page.getLayoutMetrics` for ScrollVerb's None branch
+    /// with a viewport of (vw, vh).
+    pub fn install_hit_test_box(x1: f64, y1: f64, x2: f64, y2: f64, vw: u64, vh: u64) {
+        let mut buf_doc = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({"root": {"nodeId": 1}}),
+            &mut buf_doc,
+        )
+        .unwrap();
+        let mut buf_qs = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({"nodeId": 100}),
+            &mut buf_qs,
+        )
+        .unwrap();
+        let mut buf_siv = Vec::new();
+        ciborium::ser::into_writer(&serde_json::json!({}), &mut buf_siv).unwrap();
+        let mut buf_bm = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({
+                "model": {
+                    "content": [x1, y1, x2, y1, x2, y2, x1, y2],
+                    "width": (x2 - x1) as u64,
+                    "height": (y2 - y1) as u64,
+                }
+            }),
+            &mut buf_bm,
+        )
+        .unwrap();
+        let mut buf_lm = Vec::new();
+        ciborium::ser::into_writer(
+            &serde_json::json!({
+                "cssLayoutViewport": {
+                    "clientWidth":  vw,
+                    "clientHeight": vh,
+                }
+            }),
+            &mut buf_lm,
+        )
+        .unwrap();
+        let mut map = HashMap::new();
+        map.insert("DOM.getDocument".to_string(), buf_doc);
+        map.insert("DOM.querySelector".to_string(), buf_qs);
+        map.insert("DOM.scrollIntoViewIfNeeded".to_string(), buf_siv);
+        map.insert("DOM.getBoxModel".to_string(), buf_bm);
+        map.insert("Page.getLayoutMetrics".to_string(), buf_lm);
+        setup_method_responses(map);
     }
 
     /// Return recorded host-fn calls in order.
     pub fn calls() -> Vec<HostCall> {
         CALLS.with(|c| c.borrow().clone())
+    }
+
+    /// Return every `Input.dispatchMouseEvent` payload the verb under
+    /// test sent, in dispatch order. Decoded by `shim_call_impl` from
+    /// the typed CDP envelope. Empty if no mouse events were dispatched.
+    pub fn mouse_dispatches() -> Vec<MouseDispatch> {
+        MOUSE_DISPATCHES.with(|m| m.borrow().clone())
     }
 
     /// Return the receipt that was emitted via receipt_emit.
@@ -209,7 +307,87 @@ pub mod mock_host {
             shim_id: shim_id.to_string(),
             msg_len: msg.len(),
         }));
+        // Decode the CBOR envelope once: needed for per-method response
+        // routing AND for capturing Input.dispatchMouseEvent payloads
+        // (used by verb tests to assert exact dispatched coordinates).
+        if let Ok(env) = ciborium::de::from_reader::<ciborium::value::Value, _>(msg) {
+            let method = env.as_map().and_then(|m| {
+                m.iter().find_map(|(k, v)| {
+                    if k.as_text() == Some("method") {
+                        v.as_text().map(String::from)
+                    } else {
+                        None
+                    }
+                })
+            });
+            // Capture Input.dispatchMouseEvent payloads so verb tests
+            // can directly assert (x, y) — converts bug-fix verification
+            // from circumstantial to direct (Phase-4 council R2.STEAL).
+            if method.as_deref() == Some("Input.dispatchMouseEvent") {
+                if let Some(params) = env.as_map().and_then(|m| {
+                    m.iter().find_map(|(k, v)| {
+                        if k.as_text() == Some("params") {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
+                    })
+                }) {
+                    if let Some(p) = decode_mouse_dispatch(&params) {
+                        MOUSE_DISPATCHES.with(|d| d.borrow_mut().push(p));
+                    }
+                }
+            }
+            if let Some(m) = method {
+                if let Some(resp) =
+                    SHIM_RESP_BY_METHOD.with(|map| map.borrow().get(&m).cloned())
+                {
+                    return Ok(resp);
+                }
+            }
+        }
         Ok(SHIM_RESP.with(|r| r.borrow().clone()))
+    }
+
+    /// Decode a CBOR `Value` matching the `InputDispatchMouseEvent`
+    /// param struct shape (see `cdp_message_encoder.rs`). Returns None
+    /// if any required field is missing or the wrong type.
+    fn decode_mouse_dispatch(params: &ciborium::value::Value) -> Option<MouseDispatch> {
+        let map = params.as_map()?;
+        let mut event_type: Option<String> = None;
+        let mut x: Option<i64> = None;
+        let mut y: Option<i64> = None;
+        let mut button: Option<String> = None;
+        let mut click_count: Option<u32> = None;
+        let mut delta_x: Option<i64> = None;
+        let mut delta_y: Option<i64> = None;
+        for (k, v) in map.iter() {
+            match k.as_text()? {
+                "event_type" => event_type = v.as_text().map(String::from),
+                "x" => x = v.as_integer().and_then(|i| i64::try_from(i).ok()),
+                "y" => y = v.as_integer().and_then(|i| i64::try_from(i).ok()),
+                "button" => button = v.as_text().map(String::from),
+                "click_count" => {
+                    click_count = v.as_integer().and_then(|i| u32::try_from(i).ok())
+                }
+                "delta_x" => {
+                    delta_x = v.as_integer().and_then(|i| i64::try_from(i).ok())
+                }
+                "delta_y" => {
+                    delta_y = v.as_integer().and_then(|i| i64::try_from(i).ok())
+                }
+                _ => {}
+            }
+        }
+        Some(MouseDispatch {
+            event_type: event_type?,
+            x: x?,
+            y: y?,
+            button: button?,
+            click_count: click_count?,
+            delta_x,
+            delta_y,
+        })
     }
 
     pub fn receipt_emit_impl(r: &Receipt) {

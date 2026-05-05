@@ -6,12 +6,15 @@
 // - **CDP method:** `Input.dispatchMouseEvent` with
 //   `event_type: "mousePressed"` then `"mouseReleased"` (one click =
 //   two CDP messages). Coordinates are integer CSS pixels (BC-SURF-05).
-// - **Selector resolution.** Click at element bounding-box centre. The
-//   shim resolves the selector and returns the centre; surface never
-//   parses CSS itself.
-// - **No retry.** If the selector is missing the host returns
-//   `host-error::shim-failure { kind: "selector_not_found" }` →
-//   ErrorMapper → `WebSelectorNotFound` → error Receipt.
+// - **Selector resolution.** The verb resolves the selector to the
+//   element's bounding-box centre via `hit_test::resolve_centre_for_selector`
+//   (DOM.getDocument → DOM.querySelector → DOM.scrollIntoViewIfNeeded →
+//   DOM.getBoxModel → centre, rounded to integer CSS pixels). Both
+//   mouse events fire at the same coordinates so React's synthetic
+//   event system observes a real click, not a 0,0 phantom.
+// - **No retry.** Selector missing → `WebSelectorNotFound`. Element
+//   exists but has no usable hit-test geometry (display:none, zero
+//   area, etc.) → `WebHitTestFailed`.
 
 
 extern crate alloc;
@@ -50,15 +53,23 @@ impl ClickVerb {
         let action_id = action.action_id.clone();
 
         let inner = || -> Result<Receipt, HostError> {
-            // mousePressed + mouseReleased (one click = two CDP events per spec)
+            // Resolve selector → bounding-box centre (DOM.getDocument →
+            // DOM.querySelector → DOM.scrollIntoViewIfNeeded → DOM.getBoxModel).
+            let (centre_x, centre_y) =
+                crate::hit_test::hit_test::resolve_centre_for_selector(&action.selector)?;
+
+            // mousePressed + mouseReleased at the centre (one click = two
+            // CDP events per spec). Both events use the SAME coordinates
+            // so the browser dispatches a real click event, not a
+            // mouse-down at one point and mouse-up at another.
             for event_type in &["mousePressed", "mouseReleased"] {
                 host::shim_call(
                     "chromium",
                     &CdpMessageEncoder::encode(&CdpMessage::InputDispatchMouseEvent(
                         InputDispatchMouseEvent {
                             event_type: (*event_type).into(),
-                            x: 0,
-                            y: 0,
+                            x: centre_x,
+                            y: centre_y,
                             button: action.button.clone(),
                             click_count: action.click_count,
                             delta_x: None,

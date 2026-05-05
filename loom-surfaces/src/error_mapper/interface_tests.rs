@@ -153,6 +153,29 @@ fn shim_navigation_failed_maps_to_web_navigation_failed() {
     assert_eq!(r, LoomErrorCode::WebNavigationFailed);
 }
 
+// AC-CLICK-03 / AC-HOVER-03 / AC-SCROLL-03: hit-test failure surfaces as
+// `WebHitTestFailed`. Constructed inside the WASM guest by the `hit_test`
+// helper when an element gives no usable box-model geometry.
+#[test]
+fn shim_hit_test_failed_maps_to_web_hit_test_failed() {
+    let r = ErrorMapper::map(
+        HostError::ShimFailure { kind: ShimFailureKind::HitTestFailed },
+        SurfaceContext::Web,
+    );
+    assert_eq!(r, LoomErrorCode::WebHitTestFailed);
+}
+
+#[test]
+fn shim_hit_test_failed_maps_to_web_hit_test_failed_in_non_web_context_too() {
+    // The mapper folds context only for Timeout. HitTestFailed is web-specific
+    // by construction (only Click/Hover/Scroll in the web surface emit it).
+    let r = ErrorMapper::map(
+        HostError::ShimFailure { kind: ShimFailureKind::HitTestFailed },
+        SurfaceContext::Shell,
+    );
+    assert_eq!(r, LoomErrorCode::WebHitTestFailed);
+}
+
 // === store + internal ===
 
 #[test]

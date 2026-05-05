@@ -18,11 +18,19 @@
 //!   (used by integration tests to assert what the daemon sent).
 //! - `LOOM_FAKE_CHROMIUM_FAIL_AFTER_N` — close WS after N requests
 //!   (used to test AC-SHCRT-05 surface_unavailable).
+//! - `LOOM_FAKE_CHROMIUM_FIXTURE` — path to a JSON file containing a
+//!   tiny DOM model used to answer `DOM.querySelector`, `DOM.getBoxModel`,
+//!   `DOM.scrollIntoViewIfNeeded`, and `Page.getLayoutMetrics`. Shape:
+//!   `{ "boxes": { "<selector>": [x1, y1, x2, y2] }, "viewport": [w, h] }`.
+//!   Used by the Click/Hover/Scroll hit-test integration tests
+//!   (AC-CLICK/HOVER/SCROLL-01..03).
 
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use tokio::net::TcpListener;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::Message;
@@ -234,10 +242,16 @@ async fn handle_connection(
             }
         }
 
-        let mut response = json!({
-            "id": id,
-            "result": result,
-        });
+        // CDP error sentinel: `canned_response` may return
+        // `{"__cdp_error__": {"code": ..., "message": ...}}` to signal
+        // that this method should respond with a JSON-RPC error envelope
+        // instead of `{result: ...}`. Used by `DOM.getBoxModel` on
+        // hidden / zero-area / unknown nodes (AC-CLICK-03).
+        let mut response = if let Some(err) = result.get("__cdp_error__").cloned() {
+            json!({ "id": id, "error": err })
+        } else {
+            json!({ "id": id, "result": result })
+        };
         if let Some(sid) = &session_id {
             response["sessionId"] = json!(sid);
         }
@@ -549,7 +563,10 @@ fn is_browser_scope_method_local(method: &str) -> bool {
 
 /// Canned CDP-method responses. Best-effort — unknown methods get an
 /// empty `{}` result so the daemon doesn't error out on routine calls.
-fn canned_response(method: &str, _params: &Value) -> Value {
+///
+/// `params` is consumed for `DOM.querySelector` (extract `selector`) and
+/// `DOM.getBoxModel` (extract `nodeId`); for other methods it is ignored.
+fn canned_response(method: &str, params: &Value) -> Value {
     match method {
         "Page.navigate" => json!({
             "frameId": "fake-frame-1",
@@ -565,6 +582,75 @@ fn canned_response(method: &str, _params: &Value) -> Value {
                 "children": []
             }
         }),
+        "DOM.querySelector" => {
+            let sel = params
+                .get("selector")
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            let node_id = dom_fixture()
+                .ids_by_selector
+                .get(sel)
+                .copied()
+                .unwrap_or(0);
+            json!({ "nodeId": node_id })
+        }
+        "DOM.scrollIntoViewIfNeeded" => json!({}),
+        "DOM.getBoxModel" => {
+            let nid = params
+                .get("nodeId")
+                .and_then(|n| n.as_u64())
+                .unwrap_or(0);
+            let fixture = dom_fixture();
+            match fixture
+                .selectors_by_id
+                .get(&nid)
+                .and_then(|sel| fixture.boxes.get(sel))
+            {
+                Some(b) => {
+                    let [x1, y1, x2, y2] = *b;
+                    if (x2 - x1) <= 0.0 || (y2 - y1) <= 0.0 {
+                        // Real Chromium returns -32000 for zero-area /
+                        // hidden / detached elements. The hit_test helper
+                        // maps any DOM.getBoxModel error to
+                        // ShimFailureKind::HitTestFailed.
+                        return json!({
+                            "__cdp_error__": {
+                                "code": -32000,
+                                "message": "Could not compute box model.",
+                            }
+                        });
+                    }
+                    let w = (x2 - x1) as u64;
+                    let h = (y2 - y1) as u64;
+                    json!({
+                        "model": {
+                            "content": [x1, y1, x2, y1, x2, y2, x1, y2],
+                            "padding": [x1, y1, x2, y1, x2, y2, x1, y2],
+                            "border":  [x1, y1, x2, y1, x2, y2, x1, y2],
+                            "margin":  [x1, y1, x2, y1, x2, y2, x1, y2],
+                            "width":  w,
+                            "height": h,
+                        }
+                    })
+                }
+                None => json!({
+                    "__cdp_error__": {
+                        "code": -32000,
+                        "message": "Could not find node with given id",
+                    }
+                }),
+            }
+        }
+        "Page.getLayoutMetrics" => {
+            let [w, h] = dom_fixture().viewport;
+            json!({
+                "layoutViewport":   { "pageX": 0, "pageY": 0, "clientWidth": w, "clientHeight": h },
+                "visualViewport":   { "offsetX": 0.0, "offsetY": 0.0, "pageX": 0.0, "pageY": 0.0, "clientWidth": w, "clientHeight": h, "scale": 1.0, "zoom": 1.0 },
+                "cssLayoutViewport":{ "pageX": 0, "pageY": 0, "clientWidth": w, "clientHeight": h },
+                "contentSize":      { "x": 0.0, "y": 0.0, "width": w, "height": h },
+                "cssContentSize":   { "x": 0.0, "y": 0.0, "width": w, "height": h },
+            })
+        }
         "Page.captureScreenshot" => json!({
             // 1×1 transparent PNG, base64-encoded.
             "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
@@ -595,4 +681,86 @@ fn canned_response(method: &str, _params: &Value) -> Value {
         // Page.enable, Network.enable, DOM.enable, etc.
         _ => json!({}),
     }
+}
+
+/// Tiny DOM model used by the hit-test integration tests
+/// (AC-CLICK/HOVER/SCROLL-01..03). Read once from
+/// `LOOM_FAKE_CHROMIUM_FIXTURE` (a path to a JSON file). Empty when
+/// unset.
+#[derive(Debug, Clone, Default)]
+struct DomFixture {
+    /// Selector → bounding-box `[x1, y1, x2, y2]` in CSS pixels
+    /// (top-left + bottom-right, axis-aligned).
+    boxes: HashMap<String, [f64; 4]>,
+    /// Selector → assigned synthetic `nodeId`.
+    ids_by_selector: HashMap<String, u64>,
+    /// Reverse: synthetic `nodeId` → selector.
+    selectors_by_id: HashMap<u64, String>,
+    /// Viewport `[width, height]` in CSS pixels. Defaults to `[1024, 768]`.
+    viewport: [u64; 2],
+}
+
+static FIXTURE: OnceLock<DomFixture> = OnceLock::new();
+
+fn dom_fixture() -> &'static DomFixture {
+    FIXTURE.get_or_init(load_dom_fixture)
+}
+
+fn load_dom_fixture() -> DomFixture {
+    let mut out = DomFixture {
+        viewport: [1024, 768],
+        ..Default::default()
+    };
+    let path = match std::env::var("LOOM_FAKE_CHROMIUM_FIXTURE") {
+        Ok(p) => p,
+        Err(_) => return out,
+    };
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("fake-chromium: cannot read fixture {path}: {e}");
+            return out;
+        }
+    };
+    let v: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("fake-chromium: malformed fixture JSON: {e}");
+            return out;
+        }
+    };
+    if let Some(vp) = v.get("viewport").and_then(|x| x.as_array()) {
+        if vp.len() == 2 {
+            if let (Some(w), Some(h)) = (vp[0].as_u64(), vp[1].as_u64()) {
+                out.viewport = [w, h];
+            }
+        }
+    }
+    if let Some(boxes_obj) = v.get("boxes").and_then(|b| b.as_object()) {
+        // Stable id assignment: deterministic ordering by selector string.
+        let mut keys: Vec<&String> = boxes_obj.keys().collect();
+        keys.sort();
+        for (i, sel) in keys.iter().enumerate() {
+            let arr = match boxes_obj.get(*sel).and_then(|x| x.as_array()) {
+                Some(a) if a.len() == 4 => a,
+                _ => continue,
+            };
+            let coords = match (
+                arr[0].as_f64(),
+                arr[1].as_f64(),
+                arr[2].as_f64(),
+                arr[3].as_f64(),
+            ) {
+                (Some(x1), Some(y1), Some(x2), Some(y2)) => [x1, y1, x2, y2],
+                _ => continue,
+            };
+            // Synthetic ids start at 1000 to avoid colliding with the
+            // root document nodeId (1).
+            let node_id = 1000_u64 + (i as u64);
+            out.boxes.insert((*sel).clone(), coords);
+            out.ids_by_selector.insert((*sel).clone(), node_id);
+            out.selectors_by_id.insert(node_id, (*sel).clone());
+        }
+    }
+    out
 }

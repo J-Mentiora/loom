@@ -28,6 +28,11 @@ pub enum ReceiptCode {
     WebSelectorNotFound,
     WebEvaluateThrew,
     WebActionTimeout,
+    /// Selector resolved but the element provided no usable hit-test
+    /// geometry (display:none / visibility:hidden / zero-area /
+    /// off-tree). Emitted by Click/Hover/Scroll after `DOM.querySelector`
+    /// succeeded. SemVer-minor addition (was 22 codes; now 23).
+    WebHitTestFailed,
 
     // ---- Vault errors ----
     VaultGrantExpired,
@@ -62,6 +67,7 @@ impl ReceiptCode {
             ReceiptCode::WebSelectorNotFound => "web_selector_not_found",
             ReceiptCode::WebEvaluateThrew => "web_evaluate_threw",
             ReceiptCode::WebActionTimeout => "web_action_timeout",
+            ReceiptCode::WebHitTestFailed => "web_hit_test_failed",
             ReceiptCode::VaultGrantExpired => "vault_grant_expired",
             ReceiptCode::VaultOriginMismatch => "vault_origin_mismatch",
             ReceiptCode::VaultGrantRevoked => "vault_grant_revoked",

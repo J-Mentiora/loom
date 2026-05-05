@@ -106,6 +106,31 @@ pub struct DomGetDocument {
     pub pierce: bool,
 }
 
+/// CDP `DOM.getBoxModel` — used by the `hit_test` helper to compute an
+/// element's bounding-box centre before dispatching a mouse event. The
+/// response carries a `content` quad of 8 f64s `[x1,y1,x2,y2,x3,y3,x4,y4]`
+/// in CSS pixels (clockwise from top-left). Decode is up to the caller;
+/// see `loom-surfaces::hit_test`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DomGetBoxModel {
+    pub node_id: u64,
+}
+
+/// CDP `DOM.scrollIntoViewIfNeeded` — scrolls the element into the
+/// viewport if it isn't already wholly visible. Best-effort from the
+/// `hit_test` helper's perspective: errors here are tolerated because
+/// the subsequent `DOM.getBoxModel` is the authoritative hit-test signal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DomScrollIntoViewIfNeeded {
+    pub node_id: u64,
+}
+
+/// CDP `Page.getLayoutMetrics` — used by `ScrollVerb` when no selector is
+/// provided (`scroll the root document`) to dispatch the wheel event at
+/// the viewport centre rather than at page origin. No request params.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PageGetLayoutMetrics {}
+
 /// CDP `Page.captureScreenshot`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PageCaptureScreenshot {
@@ -129,6 +154,9 @@ pub enum CdpMessage {
     RuntimeCallFunctionOn(RuntimeCallFunctionOn),
     DomQuerySelector(DomQuerySelector),
     DomGetDocument(DomGetDocument),
+    DomGetBoxModel(DomGetBoxModel),
+    DomScrollIntoViewIfNeeded(DomScrollIntoViewIfNeeded),
+    PageGetLayoutMetrics(PageGetLayoutMetrics),
     PageCaptureScreenshot(PageCaptureScreenshot),
 }
 
@@ -147,6 +175,9 @@ impl CdpMessage {
             Self::RuntimeCallFunctionOn(_) => "Runtime.callFunctionOn",
             Self::DomQuerySelector(_) => "DOM.querySelector",
             Self::DomGetDocument(_) => "DOM.getDocument",
+            Self::DomGetBoxModel(_) => "DOM.getBoxModel",
+            Self::DomScrollIntoViewIfNeeded(_) => "DOM.scrollIntoViewIfNeeded",
+            Self::PageGetLayoutMetrics(_) => "Page.getLayoutMetrics",
             Self::PageCaptureScreenshot(_) => "Page.captureScreenshot",
         }
     }
@@ -200,6 +231,15 @@ impl CdpMessageEncoder {
                 ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
             }
             CdpMessage::DomGetDocument(p) => {
+                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
+            }
+            CdpMessage::DomGetBoxModel(p) => {
+                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
+            }
+            CdpMessage::DomScrollIntoViewIfNeeded(p) => {
+                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
+            }
+            CdpMessage::PageGetLayoutMetrics(p) => {
                 ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
             }
             CdpMessage::PageCaptureScreenshot(p) => {
