@@ -40,6 +40,14 @@ const SENSITIVE_PATTERN_LOWERCASE: &[&str] = &[
     "client_secret",
     "clientsecret",
     "oauth",
+    // Code-review additions: catch HTTP-style auth headers that don't
+    // already match the above (e.g. `authorization`, `authentication`,
+    // `auth_header`). Substring-matched. The `auth_` (trailing underscore)
+    // pattern catches `auth_header` / `auth_provider` style names without
+    // over-matching `author` or `authored`.
+    "auth_",
+    "authoriz",
+    "authentic",
 ];
 
 /// Returns true when `key` (case-insensitive) contains any sensitive
@@ -154,6 +162,12 @@ mod tests {
             "Bearer",
             "Cookie",
             "jwt",
+            // Step 18 council additions:
+            "authorization",
+            "Authorization",
+            "proxy_authorization",
+            "authentication",
+            "auth_header",
         ] {
             let v = serde_json::json!({ *key: "x" });
             let r = redact_recursive(&v);
@@ -163,6 +177,26 @@ mod tests {
                 "expected key {} to be redacted",
                 key
             );
+        }
+    }
+
+    #[test]
+    fn safe_keys_with_partial_letter_overlap_pass_through() {
+        // Make sure the new "authoriz" / "authentic" patterns don't
+        // over-match common safe terms.
+        for key in &["author", "authored_at", "authentic_user_count"] {
+            let v = serde_json::json!({ *key: "x" });
+            let r = redact_recursive(&v);
+            // "authentic_user_count" CONTAINS "authentic" → would redact.
+            // "author" does NOT contain "authoriz" or "authentic" → stays.
+            // "authored_at" does NOT contain either → stays.
+            // We document the known over-match for "authentic_*" keys
+            // here; safer to redact than leak.
+            if key.contains("authentic") {
+                assert_eq!(r[*key], json!("<redacted>"));
+            } else {
+                assert_eq!(r[*key], json!("x"));
+            }
         }
     }
 
