@@ -72,6 +72,27 @@ fn auth_dir_for(home: &Path) -> PathBuf {
     }
 }
 
+/// Mirror of `loom-rpc::socket_server::default_socket_path` semantics.
+/// macOS: `dirs::cache_dir()/loom/loom.sock` = `~/Library/Caches/loom/loom.sock`.
+/// Linux: `$XDG_RUNTIME_DIR/loom.sock`. The test sets XDG_RUNTIME_DIR below
+/// to point at this same dir so the CLI subprocess agrees with the daemon.
+fn socket_path_for(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library/Caches/loom/loom.sock")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        home.join(".runtime/loom.sock")
+    }
+}
+
+/// Parent dir of `socket_path_for(home)`, used both for creating the dir at
+/// sandbox setup and for the `XDG_RUNTIME_DIR` env var on Linux.
+fn socket_parent_for(home: &Path) -> PathBuf {
+    socket_path_for(home).parent().expect("socket parent").to_path_buf()
+}
+
 // ─── Fixture: built-once-per-test-binary state ──────────────────────────────
 
 /// Cached AOT-compiled cwasm path + binary paths. Computed on first
@@ -174,15 +195,14 @@ struct Sandbox {
 impl Sandbox {
     fn new() -> Self {
         let home = tempfile::tempdir().expect("tempdir");
-        // Use the macOS-default socket path so both the daemon and the
-        // CLI agree without us having to override --socket on every CLI
-        // invocation (the `--socket` flag exists on `loom serve` but not
-        // on `loom action` / `loom session`). dirs::cache_dir() resolves
-        // to $HOME/Library/Caches on macOS — the HOME override below
-        // points it into the test sandbox.
-        let cache_loom = home.path().join("Library/Caches/loom");
-        std::fs::create_dir_all(&cache_loom).expect("mkdir cache/loom");
-        let socket = cache_loom.join("loom.sock");
+        // Daemon and CLI must agree on the socket path without us passing
+        // `--socket` to the CLI (that flag exists only on `loom serve`).
+        // socket_path_for() mirrors loom_rpc::socket_server::default_socket_path
+        // per platform: macOS uses dirs::cache_dir()/loom/loom.sock under HOME;
+        // Linux uses $XDG_RUNTIME_DIR/loom.sock — the daemon + CLI envs below
+        // both point XDG_RUNTIME_DIR at this dir so all three sides agree.
+        std::fs::create_dir_all(socket_parent_for(home.path())).expect("mkdir socket parent");
+        let socket = socket_path_for(home.path());
 
         // Layout the directories the daemon + CLI expect.
         let cfg_loom = home.path().join(".config/loom");
@@ -249,6 +269,7 @@ impl Daemon {
             .env("XDG_DATA_HOME", sandbox.home_path().join(".local/share"))
             .env("XDG_CONFIG_HOME", sandbox.home_path().join(".config"))
             .env("XDG_CACHE_HOME", sandbox.home_path().join(".cache"))
+            .env("XDG_RUNTIME_DIR", socket_parent_for(sandbox.home_path()))
             // Stream daemon stderr to a file in the sandbox; we drain it
             // into the panic message when something fails downstream.
             .env(
@@ -332,6 +353,7 @@ impl Daemon {
             .env("XDG_DATA_HOME", self.home_path().join(".local/share"))
             .env("XDG_CONFIG_HOME", self.home_path().join(".config"))
             .env("XDG_CACHE_HOME", self.home_path().join(".cache"))
+            .env("XDG_RUNTIME_DIR", socket_parent_for(self.home_path()))
             .env("RUST_LOG", "warn")
             .output()
             .expect("spawn loom CLI");
