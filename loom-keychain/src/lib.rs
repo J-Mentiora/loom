@@ -1,13 +1,12 @@
-//! `loom-keychain` — feature-gated, out-of-loom-core keychain access.
+//! `loom-keychain` — out-of-loom-core keychain access.
 //!
 //! Implements the `KeychainAccess` trait declared by
 //! `loom_core::vault::KeychainAccess`. Loom-core never imports
 //! platform-specific symbols; this crate is the seam.
 //!
-//! Currently provides a `LoomError`-aware error type and a
-//! passphrase-backed placeholder impl. Real macOS Security Framework /
-//! Linux Secret Service / Windows Credential Manager backends will be
-//! wired in later.
+//! v0.9.0 ships a `StubKeychain` returning `NotFound`. macOS Security
+//! Framework / Linux Secret Service / Windows Credential Manager
+//! backends are tracked for a future release.
 
 use zeroize::Zeroizing;
 
@@ -41,7 +40,7 @@ pub trait KeychainAccess: Send + Sync {
 }
 
 /// Stub backend used until real platform stores are wired in. Always
-/// returns `NotFound`. Useful in tests + scaffold smoke runs.
+/// returns `NotFound`.
 pub struct StubKeychain;
 
 impl KeychainAccess for StubKeychain {
