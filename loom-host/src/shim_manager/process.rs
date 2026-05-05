@@ -26,8 +26,8 @@ pub struct ShimProcess {
     /// unexpectedly (kill -9, panic, OOM). When true, `ShimManager::send`
     /// fail-fasts with `ShimFailure` instead of writing to the dead
     /// socket and waiting for a response that will never come (which
-    /// previously caused the daemon to hang for ~30s on AC-SHCRT-05
-    /// kill-shim-mid-action).
+    /// previously caused the daemon to hang for ~30s when a shim was
+    /// killed mid-action).
     pub crashed: Arc<std::sync::atomic::AtomicBool>,
     /// Optional exit-status string captured by the watcher task, e.g.
     /// `"signal: 9 (SIGKILL)"` or `"exit code 1"`. Surfaces in the
@@ -114,7 +114,7 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     // can reap the entire helper-process subtree atomically. Without
     // this, `kill -9` of the shim leaves ~8 orphan Chromium helpers
     // (renderer, GPU, utility processes) running with the shim's
-    // user-data-dir. (AC-SHCRT-05.2 requires no orphans.)
+    // user-data-dir. (No orphans permitted.)
     //
     // We apply this via `pre_exec` AFTER the dup2/close calls because
     // setpgid is async-signal-safe (per POSIX). The shim binary will
@@ -219,7 +219,7 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     let crashed_for_watcher = crashed.clone();
     let exit_text_for_watcher = exit_status_text.clone();
     // Capture the user-data-dir env so the watcher can reap orphan
-    // Chromium processes after a SIGKILL'd shim (AC-SHCRT-05.2).
+    // Chromium processes after a SIGKILL'd shim.
     // SIGKILL is uncatchable, so the shim's own SIGTERM handler can't
     // run; the host has to reap from outside the dying tree. We
     // identify the orphan tree by the unique --user-data-dir flag
@@ -250,7 +250,7 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
         // calls fail at the request_tx.send step rather than blocking.
         drop(request_tx_for_watcher);
 
-        // AC-SHCRT-05.2: reap orphan Chromium subprocess tree. Chromium
+        // Reap orphan Chromium subprocess tree. Chromium
         // and its helpers all carry --user-data-dir=<unique-per-session>
         // on their command line; pkill -f matches that pattern reliably.
         // No-op when LOOM_SHIM_USER_DATA_DIR wasn't set (test paths).
@@ -354,11 +354,14 @@ pub async fn send_and_await(
     send_timeout: Duration,
     recv_timeout: Duration,
 ) -> Result<ShimResponse, LoomError> {
-    // Fast-fail if the watcher has already detected the shim's death
-    // (AC-SHCRT-05.1). Without this check we'd write to a dead socket,
-    // park a oneshot, and time out at recv_timeout (~30s) — exactly the
-    // hang the AC was failing on.
-    if process.crashed.load(std::sync::atomic::Ordering::SeqCst) {
+    // Fast-fail if the watcher has already detected the shim's death.
+    // Without this check we'd write to a dead socket, park a oneshot,
+    // and time out at recv_timeout (~30s) — exactly the previously
+    // observed hang.
+    if process
+        .crashed
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
         let detail = process
             .exit_status_text
             .lock()

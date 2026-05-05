@@ -1,9 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/wasm_host/interface_tests.rs` instead.
 // Interface tests for `WasmHost`. Verifies the contract signatures
-// exactly (`loom-host_contract.md`), IC-HOST-01 (dispatch order),
-// IC-HOST-02 SLA shape, IC-HOST-07 (compile off hot path), and the
-// API-exposed-only invariant.
+// exactly (`loom-host_contract.md`), the dispatch order, SLA shape,
+// compile-off-hot-path invariant, and the API-exposed-only invariant.
 
 use super::wasm_host::{HostConfig, WasmHost};
 use crate::session_executor::{Action, ActionOutcome, SessionHandle};
@@ -29,7 +28,7 @@ fn new_signature_takes_core_facade_and_config_returns_arc() {
 fn dispatch_signature_is_async_returns_action_outcome() {
     // The contract literally says `Result<Receipt, LoomError>`; our
     // typed return is `ActionOutcome` which carries the receipt bits +
-    // costs. Phase 7 integration tests verify the receipt emerges on
+    // costs. Integration tests verify the receipt emerges on
     // `session.manifest`.
     fn _ck<'a>(
         h: &'a Arc<WasmHost>,
@@ -63,18 +62,18 @@ fn compile_module_is_synchronous() {
     let _ = _ck;
 }
 
-// === IC-HOST-01: dispatch order pin ===
+// === Dispatch order pin ===
 
 #[test]
 fn doc_pin_dispatch_steps_pre_check_invoke_post_account_emit() {
-    let pin = "1) library.get(action.surface) [IC-HOST-07: never compile]; \
+    let pin = "1) library.get(action.surface) [never compile]; \
               2) executor.run(action, session, mode, registry.linker_for(mode), host_state); \
-              3) AFTER sync return: receipts.queue(outcome, session.receipt_pool) [SR-HOST-01]";
+              3) AFTER sync return: receipts.queue(outcome, session.receipt_pool)";
     assert!(pin.contains("AFTER sync return"));
     assert!(pin.contains("never compile"));
 }
 
-// === IC-HOST-02: SLA shape — receipt-overhead off the dispatch return ===
+// === SLA shape — receipt-overhead off the dispatch return ===
 
 #[test]
 fn dispatch_does_not_take_manifest_writer_directly() {
@@ -92,7 +91,7 @@ fn dispatch_does_not_take_manifest_writer_directly() {
     let _ = _ck;
 }
 
-// === IC-HOST-07: compile off hot path ===
+// === Compile off hot path ===
 
 #[test]
 fn dispatch_returns_surface_unavailable_for_missing_artifact_not_lazy_compile() {
@@ -113,7 +112,7 @@ fn wasmhost_is_the_only_pub_type_in_loom_host() {
     assert!(pin.contains("`pub` outside the crate"));
 }
 
-// === IC-HOST-08: default mode plumbed at construction ===
+// === Default mode plumbed at construction ===
 
 #[test]
 fn default_mode_accessor_returns_configured_value() {
@@ -139,7 +138,7 @@ fn library_accessor_returns_arc_module_library() {
     let _ = _ck;
 }
 
-// === Storage layout (BC §1) — surfaces dir is part of HostConfig ===
+// === Storage layout — surfaces dir is part of HostConfig ===
 
 #[test]
 fn host_config_surfaces_dir_is_pathbuf() {
@@ -147,7 +146,7 @@ fn host_config_surfaces_dir_is_pathbuf() {
     assert!(c.surfaces_dir.to_string_lossy().contains("surfaces"));
 }
 
-// === Soft binding §6: redaction layer enabled by default ===
+// === Redaction layer enabled by default ===
 
 #[test]
 fn redaction_enabled_by_default() {

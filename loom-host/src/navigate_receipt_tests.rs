@@ -1,4 +1,4 @@
-// AC tests for navigate receipt tier-2 payload (AC-NAVRECEIPT-01..05).
+// Tests for navigate receipt tier-2 payload.
 //
 // These tests exercise:
 //   - ReceiptBuilder::navigate_* field population
@@ -13,7 +13,7 @@ use loom_core::mocks::MockContentStore;
 use loom_shared::navigate_outcome::LoomNetworkEvent;
 
 // ---------------------------------------------------------------------------
-// AC-NAVRECEIPT-01 — receipt JSON has all 8 navigate tier-2 keys
+// receipt JSON has all 8 navigate tier-2 keys
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -43,7 +43,7 @@ fn test_navigate_receipt_has_tier2_keys() {
     let val: serde_json::Value =
         serde_json::from_slice(&bytes).expect("canonical bytes must be valid JSON");
 
-    // Assert all 8 navigate tier-2 keys are present (AC-NAVRECEIPT-01)
+    // Assert all 8 navigate tier-2 keys are present
     let required_keys = [
         "url",
         "final_url",
@@ -57,7 +57,7 @@ fn test_navigate_receipt_has_tier2_keys() {
     for key in &required_keys {
         assert!(
             val.get(key).is_some(),
-            "AC-NAVRECEIPT-01: missing key '{key}' in navigate receipt JSON"
+            "missing key '{key}' in navigate receipt JSON"
         );
     }
 
@@ -67,7 +67,7 @@ fn test_navigate_receipt_has_tier2_keys() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NAVRECEIPT-02 — emitted_at_ms is present and monotonically non-decreasing
+// emitted_at_ms is present and monotonically non-decreasing
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -108,12 +108,12 @@ fn test_navigate_receipt_emitted_at_ms_monotonic() {
 
     assert!(
         ms2 >= ms1,
-        "AC-NAVRECEIPT-02: emitted_at_ms must be monotonically non-decreasing ({ms1} > {ms2})"
+        "emitted_at_ms must be monotonically non-decreasing ({ms1} > {ms2})"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-NAVRECEIPT-03 — side_effects JSON contains Vec<LoomNetworkEvent>
+// side_effects JSON contains Vec<LoomNetworkEvent>
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -176,7 +176,7 @@ fn test_navigate_receipt_side_effects_contains_network_events() {
         ..Default::default()
     };
 
-    // Assert side_effects_json bytes are valid JSON + deserializable (AC-NAVRECEIPT-03)
+    // Assert side_effects_json bytes are valid JSON + deserializable
     let decoded: Vec<LoomNetworkEvent> =
         serde_json::from_slice(&side_effects_json).expect("side_effects_json must be valid JSON");
 
@@ -195,7 +195,7 @@ fn test_navigate_receipt_side_effects_contains_network_events() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NAVRECEIPT-04 — hashes match ContentStore blobs
+// hashes match ContentStore blobs
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -233,7 +233,7 @@ fn test_navigate_receipt_hashes_match_content_store() {
         ReceiptMarshaller::assemble_canonical_bytes(&builder).expect("assemble must not fail");
     let val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
 
-    // Assert receipt hashes == ContentStore-computed hashes (AC-NAVRECEIPT-04)
+    // Assert receipt hashes == ContentStore-computed hashes
     assert_eq!(
         val["dom_snapshot_hash"].as_str().unwrap(),
         expected_dom_hash,
@@ -254,7 +254,7 @@ fn test_navigate_receipt_hashes_match_content_store() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NAVRECEIPT-05 — integration schema: all AC-CORE-04.2 fields present
+// integration schema: all canonical receipt fields present
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -284,19 +284,19 @@ fn test_navigate_receipt_integration_schema() {
     let val: serde_json::Value =
         serde_json::from_slice(&bytes).expect("canonical bytes must be valid JSON");
 
-    // AC-NAVRECEIPT-05: assert all AC-CORE-04.2 / navigate tier-2 fields present
+    // Assert all canonical receipt / navigate tier-2 fields are present
     // (dom_snapshot_hash or dom_after_blob_ref, screenshot_after_hash, timing_ticks)
     assert!(
         val.get("dom_snapshot_hash").is_some() || val.get("dom_after_blob_ref").is_some(),
-        "AC-NAVRECEIPT-05: dom_snapshot_hash or dom_after_blob_ref must be present"
+        "dom_snapshot_hash or dom_after_blob_ref must be present"
     );
     assert!(
         val.get("screenshot_after_hash").is_some(),
-        "AC-NAVRECEIPT-05: screenshot_after_hash must be present"
+        "screenshot_after_hash must be present"
     );
     assert!(
         val.get("timing_ticks").is_some(),
-        "AC-NAVRECEIPT-05: timing_ticks must be present in canonical receipt"
+        "timing_ticks must be present in canonical receipt"
     );
 
     // Also confirm action_id and status are serialized
@@ -308,15 +308,15 @@ fn test_navigate_receipt_integration_schema() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NAVERR-01..04 — typed-error receipts on HTTP 4xx/5xx and DNS failures
+// Typed-error receipts on HTTP 4xx/5xx and DNS failures
 // ---------------------------------------------------------------------------
 //
 // Each test builds a `ReceiptBuilder` shaped exactly as the host would produce
-// after the WIT decode + (Fix 4) shim-failure structured-detail branch in
+// after the WIT decode + shim-failure structured-detail branch in
 // `decode_typed_receipt` flips status to Error and stamps `error_code` =
 // "shim-failure" with structured JSON `error_details`. We then assert the
 // canonical-JSON output emitted by `assemble_canonical_bytes` matches the
-// AC-NAVERR contract: `status="error"`, `code="web_navigation_failed"`,
+// expected contract: `status="error"`, `code="web_navigation_failed"`,
 // `details.kind="http_status"|"dns_failure"`, and a short friendly `message`.
 
 fn navigate_error_builder(error_details: &str, status_code: Option<u32>) -> ReceiptBuilder {
@@ -339,41 +339,44 @@ fn assemble_value(builder: &ReceiptBuilder) -> serde_json::Value {
 }
 
 #[test]
-fn test_ac_naverr_01_404_emits_web_navigation_failed() {
-    let builder = navigate_error_builder(r#"{"kind":"http_status","status_code":404}"#, Some(404));
+fn test_naverr_404_emits_web_navigation_failed() {
+    let builder = navigate_error_builder(
+        r#"{"kind":"http_status","status_code":404}"#,
+        Some(404),
+    );
     let val = assemble_value(&builder);
 
-    assert_eq!(
-        val["status"], "error",
-        "AC-NAVERR-01: status must be 'error'"
-    );
+    assert_eq!(val["status"], "error", "status must be 'error'");
     assert_eq!(
         val["code"], "web_navigation_failed",
-        "AC-NAVERR-01: code must be 'web_navigation_failed'"
+        "code must be 'web_navigation_failed'"
     );
     assert_eq!(
         val["details"]["kind"], "http_status",
-        "AC-NAVERR-01: details.kind must be 'http_status'"
+        "details.kind must be 'http_status'"
     );
     assert_eq!(
         val["details"]["status_code"], 404u64,
-        "AC-NAVERR-01: details.status_code must be 404"
+        "details.status_code must be 404"
     );
     let msg = val["message"].as_str().expect("message must be string");
     assert!(
         msg.contains("404"),
-        "AC-NAVERR-01: message must reference 404 (got {msg:?})"
+        "message must reference 404 (got {msg:?})"
     );
     assert!(
         msg.len() <= 280,
-        "AC-CORE-05.1: message must be <= 280 chars (got {})",
+        "message must be <= 280 chars (got {})",
         msg.len()
     );
 }
 
 #[test]
-fn test_ac_naverr_02_500_emits_web_navigation_failed() {
-    let builder = navigate_error_builder(r#"{"kind":"http_status","status_code":500}"#, Some(500));
+fn test_naverr_500_emits_web_navigation_failed() {
+    let builder = navigate_error_builder(
+        r#"{"kind":"http_status","status_code":500}"#,
+        Some(500),
+    );
     let val = assemble_value(&builder);
 
     assert_eq!(val["status"], "error");
@@ -384,36 +387,33 @@ fn test_ac_naverr_02_500_emits_web_navigation_failed() {
 }
 
 #[test]
-fn test_ac_naverr_03_dns_failure_emits_web_navigation_failed() {
+fn test_naverr_dns_failure_emits_web_navigation_failed() {
     let builder = navigate_error_builder(
         r#"{"kind":"dns_failure","chromium_error":"net::ERR_NAME_NOT_RESOLVED"}"#,
         None,
     );
     let val = assemble_value(&builder);
 
-    assert_eq!(
-        val["status"], "error",
-        "AC-NAVERR-03: status must be 'error'"
-    );
+    assert_eq!(val["status"], "error", "status must be 'error'");
     assert_eq!(val["code"], "web_navigation_failed");
     assert_eq!(
         val["details"]["kind"], "dns_failure",
-        "AC-NAVERR-03: details.kind must be 'dns_failure'"
+        "details.kind must be 'dns_failure'"
     );
     assert_eq!(
         val["details"]["chromium_error"], "net::ERR_NAME_NOT_RESOLVED",
-        "AC-NAVERR-03: details.chromium_error must be preserved"
+        "details.chromium_error must be preserved"
     );
     let msg = val["message"].as_str().expect("message must be string");
     let lower = msg.to_lowercase();
     assert!(
         lower.contains("dns") || lower.contains("network"),
-        "AC-NAVERR-03: message must reference DNS or network failure (got {msg:?})"
+        "message must reference DNS or network failure (got {msg:?})"
     );
 }
 
 #[test]
-fn test_ac_naverr_04_200_keeps_web_action_completed() {
+fn test_naverr_200_keeps_web_action_completed() {
     // The OK path is unchanged: 2xx still produces code=web_action_completed.
     let builder = ReceiptBuilder {
         action_id: 2,
@@ -432,15 +432,15 @@ fn test_ac_naverr_04_200_keeps_web_action_completed() {
     };
     let val = assemble_value(&builder);
 
-    assert_eq!(val["status"], "ok", "AC-NAVERR-04: 200 must keep status=ok");
+    assert_eq!(val["status"], "ok", "200 must keep status=ok");
     assert_eq!(
         val["code"], "web_action_completed",
-        "AC-NAVERR-04: 200 must keep code=web_action_completed"
+        "200 must keep code=web_action_completed"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-TIMING-01..04 — Receipt.timing_ticks reflects measured action duration
+// Receipt.timing_ticks reflects measured action duration
 // ---------------------------------------------------------------------------
 //
 // Originally Receipt.timing_ticks was always 0 because:
@@ -448,7 +448,7 @@ fn test_ac_naverr_04_200_keeps_web_action_completed() {
 //      finished_at_ms} around the WASM dispatch.
 //   2. The marshaller assigned timing_ticks = builder.finished_at_ms (in ms),
 //      which was always 0 — and even if non-zero, ms-not-µs violated
-//      AC-NFR-DET-05.1's microsecond unit clause.
+//      the microsecond unit clause.
 //
 // These tests pin the canonical contract: ms→µs conversion at the marshaller,
 // monotonic across action_ids, and a non-zero value once the executor begins
@@ -473,43 +473,43 @@ fn navigate_ok_builder_with_finished_ms(action_id: u64, finished_at_ms: u64) -> 
 }
 
 #[test]
-fn test_ac_timing_01_navigate_receipt_timing_ticks_positive() {
-    // AC-TIMING-01: navigate receipt's timing_ticks is non-zero for any
-    // successful navigation. With the executor populating finished_at_ms
-    // from a non-zero virtual clock, the marshaller emits a positive
+fn test_timing_navigate_receipt_timing_ticks_positive() {
+    // Navigate receipt's timing_ticks is non-zero for any successful
+    // navigation. With the executor populating finished_at_ms from a
+    // non-zero virtual clock, the marshaller emits a positive
     // timing_ticks.
     let builder = navigate_ok_builder_with_finished_ms(1, 7);
     let val = assemble_value(&builder);
 
     let ticks = val["timing_ticks"]
         .as_u64()
-        .expect("AC-TIMING-01: timing_ticks must serialize as integer");
+        .expect("timing_ticks must serialize as integer");
     assert!(
         ticks > 0,
-        "AC-TIMING-01: timing_ticks must be > 0 for successful navigate (got {ticks})"
+        "timing_ticks must be > 0 for successful navigate (got {ticks})"
     );
 }
 
 #[test]
-fn test_ac_timing_02_navigate_receipt_timing_ticks_unit_is_microseconds() {
-    // AC-TIMING-02 / AC-NFR-DET-05.1: timing_ticks is in microseconds.
-    // builder.finished_at_ms is in ms (matches the field name); marshaller
-    // converts ms→µs at the assembly site. Given finished_at_ms=5, the
-    // canonical timing_ticks must be 5_000 µs.
+fn test_timing_navigate_receipt_timing_ticks_unit_is_microseconds() {
+    // timing_ticks is in microseconds. builder.finished_at_ms is in ms
+    // (matches the field name); marshaller converts ms→µs at the
+    // assembly site. Given finished_at_ms=5, the canonical timing_ticks
+    // must be 5_000 µs.
     let builder = navigate_ok_builder_with_finished_ms(1, 5);
     let val = assemble_value(&builder);
 
     let ticks = val["timing_ticks"].as_u64().expect("integer");
     assert_eq!(
         ticks, 5_000,
-        "AC-TIMING-02: timing_ticks unit must be microseconds (5 ms → 5000 µs, got {ticks})"
+        "timing_ticks unit must be microseconds (5 ms → 5000 µs, got {ticks})"
     );
 }
 
 #[test]
-fn test_ac_timing_03_navigate_receipt_timing_ticks_monotonic_across_actions() {
-    // AC-TIMING-03 / AC-NFR-DET-05.1: timing_ticks monotonically
-    // non-decreasing across action_ids in a session.
+fn test_timing_navigate_receipt_timing_ticks_monotonic_across_actions() {
+    // timing_ticks monotonically non-decreasing across action_ids in a
+    // session.
     let r0 = assemble_value(&navigate_ok_builder_with_finished_ms(0, 0));
     let r1 = assemble_value(&navigate_ok_builder_with_finished_ms(1, 3));
     let r2 = assemble_value(&navigate_ok_builder_with_finished_ms(2, 9));
@@ -518,22 +518,22 @@ fn test_ac_timing_03_navigate_receipt_timing_ticks_monotonic_across_actions() {
     let t1 = r1["timing_ticks"].as_u64().expect("integer");
     let t2 = r2["timing_ticks"].as_u64().expect("integer");
 
-    // Action 0 starts at 0 (AC-NFR-DET-05.1 "starts at 0 at action 0").
-    assert_eq!(t0, 0, "AC-TIMING-03: timing_ticks at action 0 starts at 0");
+    // Action 0 starts at 0.
+    assert_eq!(t0, 0, "timing_ticks at action 0 starts at 0");
     assert!(
         t1 >= t0 && t2 >= t1,
-        "AC-TIMING-03: monotonic across action_ids ({t0}, {t1}, {t2})"
+        "monotonic across action_ids ({t0}, {t1}, {t2})"
     );
     // The deltas mirror the ms-source increments scaled to µs.
     assert!(
         t1 > t0 && t2 > t1,
-        "AC-TIMING-03: strictly increasing when source clock advances ({t0}, {t1}, {t2})"
+        "strictly increasing when source clock advances ({t0}, {t1}, {t2})"
     );
 }
 
 #[test]
-fn test_ac_timing_04_navigate_timing_ticks_nonzero_after_determinism_driven_dispatch() {
-    // AC-TIMING-04: integration-shape test. Drives the same sequence the
+fn test_timing_navigate_timing_ticks_nonzero_after_determinism_driven_dispatch() {
+    // Integration-shape test. Drives the same sequence the
     // patched SessionExecutor::run uses — clock_now → begin_action(delta)
     // → clock_now — through a real DeterminismHarness, then asserts the
     // assembled receipt has timing_ticks > 0. Substitutes for a heavy
@@ -557,7 +557,7 @@ fn test_ac_timing_04_navigate_timing_ticks_nonzero_after_determinism_driven_disp
 
     // Pre-dispatch
     let started_ms = harness.clock_now();
-    assert_eq!(started_ms, 0, "AC-TIMING-03: action 0 starts at 0");
+    assert_eq!(started_ms, 0, "action 0 starts at 0");
 
     // Simulate dispatch advancing the wall clock by ≥ 1 ms — the
     // executor's `(elapsed_ms).max(1)` clamp guarantees this minimum
@@ -568,7 +568,7 @@ fn test_ac_timing_04_navigate_timing_ticks_nonzero_after_determinism_driven_disp
     let finished_ms = harness.clock_now();
     assert!(
         finished_ms > started_ms,
-        "AC-TIMING-04: virtual clock must advance across a dispatch ({started_ms} → {finished_ms})"
+        "virtual clock must advance across a dispatch ({started_ms} → {finished_ms})"
     );
 
     let builder = navigate_ok_builder_with_finished_ms(1, finished_ms);
@@ -576,18 +576,17 @@ fn test_ac_timing_04_navigate_timing_ticks_nonzero_after_determinism_driven_disp
     let ticks = val["timing_ticks"].as_u64().expect("integer");
     assert!(
         ticks > 0,
-        "AC-TIMING-04: timing_ticks must be > 0 after determinism-driven dispatch (got {ticks})"
+        "timing_ticks must be > 0 after determinism-driven dispatch (got {ticks})"
     );
     assert_eq!(
         ticks,
         finished_ms.saturating_mul(1000),
-        "AC-TIMING-02 cross-check: ticks (µs) == finished_ms × 1000"
+        "cross-check: ticks (µs) == finished_ms × 1000"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-HAREXPORT-01..05 / AC-INTEROP-02.1 (P2):
-// regression test for the marshaller-gate fix.
+// HAR export regression test for the marshaller-gate fix.
 //
 // Before the gate fix, `assemble_canonical_bytes` ducked into the generic
 // `serde_jcs::to_string(builder)` path whenever `navigate_url` and
@@ -611,7 +610,7 @@ fn test_ac_timing_04_navigate_timing_ticks_nonzero_after_determinism_driven_disp
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_harexport_marshaller_preserves_network_events_when_tier2_unset() {
+fn harexport_marshaller_preserves_network_events_when_tier2_unset() {
     use loom_core::receipt_builder::receipt_builder::ReceiptPayload;
 
     let events = vec![

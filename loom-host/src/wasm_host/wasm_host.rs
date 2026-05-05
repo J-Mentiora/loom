@@ -1,15 +1,15 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/wasm_host/interfaces.rs` instead.
 // WasmHost — public API facade implementing `loom-host_contract.md`.
 //
 // # Contract semantics
 // - **API-exposed.** Only `WasmHost` is `pub` outside the crate. All
 //   other modules are `pub(crate)`.
-// - **Loads `.cwasm` artifacts at construction.** Per IC-HOST-07,
-//   `WasmHost::new` populates `ModuleLibrary` from
+// - **Loads `.cwasm` artifacts at construction.** `WasmHost::new`
+//   populates `ModuleLibrary` from
 //   `~/Library/Application Support/loom/surfaces/*.cwasm`. Recovery on
 //   load failure is signalled via `loom-core::StartupManager::on_aot_failure`.
-// - **Dispatch order (IC-HOST-01).** `WasmHost::dispatch` runs:
+// - **Dispatch order.** `WasmHost::dispatch` runs:
 //     1. (caller `loom-core::SessionManager` already invoked `BudgetEnforcer::check`)
 //     2. `ModuleLibrary::get(action.surface)` — cache lookup, NEVER lazy compile.
 //     3. `SessionExecutor::run(...)` — surface invocation on caller's tokio handle.
@@ -17,13 +17,13 @@
 //     5. AFTER return: `ReceiptMarshaller::queue(outcome, session.receipt_pool)`
 //        — runs on background, calls `BudgetEnforcer::account` then
 //        `ManifestWriter::append`.
-// - **Off-hot-path receipt (SR-HOST-01).** Step 5 happens AFTER the
+// - **Off-hot-path receipt.** Step 5 happens AFTER the
 //   sync return — no `fsync`, no manifest append on the dispatch path.
-// - **Mode plumbing (IC-HOST-08).** `WasmHost::new(core, mode)`
+// - **Mode plumbing.** `WasmHost::new(core, mode)`
 //   captures the default mode for sessions that don't override.
 //   `dispatch` selects `HostFunctionRegistry::linker_for(mode)` based
-//   on `SessionHandle.mode_override` (added per design §3.6).
-// - **`compile_module` (IC-HOST-07).** Entry for
+//   on `SessionHandle.mode_override`.
+// - **`compile_module`.** Entry for
 //   `loom-cli postinstall` and `StartupManager::recover_surface`. NOT
 //   reachable from `dispatch`.
 
@@ -44,7 +44,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Per-process configuration. Threaded in by the binary entry point
-/// (BC §6 precedence: CLI > env > config > defaults).
+/// (config-precedence: CLI > env > config > defaults).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostConfig {
     pub surfaces_dir: PathBuf,
@@ -160,13 +160,13 @@ impl WasmHost {
 
     /// Dispatch an action to the appropriate surface module.
     ///
-    /// **Pre-conditions** (caller's responsibility, per IC-HOST-01):
+    /// **Pre-conditions** (caller's responsibility):
     ///   - `BudgetEnforcer::check(session_id, action)` already passed.
     ///   - `core.session_manager().get(session_id)` is `SessionStatus::Active`.
     ///
     /// **Post-conditions:**
     ///   - On `Ok(ActionOutcome)`: receipt already queued via
-    ///     `ReceiptMarshaller::queue` on `session.receipt_pool` (SR-HOST-01).
+    ///     `ReceiptMarshaller::queue` on `session.receipt_pool`.
     ///   - On `Err(LoomError)`: receipt was emitted (trap path) or
     ///     surface unavailable.
     ///
@@ -179,7 +179,7 @@ impl WasmHost {
     }
 
     /// **SLA:** receipt-overhead p95 ≤ 50 ms above underlying CDP/shim
-    /// call (IC-HOST-02).
+    /// call.
     pub async fn dispatch(
         self: &Arc<Self>,
         action: Action,
@@ -188,7 +188,7 @@ impl WasmHost {
         use crate::receipt_marshaller::ActionOutcome as ReceiptOutcome;
         use crate::receipt_marshaller::ObservedCosts;
 
-        // 1. Check surface is loaded (IC-HOST-07: never compile on dispatch path)
+        // 1. Check surface is loaded (never compile on dispatch path)
         let _ = self
             .library
             .get(&crate::module_library::SurfaceName(action.surface.clone()))?;
@@ -234,7 +234,7 @@ impl WasmHost {
             .run(action, session, mode, linker, host_state)
             .await?;
 
-        // 5. Queue receipt off dispatch path (SR-HOST-01)
+        // 5. Queue receipt off dispatch path
         let (builder, costs) = match &outcome {
             ActionOutcome::Success {
                 builder,
@@ -258,8 +258,7 @@ impl WasmHost {
 
     /// AOT-compile a WASM module on install or postinstall.
     /// Caches at `~/Library/Application Support/loom/surfaces/<name>.cwasm`.
-    /// SLA: ~250 ms per module (Cranelift cold cache); not on hot path
-    /// (IC-HOST-07).
+    /// SLA: ~250 ms per module (Cranelift cold cache); not on hot path.
     pub fn compile_module(&self, source: &Path, dest: &Path) -> Result<(), LoomError> {
         self.compiler.compile_module(source, dest)
     }

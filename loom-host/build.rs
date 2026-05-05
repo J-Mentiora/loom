@@ -1,5 +1,5 @@
 // loom-host build.rs — embeds the SHA-256 of loom_surface_web.wasm at compile
-// time so that load_one can verify artifact integrity at runtime (AC-WASMB-05).
+// time so that load_one can verify artifact integrity at runtime.
 //
 // The wasm artifact is produced by `loom-cli/build.rs` (which auto-builds
 // the wasm32-wasip2 cdylib in release builds and copies it to the workspace

@@ -1,11 +1,11 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/wit_type_marshaller/interfaces.rs` instead.
 // module_kind: wit-bindgen-generated
 //
 // WitTypeMarshaller — `wit-bindgen`-generated bidirectional WIT ↔ Rust
-// type conversion (BC-HOST-02 HARD: WIT is the schema source of truth).
+// type conversion. WIT is the schema source of truth.
 //
-// # The actual file in Phase 5.4
+// # The actual generated file
 //
 // At build time, `loom-host/build.rs` invokes
 // ```text
@@ -68,9 +68,9 @@
 // }
 // ```
 //
-// # What this stub asserts (BC-HOST-02 evidence)
+// # What this stub asserts
 //
-// 1. The trait `host::Host` is the SOLE WASM↔core bridge (IC-HOST-03).
+// 1. The trait `host::Host` is the SOLE WASM↔core bridge.
 // 2. The 8 host-fn signatures in the trait are byte-identical to the
 //    `wit/loom-surface.wit::interface host` declaration; any drift fails
 //    the build via `wit-bindgen --check`.
@@ -85,8 +85,8 @@
 // # Runtime exports surfaced to other loom-host modules
 //
 // The placeholder `Marshaller` struct below exists so the rest of the
-// crate compiles in Phase 5.3 (interface stage). At Phase 5.4 it is
-// replaced wholesale by the `wit-bindgen` output module.
+// crate compiles at the interface stage. It is later replaced wholesale
+// by the `wit-bindgen` output module.
 
 use loom_core::error::LoomError;
 use serde::{Deserialize, Serialize};
@@ -100,13 +100,13 @@ pub enum Mode {
     Replay,
 }
 
-/// Placeholder marshaller surface. Phase 5.4 replaces this with the
-/// generated `loom_surface_bindings` module.
+/// Placeholder marshaller surface. Replaced with the generated
+/// `loom_surface_bindings` module.
 pub struct Marshaller;
 
 impl Marshaller {
-    /// Returns a placeholder marshaller. Phase 5.4 scaffold; Phase 6
-    /// replaces this with wit-bindgen generated output.
+    /// Returns a placeholder marshaller. Scaffold replaced with
+    /// wit-bindgen generated output.
     pub fn generated_or_panic() -> Result<Self, LoomError> {
         Ok(Self)
     }

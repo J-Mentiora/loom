@@ -1,4 +1,4 @@
-//! Integration tests — `loom-host` contract (AC-HOST-01 / IC-HOST-07 / IC-HOST-08).
+//! Integration tests — `loom-host` contract.
 //!
 //! Contract: `projects/loom/architecture/contracts/loom-host_contract.md`
 //!
@@ -16,7 +16,7 @@ use tempfile::TempDir;
 
 // ─── Test 1: Happy — WasmRuntime constructs successfully ─────────────────────
 
-/// Contract: WasmRuntime::new with default config succeeds (AC-HOST-01).
+/// Contract: WasmRuntime::new with default config succeeds.
 /// The engine must be constructed and the runtime Arc'd within 2000 ms.
 #[test]
 fn test_wasm_runtime_new_default_succeeds() {
@@ -42,7 +42,7 @@ fn test_wasm_runtime_new_default_succeeds() {
 // ─── Test 2: Happy — ModuleLibrary::load_all on empty dir returns no failures ─
 
 /// Contract: ModuleLibrary::load_all on an empty surfaces dir returns zero
-/// failures and an empty library (IC-HOST-07).
+/// failures and an empty library.
 #[test]
 fn test_module_library_load_all_empty_dir_returns_no_failures() {
     let dir = TempDir::new().unwrap();
@@ -62,7 +62,7 @@ fn test_module_library_load_all_empty_dir_returns_no_failures() {
 
 // ─── Test 3: Happy — ModuleLibrary::load_all on nonexistent dir is not an error
 
-/// Contract: load_all with a nonexistent surfaces_dir returns Ok([]) (IC-HOST-07).
+/// Contract: load_all with a nonexistent surfaces_dir returns Ok([]).
 /// A missing dir means "postinstall not run yet" — not an error.
 #[test]
 fn test_module_library_load_all_nonexistent_dir_returns_empty() {
@@ -86,7 +86,7 @@ fn test_module_library_load_all_nonexistent_dir_returns_empty() {
 // ─── Test 4: Error — get() on unloaded surface returns Unsupported ────────────
 
 /// Contract: ModuleLibrary::get on a surface that was never loaded returns
-/// LoomErrorCode::Unsupported — NEVER triggers compilation (IC-HOST-07).
+/// LoomErrorCode::Unsupported — NEVER triggers compilation.
 #[test]
 fn test_module_library_get_unloaded_surface_returns_unsupported() {
     let dir = TempDir::new().unwrap();
@@ -109,7 +109,7 @@ fn test_module_library_get_unloaded_surface_returns_unsupported() {
 
 // ─── Test 5: Happy — HostConfig::default has expected field values ────────────
 
-/// Contract: HostConfig::default defaults are well-defined (BC §6, IC-HOST-08).
+/// Contract: HostConfig::default defaults are well-defined.
 /// - redaction_enabled = true (data safety default)
 /// - default_mode = Mode::Live (real execution default)
 /// - surfaces_dir is non-empty string (not empty/blank)

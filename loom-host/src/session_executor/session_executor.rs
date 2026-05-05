@@ -1,24 +1,24 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/session_executor/interfaces.rs` instead.
 // SessionExecutor — builds per-dispatch `wasmtime::Store<HostState>`
 // and runs the surface invocation on the caller's tokio task.
 //
 // # Contract semantics
-// - **No extra spawns inside dispatch (BC-HOST-01).** The surface
+// - **No extra spawns inside dispatch.** The surface
 //   invocation runs on the *caller's* `tokio::Handle` (cloned from
 //   `SessionHandle::handle`). NO `tokio::spawn` per dispatch. NO
 //   per-host-fn task spawns.
 // - **Per-action `Store<HostState>`.** A fresh `Store` is constructed
 //   per dispatch; `HostState` is moved in with `core` + `determinism`
 //   + `mode` + receipt builder. The Store is dropped at action-complete.
-// - **Trap boundary (IC-HOST-06).** The wasmtime `Func::call_async`
+// - **Trap boundary.** The wasmtime `Func::call_async`
 //   result is matched: success → `ActionOutcome::Success`; trap →
 //   `TrapHandler::handle_trap` → typed `LoomError::SurfaceTrap`.
-// - **Receipt-marshaller spawn AFTER return (SR-HOST-01).** This
+// - **Receipt-marshaller spawn AFTER return.** This
 //   module returns the `ActionOutcome` synchronously; the caller
 //   (`WasmHost::dispatch`) hands it to `ReceiptMarshaller::queue`
 //   on `session_handle.receipt_pool`.
-// - **Abort propagation (loom-core IC-CORE-02).** `tokio::select!`
+// - **Abort propagation (loom-core).** `tokio::select!`
 //   races the WASM call against `session_handle.abort_signal.notified()`.
 //   On abort: the call is dropped, a typed `LoomError::SessionAborted`
 //   receipt is returned.
@@ -59,12 +59,12 @@ pub struct Action {
 pub struct SessionHandle {
     pub session_id: SessionId,
     /// The session's tokio `Handle`. Surface invocation runs on this —
-    /// no extra spawn (BC-HOST-01).
+    /// no extra spawn.
     pub handle: TokioHandle,
     /// The session's receipt pool — separate `Handle` for the
-    /// post-return receipt-marshaller spawn (BC-HOST-01).
+    /// post-return receipt-marshaller spawn.
     pub receipt_pool: TokioHandle,
-    /// Abort flag (loom-core::session_manager IC-CORE-02).
+    /// Abort flag (loom-core::session_manager).
     pub abort_flag: Arc<AtomicBool>,
     /// Abort notify (raced against the WASM call).
     pub abort_signal: Arc<Notify>,
@@ -74,17 +74,17 @@ pub struct SessionHandle {
     ///   - `Some(BudgetExceeded { kind, observed, limit })` → emit
     ///     `ActionOutcome::Trapped { LoomError::BudgetExceeded }` so the
     ///     receipt stamps `error.kind = budget_exceeded` with
-    ///     `detail.budget_kind` + `detail.elapsed_ms` (AC-BUDGETKILL-02).
+    ///     `detail.budget_kind` + `detail.elapsed_ms`.
     ///   - `None` → user-initiated abort → emit `ActionOutcome::Aborted`.
     pub kill_reason: Arc<parking_lot::Mutex<Option<KillReason>>>,
-    /// Per-session determinism seed (AC-RNGDET-01..04). Threaded into
+    /// Per-session determinism seed. Threaded into
     /// HostState at dispatch time and onto the shim wire via
     /// `ShimRequest::PageNavigate.seed`.
     pub seed: loom_shared::types::Seed,
     /// Per-session Unix epoch milliseconds. Substituted into the shim
     /// JS template's `Date.now` constant.
     pub epoch_ms: loom_shared::types::EpochMs,
-    /// Operator's `--no-blocklist` opt-out (AC-DET-05.1, AC-BLOCKLIST-04).
+    /// Operator's `--no-blocklist` opt-out.
     /// Threaded from `Session.no_blocklist` at dispatch time onto
     /// `HostState.no_blocklist`; consumed by `navigate_execute` to
     /// compute `blocklist_enabled = !no_blocklist` for each
@@ -93,7 +93,7 @@ pub struct SessionHandle {
     /// Operator's `--profile` choice (`"safe" | "standard" | "full"`).
     /// Threaded from `Session.profile` so HostState can inject
     /// `LOOM_SHIM_PROFILE` into per-session shim spawns
-    /// (AC-SAFEPROF-04 / AC-WEB-07.2).
+    /// (safe-profile path).
     pub profile: String,
     /// Session-scoped downloads directory under safe profile
     /// (`<sessions_root>/<ulid>/downloads/`). `None` for non-safe profiles.
@@ -142,7 +142,7 @@ impl SessionExecutor {
 
     /// Run `action` on the surface from `library`. Builds a per-dispatch
     /// `Store<HostState>` and invokes the surface export. NO extra
-    /// `tokio::spawn` inside this function (BC-HOST-01).
+    /// `tokio::spawn` inside this function.
     ///
     /// `linker` is the pre-built `live_linker` or `replay_linker` from
     /// `HostFunctionRegistry::linker_for(mode)`.
@@ -160,7 +160,7 @@ impl SessionExecutor {
         let engine = self.runtime.engine();
         // Clone the determinism harness handle before `host_state` moves into
         // the Store — needed to advance the virtual clock around dispatch
-        // (AC-TIMING-01..04, AC-NFR-DET-05.1).
+        // (timing invariants).
         let harness = host_state.determinism.clone();
         let mut store = wasmtime::Store::new(engine, host_state);
         let instance = self
@@ -209,7 +209,7 @@ impl SessionExecutor {
                 builder.finished_at_ms = harness.clock_now();
                 // Distinguish budget-kill from user-abort. Budget-kill
                 // populates Session::kill_reason BEFORE notifying.
-                // AC-BUDGETKILL-02.
+                // Budget-kill detection.
                 let maybe_reason = kill_reason_slot.lock().clone();
                 return match maybe_reason {
                     Some(KillReason::BudgetExceeded { kind, observed, limit }) => {
@@ -237,7 +237,7 @@ impl SessionExecutor {
 
         // Advance the virtual session clock by the measured wall-clock
         // dispatch duration; `.max(1)` ensures strictly-positive monotonic
-        // advance even for sub-ms dispatches (AC-TIMING-01 / AC-TIMING-03).
+        // advance even for sub-ms dispatches.
         let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
         harness.begin_action(delta_ms);
         builder.finished_at_ms = harness.clock_now();
@@ -370,7 +370,7 @@ pub(crate) fn decode_typed_receipt(
                             builder.emitted_at_ms = *n;
                             have_emitted = true;
                         }
-                        // ---- Navigate tier-2 optional fields (AC-NAVRECEIPT-01..05) ----
+                        // ---- Navigate tier-2 optional fields ----
                         ("url", Val::Option(opt)) => {
                             builder.navigate_url = extract_opt_string(opt);
                         }
@@ -404,7 +404,7 @@ pub(crate) fn decode_typed_receipt(
                         ("network-summary-json", Val::Option(opt)) => {
                             builder.navigate_network_summary_json = extract_opt_bytes(opt);
                         }
-                        // ---- Evaluate tier optional fields (AC-EVALRESULT-01..04) ----
+                        // ---- Evaluate tier optional fields ----
                         ("return-value-json", Val::Option(opt)) => {
                             builder.evaluate_return_value_json = extract_opt_string(opt);
                         }
@@ -438,7 +438,7 @@ pub(crate) fn decode_typed_receipt(
                 builder.error_code = Some(name.clone());
                 builder.error_details = Some(detail.clone());
 
-                // AC-NAVERR-01/02/03: a `shim-failure` whose detail is a
+                // A `shim-failure` whose detail is a
                 // structured JSON object (currently `{kind, ...}`)
                 // represents a TYPED guest-error receipt — not an RPC
                 // failure. Surface it as `Ok(())` with `builder.status =
@@ -455,7 +455,7 @@ pub(crate) fn decode_typed_receipt(
                                 builder.navigate_status_code = Some(sc as u32);
                             }
 
-                            // AC-HAREXPORT-03 (P0): if host_impl embedded the
+                            // P0: if host_impl embedded the
                             // captured network events under `_network_events`,
                             // hoist them onto navigate_side_effects_json so
                             // the marshaller's navigate path converts them

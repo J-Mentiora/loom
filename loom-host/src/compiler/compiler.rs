@@ -1,13 +1,13 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/compiler/interfaces.rs` instead.
 // Compiler — Cranelift AOT compile `.wasm → .cwasm`.
 //
 // # Contract semantics
-// - **Off the hot path (IC-HOST-07).** Invoked only by:
+// - **Off the hot path.** Invoked only by:
 //     1. `WasmHost::compile_module` (called by `loom-cli postinstall`).
 //     2. `StartupManager::on_aot_failure` (recovery during daemon startup).
 //   The `dispatch` path has NO edge into `Compiler`.
-// - **Atomic write (BC §1).** Output uses `O_TMPFILE` + `linkat` to
+// - **Atomic write.** Output uses `O_TMPFILE` + `linkat` to
 //   land at the final cwasm path. Crash mid-write leaves no orphaned
 //   half-file in the surfaces dir (the orphan tmpfile is cleaned by
 //   `StartupManager`'s CAS sweep).
@@ -42,7 +42,7 @@ impl Compiler {
 
     /// Compile `source` (a `.wasm` file) to `dest` (a `.cwasm` file).
     /// Atomic write via a temp file + rename. Synchronous; ~250 ms cold.
-    /// **NEVER called from the dispatch path** (IC-HOST-07).
+    /// **NEVER called from the dispatch path.**
     pub fn compile_module(&self, source: &Path, dest: &Path) -> Result<(), LoomError> {
         self.compile_module_with_report(source, dest).map(|_| ())
     }

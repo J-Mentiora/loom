@@ -1,7 +1,7 @@
-// TDD tests for wasm-surface-build ACs (WASMB-03, WASMB-04, WASMB-05).
-// AC-WASMB-01 lives in loom-cli/tests/ac_wasmb_postinstall.rs.
-// AC-WASMB-02 lives in loom-cli/tests/ac_wasmb_postinstall.rs.
-// AC-WASMB-06 is verified by the full workspace test suite passing.
+// TDD tests for wasm-surface-build behaviour (load_all, navigate
+// dispatch, SHA mismatch rejection). Postinstall coverage lives in
+// loom-cli/tests/wasmb_postinstall.rs. Workspace-wide regression
+// coverage is verified by the full workspace test suite passing.
 
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -22,7 +22,7 @@ fn make_runtime() -> Arc<WasmRuntime> {
 }
 
 // ---------------------------------------------------------------------------
-// AC-WASMB-03 — load_all() returns Arc<Component> after compile
+// load_all() returns Arc<Component> after compile
 // ---------------------------------------------------------------------------
 // Steps:
 //  1. Compile a minimal .wasm component to a tempdir using Compiler.
@@ -30,7 +30,7 @@ fn make_runtime() -> Arc<WasmRuntime> {
 //  3. Call load_all().
 //  4. Assert library.get(&SurfaceName("loom_surface_web".into())).is_ok().
 #[test]
-fn test_ac_wasmb_03_load_all_returns_component_after_compile() {
+fn test_load_all_returns_component_after_compile() {
     let rt = make_runtime();
     let compiler = Compiler::new(rt.clone());
 
@@ -49,28 +49,27 @@ fn test_ac_wasmb_03_load_all_returns_component_after_compile() {
 
     assert!(
         failures.is_empty(),
-        "AC-WASMB-03: load_all had failures: {:?}",
+        "load_all had failures: {:?}",
         failures
     );
 
     let name = SurfaceName("loom_surface_web".into());
     assert!(
         library.get(&name).is_ok(),
-        "AC-WASMB-03: library.get(loom_surface_web) should be Ok after load_all"
+        "library.get(loom_surface_web) should be Ok after load_all"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-WASMB-04 — web.navigate E2E dispatch (Phase 8 — integration only)
-// AC-WGUEST-04 — smoke runbook against real Chromium
+// web.navigate E2E dispatch — integration only
+// smoke runbook against real Chromium
 // ---------------------------------------------------------------------------
 #[test]
-#[ignore = "AC-WASMB-04 / AC-WGUEST-04: full web.navigate E2E verified by smoke runbook"]
-fn test_ac_wasmb_04_web_navigate_dispatches_into_surface() {
-    // AC-WASMB-04 / AC-WGUEST-04 are end-to-end scenarios requiring a
-    // live loom-daemon and (for AC-WGUEST-04) real Chromium. They are
-    // exercised by the operator-driven smoke runbook, not by loom-host
-    // unit tests.
+#[ignore = "full web.navigate E2E verified by smoke runbook"]
+fn test_web_navigate_dispatches_into_surface() {
+    // These are end-to-end scenarios requiring a live loom-daemon and
+    // real Chromium. They are exercised by the operator-driven smoke
+    // runbook, not by loom-host unit tests.
     //
     // The dispatch path traverses: CLI → RPC socket → WasmHost →
     // SessionExecutor::run → wasmtime guest (loom_surface_web.wasm) →
@@ -104,14 +103,14 @@ fn test_ac_wasmb_04_web_navigate_dispatches_into_surface() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-WASMB-05 — load_one rejects a mismatched SHA-256 sidecar
+// load_one rejects a mismatched SHA-256 sidecar
 // ---------------------------------------------------------------------------
 // Uses `load_one_with_expected_sha` (a testability shim that lets us pass the
 // expected SHA directly rather than relying on the compile-time env!() macro).
 // This test FAILS at compile time until load_one_with_expected_sha is added
 // to ModuleLibrary in module_library/interfaces.rs.
 #[test]
-fn test_ac_wasmb_05_load_one_rejects_wrong_sha() {
+fn test_load_one_rejects_wrong_sha() {
     use loom_core::error::LoomErrorCode;
 
     let rt = make_runtime();
@@ -145,13 +144,13 @@ fn test_ac_wasmb_05_load_one_rejects_wrong_sha() {
 
     assert!(
         result.is_err(),
-        "AC-WASMB-05: load_one_with_expected_sha should return Err on SHA mismatch"
+        "load_one_with_expected_sha should return Err on SHA mismatch"
     );
     let err = result.unwrap_err();
     assert_eq!(
         err.code.as_wire(),
         LoomErrorCode::StoreIntegrityFailed.as_wire(),
-        "AC-WASMB-05: error code must be StoreIntegrityFailed, got {:?}",
+        "error code must be StoreIntegrityFailed, got {:?}",
         err.code
     );
 

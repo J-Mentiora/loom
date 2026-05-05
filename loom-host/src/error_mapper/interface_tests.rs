@@ -1,8 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/error_mapper/interface_tests.rs` instead.
-// Interface tests for `ErrorMapper`. Verifies BC-HOST-03 (boundary
-// translation), IC-HOST-06 (typed trap receipts), and the closed-mapping
-// invariant across all five `host-error` variants.
+// Interface tests for `ErrorMapper`. Verifies the boundary-translation
+// contract, typed trap receipts, and the closed-mapping invariant
+// across all five `host-error` variants.
 
 use super::error_mapper::{
     loom_error_to_host_error, wasmtime_error_to_loom_error, wasmtime_trap_to_loom_error,
@@ -10,12 +10,12 @@ use super::error_mapper::{
 };
 use loom_core::error::{LoomError, LoomErrorCode};
 
-// === BC-HOST-03: closed-mapping smoke ===
+// === Closed-mapping smoke ===
 
 #[test]
 fn host_error_has_exactly_five_variants() {
     // The contract pins five WIT discriminants. Adding a sixth without
-    // updating BC-HOST-03 is a contract violation.
+    // updating the boundary-translation contract is a contract violation.
     let _all = [
         HostError::BudgetExceeded(BudgetDetail {
             kind: "walltime".into(),
@@ -50,7 +50,7 @@ fn loom_error_to_host_error_is_a_pub_function() {
     let _ = _ck;
 }
 
-// === IC-HOST-06: trap → typed receipt ===
+// === Trap → typed receipt ===
 
 #[test]
 fn wasmtime_trap_to_loom_error_returns_surface_trap_variant() {
@@ -64,8 +64,8 @@ fn wasmtime_trap_to_loom_error_returns_surface_trap_variant() {
 
 #[test]
 fn trap_frame_carries_source_file_and_line_optionals() {
-    // Optional because .dwp may not be present; per design §3.4 the
-    // fallback is raw addresses with debug_info_unavailable=true.
+    // Optional because .dwp may not be present; the fallback is raw
+    // addresses with debug_info_unavailable=true.
     let f = TrapFrame {
         pc: 0xdeadbeef,
         source_file: Some("surfaces/stocktwits/lib.rs".into()),
@@ -95,13 +95,13 @@ fn wasmtime_trap_to_loom_error_signature_takes_surface_and_frames() {
     let _ = _ck;
 }
 
-// === BC-HOST-03: From impls live HERE only ===
+// === From impls live HERE only ===
 
 #[test]
 fn from_loom_error_for_host_error_is_implemented() {
     // Compile-time pin: the `From<LoomError> for HostError` impl exists.
     // No other module may declare it (verified by the lint
-    // `tools/lint-error-codes.py` BC-HOST-03 check).
+    // `tools/lint-error-codes.py` boundary-translation check).
     fn _ck(e: LoomError) -> HostError {
         HostError::from(e)
     }
@@ -126,7 +126,7 @@ fn from_wasmtime_trap_for_loom_error_is_implemented() {
     let _ = _ck;
 }
 
-// === Variant-by-variant conversion expectations (Phase 5.4 will assert) ===
+// === Variant-by-variant conversion expectations ===
 
 #[test]
 fn budget_exceeded_loom_code_maps_to_budget_exceeded_host_error() {
@@ -156,7 +156,7 @@ fn internal_catchall_maps_to_host_error_internal() {
     let _e = LoomErrorCode::Internal;
 }
 
-// === BC-HOST-03 negative: anyhow must not appear in From impls ===
+// === Negative: anyhow must not appear in From impls ===
 
 #[test]
 fn no_anyhow_error_to_host_error_conversion_exists() {
@@ -164,6 +164,6 @@ fn no_anyhow_error_to_host_error_conversion_exists() {
     // `From<anyhow::Error> for HostError` impl. We verify by a comment
     // pin; the actual enforcement is the CI lint that walks `From` impls
     // in `loom-host`.
-    let _pin = "BC-HOST-03: no anyhow::Error → HostError conversion permitted";
-    assert!(_pin.contains("BC-HOST-03"));
+    let _pin = "no anyhow::Error → HostError conversion permitted";
+    assert!(_pin.contains("anyhow"));
 }

@@ -1,8 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/trap_handler/interface_tests.rs` instead.
-// Interface tests for `TrapHandler`. Verifies IC-HOST-06 (typed-receipt
-// conversion, daemon survives), and the .dwp debug-info resolution
-// signature.
+// Interface tests for `TrapHandler`. Verifies typed-receipt conversion
+// (daemon survives) and the .dwp debug-info resolution signature.
 
 use super::trap_handler::{TrapContext, TrapHandler};
 use crate::error_mapper::TrapFrame;
@@ -14,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::runtime::Handle as TokioHandle;
 
-// === IC-HOST-06: handle_trap returns typed LoomError, never panics ===
+// === handle_trap returns typed LoomError, never panics ===
 
 #[test]
 fn handle_trap_signature_returns_loomerror_not_result() {
@@ -33,10 +32,10 @@ fn handle_trap_signature_returns_loomerror_not_result() {
 }
 
 #[test]
-fn handle_trap_takes_session_pool_per_bc_host_01() {
+fn handle_trap_takes_session_pool() {
     // The trap-receipt spawn must happen on the session's
-    // `receipt_pool`, not a global pool (BC-HOST-01). The pool handle
-    // is threaded through the call.
+    // `receipt_pool`, not a global pool. The pool handle is threaded
+    // through the call.
     fn _ck(
         h: &Arc<TrapHandler>,
         t: wasmtime::Trap,
@@ -58,7 +57,7 @@ fn surface_trap_loom_error_code_carries_surface_trap_code_and_frames() {
 
 #[test]
 fn resolve_frames_returns_per_pc_trap_frame() {
-    // Compile-time pin only — Phase 5.4 implements addr2line.
+    // Compile-time pin only — addr2line is implemented later.
     fn _ck(
         h: &TrapHandler,
         path: Option<&PathBuf>,
@@ -71,9 +70,9 @@ fn resolve_frames_returns_per_pc_trap_frame() {
 
 #[test]
 fn debug_info_available_returns_false_for_none() {
-    // Compile-time signature pin only. Phase 5.4 implements the
-    // .dwp existence check; a real runtime fixture exercises the
-    // bool path.
+    // Compile-time signature pin only. The .dwp existence check is
+    // implemented later; a real runtime fixture exercises the bool
+    // path.
     fn _ck(h: &TrapHandler, path: Option<&PathBuf>) -> bool {
         h.debug_info_available(path)
     }

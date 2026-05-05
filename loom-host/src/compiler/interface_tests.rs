@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/compiler/interface_tests.rs` instead.
-// Interface tests for `Compiler`. Verifies IC-HOST-07 (off hot path),
+// Interface tests for `Compiler`. Verifies the off-hot-path invariant,
 // contract signature exact-match, and atomic-write expectations.
 
 use super::compiler::{CompileReport, Compiler};
@@ -33,7 +33,7 @@ fn compile_module_is_synchronous_not_async() {
     let _ = _ck;
 }
 
-// === IC-HOST-07: not invoked from dispatch ===
+// === Off the hot path: not invoked from dispatch ===
 
 #[test]
 fn compiler_constructor_takes_runtime_only_no_dispatch_handle() {
@@ -51,11 +51,11 @@ fn compiler_does_not_implement_or_use_dispatch_traits() {
     // The Compiler module's only deps are `WasmRuntime` + std::path
     // + loom_core::error. Verified structurally (no `host_function_table`
     // or `session_executor` import). The doc string asserts this.
-    let pin = "IC-HOST-07: Compiler is reachable ONLY from postinstall + StartupManager recovery";
-    assert!(pin.contains("IC-HOST-07"));
+    let pin = "Compiler is reachable ONLY from postinstall + StartupManager recovery";
+    assert!(pin.contains("postinstall"));
 }
 
-// === Atomic write (BC §1, AC-NFR-REL-02) ===
+// === Atomic write ===
 
 #[test]
 fn compile_report_carries_compatibility_hash() {
@@ -69,7 +69,7 @@ fn compile_report_carries_compatibility_hash() {
     };
     assert!(!r.precompile_compatibility_hash.is_empty());
     assert!(r.cwasm_bytes > 0);
-    let _: u64 = r.elapsed_us; // BC HARD #3: integer-only
+    let _: u64 = r.elapsed_us; // integer-only
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn compile_module_with_report_returns_report_or_loomerror() {
     let _ = _ck;
 }
 
-// === Specific error codes Phase 5.4 will raise ===
+// === Specific error codes raised by the compiler ===
 
 #[test]
 fn compilation_failed_error_carries_wasmtime_error_string() {

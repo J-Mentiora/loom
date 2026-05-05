@@ -1,9 +1,9 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/receipt_marshaller/interface_tests.rs` instead.
-// Interface tests for `ReceiptMarshaller`. Verifies SR-HOST-01 (off
-// hot path), IC-HOST-02 (overhead budget shape), BC-HOST-01 (no extra
-// spawns inside dispatch — receipt spawn happens via caller's pool
-// handle), and the `serde_jcs` canonicalization invariant.
+// Interface tests for `ReceiptMarshaller`. Verifies the off-hot-path
+// invariant, overhead budget shape, no-extra-spawns invariant
+// (receipt spawn happens via caller's pool handle), and the
+// `serde_jcs` canonicalization invariant.
 
 use super::receipt_marshaller::{
     ActionOutcome, ObservedCosts, ReceiptBuilder, ReceiptMarshaller, ReceiptStatus,
@@ -13,13 +13,13 @@ use loom_core::manifest_writer::{ManifestWriter, SessionId};
 use std::sync::Arc;
 use tokio::runtime::Handle as TokioHandle;
 
-// === SR-HOST-01: queue takes pool handle, returns immediately ===
+// === Off the hot path: queue takes pool handle, returns immediately ===
 
 #[test]
 fn queue_signature_takes_pool_handle_and_returns_unit() {
     // The contract: dispatch must NOT block on receipt assembly.
     // `queue` accepts a `TokioHandle` (the session's receipt_pool, NOT
-    // a global pool — BC-HOST-01) and returns `Result<(), LoomError>`
+    // a global pool) and returns `Result<(), LoomError>`
     // immediately after spawning.
     fn _ck(m: &Arc<ReceiptMarshaller>, o: ActionOutcome, h: TokioHandle) -> Result<(), LoomError> {
         m.queue(o, h)
@@ -37,14 +37,14 @@ fn queue_does_not_take_self_mut() {
     let _ = _ck;
 }
 
-// === BC-HOST-01: pool is supplied by caller, not stored globally ===
+// === Pool is supplied by caller, not stored globally ===
 
 #[test]
 fn marshaller_struct_does_not_store_a_runtime() {
     // Compile-time pin: `ReceiptMarshaller::new` takes only the
     // `ManifestWriter` and `BudgetEnforcer`. The pool handle is
     // session-owned and threaded per-call. Storing a global runtime
-    // here would violate BC-HOST-01.
+    // here would violate the per-session-pool invariant.
     fn _ck(
         mw: Arc<dyn ManifestWriter>,
         be: Arc<dyn loom_core::budget_enforcer::BudgetEnforcer>,
@@ -54,7 +54,7 @@ fn marshaller_struct_does_not_store_a_runtime() {
     let _ = _ck;
 }
 
-// === IC-HOST-02 + BC HARD #3: integer-only receipt fields ===
+// === Integer-only receipt fields ===
 
 #[test]
 fn receipt_builder_has_integer_only_fields() {
@@ -107,7 +107,7 @@ fn assemble_canonical_bytes_is_pub_static_returns_vec_u8() {
     let _ = _ck;
 }
 
-// === Trap fast-path entry (IC-HOST-06) ===
+// === Trap fast-path entry ===
 
 #[test]
 fn emit_trap_receipt_signature_carries_session_action_surface_and_frames() {
