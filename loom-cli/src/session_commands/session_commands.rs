@@ -1,20 +1,20 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/SessionCommands/interfaces.rs` instead.
 // SessionCommands — handlers for `loom session.*` subcommands.
 //
 // # Contract semantics
-// - **IC-CLI-03.** Each handler maps to exactly one RPC method per
-//   design §6's subcommand → RPC table:
+// - **Routing.** Each handler maps to exactly one RPC method per
+//   the subcommand → RPC table:
 //   `create→session.create`, `inspect→session.inspect`,
 //   `list→session.list`, `close→session.close`,
 //   `abort→session.abort`, `replay→session.replay`,
 //   `diff→session.diff`, `export→session.export`,
 //   `validate→session.validate`.
-// - **SR-CLI-03 (receipt pass-through).** Handlers forward the
+// - **Receipt pass-through.** Handlers forward the
 //   `serde_json::Value` receipt to `OutputFormatter::write` verbatim.
 //   No field rewriting, no prose augmentation. Clippy lint forbids
 //   `Receipt::redact` calls.
-// - **IC-CLI-04 (exit codes).** Handlers return `Result<(), CliError>`;
+// - **Exit codes.** Handlers return `Result<(), CliError>`;
 //   exit-code mapping is owned exclusively by `ErrorMapper`.
 
 use clap::{Args, ValueEnum};
@@ -26,7 +26,7 @@ use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
-/// `--capture-policy` CLI value (AC-CAPPOL-01..04). Wire form is the
+/// `--capture-policy` CLI value. Wire form is the
 /// lowercased variant ("minimal" / "default" / "full"). Clap rejects
 /// unknown values with `ErrorKind::InvalidValue` (exit 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
@@ -50,7 +50,7 @@ impl CapturePolicyArg {
 }
 
 /// `loom session create` arguments. Flag names mirror the
-/// `session.create` RPC request schema (IC-CLI-09).
+/// `session.create` RPC request schema.
 #[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct CreateArgs {
     /// Profile name. One of: `safe` (default; denylists destructive
@@ -67,17 +67,17 @@ pub struct CreateArgs {
     pub seed: Option<u64>,
     /// Budget overrides, comma-separated key=value pairs.
     /// Keys: network=NMB, wall_clock=Ns, dom_nodes=N, js_heap=NMB.
-    /// Example: --budget network=10MB,wall_clock=30s  (AC-BUDGET-04.1)
+    /// Example: --budget network=10MB,wall_clock=30s
     #[arg(long)]
     #[serde(default)]
     pub budget: Option<String>,
-    /// Capture policy (AC-CAPPOL-01..04). One of `minimal`, `default`, `full`.
+    /// Capture policy. One of `minimal`, `default`, `full`.
     /// Controls receipt tier-2/tier-3 field emission.
     #[arg(long = "capture-policy", value_enum)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_policy: Option<CapturePolicyArg>,
     /// Disable the default analytics/ads/telemetry blocklist for this
-    /// session (AC-DET-05.1, AC-BLOCKLIST-04). Escape hatch for testing
+    /// session. Escape hatch for testing
     /// against pages that legitimately depend on the blocked services.
     /// When omitted, the default blocklist enforces sub-resource gating.
     #[arg(long = "no-blocklist", default_value_t = false)]
@@ -150,7 +150,7 @@ fn parse_secs(s: &str) -> Option<u64> {
     Some(n * 1000)
 }
 
-/// AC-PROFVAL-03 — pre-validate budget keys against
+/// Pre-validate budget keys against
 /// `KNOWN_BUDGET_KEYS` from loom-core's `profile_registry`. Synthesizes
 /// a `CliError::Receipt` envelope shape-equivalent to what the server
 /// would emit (`code = invalid_budget_key`, `details.provided`,
@@ -291,7 +291,7 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
         params.insert("seed".to_string(), serde_json::Value::Number(seed.into()));
     }
     if let Some(budget_str) = &args.budget {
-        // AC-PROFVAL-03: synthesize a typed `invalid_budget_key` receipt
+        // synthesize a typed `invalid_budget_key` receipt
         // (status="error", exit 1) instead of CliError::Usage (exit 2)
         // when the user supplies an unrecognized budget key. Keeps CLI
         // and server-rejected envelopes shape-equivalent so downstream
@@ -304,7 +304,7 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
         );
     }
     if let Some(cp) = args.capture_policy {
-        // AC-CAPPOL-03: forward the CLI choice as the `capture_policy`
+        // forward the CLI choice as the `capture_policy`
         // wire field; server validation (session_validation) rejects
         // unknown strings via `InvalidCapturePolicy` even though clap
         // already constrained the CLI value space.
@@ -313,7 +313,7 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
             serde_json::Value::String(cp.as_wire_str().to_string()),
         );
     }
-    // AC-BLOCKLIST-04: forward `--no-blocklist` as a boolean wire field.
+    // forward `--no-blocklist` as a boolean wire field.
     // Only insert when true so default-disabled (no flag) keeps params
     // shape consistent with pre-feature payloads.
     if args.no_blocklist {
@@ -363,7 +363,7 @@ pub async fn close(rpc: &RpcClient, cfg: &CliConfig, args: CloseArgs) -> Result<
         )
         .await?;
     emit_to_stdout("session.close", &resp, cfg, None)?;
-    // AC-CLIEXIT-04: close on already-closed session returns a result-body
+    // close on already-closed session returns a result-body
     // receipt with status="error"; raise to exit 1.
     crate::error_mapper::receipt_to_result(resp).map(|_| ())
 }
@@ -393,7 +393,7 @@ pub async fn replay(rpc: &RpcClient, cfg: &CliConfig, args: ReplayArgs) -> Resul
         )
         .await?;
 
-    // AC-REPLAYTERM-01/02: replay session is terminal once the action chain
+    // replay session is terminal once the action chain
     // has been re-driven. Close it explicitly on the daemon side so any
     // subsequent action.* call against the new session_id is rejected
     // by `close-is-not-terminal` enforcement (consistent with the contract
@@ -435,7 +435,7 @@ pub async fn diff(rpc: &RpcClient, cfg: &CliConfig, args: DiffArgs) -> Result<()
 
     // Exit 6 (CliError::SessionsDiffer) if there are any structural differences.
     // SessionsDiffer is a dedicated variant — distinct from Internal (CLI bug, exit 2)
-    // and from Receipt (daemon error, exit 1). See AC-CLIEXIT3-01 in loom-cli_contract.md.
+    // and from Receipt (daemon error, exit 1).
     let field_diff_count = report
         .diff
         .get("field_diffs")
@@ -534,7 +534,7 @@ pub async fn validate(
         for reason in &result.reasons {
             println!("  - {reason}");
         }
-        // AC-CLIEXIT-03: validation failures (e.g. tampered envelope MAC)
+        // validation failures (e.g. tampered envelope MAC)
         // belong in the receipt-error class (exit 1), not the internal-bug
         // class (exit 2). Construct a synthetic receipt so Display matches
         // the action-error format ("Error: <code>: <message>").
@@ -549,7 +549,7 @@ pub async fn validate(
 }
 
 /// Compile-time mapping table — used by `interface_tests` to assert
-/// IC-CLI-03 coverage.
+/// subcommand coverage.
 pub const SUBCOMMAND_RPC_MAP: &[(&str, &str)] = &[
     ("create", "session.create"),
     ("inspect", "session.inspect"),

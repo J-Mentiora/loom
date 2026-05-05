@@ -1,15 +1,15 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ErrorMapper/interface_tests.rs` instead.
-// Interface tests for `ErrorMapper`. Verifies IC-CLI-04 exit-code
-// constants, BC-CLI-05 1:1 mapping signature, and the actionable
-// connection-message catalog (steal from C-02).
+// Interface tests for `ErrorMapper`. Verifies the exit-code
+// constants, 1:1 mapping signature, and the actionable
+// connection-message catalog.
 
 use super::error_mapper::{
     connection_message, format_error, map_exit_code, CliError, ConnectionError, DoctorCheck,
     DoctorReport, EXIT_OK, EXIT_RECEIPT_ERROR, EXIT_SURFACE_UNAVAILABLE, EXIT_USAGE,
 };
 
-// === IC-CLI-04: exit codes 0/1/2/5 ===
+// === exit codes 0/1/2/5 ===
 #[test]
 fn exit_code_constants_locked() {
     assert_eq!(EXIT_OK, 0);
@@ -26,7 +26,7 @@ fn map_exit_code_signature() {
     let _ = _ck;
 }
 
-// === Actionable connection messages (C-02 steal) ===
+// === Actionable connection messages ===
 #[test]
 fn daemon_not_running_message_names_loom_serve() {
     let m = connection_message(&ConnectionError::DaemonNotRunning);
@@ -79,7 +79,7 @@ fn cli_error_variant_set_locked() {
     let _ = _ck;
 }
 
-// === AC-AESF-04: SurfaceUnavailable exits 5 ===
+// === SurfaceUnavailable exits 5 ===
 #[test]
 fn surface_unavailable_maps_to_exit_5() {
     let r: Result<(), CliError> = Err(CliError::SurfaceUnavailable(
@@ -89,7 +89,7 @@ fn surface_unavailable_maps_to_exit_5() {
     assert_eq!(map_exit_code(&r), 5);
 }
 
-// === AC-AESF-05: format_error never loses a message ===
+// === format_error never loses a message ===
 #[test]
 fn format_error_ok_returns_none() {
     assert!(format_error(&Ok(())).is_none());
@@ -158,7 +158,7 @@ fn format_error_receipt_error_returns_message() {
 
 #[test]
 fn format_error_receipt_includes_data_when_present() {
-    // AC-CLIERR-01: when daemon returns {code,message,data}, all three surface.
+    // when daemon returns {code,message,data}, all three surface.
     let r: Result<(), CliError> = Err(CliError::Receipt(serde_json::json!({
         "code": "surface_trap",
         "message": "action dispatch failed",
@@ -205,7 +205,7 @@ fn format_error_receipt_omits_data_when_absent() {
     );
 }
 
-// AC-AESF-05: compile-time exhaustiveness — every CliError variant has Display
+// compile-time exhaustiveness — every CliError variant has Display
 #[test]
 fn all_variants_have_display_impl() {
     // Tests that Display is implemented by calling to_string() on each variant.
@@ -236,7 +236,7 @@ fn all_variants_have_display_impl() {
     }
 }
 
-// === AC-CHPIN-08: PermissionDenied exits 0 (graceful degrade) ===
+// === PermissionDenied exits 0 (graceful degrade) ===
 #[test]
 fn permission_denied_maps_to_exit_ok() {
     let r: Result<(), CliError> = Err(CliError::PermissionDenied("test".into()));
@@ -256,13 +256,13 @@ fn doctor_report_carries_checks_and_failures() {
     assert_eq!(r.checks.len(), 1);
 }
 
-// === BC-CLI-05: 1:1 mirror enforced by tools/lint-error-codes.py ===
+// === 1:1 mirror enforced by tools/lint-error-codes.py ===
 //
 // The lint script lives outside this crate; here we lock the public
 // surface used by the script (the `CliError` variant set above).
 #[test]
 fn receipt_carries_serde_json_value_for_passthrough() {
-    // SR-CLI-03 — receipt flows verbatim. Encoded by the variant
+    // Receipt flows verbatim. Encoded by the variant
     // holding `serde_json::Value` (no field rewriting).
     let e = CliError::Receipt(serde_json::json!({
         "status": "error",

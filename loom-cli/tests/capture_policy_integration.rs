@@ -1,17 +1,17 @@
-//! Integration tests for `--capture-policy` CLI flag (AC-CAPPOL-01..04).
+//! Integration tests for `--capture-policy` CLI flag.
 //!
-//! AC-CAPPOL-01: `--capture-policy minimal` invokes `apply_capture_profile(Minimal)`
-//!               on the fixture receipt → no `dom_snapshot_hash`, no
-//!               `screenshot_after_hash` blob_ref, empty `console_lines`,
-//!               network event body refs stripped.
-//! AC-CAPPOL-02: `--capture-policy full` invokes `apply_capture_profile(Full)` →
-//!               tier-2 + tier-3 fields preserved.
-//! AC-CAPPOL-03: pinned by `manifest_writer/interface_tests.rs` round-trip
-//!               (canonical-JSON + skip-if-none).
-//! AC-CAPPOL-04: clap rejects bogus values with exit 2 (pinned by
-//!               `session_commands/interface_tests.rs::clap_rejects_*`); this
-//!               file additionally pins the wire-shape contract — wire form is
-//!               the lowercased enum variant ("minimal"/"default"/"full").
+//! - `--capture-policy minimal` invokes `apply_capture_profile(Minimal)`
+//!   on the fixture receipt → no `dom_snapshot_hash`, no
+//!   `screenshot_after_hash` blob_ref, empty `console_lines`,
+//!   network event body refs stripped.
+//! - `--capture-policy full` invokes `apply_capture_profile(Full)` →
+//!   tier-2 + tier-3 fields preserved.
+//! - canonical-JSON + skip-if-none round-trip is pinned by
+//!   `manifest_writer/interface_tests.rs`.
+//! - clap rejects bogus values with exit 2 (pinned by
+//!   `session_commands/interface_tests.rs::clap_rejects_*`); this
+//!   file additionally pins the wire-shape contract — wire form is
+//!   the lowercased enum variant ("minimal"/"default"/"full").
 //!
 //! Receipt-emission wiring through `CaptureProfile` is out of scope (see
 //! `decisions.md` "Scope boundary"); the integration test exercises the
@@ -88,7 +88,7 @@ fn capture_profile_from_str_rejects_unknown() {
     assert!(capture_profile_from_str("").is_none());
 }
 
-// === AC-CAPPOL-01: Minimal strips fields =====================================
+// === Minimal strips fields ====================================================
 
 #[test]
 fn capture_policy_minimal_strips_non_hash_fields() {
@@ -121,7 +121,7 @@ fn capture_policy_minimal_strips_non_hash_fields() {
     assert_eq!(r.network_events[0].response_body_size_bytes, 42);
 }
 
-// === AC-CAPPOL-02: Full preserves tier-2 + tier-3 fields ====================
+// === Full preserves tier-2 + tier-3 fields ===================================
 
 #[test]
 fn capture_policy_full_keeps_tier_two_and_three_fields() {
@@ -146,14 +146,14 @@ fn capture_policy_full_keeps_tier_two_and_three_fields() {
 
 #[test]
 fn capture_policy_default_is_noop() {
-    // AC-CAPPOL: flag-absent (None) → server resolves to `Default` → no shape change.
+    // flag-absent (None) → server resolves to `Default` → no shape change.
     let mut r = navigate_fixture();
     let before = r.clone();
     r.apply_capture_profile(CaptureProfile::Default);
     assert_eq!(r, before);
 }
 
-// === AC-CAPPOL-04: wire-shape contract for CapturePolicyArg ==================
+// === wire-shape contract for CapturePolicyArg ================================
 
 #[test]
 fn cli_create_includes_capture_policy_in_rpc_params() {

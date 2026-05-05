@@ -171,13 +171,13 @@ fn run_row(row: &Row, home: &PathBuf) -> (bool, String) {
             }
         }
 
-        // (3) AC-CLIEXIT3-03 (b): stdout MUST be clean on error so the
-        // JSON-receipt stream isn't polluted (AC-AESF-06 regression guard).
+        // (3) stdout MUST be clean on error so the JSON-receipt stream isn't
+        // polluted (regression guard).
         // Exception: --help / --version are NOT errors and write to stdout
         // intentionally — only enforced on error rows.
         if !stdout.is_empty() {
             failures.push(format!(
-                "stdout not empty on error row (AC-CLIEXIT3-03 (b)); got: {stdout:?}"
+                "stdout not empty on error row; got: {stdout:?}"
             ));
         }
     }

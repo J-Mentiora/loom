@@ -1,5 +1,4 @@
 //! Integration tests for `url-scheme-allowlist` feature.
-//! Covers AC-URLSEC-01 through AC-URLSEC-07.
 //!
 //! All cases test `check_url_scheme` directly — no RPC server needed.
 //! For rejected URLs the check returns before `rpc.call`; for allowed URLs
@@ -39,7 +38,7 @@ fn assert_rejected(url: &str, expected_scheme: &str) {
                 detail.contains("is not in allowlist"),
                 "url={url}: detail should contain 'is not in allowlist', got: {detail}"
             );
-            // Verify exit code contract (AC-URLSEC-01 through -04)
+            // Verify exit code contract
             assert_eq!(
                 map_exit_code(&Err(CliError::Receipt(v.clone()))),
                 EXIT_RECEIPT_ERROR,
@@ -60,49 +59,49 @@ fn assert_allowed(url: &str) {
     );
 }
 
-// ── AC-URLSEC-01: file:// rejected ───────────────────────────────────────────
+// ── file:// rejected ───────────────────────────────────────────
 
 #[test]
-fn test_ac_urlsec_01_file_url_rejected() {
+fn test_file_url_rejected() {
     assert_rejected("file:///etc/hosts", "file");
 }
 
-// ── AC-URLSEC-02: javascript: rejected ───────────────────────────────────────
+// ── javascript: rejected ───────────────────────────────────────
 
 #[test]
-fn test_ac_urlsec_02_javascript_url_rejected() {
+fn test_javascript_url_rejected() {
     assert_rejected("javascript:alert(1)", "javascript");
 }
 
-// ── AC-URLSEC-03: data: rejected ─────────────────────────────────────────────
+// ── data: rejected ─────────────────────────────────────────────
 
 #[test]
-fn test_ac_urlsec_03_data_url_rejected() {
+fn test_data_url_rejected() {
     assert_rejected("data:text/html,<h1>hi</h1>", "data");
 }
 
-// ── AC-URLSEC-04: chrome: rejected ───────────────────────────────────────────
+// ── chrome: rejected ───────────────────────────────────────────
 
 #[test]
-fn test_ac_urlsec_04_chrome_url_rejected() {
+fn test_chrome_url_rejected() {
     assert_rejected("chrome://settings", "chrome");
 }
 
-// ── AC-URLSEC-05: https:// allowed ───────────────────────────────────────────
+// ── https:// allowed ───────────────────────────────────────────
 
 #[test]
-fn test_ac_urlsec_05_https_url_allowed() {
+fn test_https_url_allowed() {
     assert_allowed("https://example.com");
 }
 
-// ── AC-URLSEC-06: about:blank allowed ────────────────────────────────────────
+// ── about:blank allowed ────────────────────────────────────────
 
 #[test]
-fn test_ac_urlsec_06_about_blank_allowed() {
+fn test_about_blank_allowed() {
     assert_allowed("about:blank");
 }
 
-// ── AC-URLSEC-07: Unit coverage for check_url_scheme ─────────────────────────
+// ── Unit coverage for check_url_scheme ─────────────────────────
 
 #[test]
 fn test_check_url_scheme_http_allowed() {
@@ -155,7 +154,7 @@ fn test_check_url_scheme_about_newtab_allowed() {
 
 #[test]
 fn test_error_receipt_json_structure() {
-    // Verify the full JSON structure matches AC-URLSEC-01's exact shape
+    // Verify the full JSON structure matches the expected exact shape
     let result = check_url_scheme("file:///etc/hosts");
     if let Err(CliError::Receipt(v)) = result {
         assert_eq!(v["status"], Value::String("error".to_string()));

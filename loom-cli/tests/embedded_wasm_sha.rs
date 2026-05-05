@@ -7,8 +7,8 @@
 //! These tests are NOT `#[ignore]`'d — they run on every `cargo test -p
 //! loom-cli` and assert at the byte level that the embedded artifact is a
 //! real WASM component when built in release mode. Without these, the
-//! only fitness function for AC-SHA-04 lives behind `--ignored`, which
-//! is what allowed the original regression.
+//! only fitness function for the embedded-wasm contract lives behind
+//! `--ignored`, which is what allowed the original regression.
 //!
 //! ## Build profile gating
 //!
@@ -21,11 +21,11 @@
 //!
 //! ## Coverage map
 //!
-//! | Test | AC | What it catches |
-//! |---|---|---|
-//! | `embedded_wasm_is_not_stub_in_release` | AC-SHA-04 | (a) `LOOM_SURFACE_WEB_WASM_PATH` deliberately set to a stub-sized artifact, (b) future refactor reintroducing an in-band stub fallback. The recursive-cargo-failure case is covered by build.rs panicking; this test is the next line of defense. |
-//! | `embedded_wasm_parses_as_component_in_release` | AC-SHA-04 | Bytes are a valid wasm component (catches a corrupted file or non-component module slipping through size check). |
-//! | `embedded_matches_convention_path_in_release` | AC-WASMB-05 | Path-divergence regression: loom-cli's embedded bytes ≠ the convention-path artifact loom-host SHA-checks. Note: reads the convention path at test runtime; a parallel `cargo build` between this build and test could in theory race the read (file as follow-up if observed). |
+//! | Test | What it catches |
+//! |---|---|
+//! | `embedded_wasm_is_not_stub_in_release` | (a) `LOOM_SURFACE_WEB_WASM_PATH` deliberately set to a stub-sized artifact, (b) future refactor reintroducing an in-band stub fallback. The recursive-cargo-failure case is covered by build.rs panicking; this test is the next line of defense. |
+//! | `embedded_wasm_parses_as_component_in_release` | Bytes are a valid wasm component (catches a corrupted file or non-component module slipping through size check). |
+//! | `embedded_matches_convention_path_in_release` | Path-divergence regression: loom-cli's embedded bytes ≠ the convention-path artifact loom-host SHA-checks. Note: reads the convention path at test runtime; a parallel `cargo build` between this build and test could in theory race the read (file as follow-up if observed). |
 
 use std::path::PathBuf;
 
@@ -39,7 +39,7 @@ fn is_release_build() -> bool {
     EMBEDDED_PROFILE == "release"
 }
 
-/// AC-SHA-04 regression guard: a release build MUST embed real wasm
+/// Regression guard: a release build MUST embed real wasm
 /// bytes, not the 8-byte minimal-component stub or any plausibly-
 /// truncated artifact. Real loom_surface_web.wasm is ~85KB; the stub
 /// is 8 bytes; a 10KB lower bound is well above any stub and well
@@ -60,14 +60,14 @@ fn embedded_wasm_is_not_stub_in_release() {
     if !is_release_build() {
         eprintln!(
             "skipping (PROFILE={EMBEDDED_PROFILE}); run with `cargo test --release` \
-             to exercise the AC-SHA-04 regression guard"
+             to exercise the embedded-wasm regression guard"
         );
         return;
     }
 
     assert!(
         EMBEDDED_SURFACE_WEB.len() > 10_000,
-        "AC-SHA-04: release build embedded a stub-sized or truncated wasm \
+        "release build embedded a stub-sized or truncated wasm \
          ({} bytes; expected >10KB for real loom_surface_web.wasm). \
          The 8-byte MINIMAL_COMPONENT stub fails this check. \
          Investigate loom-cli/build.rs auto-build path, the \
@@ -77,7 +77,7 @@ fn embedded_wasm_is_not_stub_in_release() {
     );
 }
 
-/// AC-SHA-04 regression guard: bytes must parse as a valid wasm
+/// Regression guard: bytes must parse as a valid wasm
 /// component (catches the case where the file is large but corrupted,
 /// or a non-component module slipped through).
 #[test]
@@ -91,14 +91,14 @@ fn embedded_wasm_parses_as_component_in_release() {
         .validate_all(EMBEDDED_SURFACE_WEB)
         .unwrap_or_else(|e| {
             panic!(
-                "AC-SHA-04: embedded loom_surface_web.wasm fails component \
+                "embedded loom_surface_web.wasm fails component \
                  validation: {e}. The file may be a stub, truncated, or \
                  built for the wrong target."
             )
         });
 }
 
-/// AC-WASMB-05 regression guard: the bytes loom-cli embeds and the
+/// Regression guard: the bytes loom-cli embeds and the
 /// bytes loom-host computes the integrity SHA over MUST be the same.
 /// Path-divergence (bug found by architect council review) silently
 /// disables the integrity check when loom-cli writes to OUT_DIR but
@@ -123,7 +123,7 @@ fn embedded_matches_convention_path_in_release() {
         // If the file is missing here, surface as test failure: integrity
         // check is silently disabled in the resulting binary.
         panic!(
-            "AC-WASMB-05: convention path missing at {}; \
+            "convention path missing at {}; \
              loom-cli/build.rs failed to copy the wasm artifact. \
              loom-host integrity check will be silently disabled.",
             convention_path.display()
@@ -142,9 +142,8 @@ fn embedded_matches_convention_path_in_release() {
     let convention_sha = format!("{:x}", Sha256::digest(&convention_bytes));
 
     assert_eq!(
-        embedded_sha,
-        convention_sha,
-        "AC-WASMB-05: embedded loom_surface_web.wasm bytes diverge from the \
+        embedded_sha, convention_sha,
+        "embedded loom_surface_web.wasm bytes diverge from the \
          convention-path artifact at {}. loom-host's integrity SHA will not \
          match the bytes loom-cli embedded. Check loom-cli/build.rs \
          convention-path-copy logic.",

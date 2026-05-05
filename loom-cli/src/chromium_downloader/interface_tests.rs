@@ -1,9 +1,9 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ChromiumDownloader/interface_tests.rs` instead.
-// Interface tests for `ChromiumDownloader`. Verifies SR-CLI-04
+// Interface tests for `ChromiumDownloader`. Verifies the
 // supply-chain mismatch shape, the idempotent-ensure contract (sentinel
-// file model — AC-CHPLUMB-02), extraction (AC-CHPLUMB-01), and the
-// `DoctorRunner`-shared verify-only path (AC-CHPLUMB-03).
+// file model), extraction, and the
+// `DoctorRunner`-shared verify-only path.
 
 use super::chromium_downloader::{
     sha256_of_file, ChromiumDownloader, ChromiumDownloaderConfig, DownloadOutcome,
@@ -72,7 +72,7 @@ fn sha256_of_file_signature() {
     let _ = _ck;
 }
 
-// ── AC-CHPLUMB-02: ensure() idempotent via sentinel file ────────────────────
+// ── ensure() idempotent via sentinel file ────────────────────
 
 /// When install_dir/.archive_sha256 contains the expected SHA-256 AND the
 /// binary exists, ensure() must return Skipped without downloading.
@@ -109,7 +109,7 @@ async fn ensure_skips_when_sentinel_matches() {
     );
 }
 
-// ── AC-CHPLUMB-01: ensure() extracts archive after SHA-256 verify ───────────
+// ── ensure() extracts archive after SHA-256 verify ───────────
 
 /// Build a minimal valid zip served via file:// URL. After ensure(), the
 /// extracted file must be present and the sentinel must contain the archive SHA.
@@ -149,7 +149,7 @@ async fn ensure_extracts_zip_and_writes_sentinel() {
         "expected Downloaded, got: {result:?}"
     );
 
-    // AC-CHPLUMB-01: binary extracted (real file, not zip archive).
+    // binary extracted (real file, not zip archive).
     let binary = install_dir.path().join("Chromium");
     assert!(binary.exists(), "binary must exist after extraction");
     let content = std::fs::read(&binary).unwrap();
@@ -158,7 +158,7 @@ async fn ensure_extracts_zip_and_writes_sentinel() {
         "extracted content must match"
     );
 
-    // AC-CHPLUMB-02: sentinel written after extraction.
+    // sentinel written after extraction.
     let sentinel = install_dir.path().join(".archive_sha256");
     assert!(
         sentinel.exists(),
@@ -210,7 +210,7 @@ async fn ensure_supply_chain_on_sha_mismatch() {
     assert!(!binary.exists(), "binary must not exist after SHA mismatch");
 }
 
-// ── AC-CHPLUMB-03: verify() checks binary + sentinel ────────────────────────
+// ── verify() checks binary + sentinel ────────────────────────
 
 /// Binary + matching sentinel → Ok(()).
 #[tokio::test]
@@ -284,7 +284,7 @@ async fn verify_internal_on_missing_sentinel() {
     );
 }
 
-// ── AC-CHBS-01: verify() falls back to scanning parent dir for executables ───
+// ── verify() falls back to scanning parent dir for executables ───
 
 /// When the literal binary_path is missing but a differently-named executable
 /// exists in the same Contents/MacOS/ directory, verify() must return Ok(()).
@@ -317,11 +317,11 @@ async fn verify_fallback_scan_finds_differently_named_binary() {
     let result = downloader.verify("any-sha-unused").await;
     assert!(
         result.is_ok(),
-        "AC-CHBS-01: fallback scan must return Ok when executable found in parent dir; got: {result:?}"
+        "fallback scan must return Ok when executable found in parent dir; got: {result:?}"
     );
 }
 
-// ── AC-CHBS-03: verify() fails when no executable exists in parent ───────────
+// ── verify() fails when no executable exists in parent ───────────
 
 /// When the literal binary_path is missing AND the parent directory contains
 /// no executable files, verify() must still return Err(Internal).
@@ -345,6 +345,6 @@ async fn verify_fails_when_no_executable_in_parent() {
     let result = downloader.verify("any-sha-unused").await;
     assert!(
         matches!(result, Err(CliError::Internal(_))),
-        "AC-CHBS-03: must return Internal when no executable in parent dir; got: {result:?}"
+        "must return Internal when no executable in parent dir; got: {result:?}"
     );
 }

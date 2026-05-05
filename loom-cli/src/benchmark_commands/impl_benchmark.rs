@@ -32,7 +32,7 @@ pub fn run(args: &BenchmarkArgs, cfg: &CliConfig) -> Result<(), CliError> {
              Pass --skip-binary-size to run latency benchmarks without the binary-size check."
                 .to_string(),
         ),
-        // AC-BENCH-04: clear remediation when meta.json missing.
+        // Clear remediation when meta.json missing.
         // Note: with the stat-fallback in run_all(), this arm fires only when
         // --meta-json is set explicitly but the file is absent.
         BenchmarkError::MetaJsonNotFound(p) => CliError::Usage(format!(

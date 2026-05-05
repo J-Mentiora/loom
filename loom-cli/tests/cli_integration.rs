@@ -1,6 +1,4 @@
 //! Integration tests for `cli-interface` feature.
-//! Covers AC-CLI-01.1, AC-CLI-02.1, AC-CLI-04.1, AC-CLI-04.2,
-//! AC-NFR-DX-01.1, AC-NFR-DX-02.1.
 
 use loom_cli::action_commands::parse_extra_to_json;
 use loom_cli::error_mapper::{map_exit_code, CliError, ConnectionError};
@@ -25,10 +23,10 @@ impl VecSink {
     }
 }
 
-// ── AC-CLI-04.1: Default output is machine-parseable canonical JSON ──────────
+// ── Default output is machine-parseable canonical JSON ──────────
 
 #[test]
-fn test_ac_cli_04_1_canonical_json_parseable() {
+fn test_canonical_json_parseable() {
     let value = json!({"session_id": "s1", "status": "ok", "created_at": 0});
     let result = OutputFormatter::<'_, VecSink>::canonical_json(&value).unwrap();
     // Must parse back cleanly
@@ -37,7 +35,7 @@ fn test_ac_cli_04_1_canonical_json_parseable() {
 }
 
 #[test]
-fn test_ac_cli_04_1_no_ansi_bytes() {
+fn test_no_ansi_bytes() {
     let value = json!({"status": "ok"});
     let result = OutputFormatter::<'_, VecSink>::canonical_json(&value).unwrap();
     // No ESC byte (ANSI escape sequences start with \x1b)
@@ -48,7 +46,7 @@ fn test_ac_cli_04_1_no_ansi_bytes() {
 }
 
 #[test]
-fn test_ac_cli_04_1_write_default_path_produces_json() {
+fn test_write_default_path_produces_json() {
     let mut sink = VecSink(Vec::new());
     let mut fmt = OutputFormatter::new(&mut sink);
     let value = json!({"session_id": "s1", "profile": "safe", "created_at": 0});
@@ -61,10 +59,10 @@ fn test_ac_cli_04_1_write_default_path_produces_json() {
     assert_eq!(parsed["session_id"], "s1");
 }
 
-// ── AC-CLI-04.2: --pretty produces human-readable output ────────────────────
+// ── --pretty produces human-readable output ────────────────────
 
 #[test]
-fn test_ac_cli_04_2_pretty_renders_text() {
+fn test_pretty_renders_text() {
     let schemas = SchemaCache::empty();
     let renderer = PrettyRenderer::with_color(&schemas, false);
     let value = json!({"session_id": "s1", "status": "ok"});
@@ -73,14 +71,14 @@ fn test_ac_cli_04_2_pretty_renders_text() {
     assert!(!rendered.is_empty());
 }
 
-// AC-CLI-04.2 — both color-disable env signals (NO_COLOR + TERM=dumb).
+// Both color-disable env signals (NO_COLOR + TERM=dumb).
 // Combined into a single #[test] because cargo runs tests in parallel and
 // `std::env::set_var` mutates process-global state; running these as two
 // independent tests was flaky (~33%) on a recompile when the scheduler
 // interleaved the NO_COLOR-set with the TERM-restore. Serializing inside
 // one test eliminates the race without pulling in `serial_test`.
 #[test]
-fn test_ac_cli_04_2_color_disable_signals_honoured() {
+fn test_color_disable_signals_honoured() {
     let no_color_old = std::env::var("NO_COLOR").ok();
     let term_old = std::env::var("TERM").ok();
 
@@ -164,10 +162,10 @@ fn test_ac_nfr_dx_02_1_error_receipt_verbatim() {
     assert_eq!(parsed["message"], "element not found");
 }
 
-// ── AC-CLI-02.1: parse_extra_to_json correctness ────────────────────────────
+// ── parse_extra_to_json correctness ────────────────────────────
 
 #[test]
-fn test_ac_cli_02_1_parse_extra_key_value_pairs() {
+fn test_parse_extra_key_value_pairs() {
     let extra = vec![
         "--selector".to_string(),
         "#btn".to_string(),
@@ -180,38 +178,29 @@ fn test_ac_cli_02_1_parse_extra_key_value_pairs() {
 }
 
 #[test]
-fn test_ac_cli_02_1_parse_extra_boolean_flag() {
-    let extra = vec![
-        "--verbose".to_string(),
-        "--selector".to_string(),
-        "#btn".to_string(),
-    ];
+fn test_parse_extra_boolean_flag() {
+    let extra = vec!["--verbose".to_string(), "--selector".to_string(), "#btn".to_string()];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["verbose"], true);
     assert_eq!(val["selector"], "#btn");
 }
 
 #[test]
-fn test_ac_cli_02_1_parse_extra_repeated_key_last_wins() {
-    let extra = vec![
-        "--k".to_string(),
-        "a".to_string(),
-        "--k".to_string(),
-        "b".to_string(),
-    ];
+fn test_parse_extra_repeated_key_last_wins() {
+    let extra = vec!["--k".to_string(), "a".to_string(), "--k".to_string(), "b".to_string()];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["k"], "b");
 }
 
 #[test]
-fn test_ac_cli_02_1_parse_extra_empty() {
+fn test_parse_extra_empty() {
     let extra: Vec<String> = vec![];
     let val = parse_extra_to_json(&extra).unwrap();
     assert!(val.as_object().unwrap().is_empty());
 }
 
 #[test]
-fn test_ac_cli_02_1_parse_extra_auto_coerce_number() {
+fn test_parse_extra_auto_coerce_number() {
     // JSON numbers auto-coerced from strings
     let extra = vec!["--count".to_string(), "42".to_string()];
     let val = parse_extra_to_json(&extra).unwrap();
@@ -275,43 +264,43 @@ fn test_columns_from_schema_no_properties() {
     assert!(cols.is_empty());
 }
 
-// ── cli-runtime-wireup feature tests (AC-CLI-RT-01..06) ─────────────────────
+// ── cli-runtime-wireup feature tests ────────────────────────────────────────
 
-/// AC-CLI-RT-06: No `unimplemented!("Phase 6: ...")` stubs remain in
+/// No leftover `unimplemented!(...)` stubs remain in
 /// CommandRouter::dispatch. This test scans the source text statically.
 ///
 /// Reads from `src/` rather than `systems/` so the src tree is self-contained
-/// (substep 5.4.7 invariant; enforced by `ga/flatten_includes.py`). Once
-/// flatten_includes runs, `command_router/interfaces.rs` carries the real
-/// dispatch body verbatim, so the same scan still works.
+/// (enforced by `ga/flatten_includes.py`). Once flatten_includes runs,
+/// `command_router/interfaces.rs` carries the real dispatch body verbatim,
+/// so the same scan still works.
 #[test]
-fn test_ac_cli_rt_06_no_phase6_stubs_in_dispatch() {
+fn test_no_unimplemented_stubs_in_dispatch() {
     let dispatch_src = include_str!("../src/command_router/command_router.rs");
     assert!(
-        !dispatch_src.contains("unimplemented!(\"Phase 6:"),
-        "CommandRouter::dispatch must not contain Phase 6 unimplemented! stubs; \
+        !dispatch_src.contains("unimplemented!(\""),
+        "CommandRouter::dispatch must not contain unimplemented! stubs; \
          found at least one remaining"
     );
 }
 
-/// AC-CLI-RT-01: `loom --version` exits 0.
+/// `loom --version` exits 0.
 #[test]
-fn test_ac_cli_rt_01_version_exits_0() {
+fn test_version_exits_0() {
     let code = loom_cli::cli_main::run(vec!["loom".to_string(), "--version".to_string()]);
     assert_eq!(code, 0, "loom --version must exit 0");
 }
 
-/// AC-CLI-RT-02: `loom --help` exits 0 and includes all 10 subcommands.
+/// `loom --help` exits 0 and includes all 10 subcommands.
 #[test]
-fn test_ac_cli_rt_02_help_exits_0() {
+fn test_help_exits_0() {
     let code = loom_cli::cli_main::run(vec!["loom".to_string(), "--help".to_string()]);
     assert_eq!(code, 0, "loom --help must exit 0");
 }
 
-/// AC-CLI-RT-03: Every subcommand parses argv without hitting unimplemented!()
+/// Every subcommand parses argv without hitting unimplemented!()
 /// when probed with --help.
 #[test]
-fn test_ac_cli_rt_03_subcommand_help_no_unimplemented() {
+fn test_subcommand_help_no_unimplemented() {
     let subcommands = [
         "session",
         "action",
@@ -334,10 +323,10 @@ fn test_ac_cli_rt_03_subcommand_help_no_unimplemented() {
     }
 }
 
-/// AC-CLI-RT-05: BC-CLI-02 — ConfigResolver::resolve called before
-/// CommandRouter. early_init must succeed for a bare argv.
+/// ConfigResolver::resolve called before CommandRouter.
+/// early_init must succeed for a bare argv.
 #[test]
-fn test_ac_cli_rt_05_early_init_returns_config() {
+fn test_early_init_returns_config() {
     let argv = vec!["loom".to_string()];
     let result = loom_cli::cli_main::early_init(&argv);
     assert!(
@@ -348,7 +337,7 @@ fn test_ac_cli_rt_05_early_init_returns_config() {
 }
 
 /// HelpGenerator: json_field_to_clap_arg and clap_arg_to_json_field are
-/// inverse functions (IC-CLI-09 round-trip).
+/// inverse functions (round-trip).
 #[test]
 fn test_help_generator_field_name_round_trip() {
     use loom_cli::help_generator::{clap_arg_to_json_field, json_field_to_clap_arg};

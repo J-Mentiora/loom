@@ -1,5 +1,5 @@
-// AC-TTY-02 regression — non-TTY JSON output must remain byte-for-byte
-// identical to canonical JSON. Tests run in-process via `emit()` with
+// Non-TTY JSON output must remain byte-for-byte identical to canonical
+// JSON. Tests run in-process via `emit()` with
 // `output_mode = Json` (which is what the resolver picks when stdout
 // is not a TTY).
 
@@ -15,7 +15,7 @@ fn cfg_json() -> loom_cli::cli_config::CliConfig {
 }
 
 #[test]
-fn ac_tty_02_session_create_byte_exact() {
+fn tty_session_create_byte_exact() {
     let v = json!({
         "session_id": "01J9ABC",
         "status": "active",
@@ -28,7 +28,7 @@ fn ac_tty_02_session_create_byte_exact() {
 }
 
 #[test]
-fn ac_tty_02_action_navigate_byte_exact() {
+fn tty_action_navigate_byte_exact() {
     let v = json!({
         "action_hash": "deadbeef",
         "session_id": "01J9ABC",
@@ -43,7 +43,7 @@ fn ac_tty_02_action_navigate_byte_exact() {
 }
 
 #[test]
-fn ac_tty_02_session_list_byte_exact() {
+fn tty_session_list_byte_exact() {
     let v = json!({
         "sessions": [
             {"session_id": "01J9A", "status": "active", "created_at": "2026-05-04T10:00:00Z"},
@@ -56,10 +56,10 @@ fn ac_tty_02_session_list_byte_exact() {
 }
 
 #[test]
-fn ac_tty_02_canonical_orders_keys_alphabetically() {
-    // Canonical JCS sorts keys alphabetically. AC-TTY-02 says non-TTY
-    // bytes are byte-for-byte identical to today; today's behaviour is
-    // canonical JCS, so key order is alphabetical regardless of insertion.
+fn tty_canonical_orders_keys_alphabetically() {
+    // Canonical JCS sorts keys alphabetically. Non-TTY bytes must remain
+    // byte-for-byte identical to today; today's behaviour is canonical
+    // JCS, so key order is alphabetical regardless of insertion.
     let v = json!({"zeta": 1, "alpha": 2, "mu": 3});
     let bytes = emit("session.create", &v, &cfg_json(), None).unwrap();
     let i_alpha = bytes.find("alpha").expect("alpha");
@@ -72,7 +72,7 @@ fn ac_tty_02_canonical_orders_keys_alphabetically() {
 }
 
 #[test]
-fn ac_tty_02_no_ansi_in_canonical_path() {
+fn tty_no_ansi_in_canonical_path() {
     let v = json!({"action_hash": "deadbeef", "status": "ok"});
     let bytes = emit("web.click", &v, &cfg_json(), None).unwrap();
     assert!(
@@ -82,7 +82,7 @@ fn ac_tty_02_no_ansi_in_canonical_path() {
 }
 
 #[test]
-fn ac_tty_02_emit_does_not_append_newline() {
+fn tty_emit_does_not_append_newline() {
     // emit() returns bytes WITHOUT a trailing newline. The trailing
     // newline is the caller's responsibility (emit_to_stdout adds one).
     // This locks the contract used by integration tests that compare

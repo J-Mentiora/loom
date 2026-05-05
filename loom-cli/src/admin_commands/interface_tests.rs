@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/AdminCommands/interface_tests.rs` instead.
 // Interface tests for `AdminCommands`. Verifies the RPC-vs-local
-// split per IC-CLI-03 and the SR-CLI-01 RPC-bypass path.
+// split and the RPC-bypass path.
 
 use super::admin_commands::{GcArgs, McpArgs, PostinstallArgs, ServeArgs, SUBCOMMAND_MAP};
 

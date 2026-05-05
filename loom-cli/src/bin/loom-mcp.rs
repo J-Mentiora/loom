@@ -1,11 +1,9 @@
 //! `loom-mcp` binary entrypoint — produces `target/release/loom-mcp` so the
-//! `loom mcp serve` CLI subcommand can delegate to it via subprocess
-//! (AC-PROTO-03.1, SR-CLI-02).
+//! `loom mcp serve` CLI subcommand can delegate to it via subprocess.
 //!
 //! Thin clap wrapper around `loom_mcp::mcp_main::run`. This file lives in
 //! `loom-cli/` (not `loom-mcp/`) so cargo-dist can bundle all 4 loom
-//! binaries into one Cargo package and ship them in one tarball
-//! (AC-DIST-01).
+//! binaries into one Cargo package and ship them in one tarball.
 
 use clap::Parser;
 use loom_mcp::mcp_main::{run, ServeArgs};

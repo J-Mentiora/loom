@@ -16,7 +16,7 @@
 //!
 //! This file lives in `loom-cli/` (not `loom-shims/`) so cargo-dist can
 //! bundle all 4 loom binaries into one Cargo package and ship them in one
-//! tarball (AC-DIST-01).
+//! tarball.
 
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;

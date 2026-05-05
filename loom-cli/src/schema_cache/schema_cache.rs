@@ -1,9 +1,9 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/SchemaCache/interfaces.rs` instead.
 // SchemaCache — in-memory `HashMap<method_name, JsonSchema>`.
 //
 // # Contract semantics
-// - **AC-ARCH-12.** Loads WIT-derived JSON Schemas from
+// - **Loads WIT-derived JSON Schemas** from
 //   `~/Library/Application Support/loom/schemas/v1/` at startup; the
 //   pipeline that emits these schemas is `loom-tools/wit-to-json-schema`.
 // - **Immutable after load.** No reload path. Each CLI invocation
@@ -103,7 +103,7 @@ impl SchemaCache {
     /// Used by `HelpGenerator` for the global `--help` listing and by
     /// `validate_args`'s "unknown method: X. Available: Y, Z" message
     /// (so `web.type-text` rejection surfaces both `web.type` and
-    /// `web.type_text` as accepted forms — AC-CLIROUTE-03).
+    /// `web.type_text` as accepted forms).
     pub fn methods(&self) -> impl Iterator<Item = &str> + '_ {
         let canonicals = self.schemas.keys().map(String::as_str);
         let aliases = loom_shared::action_aliases::METHOD_ALIASES

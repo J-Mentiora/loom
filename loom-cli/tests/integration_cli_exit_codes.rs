@@ -1,6 +1,6 @@
 //! Integration tests for `cli-exit-code-receipt-error` feature.
 //!
-//! Covers AC-CLIEXIT-01 through AC-CLIEXIT-06: every error class maps
+//! Every error class maps
 //! to the documented exit code, and `receipt_to_result` honours the
 //! `status` field on receipt JSON.
 
@@ -37,7 +37,7 @@ fn schema_cache_with_navigate() -> (SchemaCache, TempDir) {
     (cache, dir)
 }
 
-// ── AC-CLIEXIT-01: action error receipt → exit 1 ────────────────────────────
+// ── action error receipt → exit 1 ────────────────────────────
 
 #[test]
 fn test_ac_cliexit_01_action_receipt_error_maps_exit_1() {
@@ -84,7 +84,7 @@ fn test_ac_cliexit_01_receipt_to_result_no_status_passes_through() {
     assert_eq!(r.unwrap(), resp);
 }
 
-// ── AC-CLIEXIT-02: URL allowlist denial → exit 1 (regression) ───────────────
+// ── URL allowlist denial → exit 1 (regression) ───────────────
 
 #[test]
 fn test_ac_cliexit_02_allowlist_denial_maps_exit_1() {
@@ -98,7 +98,7 @@ fn test_ac_cliexit_02_allowlist_denial_maps_exit_1() {
     assert_eq!(map_exit_code(&r), EXIT_RECEIPT_ERROR);
 }
 
-// ── AC-CLIEXIT-03: tampered session validation → exit 1 ─────────────────────
+// ── tampered session validation → exit 1 ─────────────────────
 
 #[test]
 fn test_ac_cliexit_03_validation_failure_maps_exit_1() {
@@ -130,7 +130,7 @@ fn test_ac_cliexit_03_validate_synthetic_receipt_shape() {
     assert!(msg.contains("session validation failed"), "got: {msg}");
 }
 
-// ── AC-CLIEXIT-04: closing already-closed session → exit 1 ──────────────────
+// ── closing already-closed session → exit 1 ──────────────────
 
 #[test]
 fn test_ac_cliexit_04_close_already_closed_maps_exit_1() {
@@ -145,7 +145,7 @@ fn test_ac_cliexit_04_close_already_closed_maps_exit_1() {
     assert_eq!(map_exit_code(&r), EXIT_RECEIPT_ERROR);
 }
 
-// ── AC-CLIEXIT-05: unknown action method → exit 2 (regression) ──────────────
+// ── unknown action method → exit 2 (regression) ──────────────
 
 #[test]
 fn test_ac_cliexit_05_unknown_method_maps_exit_2() {
@@ -156,7 +156,7 @@ fn test_ac_cliexit_05_unknown_method_maps_exit_2() {
     assert_eq!(map_exit_code(&r), 2);
 }
 
-// ── AC-CLIEXIT-06: full exit-code table ─────────────────────────────────────
+// ── full exit-code table ─────────────────────────────────────
 
 #[test]
 fn test_ac_cliexit_06_table_exit_0_success() {
@@ -241,7 +241,7 @@ fn test_ac_cliexit_06_protocol_display_non_empty_and_mentions_class() {
     );
 }
 
-// ── AC-CLIEXIT3-01: SessionsDiffer maps to dedicated exit 6 ─────────────────
+// ── SessionsDiffer maps to dedicated exit 6 ─────────────────
 
 #[test]
 fn test_ac_cliexit3_01_table_exit_6_sessions_differ() {

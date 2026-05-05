@@ -1,10 +1,10 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/LaunchdPlistWriter/interfaces.rs` instead.
 // LaunchdPlistWriter — `cfg(target_os = "macos")`-gated plist
 // emission.
 //
 // # Contract semantics
-// - **SR-CLI-05.** Plist contains, byte-equal:
+// - **Plist contents** (byte-equal):
 //   - `<key>RunAtLoad</key><true/>`
 //   - `<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>`
 //   - `<key>ProgramArguments</key><array><string>{abs_loom}</string><string>serve</string></array>`
@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use crate::CliError;
 
 /// Stable plist constants. Locked here so `interface_tests` can
-/// byte-equal assert per SR-CLI-05.
+/// byte-equal assert.
 pub const PLIST_LABEL: &str = "com.loom.daemon";
 pub const PLIST_RUN_AT_LOAD: bool = true;
 pub const PLIST_KEEP_ALIVE_ON_SUCCESSFUL_EXIT: bool = false;
@@ -62,7 +62,7 @@ impl LaunchdPlistWriter {
     /// matching `Label`. Returns `CliError::PermissionDenied` (not
     /// `CliError::Internal`) when any filesystem operation is denied due to
     /// insufficient privileges, so `postinstall_runner::plist_step` can
-    /// degrade gracefully for non-root users (AC-CHPIN-08).
+    /// degrade gracefully for non-root users.
     #[cfg(target_os = "macos")]
     pub fn write(&self) -> Result<WriteOutcome, CliError> {
         if self.config.plist_path.exists() {
@@ -114,7 +114,7 @@ impl LaunchdPlistWriter {
     }
 
     /// Pure helper: render the plist XML for a given config. Used by
-    /// unit tests + the SR-CLI-05 byte-equal assertion.
+    /// unit tests + the byte-equal assertion.
     pub fn render(&self) -> String {
         let loom_binary = self.config.loom_binary.to_string_lossy();
         format!(

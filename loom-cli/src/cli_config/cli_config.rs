@@ -1,10 +1,10 @@
 // ConfigResolver — CLI > env > file > compiled defaults.
 //
 // # Contract semantics
-// - **BC-CLI-02 / AC-CFG-01.1.** Strict precedence:
+// - **Strict precedence.**
 //   `argv flag` overrides `LOOM_*` env var; env overrides
 //   `~/.config/loom/config.toml`; file overrides compiled defaults.
-// - **AC-CFG-03.1.** Validates the resolved `CliConfig` against the
+// - **Schema validation.** Validates the resolved `CliConfig` against the
 //   same JSON Schema the daemon uses (loaded via `SchemaCache`); fails
 //   at startup with `CliError::Usage` on invalid keys
 //   (`#[serde(deny_unknown_fields)]`).
@@ -42,7 +42,7 @@ pub struct CliConfig {
     pub pretty: bool,
     /// Resolved output mode per D-7 precedence (quiet > json > pretty >
     /// auto-detect). Replaces the old "JSON unless pretty=true" toggle.
-    /// Default = `Json` (matches IC-CLI-01 canonical default before TTY
+    /// Default = `Json` (matches the canonical default before TTY
     /// auto-detection runs in `cli_main`).
     #[serde(default, skip_serializing_if = "is_default_output_mode")]
     pub output_mode: OutputMode,
@@ -60,7 +60,7 @@ pub struct CliConfig {
     /// Default profile for `loom session create` when `--profile` is absent.
     /// Resolved from config file `default_profile`, env `LOOM_DEFAULT_PROFILE`,
     /// or CLI. Valid values: "safe" | "standard" | "full". None means RPC server picks default.
-    /// Added by config-system feature (oracle-confirmed, Phase 5.3 oversight).
+    /// Added by config-system feature (oracle-confirmed, v5.3 oversight).
     pub default_profile: Option<String>,
 }
 
@@ -76,7 +76,7 @@ pub struct ResolveInputs {
 }
 
 /// Private struct for TOML file parsing. Mirrors CliConfig fields as Option.
-/// `deny_unknown_fields` ensures AC-CFG-03.1 startup validation.
+/// `deny_unknown_fields` ensures startup validation rejects unknown keys.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct FileConfig {

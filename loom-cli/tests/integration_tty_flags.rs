@@ -1,4 +1,4 @@
-// AC-TTY-03 / AC-TTY-04 — flag precedence, --json/--pretty conflict,
+// Flag precedence, --json/--pretty conflict,
 // --color modes, NO_COLOR / CLICOLOR / TERM=dumb env conventions.
 
 use loom_cli::cli_config::cli_config::compiled_defaults;
@@ -19,7 +19,7 @@ fn clear_color_env() {
     std::env::remove_var("TERM");
 }
 
-// --- AC-TTY-03 mode resolution ---
+// --- mode resolution ---
 
 #[test]
 fn ac_tty_03_quiet_beats_json_and_pretty() {
@@ -62,7 +62,7 @@ fn ac_tty_03_auto_tty_yields_pretty() {
     );
 }
 
-// --- AC-TTY-03 conflict (--json --pretty) ---
+// --- conflict (--json --pretty) ---
 
 #[test]
 fn ac_tty_03_json_and_pretty_conflict_exits_2() {
@@ -84,7 +84,7 @@ fn ac_tty_03_color_and_no_color_conflict_exits_2() {
     assert_eq!(code, 2, "--color X --no-color must exit 2 (Usage)");
 }
 
-// --- AC-TTY-04 color env vars (D-22) ---
+// --- color env vars (D-22) ---
 
 #[test]
 fn ac_tty_04_no_color_non_empty_disables_at_tty() {

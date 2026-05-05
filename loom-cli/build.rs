@@ -1,5 +1,5 @@
-// loom-cli build script — produces and embeds the WASM surface bytes for
-// AC-PICOMP-04 / AC-SHA-04. The embedded artifact is read by
+// loom-cli build script — produces and embeds the WASM surface bytes.
+// The embedded artifact is read by
 // `postinstall_runner` via `include_bytes!(env!("LOOM_CLI_EMBEDDED_SURFACE_WEB"))`
 // during `loom postinstall`'s compile_step.
 //
@@ -8,7 +8,7 @@
 // | PROFILE  | LOOM_SURFACE_WEB_WASM_PATH | feature vendored-wasm | LOOM_SKIP_WASM_BUILD | Outcome |
 // |----------|----------------------------|------------------------|----------------------|---------|
 // | release  | set                        | -                      | -                    | Copy supplied artifact (CI / explicit override) |
-// | release  | unset                      | on (default)           | -                    | Copy committed `vendor/loom_surface_web.wasm` (AC-DIST-01) |
+// | release  | unset                      | on (default)           | -                    | Copy committed `vendor/loom_surface_web.wasm` |
 // | release  | unset                      | off                    | unset                | Auto-build wasm32-wasip2 cdylib via recursive cargo |
 // | release  | unset                      | off                    | =1                   | Panic — release builds refuse the stub |
 // | debug    | set                        | -                      | -                    | Copy supplied artifact |
@@ -38,7 +38,7 @@
 //
 // We also copy the produced artifact to the workspace convention path
 // `<workspace>/target/wasm32-wasip2/release/loom_surface_web.wasm` so
-// `loom-host/build.rs` can compute its integrity SHA (AC-WASMB-05).
+// `loom-host/build.rs` can compute its integrity SHA.
 //
 // ## Re-run triggers
 //
@@ -144,7 +144,7 @@ fn main() {
         );
         return;
     } else if std::env::var("CARGO_FEATURE_VENDORED_WASM").is_ok() {
-        // AC-DIST-01: `vendored-wasm` (default) reads the committed artifact
+        // `vendored-wasm` (default) reads the committed artifact
         // so `cargo install --git ... loom-cli` succeeds on a fresh machine
         // without requiring `rustup target add wasm32-wasip2`. CI's
         // `vendored-wasm-check` job re-builds from source and diffs against
@@ -183,7 +183,7 @@ fn main() {
     });
 
     // Path-divergence fix (council C2): also copy to the convention path
-    // so loom-host/build.rs can compute the integrity SHA (AC-WASMB-05).
+    // so loom-host/build.rs can compute the integrity SHA.
     let convention_path = workspace_root.join("target/wasm32-wasip2/release/loom_surface_web.wasm");
     if let Some(parent) = convention_path.parent() {
         let _ = std::fs::create_dir_all(parent);
@@ -204,7 +204,7 @@ fn main() {
 }
 
 /// Emit `LOOM_GIT_SHA` and `LOOM_BUILD_DATE` for the version-command crate
-/// to consume via `env!()` (AC-VER-02). Both fall back to "unknown" so
+/// to consume via `env!()`. Both fall back to "unknown" so
 /// cargo-dist source-tarball builds (no `.git` directory) still compile.
 fn emit_build_provenance() {
     let sha = Command::new("git")

@@ -1,14 +1,14 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/OutputFormatter/interfaces.rs` instead.
 // OutputFormatter — SOLE writer to stdout.
 //
 // # Contract semantics
-// - **IC-CLI-01 / AC-CLI-04.1.** Default path is `serde_jcs::to_string`
+// - **Default path** is `serde_jcs::to_string`
 //   (RFC 8785 canonical JSON). Exactly one canonical-JSON object per
 //   command. No ANSI color, no headers, no prose.
-// - **IC-CLI-02 / AC-CLI-04.2.** `--pretty` delegates to
+// - **Pretty path.** `--pretty` delegates to
 //   `PrettyRenderer`; default path never touches the renderer.
-// - **SR-CLI-03.** Receipt fields flow verbatim. No field rewriting,
+// - **Verbatim flow.** Receipt fields flow verbatim. No field rewriting,
 //   no field stripping, no prose augmentation. Clippy lint forbids
 //   `Receipt::redact` calls in any handler module.
 // - **Hard binding 3 (no floats).** `serde_jcs` rejects f32/f64;
@@ -77,7 +77,7 @@ impl<'a, S: OutputSink> OutputFormatter<'a, S> {
     }
 }
 
-/// Render `value` for direct stdout use by handlers (AC-CLI-04.1 / AC-CLI-04.2).
+/// Render `value` for direct stdout use by handlers.
 ///
 /// Legacy entry point preserved for incremental migration. New callers
 /// should use [`emit`] instead, which dispatches on `cfg.output_mode`.
@@ -94,14 +94,14 @@ pub fn format_output(value: &serde_json::Value, pretty: bool) -> Result<String, 
     }
 }
 
-/// Single stdout entry point (AC-TTY-01..04). Dispatches on
+/// Single stdout entry point. Dispatches on
 /// `cfg.output_mode` and returns the bytes the caller writes (one
 /// trailing `\n` is the caller's responsibility — this returns the
 /// payload without it).
 ///
 /// - `Quiet` → canonical id from the curated registry (D-19), or empty
 ///   string when the method has no `quiet_id`.
-/// - `Json` → RFC 8785 canonical JSON (AC-TTY-02 byte-exact path).
+/// - `Json` → RFC 8785 canonical JSON (byte-exact path).
 /// - `PrettyCurated` → curated layout via `curated::dispatch` with
 ///   recursive sensitive-field redaction (D-29) and "more details" tail
 ///   block (D-21..D-24). Falls through to `PrettyFallback` if no

@@ -1,9 +1,9 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/DoctorRunner/interfaces.rs` instead.
 // DoctorRunner — `loom doctor` 5-check health probe.
 //
 // # Contract semantics
-// - **IC-CLI-07.** Exactly 5 checks, no more, no fewer:
+// - **Exactly 5 checks, no more, no fewer:**
 //   1. Socket reachable at platform path (mode 0600).
 //   2. Daemon responsive (single `rpc.ping`).
 //   3. AOT artifacts present (`~/.../surfaces/*.cwasm` non-empty).
@@ -173,9 +173,9 @@ pub async fn check_chromium(
 #[cfg(target_os = "macos")]
 pub async fn check_keychain_acl(keychain_label: &str) -> Result<(), CliError> {
     let _ = keychain_label;
-    // Full implementation uses security-framework crate (Phase 6).
-    // Phase 5.4 returns Ok; `loom doctor` correctly reports check 5 as ok
-    // unless the keychain is locked (caught by Phase 6 wiring).
+    // Full implementation will use the security-framework crate.
+    // For now this returns Ok; `loom doctor` correctly reports check 5
+    // as ok unless the keychain is locked (caught by future wiring).
     Ok(())
 }
 

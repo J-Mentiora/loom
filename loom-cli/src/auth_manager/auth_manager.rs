@@ -1,10 +1,10 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/AuthManager/interfaces.rs` instead.
 // AuthManager — reads the daemon HELLO token from the per-startup
 // artefact.
 //
 // # Contract semantics
-// - **IC-CLI-05.** HELLO token lives at
+// - **HELLO token** lives at
 //   `~/Library/Application Support/loom/auth/hello.token`. The daemon
 //   writes it on startup and removes it on shutdown.
 // - **Never persists across daemon restarts.** Stale tokens are

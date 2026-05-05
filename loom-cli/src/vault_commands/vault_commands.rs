@@ -1,12 +1,12 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/VaultCommands/interfaces.rs` instead.
 // VaultCommands — handlers for `loom vault.*` subcommands.
 //
 // # Contract semantics
-// - **IC-CLI-03.** Each subcommand maps to exactly one RPC:
+// - **Routing.** Each subcommand maps to exactly one RPC:
 //   `grant→vault.grant`, `revoke→vault.revoke`,
 //   `list→vault.list_grants`, `add→vault.add`.
-// - **IC-CLI-10 (no interactive prompts default).** Only `add` may
+// - **No interactive prompts by default.** Only `add` may
 //   prompt (OAuth device-flow); `--yes` opts out for non-interactive
 //   shells. Clippy lint bans `dialoguer::*` outside this module.
 // - **Hard binding 2 (vault stays in core).** `VaultCommands` never
@@ -25,7 +25,7 @@ use crate::CliError;
 
 /// Parse a TTL value. Accepts either a bare integer (interpreted as seconds)
 /// or a humantime duration like "1h", "30m", "45s", "1h30m". This is the
-/// `clap::value_parser` for the `--ttl` flag (AC-VAULTTTL-01..04).
+/// `clap::value_parser` for the `--ttl` flag.
 pub(crate) fn parse_ttl(s: &str) -> Result<u64, String> {
     if let Ok(n) = s.parse::<u64>() {
         return Ok(n);
@@ -158,7 +158,7 @@ pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result
     Ok(())
 }
 
-/// IC-CLI-03 mapping table — `interface_tests` asserts coverage.
+/// Subcommand → RPC mapping table — `interface_tests` asserts coverage.
 pub const SUBCOMMAND_RPC_MAP: &[(&str, &str)] = &[
     ("grant", "vault.grant"),
     ("revoke", "vault.revoke"),

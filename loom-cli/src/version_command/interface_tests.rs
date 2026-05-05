@@ -1,5 +1,5 @@
-// Interface tests for `VersionCommand`. Verifies SR-CLI-01 RPC bypass
-// (`print` does NOT take an `RpcClient`) plus AC-VER-02 build provenance
+// Interface tests for `VersionCommand`. Verifies the RPC bypass
+// (`print` does NOT take an `RpcClient`) plus build provenance
 // (`LOOM_VERSION` includes git SHA + build date).
 
 use super::version_command::{print, resolve, VersionInfo, LOOM_VERSION};
@@ -25,11 +25,11 @@ fn resolve_signature_is_pure() {
     let _ = _ck;
 }
 
-// === SR-CLI-01: bypasses RpcClient entirely ===
+// === bypasses RpcClient entirely ===
 //
 // Encoded structurally: `print` is parameterless. If it ever needs an
 // `RpcClient`, this test should be reviewed alongside an audit of the
-// AC-NFR-PERF latency budget.
+// latency budget.
 #[test]
 fn print_takes_no_rpc_client() {
     fn _ck() -> Result<(), CliError> {
@@ -53,7 +53,7 @@ fn version_info_serialises_to_json_object() {
     assert!(s.contains("\"target\""));
 }
 
-// === AC-VER-02: --version output includes git sha + build date ===
+// === --version output includes git sha + build date ===
 
 #[test]
 fn loom_version_starts_with_cargo_pkg_version() {

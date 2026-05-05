@@ -14,7 +14,7 @@ pub mod auth_manager;
 pub mod benchmark_commands;
 pub mod chromium_downloader;
 pub mod chromium_pin;
-pub mod cli_config; // Phase 5.3 system dir is `ConfigResolver`; renamed for crate path consistency.
+pub mod cli_config; // v5.3 system dir is `ConfigResolver`; renamed for crate path consistency.
 pub mod cli_main;
 pub mod cli_observability;
 pub mod command_router;
@@ -35,12 +35,12 @@ pub mod serve_runner;
 pub mod session_commands;
 pub mod url_allowlist;
 pub mod vault_commands;
-pub mod version_command; // Phase 5.3 system dir is `main`; renamed `cli_main` for crate path consistency.
+pub mod version_command; // v5.3 system dir is `main`; renamed `cli_main` for crate path consistency.
 
 #[cfg(any(test, feature = "mock"))]
 pub mod mocks;
 
 // `crate::CliConfig` and `crate::CliError` are referenced bare across
-// the crate per the locked Phase 5.3 interfaces.
+// the crate per the locked v5.3 interfaces.
 pub use cli_config::CliConfig;
 pub use error_mapper::CliError;

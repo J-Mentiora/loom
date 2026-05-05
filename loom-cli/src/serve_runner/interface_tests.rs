@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ServeRunner/interface_tests.rs` instead.
-// Interface tests for `ServeRunner`. Verifies IC-CLI-05 HELLO
+// Interface tests for `ServeRunner`. Verifies HELLO
 // disclosure shape and the no-persist contract.
 
 use super::serve_runner::{
@@ -55,7 +55,7 @@ fn default_daemon_binary_signature() {
     let _ = _ck;
 }
 
-// === IC-CLI-05: never persists across daemon restarts ===
+// === never persists across daemon restarts ===
 //
 // Encoded structurally — `ServeRunner` does not have a method to
 // persist or cache the token. The token is exposed once (printed +
@@ -64,7 +64,7 @@ fn default_daemon_binary_signature() {
 #[test]
 fn no_persist_method_in_public_api() {
     // If a `cache_token` or `persist_token` method is ever added,
-    // this test should be updated alongside an audit of IC-CLI-05.
+    // this test should be reviewed alongside the no-persist audit.
     let _ = HelloDisclosure {
         token: "x".into(),
         daemon_pid: 1,

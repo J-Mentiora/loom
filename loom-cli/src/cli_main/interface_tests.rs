@@ -1,4 +1,4 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/main/interface_tests.rs` instead.
 // Interface tests for `main`. Verifies the binary entry signature,
 // library `run` test hook, and tokio runtime construction.
@@ -30,7 +30,7 @@ fn early_init_returns_cli_config_or_error() {
     let _ = _ck;
 }
 
-// === IC-CLI-04: main is sole std::process::exit caller ===
+// === main is sole std::process::exit caller ===
 //
 // Encoded as a project-level clippy lint; the test below documents the
 // contract by referencing the FORBIDDEN comment string verbatim.

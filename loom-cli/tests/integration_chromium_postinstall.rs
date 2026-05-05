@@ -1,8 +1,8 @@
-// Integration tests for chromium-sha-pin-real ACs.
+// Integration tests for chromium-sha-pin-real.
 //
-// AC-CHRPIN-03: `loom postinstall` downloads, verifies SHA, extracts — binary executable.
-// AC-CHRPIN-04: Corrupted archive → CliError::SupplyChain, not exit 0.
-// AC-CHRPIN-05: Tests use a local HTTP server; both happy and tampered paths covered.
+// `loom postinstall` downloads, verifies SHA, extracts — binary executable.
+// Corrupted archive → CliError::SupplyChain, not exit 0.
+// Tests use a local HTTP server; both happy and tampered paths covered.
 //
 // Run with: cargo test -p loom-cli --test integration_chromium_postinstall
 
@@ -64,13 +64,13 @@ fn spawn_one_shot_server(zip_bytes: Vec<u8>) -> (String, std::thread::JoinHandle
     (url, handle)
 }
 
-// ── AC-CHRPIN-03: happy path download + extract + binary executable ───────────
+// ── happy path download + extract + binary executable ───────────
 
-/// AC-CHRPIN-03 / AC-CHRPIN-05 (happy path):
+/// Happy path:
 /// ChromiumDownloader::ensure() with a correct SHA-256 must download the
 /// archive, verify SHA, extract the binary, and return Downloaded.
 #[tokio::test]
-async fn test_ac_chrpin_03_happy_path_download_and_extract() {
+async fn test_happy_path_download_and_extract() {
     let install_dir = TempDir::new().unwrap();
 
     // Build a zip containing our "binary" at the subpath.
@@ -88,15 +88,15 @@ async fn test_ac_chrpin_03_happy_path_download_and_extract() {
     let outcome = downloader
         .ensure(&url, &expected_sha)
         .await
-        .expect("AC-CHRPIN-03: ensure() must not return Err on valid archive");
+        .expect("ensure() must not return Err on valid archive");
 
-    // AC-CHRPIN-03: outcome must be Downloaded, not Skipped.
+    // Outcome must be Downloaded, not Skipped.
     assert!(
         matches!(
             outcome,
             loom_cli::chromium_downloader::DownloadOutcome::Downloaded(_)
         ),
-        "AC-CHRPIN-03: expected Downloaded, got {:?}",
+        "expected Downloaded, got {:?}",
         outcome
     );
 
@@ -104,10 +104,10 @@ async fn test_ac_chrpin_03_happy_path_download_and_extract() {
     let binary_path = install_dir.path().join(binary_subpath);
     assert!(
         binary_path.exists(),
-        "AC-CHRPIN-03: binary must exist at {binary_path:?} after ensure()"
+        "binary must exist at {binary_path:?} after ensure()"
     );
 
-    // Binary must be executable on Unix (AC-CHRPIN-03 requirement).
+    // Binary must be executable on Unix.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -117,20 +117,20 @@ async fn test_ac_chrpin_03_happy_path_download_and_extract() {
             .mode();
         assert!(
             mode & 0o111 != 0,
-            "AC-CHRPIN-03: binary must be executable, mode={mode:o}"
+            "binary must be executable, mode={mode:o}"
         );
     }
 
     let _ = server.join();
 }
 
-// ── AC-CHRPIN-04: supply-chain mismatch → CliError::SupplyChain ───────────────
+// ── supply-chain mismatch → CliError::SupplyChain ───────────────
 
-/// AC-CHRPIN-04 / AC-CHRPIN-05 (tampered archive path):
+/// Tampered archive path:
 /// ChromiumDownloader::ensure() with a wrong SHA-256 must return
 /// CliError::SupplyChain (not exit 0, not CliError::Internal).
 #[tokio::test]
-async fn test_ac_chrpin_04_supply_chain_tampered_archive() {
+async fn test_supply_chain_tampered_archive() {
     let install_dir = TempDir::new().unwrap();
 
     let binary_subpath = "chromium";
@@ -148,11 +148,8 @@ async fn test_ac_chrpin_04_supply_chain_tampered_archive() {
 
     let result = downloader.ensure(&url, &wrong_sha).await;
 
-    // AC-CHRPIN-04: must be Err, and specifically CliError::SupplyChain.
-    assert!(
-        result.is_err(),
-        "AC-CHRPIN-04: ensure() must return Err on SHA mismatch"
-    );
+    // Must be Err, and specifically CliError::SupplyChain.
+    assert!(result.is_err(), "ensure() must return Err on SHA mismatch");
 
     match result.unwrap_err() {
         CliError::SupplyChain {
@@ -162,27 +159,29 @@ async fn test_ac_chrpin_04_supply_chain_tampered_archive() {
         } => {
             assert_eq!(
                 expected_hash, wrong_sha,
-                "AC-CHRPIN-04: SupplyChain::expected_hash must be the SHA we passed"
+                "SupplyChain::expected_hash must be the SHA we passed"
             );
             assert_ne!(
                 actual_hash, wrong_sha,
-                "AC-CHRPIN-04: SupplyChain::actual_hash must differ from the wrong SHA"
+                "SupplyChain::actual_hash must differ from the wrong SHA"
             );
         }
-        other => panic!("AC-CHRPIN-04: expected CliError::SupplyChain, got: {other:?}"),
+        other => panic!(
+            "expected CliError::SupplyChain, got: {other:?}"
+        ),
     }
 
     // Binary must NOT exist after a failed ensure (archive not extracted).
     let binary_path = install_dir.path().join(binary_subpath);
     assert!(
         !binary_path.exists(),
-        "AC-CHRPIN-04: binary must not exist after supply-chain failure"
+        "binary must not exist after supply-chain failure"
     );
 
     let _ = server.join();
 }
 
-// ── AC-CHRPIN-05: idempotence — second ensure() with matching sentinel → Skipped
+// ── idempotence — second ensure() with matching sentinel → Skipped
 
 /// Bonus: second call to ensure() when sentinel already present → Skipped.
 /// Not in the AC set but validates idempotence invariant from chromium-plumbing-fix.

@@ -1,13 +1,13 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/VaultCommands/interface_tests.rs` instead.
-// Interface tests for `VaultCommands`. Verifies IC-CLI-03 coverage
-// and IC-CLI-10 prompt discipline.
+// Interface tests for `VaultCommands`. Verifies subcommand coverage
+// and prompt discipline.
 
 use super::vault_commands::{
     VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs, SUBCOMMAND_RPC_MAP,
 };
 
-// === IC-CLI-03 ===
+// === Subcommand coverage ===
 #[test]
 fn subcommand_rpc_map_covers_four_verbs() {
     assert_eq!(SUBCOMMAND_RPC_MAP.len(), 4);
@@ -19,8 +19,8 @@ fn subcommand_rpc_map_covers_four_verbs() {
 
 #[test]
 fn list_rpc_method_is_vault_list_grants_not_vault_list() {
-    // The CLI verb is `list` but the RPC is `vault.list_grants` per
-    // design §6 to disambiguate from `vault.list_secrets` (reserved).
+    // The CLI verb is `list` but the RPC is `vault.list_grants`
+    // to disambiguate from `vault.list_secrets` (reserved).
     assert_eq!(
         SUBCOMMAND_RPC_MAP
             .iter()
@@ -30,7 +30,7 @@ fn list_rpc_method_is_vault_list_grants_not_vault_list() {
     );
 }
 
-// === IC-CLI-10: only `vault add` may prompt; --yes opts out ===
+// === only `vault add` may prompt; --yes opts out ===
 #[test]
 fn vault_add_args_have_yes_flag() {
     let a = VaultAddArgs {
@@ -79,7 +79,7 @@ fn vault_list_session_filter_optional() {
     assert!(l.session.is_none());
 }
 
-// === AC-VAULTTTL-01..04: --ttl accepts integer seconds OR humantime ===
+// === --ttl accepts integer seconds OR humantime ===
 
 use super::vault_commands::parse_ttl;
 

@@ -1,7 +1,7 @@
 // VersionCommand — `loom --version` handler.
 //
 // # Contract semantics
-// - **SR-CLI-01 / AC-NFR-PERF.** Bypasses `RpcClient` entirely.
+// - **Bypasses `RpcClient` entirely.**
 //   Resolves `env!("CARGO_PKG_VERSION")` + compile-time provenance
 //   constants set by `build.rs`. No socket I/O. No schema load.
 //   p99 < 50 ms target, contract SLA p99 ≤ 200 ms.
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::CliError;
 
-/// Display string used by clap's `--version` (AC-VER-02). Format:
+/// Display string used by clap's `--version`. Format:
 /// `<semver> (<short-sha> <build-date>)`. clap prepends the binary
 /// name, so `loom --version` prints `loom 0.9.0 (abc1234 2026-05-04)`.
 pub const LOOM_VERSION: &str = concat!(

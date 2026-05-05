@@ -1,12 +1,11 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/McpDelegate/interfaces.rs` instead.
 // McpDelegate — `loom mcp serve` delegation to loom-mcp.
 //
 // # Contract semantics
-// - **SR-CLI-02 / AC-PROTO-03.1.** Calls
-//   `loom-mcp::McpMain::run_stdio()` directly. The entire MCP loop
-//   runs inside the linked-in `loom-mcp` crate; `loom-cli` does NO
-//   MCP framing.
+// - **MCP delegation.** Calls `loom-mcp::McpMain::run_stdio()` directly.
+//   The entire MCP loop runs inside the linked-in `loom-mcp` crate;
+//   `loom-cli` does NO MCP framing.
 // - **`mcp-rs` banned.** `cargo deny` forbids the `mcp-rs` crate in
 //   `loom-cli/Cargo.toml`. Re-implementing MCP framing inside
 //   loom-cli is structurally impossible.
@@ -19,12 +18,11 @@ use crate::CliError;
 /// awaits its termination. Returns when the parent process closes
 /// stdin or sends SIGINT/SIGTERM.
 ///
-/// loom-mcp is not yet a direct dep of loom-cli (Phase 5.4 scaffold);
-/// the delegate path is wired up in Phase 6.
+/// loom-mcp is not yet a direct dep of loom-cli; the delegate path will
+/// be wired up in a future iteration.
 pub async fn run() -> Result<(), CliError> {
     Err(CliError::Internal(
-        "McpDelegate: loom-mcp linkage is wired in Phase 6 — run `loom-mcp serve` directly"
-            .to_string(),
+        "McpDelegate: loom-mcp linkage is not yet wired — run `loom-mcp serve` directly".to_string(),
     ))
 }
 

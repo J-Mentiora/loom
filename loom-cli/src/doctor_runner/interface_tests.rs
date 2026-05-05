@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/DoctorRunner/interface_tests.rs` instead.
-// Interface tests for `DoctorRunner`. Verifies IC-CLI-07's exactly-5
+// Interface tests for `DoctorRunner`. Verifies the exactly-5
 // check enumeration in stable order.
 
 use super::doctor_runner::{DoctorArgs, DoctorPaths, CHECK_NAMES};
@@ -10,7 +10,7 @@ fn check_names_count_is_exactly_five() {
     assert_eq!(
         CHECK_NAMES.len(),
         5,
-        "IC-CLI-07 mandates exactly 5 checks; got {}",
+        "expected exactly 5 checks; got {}",
         CHECK_NAMES.len()
     );
 }
@@ -47,11 +47,11 @@ fn doctor_paths_carries_all_5_check_inputs() {
     assert!(p.socket_path.is_absolute());
 }
 
-// === IC-CLI-07: missing any check is a KILL ===
+// === missing any check is a KILL ===
 //
 // The 5 individual `check_*` functions below MUST exist; their
 // absence breaks compilation of `interface_tests`, which is the
-// structural enforcement of IC-CLI-07.
+// structural enforcement.
 #[test]
 fn five_individual_check_functions_compile() {
     // Reference each function by signature.

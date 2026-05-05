@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/OutputFormatter/interface_tests.rs` instead.
-// Interface tests for `OutputFormatter`. Verifies IC-CLI-01 canonical
-// JSON path, IC-CLI-02 pretty delegation shape, and SR-CLI-03 verbatim
+// Interface tests for `OutputFormatter`. Verifies the canonical
+// JSON path, pretty delegation shape, and verbatim
 // pass-through.
 
 use super::output_formatter::{format_output, OutputFormatter, OutputSink, StdoutSink};
@@ -24,7 +24,7 @@ fn new_uses_canonical_json_path() {
     let mut sink = VecSink(Vec::new());
     let f: OutputFormatter<'_, VecSink> = OutputFormatter::new(&mut sink);
     drop(f);
-    // Constructor compiles with no renderer — IC-CLI-01 default path.
+    // Constructor compiles with no renderer — default canonical-JSON path.
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn stdout_sink_default_constructor() {
     let _ = StdoutSink;
 }
 
-// === IC-CLI-01: no ANSI, no headers, no prose ===
+// === no ANSI, no headers, no prose ===
 //
 // The contract is that `canonical_json` calls `serde_jcs::to_string`.
 // We can't test the actual output without an implementation, but we

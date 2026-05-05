@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/RpcClient/interface_tests.rs` instead.
-// Interface tests for `RpcClient`. Verifies AC-PROTO-01.1 socket-path
-// shape, BC-CLI-05 1:1 error mapping signatures, and the retry policy
+// Interface tests for `RpcClient`. Verifies socket-path
+// shape, 1:1 error mapping signatures, and the retry policy
 // defaults.
 
 use super::rpc_client::{RpcClient, RpcClientConfig, RpcError};
@@ -52,7 +52,7 @@ fn ping_signature_returns_unit_or_error() {
     let _ = _ck;
 }
 
-// === BC-CLI-05: From<RpcError> for CliError mirrors LoomErrorCode 1:1 ===
+// === From<RpcError> for CliError mirrors LoomErrorCode 1:1 ===
 #[test]
 fn from_rpc_error_for_cli_error_present() {
     fn _ck(e: RpcError) -> CliError {

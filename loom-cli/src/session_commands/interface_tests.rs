@@ -1,14 +1,14 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/SessionCommands/interface_tests.rs` instead.
-// Interface tests for `SessionCommands`. Verifies IC-CLI-03 coverage,
-// IC-CLI-09 flag-name parity, and SR-CLI-03 receipt pass-through shape.
+// Interface tests for `SessionCommands`. Verifies subcommand coverage,
+// flag-name parity, and receipt pass-through shape.
 
 use super::session_commands::{
     parse_budget_string, AbortArgs, CapturePolicyArg, CloseArgs, CreateArgs, DiffArgs, ExportArgs,
     ExportFormat, InspectArgs, ListArgs, ReplayArgs, ValidateArgs, SUBCOMMAND_RPC_MAP,
 };
 
-// === IC-CLI-03: 9 session subcommands map to 9 RPC methods ===
+// === 9 session subcommands map to 9 RPC methods ===
 
 #[test]
 fn subcommand_rpc_map_has_nine_entries() {
@@ -35,7 +35,7 @@ fn subcommand_rpc_map_uses_session_dot_prefix() {
     }
 }
 
-// === IC-CLI-09: flag names mirror RPC schema field names ===
+// === flag names mirror RPC schema field names ===
 //
 // We assert struct field names match the documented JSON-Schema fields.
 
@@ -56,7 +56,7 @@ fn create_args_field_names_match_schema() {
     assert!(json.get("seed").is_some());
 }
 
-// === AC-CAPPOL-04: clap rejects unknown capture-policy values with exit 2 ===
+// === clap rejects unknown capture-policy values with exit 2 ===
 
 #[test]
 fn capture_policy_arg_accepts_three_known_values() {
@@ -182,10 +182,10 @@ fn validate_args_takes_session_id() {
     assert_eq!(v.session_id, "id");
 }
 
-// === AC-BUDGET-04.1: --budget flag parsing ===
+// === --budget flag parsing ===
 
 #[test]
-fn ac_budget_04_1_parse_budget_string_network_and_wall_clock() {
+fn parse_budget_string_network_and_wall_clock() {
     let limits = parse_budget_string("network=10MB,wall_clock=30s").unwrap();
     assert_eq!(
         limits.network_bytes,
@@ -200,12 +200,12 @@ fn ac_budget_04_1_parse_budget_string_network_and_wall_clock() {
 }
 
 #[test]
-fn ac_budget_04_1_parse_budget_string_unknown_key_is_error() {
+fn parse_budget_string_unknown_key_is_error() {
     assert!(parse_budget_string("unknown=10MB").is_err());
 }
 
 #[test]
-fn ac_budget_04_1_parse_budget_string_partial_overrides_keeps_defaults() {
+fn parse_budget_string_partial_overrides_keeps_defaults() {
     let limits = parse_budget_string("wall_clock=30s").unwrap();
     assert_eq!(limits.session_walltime_ms, 30_000);
     // Unspecified fields stay at defaults.

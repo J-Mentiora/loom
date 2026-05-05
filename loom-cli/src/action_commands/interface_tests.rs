@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ActionCommands/interface_tests.rs` instead.
-// Interface tests for `ActionCommands`. Verifies IC-CLI-03 single-RPC
+// Interface tests for `ActionCommands`. Verifies the single-RPC
 // shape, the schema-before-RPC contract, and the
 // `<surface>.<verb>` method-name discipline.
 
@@ -21,7 +21,7 @@ fn action_args_carry_method_session_extra() {
 
 #[test]
 fn action_method_must_be_dot_separated() {
-    // <surface>.<verb> is structural — IC-CLI-03 maps method 1:1 to
+    // <surface>.<verb> is structural — the method name maps 1:1 to
     // the JSON-RPC method name. The runtime check lives in dispatch();
     // here we lock the convention by constructing a typical example.
     let a = ActionArgs {

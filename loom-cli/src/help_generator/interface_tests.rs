@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/HelpGenerator/interface_tests.rs` instead.
-// Interface tests for `HelpGenerator`. Verifies IC-CLI-09 mechanical
+// Interface tests for `HelpGenerator`. Verifies mechanical
 // field-name conversion (round-trip) and the parity-test data shape.
 
 use super::help_generator::{clap_arg_to_json_field, generate, json_field_to_clap_arg, MethodHelp};
@@ -26,11 +26,11 @@ fn method_help_carries_method_fields_description() {
     assert_eq!(h.fields.len(), 2);
 }
 
-// === IC-CLI-09: mechanical field-name conversion ===
+// === mechanical field-name conversion ===
 //
 // `json_field_to_clap_arg` and `clap_arg_to_json_field` must be
-// inverse functions for the parity test to be byte-equal. Phase 5.4
-// asserts the round-trip; here we lock the signatures.
+// inverse functions for the parity test to be byte-equal. A future
+// iteration asserts the round-trip; here we lock the signatures.
 #[test]
 fn json_field_to_clap_arg_signature() {
     fn _ck(f: &str) -> String {
@@ -48,4 +48,4 @@ fn clap_arg_to_json_field_signature() {
 }
 
 // Pure signature lock — runtime byte-equality is checked by the CI
-// parity test once Phase 5.4 implements the conversion.
+// parity test once a future iteration implements the conversion.

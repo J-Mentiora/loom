@@ -1,10 +1,10 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/HelpGenerator/interfaces.rs` instead.
 // HelpGenerator — derives `--help` text from clap definitions +
 // `SchemaCache` field descriptions.
 //
 // # Contract semantics
-// - **IC-CLI-09 / AC-ARCH-21.** clap arg names are mechanically
+// - **clap arg names** are mechanically
 //   derived from JSON-Schema field names so
 //   `loom session create --help` mirrors `session.create` field names
 //   exactly. CI parity test
@@ -29,7 +29,7 @@ pub struct MethodHelp {
 
 /// Generates the help-text bundle from the schema cache. Pure function.
 pub fn generate(_schemas: &SchemaCache) -> Result<Vec<MethodHelp>, CliError> {
-    // Full schema-driven generation is Phase 7 CI parity scope.
+    // Full schema-driven generation is a future CI parity task.
     Ok(vec![])
 }
 

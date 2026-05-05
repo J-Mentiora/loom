@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/AuthManager/interface_tests.rs` instead.
-// Interface tests for `AuthManager`. Verifies IC-CLI-05 artefact
+// Interface tests for `AuthManager`. Verifies artefact
 // shape and the no-persistence contract.
 
 use super::auth_manager::{default_auth_paths, AuthManager, AuthPaths};
@@ -49,7 +49,7 @@ fn default_auth_paths_signature() {
     let _ = _ck;
 }
 
-// === IC-CLI-05: never persists across daemon restarts ===
+// === never persists across daemon restarts ===
 //
 // Encoded structurally — there is no `write_hello_token` method on
 // `AuthManager`. The test below documents the absence by relying on
@@ -57,7 +57,7 @@ fn default_auth_paths_signature() {
 #[test]
 fn no_token_writer_in_public_api() {
     // If a `write_hello_token` is ever added, this test should be
-    // updated alongside an audit of IC-CLI-05.
+    // reviewed alongside the no-persistence audit.
     let _ = AuthManager::new(AuthPaths {
         token_path: "/tmp/x".into(),
         pid_path: "/tmp/y".into(),
