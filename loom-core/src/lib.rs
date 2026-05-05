@@ -16,7 +16,7 @@
 // files to resolve to `crate::…` without edits to the design-artifact sources.
 extern crate self as loom_core;
 
-// ---- Canonical error re-export (binding-constraints §5) ----
+// ---- Canonical error re-export ----
 // `loom_core::error::LoomError` is the universal error type referenced
 // by every other crate. The canonical definition lives in
 // `loom-shared` (cross-crate); we re-export here so the path

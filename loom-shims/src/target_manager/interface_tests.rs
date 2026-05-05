@@ -78,7 +78,7 @@ fn target_state_binds_session_id() {
     assert_eq!(s.profile, "isolated");
 }
 
-// === Hard binding 3: integer-only fields ===
+// === Integer-only fields ===
 
 #[test]
 fn target_state_ids_are_u64_not_float() {

@@ -11,8 +11,8 @@
 // - **Verbatim flow.** Receipt fields flow verbatim. No field rewriting,
 //   no field stripping, no prose augmentation. Clippy lint forbids
 //   `Receipt::redact` calls in any handler module.
-// - **Hard binding 3 (no floats).** `serde_jcs` rejects f32/f64;
-//   clippy lint forbids float literals in any loom-cli module.
+// - **No floats.** `serde_jcs` rejects f32/f64; clippy lint forbids
+//   float literals in any loom-cli module.
 
 use crate::cli_config::output_mode::OutputMode;
 use crate::cli_config::CliConfig;

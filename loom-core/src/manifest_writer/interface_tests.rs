@@ -79,7 +79,7 @@ fn header_deserializes_legacy_no_capture_policy() {
 
 #[test]
 fn action_receipt_has_integer_only_numeric_fields() {
-    // Hard binding 3: no f32/f64 anywhere in receipt-shaped types.
+    // No f32/f64 anywhere in receipt-shaped types.
     let r = ManifestEntry::ActionReceipt {
         action_id: 7,
         emitted_at_ms: 1714074336100,

@@ -24,8 +24,7 @@
 // - **No hand-rolled `extern "C"` declarations.** Surface
 //   crate has zero `unsafe extern "C"` blocks; CI lint
 //   `tools/lint-surface-bindings.py` greps and fails on any match.
-// - **Synchronous trampolines.** Each function blocks on host return per
-//   binding constraint §3.
+// - **Synchronous trampolines.** Each function blocks on host return.
 // - **Result-typed.** Fallible host-fns return `Result<T, HostError>`;
 //   infallible (`clock_now`, `rng_next_u64`, `log_emit`, `receipt_emit`)
 //   return their bare type or `()`.
@@ -70,8 +69,7 @@ pub enum LogLevel {
 
 /// Vault-mediated network request. `headers` may include
 /// `Authorization: Grant <id>` — the host substitutes the real secret
-/// inside `Vault::substitute` (binding constraint §2). Surface NEVER
-/// holds raw OAuth tokens.
+/// inside `Vault::substitute`. Surface NEVER holds raw OAuth tokens.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetReq {
     pub method: String,

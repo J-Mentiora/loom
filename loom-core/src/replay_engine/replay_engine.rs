@@ -122,8 +122,8 @@ pub trait ReplayEngine: Send + Sync {
     ///         ManifestIntegrityFailed { failed_at_index }.
     fn replay(&self, source: SessionId, opts: ReplayOpts) -> Result<SessionId, LoomError>;
 
-    /// Diff two session manifests. Screenshots excluded from `differences`
-    /// count by default (Hard binding 5).
+    /// Diff two session manifests. Screenshots are excluded from the
+    /// `differences` count by default.
     fn diff(&self, a: SessionId, b: SessionId, opts: DiffOpts) -> Result<DiffReport, LoomError>;
 }
 

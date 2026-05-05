@@ -108,7 +108,7 @@ fn gc_report_fields_are_pure_integers() {
 
 #[test]
 fn content_ref_size_bytes_is_u64_not_float() {
-    // Compile-time guarantee per Hard binding 3.
+    // Compile-time guarantee: integer-only numeric fields.
     let r = ContentRef {
         sha256: "0".repeat(64),
         size_bytes: u64::MAX,

@@ -1,4 +1,4 @@
-//! Canonical `LoomError` + `LoomErrorCode` per binding-constraints §5.
+//! Canonical `LoomError` + `LoomErrorCode` shared across every crate.
 //!
 //! Stable enum (~25 codes). Adding a code is SemVer-minor; removing one
 //! is major. The linter `tools/lint-error-codes.py` walks every

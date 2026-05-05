@@ -6,10 +6,9 @@
 //   default; jpeg quality is integer 0-100 if used.
 // - **Hashing.** Screenshot bytes go through `host::blob_put` →
 //   `ContentRef`; the ref populates `Receipt.screenshot_after_ref`.
-// - **NFR-DET-01.** Screenshots are excluded from the hash chain (see
-//   binding-constraints §Hard binding 5); the Receipt itself is hashed
-//   via canonical JSON, but the screenshot bytes themselves are not in
-//   the hash chain.
+// - **NFR-DET-01.** Screenshots are excluded from the hash chain; the
+//   Receipt itself is hashed via canonical JSON, but the screenshot
+//   bytes themselves are not in the hash chain.
 
 extern crate alloc;
 
