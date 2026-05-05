@@ -243,9 +243,7 @@ Each module's source file is named after the module
 
 loom is **0.9.0** — pre-1.0. The matrix below is the stability
 contract: breaking changes to **Stable** rows bump the major version
-when 1.0 ships; **Beta** rows may change without notice. Production
-users include Mentiora's GA-driven software-generation pipeline (the
-harness loom was extracted from).
+when 1.0 ships; **Beta** rows may change without notice.
 
 | Surface | Status | Notes |
 |---|---|---|
@@ -254,7 +252,7 @@ harness loom was extracted from).
 | Determinism harness (`Math.random`, `Date.now`, `performance.now`) | **Stable** | Seeded at session-create; reproduced bit-for-bit on replay. |
 | Deterministic replay (manifest hash-chain bit-equality src ↔ replay) | **Beta** | Source/replay equality is not yet bulletproof — gated on real-Chromium subprocess wiring. |
 | `web.navigate`, `web.evaluate`, `web.wait`, `web.type` | **Stable** | Covered by replay-equality tests. |
-| `web.click` | **Beta** | DOM coordinate edge cases — gated on **AC-CLICK-***. |
+| `web.click` | **Beta** | DOM coordinate edge cases — gated on the hit-test refinements still in progress. |
 | `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). |
 | CLI surface (`loom session`, `loom action`, `loom export`, `loom import`) | **Stable** | Flags pinned. `--version` format pinned: `loom <ver> (<sha> <date>)`. |
 | `import.playwright` RPC | **Stable** | End-to-end wired through facade, adapter, handlers, router. |
