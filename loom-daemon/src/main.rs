@@ -442,6 +442,15 @@ impl WasmHostBridge for StubHostBridge {
         use loom_rpc::error_translator::error_translator::LoomErrorCode;
         Err(LoomErrorCode::SurfaceUnavailable)
     }
+
+    // AC-DIST-05: stub bridge means WASM host failed to load (no surfaces).
+    // Reporting false here doesn't change behavior — `dispatch_action`
+    // already errors with SurfaceUnavailable — but it produces a clearer
+    // BrowserNotFound message at session.create when the surfaces dir
+    // happens to be empty AND chromium is missing.
+    fn has_chromium(&self) -> bool {
+        false
+    }
 }
 
 /// Real bridge wrapping `Arc<loom_host::WasmHost>`. Uses
@@ -450,6 +459,9 @@ impl WasmHostBridge for StubHostBridge {
 struct WasmBridge {
     host: Arc<loom_host::WasmHost>,
     core: Arc<CoreApiFacade>,
+    /// AC-DIST-05: was a `ShimChromiumConfig` registered at host boot?
+    /// Set at `build_host_bridge` time from the resolver's outcome.
+    has_chromium: bool,
 }
 
 impl WasmHostBridge for WasmBridge {
@@ -615,6 +627,10 @@ impl WasmHostBridge for WasmBridge {
                 Err(map_loom_error(&loom_error))
             }
         }
+    }
+
+    fn has_chromium(&self) -> bool {
+        self.has_chromium
     }
 }
 
@@ -1335,39 +1351,51 @@ fn build_host_bridge(
         .join("loom")
         .join("surfaces");
 
-    // Resolve shim-chromium binary via the shared resolver — picks up the
-    // postinstall-managed `dirs::data_local_dir()/loom/bin/` for cargo-install
-    // installs, then falls back to the daemon's own dir (brew/manual paths).
-    // Resolve the verified Chromium binary the same way `loom doctor` does
-    // (~/.config/loom/chromium/Chromium.app/...).
-    let chromium = dirs::home_dir()
+    // AC-DIST-05: resolve Chromium across all install channels. Resolution
+    // chain: LOOM_CHROMIUM_PATH env override → pinned `~/.config/loom/chromium/...`
+    // → PATH search (chromium / chromium-browser / chrome / google-chrome) →
+    // macOS `/Applications/...` → typed `BrowserNotFound`. Pinned wins for
+    // replay-bit-equality (SR-SHIM-03); a `tracing::warn!` fires below when
+    // the resolver picks a non-pinned source so users know they've lost
+    // determinism.
+    let chromium_dir = dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join(".config")
         .join("loom")
-        .join("chromium")
-        .join("Chromium.app/Contents/MacOS/Chromium");
-
-    // AC-DIST-05: actionable error when Chromium isn't yet present. Drop the
-    // shim_chromium registration entirely (web actions return
-    // `SurfaceUnavailable`) AND emit a clear stderr line so the user knows
-    // the next step. No silent panic — see daemon `serve_runner` which
-    // inherits stderr to the user's terminal.
-    let shim_chromium = if !chromium.exists() {
-        tracing::error!(
-            "Chromium not yet downloaded. Run `loom postinstall` to fetch the \
-             pinned Chromium build (~150 MB, one-time). Web actions will return \
-             SurfaceUnavailable until then."
-        );
-        None
-    } else {
-        loom_shared::binary_resolver::resolve_loom_sibling("loom-shim-chromium").map(|shim_bin| {
-            ShimChromiumConfig {
-                shim_binary_path: shim_bin,
-                chromium_path: chromium,
+        .join("chromium");
+    let shim_chromium = match loom_shared::chromium_resolver::resolve_chromium(&chromium_dir) {
+        Ok((chromium, source)) => {
+            use loom_shared::chromium_resolver::ChromiumSource;
+            if source != ChromiumSource::Pinned {
+                tracing::warn!(
+                    chromium_path = %chromium.display(),
+                    source = ?source,
+                    "loom: using system-installed Chromium; replay-bit-equality is \
+                     not guaranteed across machines. Run 'loom postinstall' for the \
+                     pinned build."
+                );
             }
-        })
+            loom_shared::binary_resolver::resolve_loom_sibling("loom-shim-chromium").map(
+                |shim_bin| ShimChromiumConfig {
+                    shim_binary_path: shim_bin,
+                    chromium_path: chromium,
+                },
+            )
+        }
+        Err(not_found) => {
+            tracing::error!(
+                searched = ?not_found.searched_paths,
+                "Chromium not found by any resolver path. \
+                 Install via 'brew install --cask chromium' (macOS) or your \
+                 distro's package manager (Linux), or run 'loom postinstall' \
+                 for the pinned build. session.create will return BrowserNotFound \
+                 until Chromium is reachable."
+            );
+            None
+        }
     };
 
+    let has_chromium = shim_chromium.is_some();
     let host_config = HostConfig {
         surfaces_dir,
         shim_chromium,
@@ -1381,6 +1409,7 @@ fn build_host_bridge(
                 Arc::new(WasmBridge {
                     host: host_for_bridge,
                     core,
+                    has_chromium,
                 }),
                 Some(host),
             )

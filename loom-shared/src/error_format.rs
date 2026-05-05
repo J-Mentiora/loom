@@ -92,6 +92,14 @@ pub enum LoomErrorCode {
     #[serde(rename = "profile_restricted")]
     ProfileRestricted,
 
+    // ---- Browser / launch ----
+    /// AC-DIST-05: chromium binary could not be located by any of the
+    /// resolver's search paths (env override, pinned `~/.config/loom/chromium/...`,
+    /// PATH lookup for `chromium`/`chromium-browser`/`chrome`/`google-chrome`,
+    /// macOS `/Applications/...`). Wire string: `"browser-not-found"`.
+    /// `LoomError.message` carries the actionable install command.
+    BrowserNotFound,
+
     // ---- Catch-alls ----
     InvalidArgument,
     Unsupported,
@@ -130,6 +138,7 @@ impl LoomErrorCode {
             LoomErrorCode::SchemaViolation => "schema_violation",
             LoomErrorCode::SafeProfileDownloadBlocked => "safe_profile_download_blocked",
             LoomErrorCode::ProfileRestricted => "profile_restricted",
+            LoomErrorCode::BrowserNotFound => "browser-not-found",
             LoomErrorCode::InvalidArgument => "invalid-argument",
             LoomErrorCode::Unsupported => "unsupported",
             LoomErrorCode::Internal => "internal",
