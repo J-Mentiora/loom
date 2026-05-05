@@ -170,8 +170,26 @@ pub mod mock_host {
         /// `hit_test::resolve_centre_for_selector` sequence (which makes
         /// 4+ distinct shim_call invocations per click/hover/scroll).
         static SHIM_RESP_BY_METHOD: RefCell<HashMap<String, Vec<u8>>> = RefCell::new(HashMap::new());
+        /// Decoded `Input.dispatchMouseEvent` payloads, in dispatch order.
+        /// Lets verb tests assert exact (x, y) coordinates rather than
+        /// trusting "no error" as proof the click landed at the centre.
+        /// Per Phase-4 council reviewer R2.STEAL: prevents the original
+        /// (0,0) bug from regressing silently.
+        static MOUSE_DISPATCHES: RefCell<Vec<MouseDispatch>> = const { RefCell::new(Vec::new()) };
         /// Emitted receipt captured by receipt_emit.
         static EMITTED: RefCell<Option<Receipt>> = const { RefCell::new(None) };
+    }
+
+    /// One decoded `Input.dispatchMouseEvent` request.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct MouseDispatch {
+        pub event_type: String,
+        pub x: i64,
+        pub y: i64,
+        pub button: String,
+        pub click_count: u32,
+        pub delta_x: Option<i64>,
+        pub delta_y: Option<i64>,
     }
 
     /// Set up the mock for a test. Call at the start of each test.
@@ -182,6 +200,7 @@ pub mod mock_host {
         TICKS.with(|t| *t.borrow_mut() = 1000);
         SHIM_RESP.with(|r| *r.borrow_mut() = shim_response);
         SHIM_RESP_BY_METHOD.with(|m| m.borrow_mut().clear());
+        MOUSE_DISPATCHES.with(|m| m.borrow_mut().clear());
         EMITTED.with(|e| *e.borrow_mut() = None);
     }
 
@@ -251,6 +270,13 @@ pub mod mock_host {
         CALLS.with(|c| c.borrow().clone())
     }
 
+    /// Return every `Input.dispatchMouseEvent` payload the verb under
+    /// test sent, in dispatch order. Decoded by `shim_call_impl` from
+    /// the typed CDP envelope. Empty if no mouse events were dispatched.
+    pub fn mouse_dispatches() -> Vec<MouseDispatch> {
+        MOUSE_DISPATCHES.with(|m| m.borrow().clone())
+    }
+
     /// Return the receipt that was emitted via receipt_emit.
     pub fn emitted_receipt() -> Option<Receipt> {
         EMITTED.with(|e| e.borrow().clone())
@@ -281,11 +307,11 @@ pub mod mock_host {
             shim_id: shim_id.to_string(),
             msg_len: msg.len(),
         }));
-        // Try per-method override: decode the CBOR envelope's "method"
-        // field and look it up. Fall back to the default SHIM_RESP if
-        // no override matches.
+        // Decode the CBOR envelope once: needed for per-method response
+        // routing AND for capturing Input.dispatchMouseEvent payloads
+        // (used by verb tests to assert exact dispatched coordinates).
         if let Ok(env) = ciborium::de::from_reader::<ciborium::value::Value, _>(msg) {
-            if let Some(method) = env.as_map().and_then(|m| {
+            let method = env.as_map().and_then(|m| {
                 m.iter().find_map(|(k, v)| {
                     if k.as_text() == Some("method") {
                         v.as_text().map(String::from)
@@ -293,15 +319,75 @@ pub mod mock_host {
                         None
                     }
                 })
-            }) {
+            });
+            // Capture Input.dispatchMouseEvent payloads so verb tests
+            // can directly assert (x, y) — converts bug-fix verification
+            // from circumstantial to direct (Phase-4 council R2.STEAL).
+            if method.as_deref() == Some("Input.dispatchMouseEvent") {
+                if let Some(params) = env.as_map().and_then(|m| {
+                    m.iter().find_map(|(k, v)| {
+                        if k.as_text() == Some("params") {
+                            Some(v.clone())
+                        } else {
+                            None
+                        }
+                    })
+                }) {
+                    if let Some(p) = decode_mouse_dispatch(&params) {
+                        MOUSE_DISPATCHES.with(|d| d.borrow_mut().push(p));
+                    }
+                }
+            }
+            if let Some(m) = method {
                 if let Some(resp) =
-                    SHIM_RESP_BY_METHOD.with(|m| m.borrow().get(&method).cloned())
+                    SHIM_RESP_BY_METHOD.with(|map| map.borrow().get(&m).cloned())
                 {
                     return Ok(resp);
                 }
             }
         }
         Ok(SHIM_RESP.with(|r| r.borrow().clone()))
+    }
+
+    /// Decode a CBOR `Value` matching the `InputDispatchMouseEvent`
+    /// param struct shape (see `cdp_message_encoder.rs`). Returns None
+    /// if any required field is missing or the wrong type.
+    fn decode_mouse_dispatch(params: &ciborium::value::Value) -> Option<MouseDispatch> {
+        let map = params.as_map()?;
+        let mut event_type: Option<String> = None;
+        let mut x: Option<i64> = None;
+        let mut y: Option<i64> = None;
+        let mut button: Option<String> = None;
+        let mut click_count: Option<u32> = None;
+        let mut delta_x: Option<i64> = None;
+        let mut delta_y: Option<i64> = None;
+        for (k, v) in map.iter() {
+            match k.as_text()? {
+                "event_type" => event_type = v.as_text().map(String::from),
+                "x" => x = v.as_integer().and_then(|i| i64::try_from(i).ok()),
+                "y" => y = v.as_integer().and_then(|i| i64::try_from(i).ok()),
+                "button" => button = v.as_text().map(String::from),
+                "click_count" => {
+                    click_count = v.as_integer().and_then(|i| u32::try_from(i).ok())
+                }
+                "delta_x" => {
+                    delta_x = v.as_integer().and_then(|i| i64::try_from(i).ok())
+                }
+                "delta_y" => {
+                    delta_y = v.as_integer().and_then(|i| i64::try_from(i).ok())
+                }
+                _ => {}
+            }
+        }
+        Some(MouseDispatch {
+            event_type: event_type?,
+            x: x?,
+            y: y?,
+            button: button?,
+            click_count: click_count?,
+            delta_x,
+            delta_y,
+        })
     }
 
     pub fn receipt_emit_impl(r: &Receipt) {

@@ -1,7 +1,10 @@
 // Interface tests for `hit_test`. The public function
 // `resolve_centre_for_selector` performs four host-fn calls in sequence
-// and is exercised end-to-end by `loom-cli/tests/integration_click_hit_test.rs`
-// (which runs against a real fake-chromium with an injected DOM model).
+// and is exercised end-to-end by the per-verb interface tests at
+// `loom-surfaces/src/{click,hover,scroll}_verb/interface_tests.rs`,
+// which install a fixture box via `mock_host::install_hit_test_box`,
+// run the verb, and assert the dispatched `Input.dispatchMouseEvent`
+// coordinates landed at the box centre.
 //
 // The pure centre-computation helper `centre_from_content_quad` is unit-
 // testable in isolation; this file pins its semantics around CDP quad

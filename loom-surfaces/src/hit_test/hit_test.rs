@@ -160,16 +160,30 @@ pub fn resolve_centre_for_selector(selector: &str) -> Result<(i64, i64), HostErr
         )),
     );
 
-    // 4. Box model. Any shim error here (e.g. Chromium -32000 "Could not
-    //    compute box model" for hidden / detached elements) maps to
-    //    HitTestFailed, not the generic `SurfaceShimFailed`.
-    let bm_bytes = host::shim_call(
+    // 4. Box model. A Chromium-side -32000 "Could not compute box model"
+    //    on a hidden / detached element is a hit-test miss, but a
+    //    shim-transport class failure (Crashed, Timeout, etc.) is NOT —
+    //    those should propagate as-is so the agent can distinguish a
+    //    hidden element from a dead browser. Only generic / unknown
+    //    shim failures collapse to HitTestFailed.
+    let bm_bytes = match host::shim_call(
         "chromium",
         &CdpMessageEncoder::encode(&CdpMessage::DomGetBoxModel(DomGetBoxModel { node_id })),
-    )
-    .map_err(|_| HostError::ShimFailure {
-        kind: ShimFailureKind::HitTestFailed,
-    })?;
+    ) {
+        Ok(b) => b,
+        Err(e @ HostError::ShimFailure { kind: ShimFailureKind::Timeout })
+        | Err(e @ HostError::ShimFailure { kind: ShimFailureKind::Crashed })
+        | Err(e @ HostError::ShimFailure { kind: ShimFailureKind::PermissionDenied { .. } })
+        | Err(e @ HostError::Internal { .. })
+        | Err(e @ HostError::BudgetExceeded { .. })
+        | Err(e @ HostError::VaultRejection { .. })
+        | Err(e @ HostError::StoreIntegrityFailed) => return Err(e),
+        Err(_) => {
+            return Err(HostError::ShimFailure {
+                kind: ShimFailureKind::HitTestFailed,
+            })
+        }
+    };
     let bm: DomGetBoxModelResp =
         ciborium::de::from_reader(&bm_bytes[..]).map_err(|_| HostError::ShimFailure {
             kind: ShimFailureKind::HitTestFailed,
@@ -221,6 +235,16 @@ pub(crate) fn centre_from_content_quad(q: &[f64]) -> Option<(i64, i64)> {
     }
     let centre_x = ((q[0] + q[4]) * 0.5).round() as i64;
     let centre_y = ((q[1] + q[5]) * 0.5).round() as i64;
+    // Regression guard: returning (0, 0) for a non-origin element would
+    // silently re-introduce the original web.click bug (every click
+    // landed at page origin). Compiled out in release; the per-verb
+    // integration tests assert exact coords end-to-end.
+    debug_assert!(
+        (centre_x, centre_y) != (0, 0)
+            || (q[0] == 0.0 && q[1] == 0.0 && q[4] == 0.0 && q[5] == 0.0),
+        "centre_from_content_quad returned (0,0) for non-origin quad {q:?} — \
+         would silently re-introduce the original web.click hit-test bug"
+    );
     Some((centre_x, centre_y))
 }
 
