@@ -103,11 +103,13 @@ jobs:
         # 0 tests.
         # `--include-ignored`: runs the 23 fake-chromium ignored tests on
         # stable cells (forms the e2e signal for AC-CI-01).
-        # `--skip v8_seed_determinism`: the two tests in
-        # loom-host/tests/v8_seed_determinism.rs are deferred Phase 6+ stubs
-        # that panic!() until real Chromium subprocess wiring lands. Drop
-        # this filter when those tests are implemented.
-        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip v8_seed_determinism
+        # The two ignored tests in `loom-host/tests/v8_seed_determinism.rs`
+        # are Phase 6+ stubs that `panic!()` until real Chromium subprocess
+        # wiring lands. libtest's `--skip` matches function names (not the
+        # test-binary file name), so we filter on the unique substrings
+        # of each function name. Drop both filters when those tests are
+        # implemented.
+        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42
       - name: Run tests (beta, baseline only)
         if: matrix.toolchain == 'beta'
         # Beta cells run the same baseline cargo test as the previous CI did,
