@@ -37,7 +37,7 @@ use std::sync::Arc;
 /// this becomes `Arc<loom_host::WasmHost>` directly.
 pub trait WasmHostBridge: Send + Sync {
     /// Dispatch an action to the WASM surface. Returns a typed
-    /// `Receipt` (CDP-free, per IC-RPC-07). This is the one and only
+    /// `Receipt` (CDP-free, per the contract). This is the one and only
     /// host-side entry point.
     fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, AdapterError>;
 
