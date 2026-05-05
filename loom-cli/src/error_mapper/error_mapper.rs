@@ -152,14 +152,12 @@ impl std::fmt::Display for CliError {
                             Some(format!(
                                 "matched denylist pattern '{matched}' under profile '{profile}'"
                             ))
-                        } else if let Some(exc) =
-                            o.get("exception").and_then(|e| e.as_str())
-                        {
+                        } else {
                             // Page-side js_throw exception text (multi-line)
                             // — surface the first line as the message.
-                            Some(exc.lines().next().unwrap_or(exc).to_string())
-                        } else {
-                            None
+                            o.get("exception")
+                                .and_then(|e| e.as_str())
+                                .map(|exc| exc.lines().next().unwrap_or(exc).to_string())
                         }
                     } else {
                         None

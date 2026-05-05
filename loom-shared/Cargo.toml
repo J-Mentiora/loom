@@ -27,3 +27,6 @@ dirs = { workspace = true }
 # AC-DIST-05: chromium_resolver tests plant fake-chromium executables
 # in tempdirs to exercise every branch of the resolution chain.
 tempfile = { workspace = true }
+
+[lints]
+workspace = true

@@ -39,7 +39,7 @@ fn repo_relative(p: &str) -> PathBuf {
 }
 
 fn write_file_atomic(path: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
-    if let Some(existing) = fs::read_to_string(path).ok() {
+    if let Ok(existing) = fs::read_to_string(path) {
         if existing == contents {
             return Ok(());
         }

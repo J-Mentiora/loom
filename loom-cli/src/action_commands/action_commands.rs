@@ -158,6 +158,7 @@ pub fn parse_extra_to_json(extra: &[String]) -> Result<serde_json::Value, CliErr
 ///     fails (preserving the original error path).
 ///   - "boolean": parse "true"/"false" literally; anything else stays
 ///     a string (lets the validator surface the violation).
+///
 /// When no hint is present, fall back to the legacy auto-coerce
 /// (preserves the AC-CLI-02.1 behavior tests pin).
 pub fn parse_extra_to_json_typed(

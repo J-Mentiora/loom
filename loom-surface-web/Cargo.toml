@@ -21,3 +21,6 @@ wit-bindgen = { workspace = true }
 # Pinned via version (not workspace = true) because the workspace
 # declaration uses default features for host crates.
 sha2 = { version = "0.10", default-features = false }
+
+[lints]
+workspace = true

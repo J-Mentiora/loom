@@ -109,6 +109,16 @@ loom-daemon = { path = "loom-daemon" }
 loom-surfaces = { path = "loom-surfaces" }
 loom-shims = { path = "loom-shims" }
 
+# Workspace-wide lint policy. Each member crate opts in via `[lints] workspace = true`
+# so a future addition to this list propagates without per-crate edits. The CI
+# clippy job pins `dtolnay/rust-toolchain@stable` (≥ 1.95), so allow-list anything
+# that's stylistic-only or that the workspace deliberately uses.
+[workspace.lints.clippy]
+# loom-core uses the `mod foo/foo.rs` re-export pattern intentionally for its
+# domain modules (15 occurrences). Renaming would touch every public re-export
+# path in the lib. Stylistic, not load-bearing.
+module_inception = "allow"
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

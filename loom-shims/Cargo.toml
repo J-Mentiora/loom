@@ -76,3 +76,6 @@ required-features = ["fake-chromium-bin"]
 # package entirely so the test bin doesn't get auto-shipped.
 [package.metadata.dist]
 dist = false
+
+[lints]
+workspace = true
