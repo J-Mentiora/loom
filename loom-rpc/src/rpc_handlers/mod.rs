@@ -52,6 +52,20 @@ impl RpcHandlers {
         // profile / network-mode / budget-key values are rejected with
         // typed envelopes carrying the canonical allowlist in `data`.
         crate::session_validation::session_validation::validate_create_session_params(&p)?;
+        // AC-DIST-05: fail-fast when no chromium binary was resolved at
+        // daemon boot. Without this check, session.create succeeds and
+        // the failure surfaces only on first action (an opaque
+        // `shim-failure: action dispatch failed` from spawn ENOENT). The
+        // CLI maps `browser_not_found` to a platform-aware install hint.
+        if !self.host.has_chromium() {
+            return Err(JsonRpcError {
+                code: LoomErrorCode::BrowserNotFound,
+                message: "no chromium binary found by the resolver — \
+                          install via brew/apt/dnf or run 'loom postinstall'"
+                    .to_string(),
+                data: None,
+            });
+        }
         self.core.create_session(p).map_err(|code| JsonRpcError {
             code,
             message: "session.create failed".to_string(),

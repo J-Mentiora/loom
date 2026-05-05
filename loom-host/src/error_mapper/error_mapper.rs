@@ -146,6 +146,7 @@ impl From<LoomError> for HostError {
             | LoomErrorCode::Io
             | LoomErrorCode::InvalidArgument
             | LoomErrorCode::Unsupported
+            | LoomErrorCode::BrowserNotFound
             | LoomErrorCode::Internal => HostError::Internal(detail),
         }
     }
