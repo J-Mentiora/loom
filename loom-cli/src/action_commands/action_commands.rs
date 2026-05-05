@@ -66,11 +66,36 @@ pub async fn dispatch(
         .unwrap_or_default();
     let extra_params = parse_extra_to_json_typed(&args.extra, &property_types)?;
     let mut full_params = serde_json::Map::new();
-    full_params.insert("session".to_string(), serde_json::Value::String(args.session.clone()));
+    full_params.insert(
+        "session".to_string(),
+        serde_json::Value::String(args.session.clone()),
+    );
     if let serde_json::Value::Object(m) = extra_params {
         full_params.extend(m);
     }
     let full_params = serde_json::Value::Object(full_params);
+
+    // Registry-driven help + validation runs BEFORE the schema validation
+    // so the user gets nicer errors (typed-flag suggestions, levenshtein-1
+    // hints) when the action is in the registry. Unknown methods continue
+    // through the schema-validation path unchanged (preserves AC-AVOR-01).
+    if let Some(meta) = loom_rpc::action_registry::find(&args.method) {
+        if crate::action_help::extra_requests_help(&args.extra) {
+            print!("{}", crate::action_help::render_per_action_help(meta));
+            return Ok(());
+        }
+        if let Err(msg) = crate::action_help::validate_against_registry(meta, &full_params) {
+            return Err(CliError::Usage(msg));
+        }
+    } else {
+        // Per decision C-7: unregistered actions fall through to the
+        // existing dynamic dispatch with a stderr advisory note.
+        eprintln!(
+            "note: action '{}' not in local registry; sending to host as-is",
+            args.method
+        );
+    }
+
     validate_args(schemas, &args.method, &full_params)?;
     // Canonicalise the method name before the wire call so observability
     // (request logs, replay, rpc.schemas method labels) sees only the
@@ -143,9 +168,9 @@ pub fn parse_extra_to_json_typed(
     let mut i = 0;
     while i < extra.len() {
         let s = &extra[i];
-        let key = s.strip_prefix("--").ok_or_else(|| {
-            CliError::Usage(format!("unexpected positional argument: {}", s))
-        })?;
+        let key = s
+            .strip_prefix("--")
+            .ok_or_else(|| CliError::Usage(format!("unexpected positional argument: {}", s)))?;
         let value = if let Some(next) = extra.get(i + 1) {
             if !next.starts_with("--") {
                 i += 1;
@@ -217,11 +242,9 @@ pub fn extract_property_types(
     for (name, prop) in props {
         let ty = match prop.get("type") {
             Some(serde_json::Value::String(s)) => Some(s.clone()),
-            Some(serde_json::Value::Array(items)) => items.iter().find_map(|v| {
-                v.as_str()
-                    .filter(|s| *s != "null")
-                    .map(String::from)
-            }),
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .find_map(|v| v.as_str().filter(|s| *s != "null").map(String::from)),
             _ => None,
         };
         if let Some(t) = ty {
@@ -254,7 +277,10 @@ pub fn validate_args(
         .map_err(|e| CliError::Internal(format!("schema compile error: {e}")))?;
     if !compiled.is_valid(args) {
         let errors: Vec<String> = compiled.iter_errors(args).map(|e| e.to_string()).collect();
-        return Err(CliError::Usage(format!("invalid args for {method}: {}", errors.join(", "))));
+        return Err(CliError::Usage(format!(
+            "invalid args for {method}: {}",
+            errors.join(", ")
+        )));
     }
     Ok(())
 }

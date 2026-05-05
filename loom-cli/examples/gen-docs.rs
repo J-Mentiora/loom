@@ -164,7 +164,13 @@ fn render_example_shell(a: &ActionMeta) -> String {
 // ---------- docs/loom-*.1 ----------
 
 fn write_man_pages(out_dir: &Path) -> Result<(), Box<dyn Error>> {
-    let cmd = Cli::command().name("loom");
+    // Pin the man-page version to the package's CARGO_PKG_VERSION rather than
+    // the runtime LOOM_VERSION (which includes the build-time git SHA + date,
+    // and would force a man-page diff on every commit — making the CI
+    // staleness gate impossible to satisfy). The shipped binary still
+    // reports the full SHA-tagged version via `loom --version`; only the
+    // checked-in man page uses the bare semver.
+    let cmd = Cli::command().name("loom").version(env!("CARGO_PKG_VERSION"));
     render_man(&cmd, out_dir, "loom")?;
 
     let action_summaries = build_action_summaries();

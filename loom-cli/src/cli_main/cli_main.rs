@@ -22,7 +22,7 @@
 // Binary entry — exports `fn main()` and the `loom-cli` crate's
 // library-style `run` helper for integration tests.
 
-use clap::Parser as _;
+use clap::{CommandFactory as _, FromArgMatches as _};
 use std::io::IsTerminal;
 
 use crate::cli_config::output_mode::OutputMode;
@@ -55,12 +55,40 @@ pub fn run(argv: Vec<String>) -> i32 {
 /// Async inner body of `run`. Separated to keep `run` synchronous
 /// (required by the `tokio::runtime::Runtime::block_on` API).
 async fn async_run(argv: Vec<String>) -> i32 {
+    // AC-DOCS-02: `loom action <name> --help` must show the registered
+    // action's detailed signature. clap's built-in --help intercepts at
+    // the subcommand level (renders Action's help) before our dispatch
+    // can see `extra`, so we pre-scan argv here. Pre-clap so the test
+    // harness gets the same behaviour.
+    if let Some(method) = detect_per_action_help_request(&argv) {
+        if let Some(meta) = loom_rpc::action_registry::find(&method) {
+            print!("{}", crate::action_help::render_per_action_help(meta));
+            return 0;
+        }
+    }
+
     // Parse first — so --help / --version never trigger config I/O
     // (SR-CLI-01: --version p99 ≤ 200 ms, must not read filesystem).
     // Use try_parse_from so the test harness can call run() without
     // triggering std::process::exit.
-    let cli = match Cli::try_parse_from(argv.iter().map(String::as_str)) {
-        Ok(cli) => cli,
+    //
+    // Augment the `action` subcommand with a registry-rendered after_help
+    // (AC-DOCS-02) so `loom action --help` lists every registered action
+    // with a one-line summary. The leak is one-shot per process.
+    let after_help: &'static str =
+        Box::leak(crate::action_help::render_all_actions_after_help().into_boxed_str());
+    let cmd = Cli::command()
+        .mut_subcommand("action", |sub| sub.after_help(after_help))
+        .mut_subcommand("action", |sub| sub.after_long_help(after_help));
+    let cli = match cmd.try_get_matches_from(argv.iter().map(String::as_str)) {
+        Ok(matches) => match Cli::from_arg_matches(&matches) {
+            Ok(cli) => cli,
+            Err(e) => {
+                let code = e.exit_code();
+                let _ = e.print();
+                return code;
+            }
+        },
         Err(e) => {
             // exit_code 0 → DisplayHelp / DisplayVersion (print to stdout/stderr)
             // exit_code 2 → usage / parse error
@@ -134,6 +162,24 @@ pub fn early_init(argv: &[String]) -> Result<CliConfig, CliError> {
 
     // Resolve: compiled defaults → config.toml → LOOM_* env → CLI flags.
     crate::cli_config::resolve(inputs, None)
+}
+
+/// Returns `Some(method)` if argv looks like `loom action <method> ... --help`
+/// (or `-h`) where `method` is a non-flag positional. Used to short-circuit
+/// to the registry-driven per-action help renderer before clap consumes
+/// `--help` at the subcommand level.
+fn detect_per_action_help_request(argv: &[String]) -> Option<String> {
+    let mut iter = argv.iter().skip(1).peekable();
+    if iter.next().map(String::as_str) != Some("action") {
+        return None;
+    }
+    let method = iter.find(|a| !a.starts_with('-'))?;
+    let has_help = argv.iter().any(|a| a == "--help" || a == "-h");
+    if has_help {
+        Some(method.clone())
+    } else {
+        None
+    }
 }
 
 /// Extracts the `--config <path>` or `--config=<path>` value from raw

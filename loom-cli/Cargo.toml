@@ -14,6 +14,7 @@ categories.workspace = true
 [dependencies]
 loom-shared = { workspace = true }
 loom-core = { workspace = true }
+loom-rpc = { workspace = true }
 loom-host = { workspace = true, optional = true }
 # AC-DIST-01: loom-daemon, loom-mcp, loom-shims are added as deps so the
 # `[[bin]]` entries for loom-daemon, loom-mcp, loom-shim-chromium (in
@@ -52,6 +53,10 @@ tokio = { workspace = true }
 # component (not the dev stub) in the non-ignored embedded_wasm_sha test.
 # Version pinned to 0.246 to share the transitive lock-entry from wasmtime 44.
 wasmparser = "0.246"
+# clap_mangen: used only by examples/gen-docs.rs to render `loom.1`
+# and per-subcommand man pages from the clap derive; not in the
+# production binary.
+clap_mangen = "0.2"
 
 [features]
 # AC-PICOMP-01: postinstall enabled by default so `cargo build --release --bin loom`

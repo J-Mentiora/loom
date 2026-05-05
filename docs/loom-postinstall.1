@@ -4,10 +4,16 @@
 .SH NAME
 loom\-postinstall \- Idempotent installer. RPC\-free local action (IC\-CLI\-06)
 .SH SYNOPSIS
-\fBloom\-postinstall\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBloom\-postinstall\fR [\fB\-\-skip\-chromium\fR] [\fB\-\-skip\-binaries\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Idempotent installer. RPC\-free local action (IC\-CLI\-06)
 .SH OPTIONS
+.TP
+\fB\-\-skip\-chromium\fR
+Skip the Chromium download + verification step
+.TP
+\fB\-\-skip\-binaries\fR
+Skip the loom\-daemon / loom\-mcp / loom\-shim\-chromium download from the matching GitHub Release
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help

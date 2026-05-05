@@ -67,6 +67,10 @@ fn main() {
         .to_path_buf();
     let dest = out_dir.join("loom_surface_web.wasm");
 
+    // Embed docs/man pages first so the env vars are set in BOTH debug
+    // (early-return) and release paths below.
+    embed_docs(&workspace_root, &out_dir);
+
     // Re-run triggers — declare unconditionally so cargo invalidates the
     // build script when any of these change, regardless of which branch
     // we take below.
@@ -253,6 +257,39 @@ fn format_ymd_utc(secs: u64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{:04}-{:02}-{:02}", y, m, d)
+}
+
+/// Embed the generated man pages and `docs/actions.md` into the binary so
+/// `loom postinstall` can write them out to `$PREFIX/share/man/man1/` and a
+/// docs dir without depending on the cargo-dist tarball still being around.
+///
+/// Empty placeholder bytes are emitted when a file is missing, so a fresh
+/// `cargo build` works before `cargo run --example gen-docs -p loom-cli` has
+/// ever produced the artefacts. The CI staleness gate in `ci.yml` enforces
+/// that the committed `docs/` matches the registry, so production builds
+/// always have non-empty bytes here.
+fn embed_docs(workspace_root: &Path, out_dir: &Path) {
+    const TARGETS: &[(&str, &str)] = &[
+        ("LOOM_CLI_EMBEDDED_MANPAGE_LOOM", "docs/loom.1"),
+        ("LOOM_CLI_EMBEDDED_MANPAGE_ACTION", "docs/loom-action.1"),
+        ("LOOM_CLI_EMBEDDED_ACTIONS_MD", "docs/actions.md"),
+    ];
+    for (env_var, rel) in TARGETS {
+        let src = workspace_root.join(rel);
+        let dest = out_dir.join(rel.replace('/', "_"));
+        println!("cargo:rerun-if-changed={}", src.display());
+        let bytes = std::fs::read(&src).unwrap_or_default();
+        std::fs::write(&dest, &bytes)
+            .unwrap_or_else(|e| panic!("build.rs: failed to write {}: {}", dest.display(), e));
+        if bytes.is_empty() {
+            println!(
+                "cargo:warning=docs file {} is missing; manpage_step will skip it. \
+                 Run `cargo run --example gen-docs -p loom-cli` to generate it.",
+                rel
+            );
+        }
+        println!("cargo:rustc-env={}={}", env_var, dest.display());
+    }
 }
 
 /// Recursively invoke cargo to build the wasm32-wasip2 cdylib. Returns
