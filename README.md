@@ -18,7 +18,7 @@ artifacts, and a typed error wire shape that doesn't leak generic
                         └──────────────┘
 ```
 
-**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v1.0.0.
+**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v0.9.0.
 
 ## What makes loom different
 
@@ -55,7 +55,7 @@ loom doctor
 ### `cargo install` — any platform with Rust 1.92+
 
 ```bash
-cargo install --git https://github.com/J-Mentiora/loom --tag v1.0.0 loom-cli
+cargo install --git https://github.com/J-Mentiora/loom --tag v0.9.0 loom-cli
 loom postinstall
 loom doctor
 ```
@@ -63,12 +63,12 @@ loom doctor
 `--tag` is required: `loom postinstall` fetches `loom-daemon`, `loom-mcp`, and
 `loom-shim-chromium` from the GitHub Release matching the installed crate
 version, so the tag must point at an existing release. (Substitute the latest
-release version for `v1.0.0`.)
+release version for `v0.9.0`.)
 
 ### Manual download — pre-built tarball
 
 ```bash
-curl -fsSL https://github.com/J-Mentiora/loom/releases/latest/download/loom-installer.sh | sh
+curl -fsSL https://github.com/J-Mentiora/loom/releases/latest/download/loom-cli-installer.sh | sh
 loom postinstall
 loom doctor
 ```
