@@ -38,7 +38,7 @@ from loom.types import (
     ValidationResult,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.9.0"
 __all__ = [
     "Session",
     "AsyncSession",
