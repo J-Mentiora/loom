@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/schema_provider/interface_tests.rs` instead.
 // Interface tests for `SchemaProvider`. Verifies startup
 // load, in-memory snapshot, and WIT-source-of-truth invariants.
 

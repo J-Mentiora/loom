@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/rpc_handlers/interface_tests.rs` instead.
 // Interface tests for `RpcHandlers`. Verifies every contract method
 // has a handler signature, the routing split (action vs core),
 // vault response shape, and that rpc.schemas is served in-memory.

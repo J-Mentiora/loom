@@ -1,6 +1,4 @@
-//! `connection_handler` — see `systems/loom-rpc/modules/connection_handler/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `connection_handler` — see crate root.
 pub mod connection_handler;
 pub use connection_handler::*;
 

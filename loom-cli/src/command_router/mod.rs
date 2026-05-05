@@ -1,6 +1,4 @@
-//! `command_router` — see `systems/loom-cli/modules/CommandRouter/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `command_router` — see crate root.
 pub mod command_router;
 pub mod validate_flags;
 pub use command_router::*;

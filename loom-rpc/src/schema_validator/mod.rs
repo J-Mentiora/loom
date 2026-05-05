@@ -1,6 +1,4 @@
-//! `schema_validator` — see `systems/loom-rpc/modules/schema_validator/interfaces.rs`
-//! for the locked v5.3 interface. Re-exports it verbatim via
-//! `include!`, keeping `systems/` the single source of truth.
+//! `schema_validator` — see crate root.
 pub mod schema_validator;
 pub use schema_validator::*;
 

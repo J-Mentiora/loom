@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/error_translator/interfaces.rs` instead.
 // ErrorTranslator — single conversion point from `LoomError` to JSON-RPC
 // error envelope. Mirrors `LoomErrorCode` 1:1.
 //

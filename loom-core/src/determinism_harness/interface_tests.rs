@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/determinism_harness/interface_tests.rs` instead.
 // Interface tests for `DeterminismHarness`. Verifies the 5
 // determinism mechanisms, canonicalization,
 // replay-mode host-fn swap.

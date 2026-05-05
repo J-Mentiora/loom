@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/CliObservability/interface_tests.rs` instead.
 // Interface tests for `CliObservability`. Verifies the per-command
 // span shape and the redaction-field allowlist.
 

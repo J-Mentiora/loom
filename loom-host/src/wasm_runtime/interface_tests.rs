@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/wasm_runtime/interface_tests.rs` instead.
 // Interface tests for `WasmRuntime`. Verifies singleton shape,
 // component-model + fuel + AOT config defaults, and the engine
 // encapsulation invariant.

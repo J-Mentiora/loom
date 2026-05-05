@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/compiler/interface_tests.rs` instead.
 // Interface tests for `Compiler`. Verifies the off-hot-path invariant,
 // contract signature exact-match, and atomic-write expectations.
 

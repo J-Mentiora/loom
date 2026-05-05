@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/replay_engine/interface_tests.rs` instead.
 // Interface tests for `ReplayEngine`. Verifies host-fn swap,
 // ≥ 5× real-time shape, reads-CAS-only, screenshots excluded.
 

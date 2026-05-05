@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/HelpGenerator/interfaces.rs` instead.
 // HelpGenerator — derives `--help` text from clap definitions +
 // `SchemaCache` field descriptions.
 //

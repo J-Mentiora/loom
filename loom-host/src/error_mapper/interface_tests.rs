@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-host/modules/error_mapper/interface_tests.rs` instead.
 // Interface tests for `ErrorMapper`. Verifies the boundary-translation
 // contract, typed trap receipts, and the closed-mapping invariant
 // across all five `host-error` variants.

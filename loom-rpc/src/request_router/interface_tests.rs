@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/request_router/interface_tests.rs` instead.
 // Interface tests for `RequestRouter`. Verifies startup
 // enumeration, pre-dispatch validation wiring,
 // refuse-to-start on missing handler/schema.

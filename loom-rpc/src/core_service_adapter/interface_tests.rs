@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/core_service_adapter/interface_tests.rs` instead.
 // Interface tests for `CoreServiceAdapter`. Verifies the routing split
 // (no `action.*` here), GrantInfo shape (no secret-fields),
 // and that every contract method on `session.*` / `vault.*` has a

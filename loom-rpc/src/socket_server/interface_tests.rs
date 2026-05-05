@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/socket_server/interface_tests.rs` instead.
 // Interface tests for `SocketServer`. Verifies.1 socket
 // mode, default path resolution, shared-runtime
 // signature, BindError categorisation.

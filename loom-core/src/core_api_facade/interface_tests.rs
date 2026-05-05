@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/core_api_facade/interface_tests.rs` instead.
 // Interface tests for `CoreApiFacade`. Verifies single-entry-point
 // property, config wiring, startup health
 // check delegation.

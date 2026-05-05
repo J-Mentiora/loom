@@ -41,6 +41,6 @@ pub mod version_command; // v5.3 system dir is `main`; renamed `cli_main` for cr
 pub mod mocks;
 
 // `crate::CliConfig` and `crate::CliError` are referenced bare across
-// the crate per the locked v5.3 interfaces.
+// the crate.
 pub use cli_config::CliConfig;
 pub use error_mapper::CliError;

@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/ChromiumDownloader/interface_tests.rs` instead.
 // Interface tests for `ChromiumDownloader`. Verifies the
 // supply-chain mismatch shape, the idempotent-ensure contract (sentinel
 // file model), extraction, and the

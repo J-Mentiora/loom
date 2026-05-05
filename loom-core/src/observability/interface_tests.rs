@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-core/modules/observability/interface_tests.rs` instead.
 // Interface tests for `Observability`. These tests verify the contract
 // surface against verification criteria; they are authored as compilable
 // Rust against `interfaces.rs` in the same dir.

@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-rpc/modules/frame_handler/interface_tests.rs` instead.
 // Interface tests for `FrameHandler`. Verifies codec
 // configuration: 4-byte big-endian length prefix + 16 MB cap.
 

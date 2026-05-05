@@ -1,5 +1,3 @@
-// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
-// Edit `systems/loom-cli/modules/SchemaCache/interface_tests.rs` instead.
 // Interface tests for `SchemaCache`. Verifies the immutable-after-load
 // posture, the missing-dir error, and the request/response accessor
 // pair.
