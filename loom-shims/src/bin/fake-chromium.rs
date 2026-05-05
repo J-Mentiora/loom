@@ -197,7 +197,7 @@ async fn handle_connection(
                     "message": format!("'{method}' wasn't found"),
                 },
             });
-            let _ = write.send(Message::Text(err.to_string())).await;
+            let _ = write.send(Message::Text(err.to_string().into())).await;
             continue;
         }
 
@@ -270,7 +270,11 @@ async fn handle_connection(
             response["sessionId"] = json!(sid);
         }
         let response_text = response.to_string();
-        if write.send(Message::Text(response_text)).await.is_err() {
+        if write
+            .send(Message::Text(response_text.into()))
+            .await
+            .is_err()
+        {
             return;
         }
 
@@ -303,7 +307,7 @@ async fn handle_connection(
                     if let Some(sid) = &session_id {
                         evt["sessionId"] = json!(sid);
                     }
-                    let _ = write.send(Message::Text(evt.to_string())).await;
+                    let _ = write.send(Message::Text(evt.to_string().into())).await;
                 }
                 FakeUrlPattern::Error(code) => {
                     let mut evt = json!({
@@ -319,7 +323,7 @@ async fn handle_connection(
                     if let Some(sid) = &session_id {
                         evt["sessionId"] = json!(sid);
                     }
-                    let _ = write.send(Message::Text(evt.to_string())).await;
+                    let _ = write.send(Message::Text(evt.to_string().into())).await;
                 }
                 FakeUrlPattern::PageWithTracker => {
                     // Emit two `Fetch.requestPaused`
@@ -348,7 +352,7 @@ async fn handle_connection(
                         if let Some(sid) = &session_id {
                             doc_evt["sessionId"] = json!(sid);
                         }
-                        let _ = write.send(Message::Text(doc_evt.to_string())).await;
+                        let _ = write.send(Message::Text(doc_evt.to_string().into())).await;
 
                         let ga_url = "https://www.google-analytics.com/analytics.js";
                         let mut ga_evt = json!({
@@ -363,7 +367,7 @@ async fn handle_connection(
                         if let Some(sid) = &session_id {
                             ga_evt["sessionId"] = json!(sid);
                         }
-                        let _ = write.send(Message::Text(ga_evt.to_string())).await;
+                        let _ = write.send(Message::Text(ga_evt.to_string().into())).await;
                     }
 
                     // Also emit the document's Network.responseReceived
@@ -387,7 +391,7 @@ async fn handle_connection(
                     if let Some(sid) = &session_id {
                         resp_evt["sessionId"] = json!(sid);
                     }
-                    let _ = write.send(Message::Text(resp_evt.to_string())).await;
+                    let _ = write.send(Message::Text(resp_evt.to_string().into())).await;
                 }
                 FakeUrlPattern::None => {}
             }
@@ -403,7 +407,7 @@ async fn handle_connection(
             if let Some(sid) = &session_id {
                 evt["sessionId"] = json!(sid);
             }
-            let _ = write.send(Message::Text(evt.to_string())).await;
+            let _ = write.send(Message::Text(evt.to_string().into())).await;
         }
     }
 }
@@ -530,10 +534,13 @@ fn build_fake_evaluate_response(expression: &str) -> Value {
         "__loom_test_empty_str__" => json!({
             "result": { "type": "string", "value": "" },
         }),
-        "__loom_test_pi__" => json!({
+        "__loom_test_pi__" => {
             // Real Chromium returns floats verbatim in the value field.
-            "result": { "type": "number", "value": 3.141592653589793 },
-        }),
+            // Use std::f64::consts::PI to satisfy clippy::approx_constant.
+            json!({
+                "result": { "type": "number", "value": std::f64::consts::PI },
+            })
+        }
         "__loom_test_obj__" => json!({
             "result": {
                 "type": "object",
