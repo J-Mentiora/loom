@@ -6,6 +6,28 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## Unreleased
 
+### Changed — Version walk-back to 0.9.0 (AC-VER-01)
+
+- **Workspace version walked back from 1.0.0 → 0.9.0** to reflect that
+  deterministic replay (gated on AC-SHCRT-08) and `web.click` (gated on
+  AC-CLICK-*) are not yet bulletproof. The `v1.0.0` tag was published
+  prematurely and remains on origin for historical reference, but
+  0.9.0 supersedes it as the supported release. Promotion to 1.0
+  requires both blockers landing and the matrix CI green.
+- `loom --version` now prints `loom 0.9.0 (<short-sha> <build-date>)`
+  so issue reports identify the exact build (AC-VER-02). The short SHA
+  + UTC build date are baked in by `loom-cli/build.rs` from
+  `git rev-parse` at compile time, with a `"unknown"` fallback for
+  source-tarball builds (no `.git` directory). `SOURCE_DATE_EPOCH` is
+  honored for reproducible builds.
+
+### Added — Stability contract (AC-VER-03..04)
+
+- README "Status" matrix declaring stable vs beta surfaces, with
+  concrete promotion criteria for 1.0.
+- `build_date` field on the JSON-emitted `VersionInfo` (alongside
+  existing `version`, `git_sha`, `target`).
+
 ### Added — Pretty TTY output (AC-TTY-01..04)
 
 - **TTY auto-detection.** `loom session create` and `loom action ...`
@@ -63,11 +85,13 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   requires. CI environments that set `NO_COLOR=""` for parent
   processes will no longer accidentally disable color.
 
-## [1.0.0] — 2026-05-04
+## [0.9.0] — 2026-05-04
 
-First stable release. Extracted from Mentiora's code-pipeline project
-after 23 rounds of GA-driven hardening. API is stable; breaking changes
-will bump the major version.
+Initial public pre-1.0 release. Extracted from Mentiora's code-pipeline
+project after 23 rounds of GA-driven hardening. See the README's
+[Status matrix](README.md#status) for which surfaces are stable;
+deterministic replay and `web.click` remain Beta until AC-SHCRT-08 and
+AC-CLICK-* land.
 
 ### Added
 
@@ -130,7 +154,7 @@ will bump the major version.
   determinism script applied. Fixed by lazy-spawning the
   determinism-injected target on the first evaluate.
 
-## Pre-1.0
+## Pre-0.9
 
-Pre-1.0 history lives in the source code-pipeline repository:
+Pre-0.9 history lives in the source code-pipeline repository:
 https://github.com/WhoIsJohannes/code-pipeline (under `projects/loom/`).

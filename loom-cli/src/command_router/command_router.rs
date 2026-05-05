@@ -31,11 +31,12 @@ use crate::session_commands::{
     ValidateArgs,
 };
 use crate::vault_commands::{VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs};
+use crate::version_command::LOOM_VERSION;
 use crate::CliError;
 
 /// Top-level CLI parser. Drives the clap derive pipeline.
 #[derive(Debug, Parser)]
-#[command(name = "loom", version, about = "Loom command-line interface")]
+#[command(name = "loom", version = LOOM_VERSION, about = "Loom command-line interface")]
 pub struct Cli {
     /// Override config file path. Highest precedence after CLI flags.
     #[arg(long, global = true)]

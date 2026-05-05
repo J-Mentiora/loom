@@ -48,6 +48,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MINIMAL_COMPONENT: &[u8] = &[
     0x00, 0x61, 0x73, 0x6D, // magic: \0asm
@@ -55,6 +56,8 @@ const MINIMAL_COMPONENT: &[u8] = &[
 ];
 
 fn main() {
+    emit_build_provenance();
+
     let out_dir = PathBuf::from(std::env::var("OUT_DIR").expect("OUT_DIR not set by Cargo"));
     let manifest_dir =
         PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
@@ -194,6 +197,62 @@ fn main() {
         "cargo:rustc-env=LOOM_CLI_EMBEDDED_SURFACE_WEB={}",
         dest.display()
     );
+}
+
+/// Emit `LOOM_GIT_SHA` and `LOOM_BUILD_DATE` for the version-command crate
+/// to consume via `env!()` (AC-VER-02). Both fall back to "unknown" so
+/// cargo-dist source-tarball builds (no `.git` directory) still compile.
+fn emit_build_provenance() {
+    let sha = Command::new("git")
+        .args(["rev-parse", "--short=7", "HEAD"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // YYYY-MM-DD UTC, hand-formatted from the unix epoch so we don't pull in chrono.
+    // SOURCE_DATE_EPOCH (reproducible-builds.org) is honored if set.
+    let secs: u64 = std::env::var("SOURCE_DATE_EPOCH")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|d| d.as_secs())
+        })
+        .unwrap_or(0);
+    let date = format_ymd_utc(secs);
+
+    println!("cargo:rustc-env=LOOM_GIT_SHA={sha}");
+    println!("cargo:rustc-env=LOOM_BUILD_DATE={date}");
+
+    // Re-run when HEAD moves so the SHA stays fresh on `cargo build`.
+    println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/refs/heads");
+}
+
+/// Format a unix timestamp as YYYY-MM-DD in UTC. Civil-from-days algorithm
+/// (Howard Hinnant's date library, public domain). No chrono dependency.
+fn format_ymd_utc(secs: u64) -> String {
+    if secs == 0 {
+        return "unknown".to_string();
+    }
+    let days = (secs / 86_400) as i64;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    format!("{:04}-{:02}-{:02}", y, m, d)
 }
 
 /// Recursively invoke cargo to build the wasm32-wasip2 cdylib. Returns

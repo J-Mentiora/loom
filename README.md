@@ -230,9 +230,26 @@ Each module's source file is named after the module
 
 ## Status
 
-v1.0.0 — first stable release. Production users include Mentiora's
-GA-driven software-generation pipeline (the harness loom was extracted
-from). API is stable; breaking changes will bump the major version.
+loom is **0.9.0** — pre-1.0. The matrix below is the stability
+contract: breaking changes to **Stable** rows bump the major version
+when 1.0 ships; **Beta** rows may change without notice. Production
+users include Mentiora's GA-driven software-generation pipeline (the
+harness loom was extracted from).
+
+| Surface | Status | Notes |
+|---|---|---|
+| Receipt schema (`ActionReceipt`, `SessionManifest` wire format) | **Stable** | Hash chain + canonical bytes frozen. Breaking changes bump major. |
+| Action / blob store (content-addressed SHA-256) | **Stable** | On-disk layout frozen; `loom gc` reference protection covers it. |
+| Determinism harness (`Math.random`, `Date.now`, `performance.now`) | **Stable** | Seeded at session-create; reproduced bit-for-bit on replay. |
+| Deterministic replay (manifest hash-chain bit-equality src ↔ replay) | **Beta** | Source/replay equality is not yet bulletproof — gated on **AC-SHCRT-08**. |
+| `web.navigate`, `web.evaluate`, `web.wait`, `web.type` | **Stable** | Covered by replay-equality tests. |
+| `web.click` | **Beta** | DOM coordinate edge cases — gated on **AC-CLICK-***. |
+| `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). |
+| CLI surface (`loom session`, `loom action`, `loom export`, `loom import`) | **Stable** | Flags pinned. `--version` format pinned: `loom <ver> (<sha> <date>)`. |
+| `import.playwright` RPC | **Stable** | End-to-end wired through facade, adapter, handlers, router. |
+
+**1.0 promotion criteria:** AC-SHCRT-08 + AC-CLICK-* land, matrix CI
+green across the four release targets, no Beta rows remaining.
 
 ### Known limitations
 
