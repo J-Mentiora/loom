@@ -42,5 +42,5 @@ pub struct BenchmarkArgs {
 /// Returns `Err(CliError::Usage)` on invalid arguments (exit 2),
 /// `Err(CliError::Receipt)` if SLAs fail (exit 1), or `Ok(())` on pass (exit 0).
 pub fn run_benchmark(args: &BenchmarkArgs, config: &CliConfig) -> Result<(), CliError> {
-    crate::benchmark_commands::impl_benchmark::run(args, config.pretty)
+    crate::benchmark_commands::impl_benchmark::run(args, config)
 }

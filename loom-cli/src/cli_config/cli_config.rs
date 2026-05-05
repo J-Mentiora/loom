@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use crate::cli_config::output_mode::OutputMode;
 use crate::schema_cache::SchemaCache;
 use crate::CliError;
 
@@ -35,8 +36,24 @@ pub struct CliConfig {
     pub surfaces_dir: PathBuf,
     /// Chromium install root.
     pub chromium_dir: PathBuf,
-    /// Pretty-renderer toggle (CLI flag mirror).
+    /// Pretty-renderer toggle (CLI flag mirror). Retained for back-compat
+    /// and for the `LOOM_PRETTY` env var; the canonical resolved value
+    /// lives in `output_mode`.
     pub pretty: bool,
+    /// Resolved output mode per D-7 precedence (quiet > json > pretty >
+    /// auto-detect). Replaces the old "JSON unless pretty=true" toggle.
+    /// Default = `Json` (matches IC-CLI-01 canonical default before TTY
+    /// auto-detection runs in `cli_main`).
+    #[serde(default, skip_serializing_if = "is_default_output_mode")]
+    pub output_mode: OutputMode,
+    /// Per-stream color enablement per D-20. Resolved at startup from
+    /// `--color`/`--no-color` flag, env vars (CLICOLOR_FORCE / NO_COLOR /
+    /// CLICOLOR / TERM), and IsTerminal verdict for each stream
+    /// independently.
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub stdout_color_enabled: bool,
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    pub stderr_color_enabled: bool,
     /// Connect / request timeouts.
     pub connect_timeout: Duration,
     pub request_timeout: Duration,
@@ -162,10 +179,25 @@ pub fn compiled_defaults() -> CliConfig {
         surfaces_dir: config_base.join("surfaces"),
         chromium_dir: config_base.join("chromium"),
         pretty: false,
+        output_mode: OutputMode::Json,
+        // Default to "color allowed"; resolver in cli_main will downgrade
+        // when the stream isn't a TTY or when env vars say no.
+        stdout_color_enabled: true,
+        stderr_color_enabled: true,
         connect_timeout: Duration::from_secs(5),
         request_timeout: Duration::from_secs(30),
         default_profile: None,
     }
+}
+
+fn default_true() -> bool {
+    true
+}
+fn is_true(b: &bool) -> bool {
+    *b
+}
+fn is_default_output_mode(m: &OutputMode) -> bool {
+    *m == OutputMode::Json
 }
 
 /// Pure helper: validate a `CliConfig` against the loom-rpc JSON

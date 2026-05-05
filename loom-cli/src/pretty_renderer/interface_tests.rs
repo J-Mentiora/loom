@@ -62,3 +62,50 @@ fn columns_from_schema_signature_lock() {
     // Phase 5.4 will assert byte-equal column ordering. For now the
     // signature is the contract surface.
 }
+
+// === D-16 NO_COLOR spec correctness ===
+//
+// Per https://no-color.org: "NO_COLOR... when present and not an empty
+// string". The earlier `is_ok()` check treated empty string as a disable
+// signal, which the spec explicitly rejects.
+//
+// Tests serialise on a process-wide mutex because env vars are per-process.
+
+use std::sync::Mutex;
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+#[test]
+fn no_color_unset_allows_color() {
+    let _g = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("NO_COLOR");
+    std::env::remove_var("TERM");
+    assert!(detect_color_enabled());
+}
+
+#[test]
+fn no_color_empty_does_not_disable() {
+    let _g = ENV_LOCK.lock().unwrap();
+    std::env::set_var("NO_COLOR", "");
+    std::env::remove_var("TERM");
+    // Per spec: empty value is NOT a disable signal.
+    assert!(detect_color_enabled());
+    std::env::remove_var("NO_COLOR");
+}
+
+#[test]
+fn no_color_non_empty_disables() {
+    let _g = ENV_LOCK.lock().unwrap();
+    std::env::set_var("NO_COLOR", "1");
+    std::env::remove_var("TERM");
+    assert!(!detect_color_enabled());
+    std::env::remove_var("NO_COLOR");
+}
+
+#[test]
+fn term_dumb_disables_color() {
+    let _g = ENV_LOCK.lock().unwrap();
+    std::env::remove_var("NO_COLOR");
+    std::env::set_var("TERM", "dumb");
+    assert!(!detect_color_enabled());
+    std::env::remove_var("TERM");
+}

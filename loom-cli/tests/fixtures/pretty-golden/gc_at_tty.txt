@@ -1,0 +1,1 @@
+gc deleted=42 freed_bytes=1048576 status=ok

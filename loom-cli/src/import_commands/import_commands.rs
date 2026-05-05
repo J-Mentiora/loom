@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::cli_config::CliConfig;
-use crate::output_formatter::format_output;
+use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
@@ -65,7 +65,8 @@ pub async fn import_playwright(
         .call("import.playwright", serde_json::json!({ "trace_hex": trace_hex }))
         .await?;
 
-    // Forward raw receipt to stdout (canonical JSON, no rewriting — IC-CLI-03).
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    // Forward raw receipt to stdout (IC-CLI-03 verbatim; AC-TTY-* mode
+    // selection happens inside emit).
+    emit_to_stdout("session.import", &resp, cfg, None)?;
     Ok(())
 }

@@ -300,9 +300,28 @@ pub fn format_error(result: &Result<(), CliError>) -> Option<String> {
 /// Called by `main` before `map_exit_code` to ensure every error class
 /// is surfaced to the user before process exit. Uses stderr so errors
 /// never pollute the JSON receipt stream on stdout (AC-AESF-06).
+///
+/// Color-agnostic version (used in early-init paths where no resolved
+/// `CliConfig` exists yet). Plain bytes; no ANSI.
 pub fn print_error(result: &Result<(), CliError>) {
     if let Some(msg) = format_error(result) {
         eprintln!("{msg}");
+    }
+}
+
+/// Color-aware variant per D-20: when `stderr_color_enabled` is true,
+/// the message is rendered RED+BOLD. Used after `CliConfig` resolution
+/// in `cli_main`. The plain `print_error` is preserved for the early-init
+/// failure path.
+pub fn print_error_with_color(result: &Result<(), CliError>, stderr_color_enabled: bool) {
+    if let Some(msg) = format_error(result) {
+        if stderr_color_enabled {
+            use crate::pretty_renderer::ansi;
+            let style = ansi::combine(ansi::BOLD, ansi::RED);
+            eprintln!("{}{}{}", style, msg, ansi::RESET);
+        } else {
+            eprintln!("{msg}");
+        }
     }
 }
 

@@ -1,0 +1,5 @@
+status: ok
+final_url: https://example.test/landing
+action_hash: deadbeefcafe
+console_count: 3 lines
+network_summary: 7 requests, 12345 bytes, 0 errors

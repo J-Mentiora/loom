@@ -15,6 +15,7 @@
 use clap::{Parser, Subcommand};
 
 use crate::action_commands::ActionArgs;
+use crate::cli_config::ColorChoice;
 use crate::admin_commands::{GcArgs, McpArgs, PostinstallArgs, ServeArgs};
 use crate::benchmark_commands::BenchmarkArgs;
 use crate::chromium_downloader::{ChromiumDownloader, ChromiumDownloaderConfig};
@@ -40,10 +41,36 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub config: Option<std::path::PathBuf>,
 
-    /// Pretty-print output via the schema-driven tabular renderer
-    /// (IC-CLI-02). Default is canonical JSON (IC-CLI-01).
+    /// Force human-readable colored multi-line output, even when stdout
+    /// is piped. (Was indented JSON pre-AC-TTY-01; see CHANGELOG.) The
+    /// auto-detect default emits this format only when stdout is a TTY.
     #[arg(long, global = true)]
     pub pretty: bool,
+
+    /// Force canonical JSON output, even when stdout is a TTY. Bypasses
+    /// the auto-detected pretty-print path (AC-TTY-03). Mutually
+    /// exclusive with `--pretty`.
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Suppress non-error output. For commands that produce a single
+    /// resource (session create, action), prints only the canonical id.
+    /// For list commands (session list, vault list), prints one id per
+    /// line — may be a large amount of data on big result sets. Errors
+    /// always go to stderr.
+    #[arg(long, short = 'q', global = true)]
+    pub quiet: bool,
+
+    /// Color choice: `auto` (default), `always`, or `never`. Honours
+    /// `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, and `TERM=dumb` env
+    /// conventions in `auto` mode (AC-TTY-04). Mutually exclusive with
+    /// `--no-color`.
+    #[arg(long, global = true, value_enum)]
+    pub color: Option<ColorChoice>,
+
+    /// Disable color output. Equivalent to `--color never`.
+    #[arg(long = "no-color", global = true)]
+    pub no_color: bool,
 
     #[command(subcommand)]
     pub command: Command,
@@ -228,11 +255,10 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 Err(CliError::DoctorFailed(r)) => r,
                 Err(_) => return result.map(|_| ()),
             };
-            println!(
-                "{}",
-                serde_json::to_string(report)
-                    .unwrap_or_else(|_| r#"{"error":"serialization_failed"}"#.to_string())
+            let value = serde_json::to_value(report).unwrap_or_else(
+                |_| serde_json::json!({"error":"serialization_failed"}),
             );
+            crate::output_formatter::emit_to_stdout("doctor", &value, config, None)?;
             result.map(|_| ())
         }
 

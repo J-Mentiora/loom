@@ -86,21 +86,20 @@ pub async fn dispatch(
             let scheme_check = crate::url_allowlist::check_url_scheme(url);
             if let Err(CliError::Receipt(ref v)) = scheme_check {
                 // Print JSON receipt to stdout (mirrors the success receipt path).
-                // print_error in main uses eprintln! (stderr) — no double-stdout.
-                println!(
-                    "{}",
-                    crate::output_formatter::format_output(v, cfg.pretty)
-                        .unwrap_or_default()
-                );
+                // Best-effort: surface a stderr warning on emit failure rather
+                // than silently dropping it, but don't override the original
+                // scheme_check error which is the actionable result.
+                if let Err(emit_err) =
+                    crate::output_formatter::emit_to_stdout(canonical_method, v, cfg, None)
+                {
+                    eprintln!("warning: failed to write rejection receipt: {}", emit_err);
+                }
             }
             scheme_check?;
         }
     }
     let resp = rpc.call(canonical_method, full_params).await?;
-    println!(
-        "{}",
-        crate::output_formatter::format_output(&resp, cfg.pretty)?
-    );
+    crate::output_formatter::emit_to_stdout(canonical_method, &resp, cfg, None)?;
     // AC-CLIEXIT-01: receipts with status="error" raise to exit 1, even
     // when the JSON-RPC envelope was a successful result. SR-CLI-03 is
     // preserved — the receipt is already on stdout above.
