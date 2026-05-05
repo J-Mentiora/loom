@@ -287,7 +287,7 @@ jobs:
           VERSION="${TAG#v}"
           # Wait briefly for the tap repo's main branch to settle after the push.
           sleep 10
-          FORMULA_URL="https://raw.githubusercontent.com/J-Mentiora/homebrew-loom/main/Formula/loom.rb"
+          FORMULA_URL="https://raw.githubusercontent.com/mentiora/homebrew-loom/main/Formula/loom.rb"
           RAW=$(curl -fsSL "$FORMULA_URL" || echo "FETCH_FAILED")
           if [ "$RAW" = "FETCH_FAILED" ]; then
             echo "::error::Could not fetch $FORMULA_URL — HOMEBREW_TAP_TOKEN missing/expired or tap repo not initialized?"
