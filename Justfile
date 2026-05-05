@@ -1,5 +1,4 @@
-# Loom workspace build helpers.
-# Run from the src/ directory (where Cargo.toml lives).
+# Loom workspace build helpers. Run from the repo root.
 #
 # Prerequisites: https://just.systems — `brew install just`
 
