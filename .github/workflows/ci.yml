@@ -133,6 +133,39 @@ jobs:
         if: failure()
         run: cat /tmp/loom-daemon.log || true
 
+  # AC-DOCS-01: ensure docs/actions.md and the man pages match the registry.
+  # `loom-rpc/src/action_registry/action_registry.rs` is the source of truth;
+  # the example regenerates everything; the diff check fails the PR if a
+  # registry edit was committed without re-running the generator.
+  gen-docs:
+    name: docs/actions.md and man pages are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+      - name: Regenerate docs
+        # `cargo run` propagates the example's exit code, so a non-zero
+        # exit from gen-docs (registry malformed, render failure) fails
+        # this step before the diff check below ever runs.
+        # Dev profile (no --release): text generation doesn't benefit
+        # from optimisations and faster CI feedback matters.
+        run: cargo run --example gen-docs -p loom-cli
+      - name: Fail on stale generated artefacts
+        run: |
+          # Diff the entire docs/ directory rather than a hardcoded file
+          # list — keeps this in sync with the dynamic subcommand-walking
+          # man-page generator. New CLI subcommands automatically appear
+          # in docs/ and are covered here without editing this workflow.
+          if ! git diff --exit-code -- docs/; then
+            echo "::error::Generated docs in docs/ are out of date. Run 'cargo run --example gen-docs -p loom-cli' and commit the result."
+            exit 1
+          fi
+
   # cargo-deny — license + advisory checks on the workspace.
   deny:
     name: cargo-deny
