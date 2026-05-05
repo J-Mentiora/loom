@@ -5,10 +5,11 @@
 use loom_core::benchmarks::{BenchmarkConfig, BenchmarkError};
 
 use crate::benchmark_commands::BenchmarkArgs;
-use crate::output_formatter::format_output;
+use crate::cli_config::CliConfig;
+use crate::output_formatter::emit_to_stdout;
 use crate::CliError;
 
-pub fn run(args: &BenchmarkArgs, pretty: bool) -> Result<(), CliError> {
+pub fn run(args: &BenchmarkArgs, cfg: &CliConfig) -> Result<(), CliError> {
     // Validate iterations.
     if args.iterations < 1 {
         return Err(CliError::Usage("--iterations must be >= 1".to_string()));
@@ -43,10 +44,9 @@ pub fn run(args: &BenchmarkArgs, pretty: bool) -> Result<(), CliError> {
         other => CliError::Internal(other.to_string()),
     })?;
 
-    // Write JSON output (canonical by default, pretty if --pretty).
     let value = serde_json::to_value(&report)
         .map_err(|e| CliError::Internal(e.to_string()))?;
-    println!("{}", format_output(&value, pretty)?);
+    emit_to_stdout("benchmark", &value, cfg, None)?;
 
     // Return error if SLAs failed (exit 1).
     if !report.overall_pass {

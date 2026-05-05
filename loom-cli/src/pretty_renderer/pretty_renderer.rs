@@ -97,8 +97,12 @@ impl<'a> PrettyRenderer<'a> {
 
 /// Reads `NO_COLOR` and `TERM` to determine color enablement.
 /// Public so `interface_tests` can lock the env-var contract.
+///
+/// Per the no-color.org spec: NO_COLOR disables color only when set to a
+/// **non-empty** value. The previous implementation's `is_ok()` check
+/// treated `NO_COLOR=""` as a disable signal, contrary to spec.
 pub fn detect_color_enabled() -> bool {
-    if std::env::var("NO_COLOR").is_ok() {
+    if std::env::var("NO_COLOR").map(|s| !s.is_empty()).unwrap_or(false) {
         return false;
     }
     if std::env::var("TERM").ok().as_deref() == Some("dumb") {

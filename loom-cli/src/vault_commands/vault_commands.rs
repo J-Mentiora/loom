@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use crate::cli_config::CliConfig;
-use crate::output_formatter::format_output;
+use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
@@ -99,7 +99,7 @@ pub async fn grant(rpc: &RpcClient, cfg: &CliConfig, args: VaultGrantArgs) -> Re
         "ttl_seconds": args.ttl,
         "label": args.label.unwrap_or_default(),
     })).await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("vault.grant", &resp, cfg, None)?;
     Ok(())
 }
 
@@ -112,7 +112,7 @@ pub async fn revoke(
         "grant_id": args.grant,
         "reason": args.reason,
     })).await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("vault.revoke", &resp, cfg, None)?;
     Ok(())
 }
 
@@ -120,7 +120,8 @@ pub async fn list(rpc: &RpcClient, cfg: &CliConfig, args: VaultListArgs) -> Resu
     let resp = rpc.call("vault.list_grants", serde_json::json!({
         "session_id": args.session,
     })).await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    // Map list_grants → vault.list for the curated registry (same shape).
+    emit_to_stdout("vault.list", &resp, cfg, None)?;
     Ok(())
 }
 
@@ -133,7 +134,7 @@ pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result
         "label": args.label,
         "yes": args.yes,
     })).await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("vault.add", &resp, cfg, None)?;
     Ok(())
 }
 

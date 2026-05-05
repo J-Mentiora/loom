@@ -1,0 +1,4 @@
+✓ status: ok
+  OK daemon_running
+  OK chromium_present
+  OK schemas_loaded

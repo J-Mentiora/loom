@@ -22,7 +22,7 @@ use loom_core::budget_enforcer::BudgetLimits;
 use serde::{Deserialize, Serialize};
 
 use crate::cli_config::CliConfig;
-use crate::output_formatter::format_output;
+use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
@@ -322,7 +322,7 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
     let resp = rpc
         .call("session.create", serde_json::Value::Object(params))
         .await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("session.create", &resp, cfg, None)?;
     crate::error_mapper::receipt_to_result(resp).map(|_| ())
 }
 
@@ -344,17 +344,14 @@ pub async fn inspect(rpc: &RpcClient, cfg: &CliConfig, args: InspectArgs) -> Res
     let inspection: SessionInspection = serde_json::from_value(resp)
         .map_err(|e| CliError::Internal(format!("inspect response parse: {e}")))?;
 
-    println!(
-        "{}",
-        format_output(&inspection.manifest_summary, cfg.pretty)?
-    );
+    emit_to_stdout("session.inspect", &inspection.manifest_summary, cfg, None)?;
     Ok(())
 }
 
 pub async fn list(rpc: &RpcClient, cfg: &CliConfig, args: ListArgs) -> Result<(), CliError> {
     let _ = args;
     let resp = rpc.call("session.list", serde_json::json!({})).await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("session.list", &resp, cfg, None)?;
     crate::error_mapper::receipt_to_result(resp).map(|_| ())
 }
 
@@ -365,7 +362,7 @@ pub async fn close(rpc: &RpcClient, cfg: &CliConfig, args: CloseArgs) -> Result<
             serde_json::json!({ "session_id": args.session_id }),
         )
         .await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("session.close", &resp, cfg, None)?;
     // AC-CLIEXIT-04: close on already-closed session returns a result-body
     // receipt with status="error"; raise to exit 1.
     crate::error_mapper::receipt_to_result(resp).map(|_| ())
@@ -381,7 +378,7 @@ pub async fn abort(rpc: &RpcClient, cfg: &CliConfig, args: AbortArgs) -> Result<
             }),
         )
         .await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("session.abort", &resp, cfg, None)?;
     crate::error_mapper::receipt_to_result(resp).map(|_| ())
 }
 
@@ -410,7 +407,7 @@ pub async fn replay(rpc: &RpcClient, cfg: &CliConfig, args: ReplayArgs) -> Resul
             .await;
     }
 
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("session.replay", &resp, cfg, None)?;
     Ok(())
 }
 
@@ -434,7 +431,7 @@ pub async fn diff(rpc: &RpcClient, cfg: &CliConfig, args: DiffArgs) -> Result<()
     let report: DiffReport = serde_json::from_value(resp)
         .map_err(|e| CliError::Internal(format!("diff response parse: {e}")))?;
 
-    println!("{}", format_output(&report.diff, cfg.pretty)?);
+    emit_to_stdout("session.diff", &report.diff, cfg, None)?;
 
     // Exit 6 (CliError::SessionsDiffer) if there are any structural differences.
     // SessionsDiffer is a dedicated variant — distinct from Internal (CLI bug, exit 2)

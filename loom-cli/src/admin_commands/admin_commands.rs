@@ -15,7 +15,7 @@ use clap::Args;
 use serde::{Deserialize, Serialize};
 
 use crate::cli_config::CliConfig;
-use crate::output_formatter::format_output;
+use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
@@ -85,7 +85,7 @@ pub async fn gc(rpc: &RpcClient, cfg: &CliConfig, args: GcArgs) -> Result<(), Cl
             }),
         )
         .await?;
-    println!("{}", format_output(&resp, cfg.pretty)?);
+    emit_to_stdout("gc.run", &resp, cfg, None)?;
     Ok(())
 }
 

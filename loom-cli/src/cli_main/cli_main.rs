@@ -23,9 +23,11 @@
 // library-style `run` helper for integration tests.
 
 use clap::Parser as _;
+use std::io::IsTerminal;
 
-use crate::cli_config::ResolveInputs;
-use crate::command_router::{Cli, dispatch};
+use crate::cli_config::output_mode::OutputMode;
+use crate::cli_config::{resolve_color, ColorChoice, ResolveInputs};
+use crate::command_router::{dispatch, validate_flags, Cli};
 use crate::error_mapper::map_exit_code;
 use crate::CliConfig;
 use crate::CliError;
@@ -68,6 +70,14 @@ async fn async_run(argv: Vec<String>) -> i32 {
         }
     };
 
+    // AC-TTY-03 / D-7 / D-31: reject conflicting flags BEFORE config
+    // resolution so the failure mode is a fast Usage error.
+    if let Err(e) = validate_flags(&cli) {
+        let r = Err(e);
+        crate::error_mapper::print_error(&r);
+        return map_exit_code(&r);
+    }
+
     // BC-CLI-02: ConfigResolver::resolve called before CommandRouter.
     let config = match early_init(&argv) {
         Ok(c) => c,
@@ -79,18 +89,27 @@ async fn async_run(argv: Vec<String>) -> i32 {
         }
     };
 
-    // AC-CLIOUT2-03: propagate the global --pretty flag from clap into
-    // the resolved config so handlers can route through `format_output`
-    // without re-parsing argv. This is the single point where the flag
-    // is mirrored; everything downstream reads `cfg.pretty`.
+    // AC-CLIOUT2-03 / AC-TTY-01..04: resolve output_mode per D-7
+    // precedence (quiet > json > pretty > auto-detect) and per-stream
+    // color enablement per D-20 / D-22.
     let mut config = config;
-    if cli.pretty {
-        config.pretty = true;
-    }
+    config.pretty = cli.pretty;
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    let stderr_is_tty = std::io::stderr().is_terminal();
+    config.output_mode =
+        OutputMode::resolve(cli.quiet, cli.json, cli.pretty, stdout_is_tty);
+    let color_choice = if cli.no_color {
+        ColorChoice::Never
+    } else {
+        cli.color.unwrap_or(ColorChoice::Auto)
+    };
+    config.stdout_color_enabled = resolve_color(color_choice, stdout_is_tty);
+    config.stderr_color_enabled = resolve_color(color_choice, stderr_is_tty);
     let result = dispatch(cli, &config).await;
     // AC-AESF-05: print error to stderr BEFORE returning exit code so the user
     // always gets a message. stdout is reserved for JSON receipt stream (SR-CLI-03).
-    crate::error_mapper::print_error(&result);
+    // D-20: color the prose RED+BOLD when stderr is a TTY.
+    crate::error_mapper::print_error_with_color(&result, config.stderr_color_enabled);
     map_exit_code(&result)
 }
 
