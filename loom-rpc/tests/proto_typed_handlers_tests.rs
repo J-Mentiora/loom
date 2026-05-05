@@ -1,4 +1,4 @@
-//! AC-PROTO-01.2 — Token handshake required.
+//! — Token handshake required.
 //!
 //! Given the daemon configured with auth token T,
 //! When a JSON-RPC client connects but does not issue HELLO {token: T}
@@ -68,7 +68,7 @@ async fn connection_closed_when_no_hello_sent() {
             assert_eq!(
                 val["code"].as_str().unwrap_or(""),
                 "protocol_auth_required",
-                "AC-PROTO-01.2: must send protocol_auth_required on timeout"
+                "must send protocol_auth_required on timeout"
             );
         }
         Some(Err(_)) | None => { /* connection reset or EOF is also correct */ }
@@ -108,7 +108,7 @@ async fn connection_closed_when_wrong_token_sent() {
     assert_eq!(
         response["code"].as_str().unwrap_or(""),
         "protocol_auth_required",
-        "AC-PROTO-01.2: wrong token must yield protocol_auth_required"
+        "wrong token must yield protocol_auth_required"
     );
 
     // Connection must close after auth failure.
@@ -117,7 +117,7 @@ async fn connection_closed_when_wrong_token_sent() {
         .expect("server must close connection promptly after auth failure");
     assert!(
         next.map(|r| r.is_err()).unwrap_or(true),
-        "AC-PROTO-01.2: connection must be closed after auth failure"
+        "connection must be closed after auth failure"
     );
 
     server_task.abort();

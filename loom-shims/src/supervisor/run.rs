@@ -32,7 +32,7 @@ use tokio::sync::oneshot;
 /// determinism_init.js file used by the integration tests.
 const DETERMINISM_SCRIPT: &str = include_str!("../../assets/determinism_init.js");
 
-/// Default analytics/ads/telemetry blocklist (AC-DET-05.1). Embedded at
+/// Default analytics/ads/telemetry blocklist. Embedded at
 /// build time via `include_str!`. ~140 entries grouped under
 /// `# --- Section ---` headers; section names become the `reason` field
 /// on `BlockedEvent`s. The shim parses this once at boot.
@@ -94,7 +94,7 @@ pub async fn run(config: SupervisorConfig, ipc_fd: RawFd) -> Result<(), Supervis
     // termination paths (the daemon's `pkill loom-shim-chromium` after
     // a session close, for instance).
     //
-    // AC-SHCRT-05.2: the binary's process group is set to the shim's
+    // The binary's process group is set to the shim's
     // own pid by default (no process_group(0) in spawn_shim). Chromium's
     // pgid was explicitly set in ChromiumSupervisor::start. So a
     // `kill -9 <shim_pid>` from the host orphans Chromium unless we

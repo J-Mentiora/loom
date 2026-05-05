@@ -1,22 +1,22 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ChromiumDownloader/interfaces.rs` instead.
 // ChromiumDownloader — pinned-URL Chromium download with sha256
 // verification.
 //
 // # Contract semantics
-// - **SR-CLI-04.** sha256 mismatch returns
+// - **Supply-chain check.** sha256 mismatch returns
 //   `LoomErrorCode::SupplyChainViolation { expected_hash,
 //   actual_hash, url }` (mapped to `CliError::SupplyChain` by
 //   `ErrorMapper`).
-// - **Idempotent (AC-CHPLUMB-02).** `ensure(url, expected_sha256)` skips
+// - **Idempotent.** `ensure(url, expected_sha256)` skips
 //   download if the binary is present AND `install_dir/.archive_sha256`
 //   contains the expected SHA. The sentinel stores the archive SHA so the
 //   idempotence check is semantically correct (archive SHA ≠ binary SHA).
-// - **Extraction (AC-CHPLUMB-01).** After SHA verify the zip archive is
+// - **Extraction.** After SHA verify the zip archive is
 //   extracted via the `zip` crate into `install_dir`. The sentinel is
 //   written only after successful extraction.
 // - **Internal-only.** Used by `PostinstallRunner` (download path) +
-//   `DoctorRunner` (verify-only path, AC-CHPLUMB-03).
+//   `DoctorRunner` (verify-only path).
 
 use std::path::{Path, PathBuf};
 
@@ -50,7 +50,7 @@ impl ChromiumDownloader {
         Self { config }
     }
 
-    /// Idempotent ensure-present (AC-CHPLUMB-02): return `Skipped` when
+    /// Idempotent ensure-present: return `Skipped` when
     /// the binary exists and `install_dir/.archive_sha256` contains the
     /// expected SHA. Otherwise: download archive → verify SHA → extract
     /// zip → write sentinel.
@@ -100,26 +100,26 @@ impl ChromiumDownloader {
             });
         }
 
-        // Extract zip archive into install_dir (AC-CHPLUMB-01).
+        // Extract zip archive into install_dir.
         extract_zip(&tmp, &self.config.install_dir)?;
         let _ = std::fs::remove_file(&tmp);
 
-        // Write sentinel with archive SHA (AC-CHPLUMB-02).
+        // Write sentinel with archive SHA.
         std::fs::write(&sentinel, expected_sha256)
             .map_err(|e| CliError::Internal(format!("write sentinel: {e}")))?;
 
         Ok(DownloadOutcome::Downloaded(binary))
     }
 
-    /// Verify-only path used by `DoctorRunner` check 4 (AC-CHPLUMB-03).
+    /// Verify-only path used by `DoctorRunner` check 4.
     /// Does NOT download; returns `Ok(())` when the binary exists and
     /// the sentinel matches `expected_sha256`.
     ///
-    /// Fallback (AC-CHBS-01): when the literal `binary_path()` is missing but
+    /// Fallback: when the literal `binary_path()` is missing but
     /// its parent directory (e.g. `Contents/MacOS/`) exists and contains at
     /// least one executable file, returns `Ok(())` without a sentinel check.
     /// This covers whole-bundle symlinks to differently-named browsers such as
-    /// `Google Chrome.app` (AC-CHBS-02).
+    /// `Google Chrome.app`.
     pub async fn verify(&self, expected_sha256: &str) -> Result<(), CliError> {
         let binary = self.binary_path();
         if !binary.exists() {

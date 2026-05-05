@@ -1,4 +1,4 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/main/interfaces.rs` instead.
 // `main` — `loom` binary entrypoint.
 //
@@ -6,12 +6,12 @@
 // - **Entry layer.** Builds the clap parser, initialises the tokio
 //   runtime, resolves config, initialises observability, then hands
 //   off to `CommandRouter`.
-// - **IC-CLI-04 (exit codes).** `main` is the SOLE caller of
+// - **Exit codes.** `main` is the SOLE caller of
 //   `std::process::exit`. All exits are mapped through
 //   `ErrorMapper::map_exit_code`. The clippy lint
 //   `// FORBIDDEN: std::process::exit outside main + ErrorMapper`
 //   enforces this elsewhere in the crate.
-// - **BC-CLI-02 (config precedence).** `main` invokes
+// - **Config precedence.** `main` invokes
 //   `ConfigResolver::resolve(args, env, file)` before constructing
 //   `CommandRouter`. The resolved `CliConfig` is owned by `main` and
 //   borrowed by handlers via `CommandRouter`.
@@ -36,7 +36,7 @@ use crate::CliError;
 /// `CommandRouter`, and exits with the mapped exit code from
 /// `ErrorMapper`.
 ///
-/// IC-CLI-04: SOLE caller of `std::process::exit` in the crate
+/// SOLE caller of `std::process::exit` in the crate
 /// (other than `ErrorMapper::map_exit_code` which supplies the code).
 /// // FORBIDDEN: std::process::exit outside main + ErrorMapper
 pub fn main() {
@@ -55,7 +55,7 @@ pub fn run(argv: Vec<String>) -> i32 {
 /// Async inner body of `run`. Separated to keep `run` synchronous
 /// (required by the `tokio::runtime::Runtime::block_on` API).
 async fn async_run(argv: Vec<String>) -> i32 {
-    // AC-DOCS-02: `loom action <name> --help` must show the registered
+    // `loom action <name> --help` must show the registered
     // action's detailed signature. clap's built-in --help intercepts at
     // the subcommand level (renders Action's help) before our dispatch
     // can see `extra`, so we pre-scan argv here. Pre-clap so the test
@@ -68,12 +68,12 @@ async fn async_run(argv: Vec<String>) -> i32 {
     }
 
     // Parse first — so --help / --version never trigger config I/O
-    // (SR-CLI-01: --version p99 ≤ 200 ms, must not read filesystem).
+    // (--version p99 ≤ 200 ms, must not read filesystem).
     // Use try_parse_from so the test harness can call run() without
     // triggering std::process::exit.
     //
     // Augment the `action` subcommand with a registry-rendered after_help
-    // (AC-DOCS-02) so `loom action --help` lists every registered action
+    // so `loom action --help` lists every registered action
     // with a one-line summary. The leak is one-shot per process.
     let after_help: &'static str =
         Box::leak(crate::action_help::render_all_actions_after_help().into_boxed_str());
@@ -98,7 +98,7 @@ async fn async_run(argv: Vec<String>) -> i32 {
         }
     };
 
-    // AC-TTY-03 / D-7 / D-31: reject conflicting flags BEFORE config
+    // D-7 / D-31: reject conflicting flags BEFORE config
     // resolution so the failure mode is a fast Usage error.
     if let Err(e) = validate_flags(&cli) {
         let r = Err(e);
@@ -106,18 +106,18 @@ async fn async_run(argv: Vec<String>) -> i32 {
         return map_exit_code(&r);
     }
 
-    // BC-CLI-02: ConfigResolver::resolve called before CommandRouter.
+    // ConfigResolver::resolve called before CommandRouter.
     let config = match early_init(&argv) {
         Ok(c) => c,
         Err(e) => {
-            // AC-AESF-05: print_error before exit so early-init failures are visible.
+            // print_error before exit so early-init failures are visible.
             let r = Err(e);
             crate::error_mapper::print_error(&r);
             return map_exit_code(&r);
         }
     };
 
-    // AC-CLIOUT2-03 / AC-TTY-01..04: resolve output_mode per D-7
+    // resolve output_mode per D-7
     // precedence (quiet > json > pretty > auto-detect) and per-stream
     // color enablement per D-20 / D-22.
     let mut config = config;
@@ -133,8 +133,8 @@ async fn async_run(argv: Vec<String>) -> i32 {
     config.stdout_color_enabled = resolve_color(color_choice, stdout_is_tty);
     config.stderr_color_enabled = resolve_color(color_choice, stderr_is_tty);
     let result = dispatch(cli, &config).await;
-    // AC-AESF-05: print error to stderr BEFORE returning exit code so the user
-    // always gets a message. stdout is reserved for JSON receipt stream (SR-CLI-03).
+    // print error to stderr BEFORE returning exit code so the user
+    // always gets a message. stdout is reserved for JSON receipt stream.
     // D-20: color the prose RED+BOLD when stderr is a TTY.
     crate::error_mapper::print_error_with_color(&result, config.stderr_color_enabled);
     map_exit_code(&result)

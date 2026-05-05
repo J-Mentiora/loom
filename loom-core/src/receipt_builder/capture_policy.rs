@@ -1,6 +1,5 @@
 // capture_policy — single source of truth for `--capture-policy` field
-// inclusion across the manifest receipt and the wire receipt
-// (AC-NAVRECEIPT2-05 / AC-CORE-04.4 / AC-CORE-04.5 / brief).
+// inclusion across the manifest receipt and the wire receipt.
 //
 // # Why one decision table
 //
@@ -20,8 +19,8 @@
 use super::receipt_builder::CaptureProfile;
 
 /// Where this enforcer runs. Manifest path keeps tier-1 hashes on
-/// Minimal (AC-CORE-04.5 strips blobs but keeps `*_hash` references
-/// — see `apply_capture_profile`); the brief makes the wire-path
+/// Minimal (Minimal strips blobs but keeps `*_hash` references —
+/// see `apply_capture_profile`); the brief makes the wire-path
 /// Minimal stricter ("only `url`, `status_code`, `error`").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureScope {
@@ -115,12 +114,12 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Manifest, P::Default, F::ScreenshotBeforeBlobRef) => false,
         (S::Manifest, P::Default, _) => true,
 
-        // Manifest + Full (AC-CORE-04.4): keep everything including
+        // Manifest + Full: keep everything including
         // before-refs. The caller is responsible for populating
         // `*BeforeBlobRef` on the struct before invoking the enforcer.
         (S::Manifest, P::Full, _) => true,
 
-        // Manifest + Minimal (AC-CORE-04.5): hash-only. Strip blob
+        // Manifest + Minimal: hash-only. Strip blob
         // refs; downgrade to hash-only navigate fields; empty
         // console_lines; strip network event body refs (keep
         // hash/metadata).
@@ -132,7 +131,7 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Manifest, P::Minimal, F::NetworkEventBodyRef) => false,
         // Hash-only payloads + per-event metadata (status, url,
         // method, timing) survive Minimal — only the *bodies* are
-        // stripped, per AC-CORE-04.5 wording "no `network_events[]`
+        // stripped, per Minimal wording "no `network_events[]`
         // bodies, only counts" interpreted as "keep counts + metadata,
         // strip body refs".
         (S::Manifest, P::Minimal, F::Url) => true,

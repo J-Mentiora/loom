@@ -45,7 +45,7 @@ pub struct PlaywrightImportResult {
 }
 
 /// Facade configuration. Loaded from the `loom` binary's config layer
-/// (BC-CORE-08 precedence: CLI > env > config file > defaults). Validated
+/// (precedence: CLI > env > config file > defaults). Validated
 /// once at startup against the JSON Schema shipped in the binary.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CoreConfig {
@@ -90,7 +90,7 @@ impl CoreApiFacade {
                 Arc::clone(&obs),
             ));
 
-        // Scaffold keychain — Phase 6 wires the real platform backend.
+        // Scaffold keychain — a later release wires the real platform backend.
         struct NullKeychain;
         impl loom_core::vault::KeychainAccess for NullKeychain {
             fn get_secret(&self, label: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
@@ -267,7 +267,7 @@ impl CoreApiFacade {
 
     /// Import a Playwright trace.zip from raw bytes; create a non-replayable session.
     ///
-    /// Called by the `import.playwright` RPC method in `loom-rpc` (Phase 7).
+    /// Called by the `import.playwright` RPC method in `loom-rpc`.
     /// Returns `PlaywrightImportResult { session_id, action_count }`.
     pub fn import_playwright_from_bytes(
         &self,

@@ -189,7 +189,7 @@ impl McpDispatcher {
         self.tool_cache.list().await
     }
 
-    /// AC-MCPTOOLS-01..04: prime the tool cache from `rpc.schemas`.
+    /// prime the tool cache from `rpc.schemas`.
     /// Idempotent — repeated calls re-fetch and overwrite. Called once
     /// at server startup by `mcp_main::run`; safe to retry on transient
     /// daemon-down.

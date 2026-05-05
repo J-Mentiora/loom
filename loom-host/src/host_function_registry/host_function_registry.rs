@@ -1,14 +1,14 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/host_function_registry/interfaces.rs` instead.
 // HostFunctionRegistry — builds two pre-baked `wasmtime::component::Linker<HostState>`
 // instances at startup; selects per-session linker by `Mode`.
 //
 // # Contract semantics
-// - **Two pre-built linkers (IC-HOST-08).** `live_linker` and
+// - **Two pre-built linkers.** `live_linker` and
 //   `replay_linker` are constructed ONCE at `WasmHost::new`, both
 //   immutable for the process lifetime. Mode selection is a pointer
 //   choice, not a table mutation.
-// - **Generated `add_to_linker` (BC-HOST-02).** The `wit-bindgen`
+// - **Generated `add_to_linker`.** The `wit-bindgen`
 //   output supplies one `add_to_linker<T, U: Host>(linker, get)`
 //   function. We invoke it twice, once with `LiveHostFns` and once
 //   with `ReplayHostFns` (both impl the generated `host::Host` trait
@@ -17,7 +17,7 @@
 //   `HostFunctionTable` (per `module_list.md`). It does NOT depend on
 //   `WasmRuntime` directly — the engine is passed in via the linker's
 //   constructor argument.
-// - **Replay never reaches live side-effects (IC-HOST-08).** The
+// - **Replay never reaches live side-effects.** The
 //   `replay_linker` registers `ReplayHostFns`, which has no edges into
 //   `Vault`, `ShimManager::send`, live HTTP, or `ContentStore::put`.
 

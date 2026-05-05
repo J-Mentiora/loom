@@ -1,4 +1,4 @@
-// error_types — stable receipt status/error discriminators (AC-CORE-05.1, AC-CORE-05.2).
+// error_types — stable receipt status/error discriminators.
 pub mod error_types;
 pub use error_types::*;
 

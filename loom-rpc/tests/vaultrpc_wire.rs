@@ -3,17 +3,17 @@
 //! Asserts the full `request_router → rpc_handlers → CoreServiceAdapter →
 //! CoreFacadeBridge` chain returns the contract-shaped envelopes for:
 //!
-//! - **AC-VAULTRPC-01** `vault.list_grants` returns a (possibly empty) JSON array.
-//! - **AC-VAULTRPC-02** `vault.add` returns the typed receipt for allowlisted
+//! - `vault.list_grants` returns a (possibly empty) JSON array.
+//! - `vault.add` returns the typed receipt for allowlisted
 //!   providers AND emits the canonical `oauth-only` rejection envelope for
-//!   non-allowlisted providers (per AC-VAULT-04.1).
-//! - **AC-VAULTRPC-03** `vault.grant` returns `GrantInfo` with `grant_id` only
-//!   (IC-RPC-10 — never the secret bytes).
-//! - **AC-VAULTRPC-04** `vault.revoke` succeeds; subsequent revoke surfaces the
+//!   non-allowlisted providers (per the contract).
+//! - `vault.grant` returns `GrantInfo` with `grant_id` only
+//!   (never the secret bytes).
+//! - `vault.revoke` succeeds; subsequent revoke surfaces the
 //!   distinct `vault_grant_revoked` wire kind (not collapsed to
 //!   `vault_grant_not_found`).
 //!
-//! Plus an AC-CLI-01.1 spot-check on canonical JCS response encoding.
+//! Plus an spot-check on canonical JCS response encoding.
 //!
 //! Uses `EmptySchemaProvider` (validation bypassed when no methods are
 //! registered) and a `RecordingCoreBridge` that returns canned values.
@@ -53,7 +53,7 @@ struct VaultCalls {
     list_grants: Vec<Option<String>>,
     add: Vec<VaultAddParams>,
     /// Tracks which grant_ids have been revoked so the second revoke
-    /// returns `VaultGrantRevoked` (AC-VAULTRPC-04 distinct kind).
+    /// returns `VaultGrantRevoked` (distinct kind).
     revoked_ids: std::collections::HashSet<String>,
 }
 
@@ -151,7 +151,7 @@ impl CoreFacadeBridge for RecordingCoreBridge {
             .push((grant_id.to_string(), reason.to_string()));
         if !calls.revoked_ids.insert(grant_id.to_string()) {
             // Second revoke of the same grant_id → distinct VaultGrantRevoked
-            // wire kind per AC-VAULTRPC-04.
+            // wire kind per the contract.
             return Err(LoomErrorCode::VaultGrantRevoked);
         }
         Ok(())
@@ -346,7 +346,7 @@ async fn authenticate(
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-/// AC-VAULTRPC-01: `vault.list_grants` returns a (possibly empty) JSON array.
+/// `vault.list_grants` returns a (possibly empty) JSON array.
 #[tokio::test(flavor = "multi_thread")]
 async fn vault_list_returns_empty_array() {
     let (srv, _bg) = start_vault_server().await;
@@ -363,7 +363,7 @@ async fn vault_list_returns_empty_array() {
     assert!(arr.is_empty(), "expected empty array; got: {result}");
 }
 
-/// AC-VAULTRPC-02 accept branch: `vault.add github` returns typed receipt.
+/// accept branch: `vault.add github` returns typed receipt.
 #[tokio::test(flavor = "multi_thread")]
 async fn vault_add_github_returns_typed_receipt() {
     let (srv, _bg) = start_vault_server().await;
@@ -391,8 +391,8 @@ async fn vault_add_github_returns_typed_receipt() {
     assert!(result.get("label").is_some(), "label field must be present");
 }
 
-/// AC-VAULTRPC-02 reject branch: non-allowlisted provider rejects with
-/// the `vault_rejection` wire kind. AC-VAULT-04.1's structured `details`
+/// reject branch: non-allowlisted provider rejects with
+/// the `vault_rejection` wire kind. The structured `details`
 /// payload is asserted in the loom-core unit tests; here we assert the
 /// router emits a JSON-RPC error envelope (not a method-not-found prose
 /// or a successful result).
@@ -425,7 +425,7 @@ async fn vault_add_unknown_provider_rejects_oauth_only() {
     );
 }
 
-/// AC-VAULTRPC-03 + IC-RPC-10: `vault.grant` returns GrantInfo with grant_id only.
+/// `vault.grant` returns GrantInfo with grant_id only.
 #[tokio::test(flavor = "multi_thread")]
 async fn vault_grant_returns_grant_info_with_grant_id_only() {
     let (srv, _bg) = start_vault_server().await;
@@ -452,7 +452,7 @@ async fn vault_grant_returns_grant_info_with_grant_id_only() {
         result.get("grant_id").and_then(|v| v.as_str()).is_some(),
         "GrantInfo.grant_id must be present"
     );
-    // IC-RPC-10: response carries no secret bytes. The struct field listing
+    // response carries no secret bytes. The struct field listing
     // (grant_id, origin, scopes, ttl_seconds, label) is exhaustive — the
     // serde-derived JSON has no `secret`/`token`/`value` fields.
     for forbidden in &["secret", "token", "value"] {
@@ -463,7 +463,7 @@ async fn vault_grant_returns_grant_info_with_grant_id_only() {
     }
 }
 
-/// AC-VAULTRPC-04: `vault.revoke` succeeds; subsequent revoke of the same
+/// `vault.revoke` succeeds; subsequent revoke of the same
 /// grant_id surfaces the distinct `vault_grant_revoked` wire kind (NOT
 /// collapsed to `vault_grant_not_found` — that was the F-A2 bug).
 #[tokio::test(flavor = "multi_thread")]
@@ -503,7 +503,7 @@ async fn vault_revoke_succeeds_and_double_revoke_envelope_is_typed() {
     );
 }
 
-/// AC-CLI-01.1 spot-check: the response payload encodes as canonical JCS.
+/// spot-check: the response payload encodes as canonical JCS.
 /// Object keys serialise in sorted order (RFC 8785). We assert the
 /// serialisation by reading the raw response bytes and re-parsing into a
 /// `serde_json::Map` to verify field ordering.

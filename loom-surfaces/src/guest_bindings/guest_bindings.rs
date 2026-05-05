@@ -18,20 +18,18 @@
 //
 // # Contract semantics
 // - **Sole WASM export.** `web-surface` interface is the only export
-//   from `loom-surface-web.wasm` (BC-SURF-02; IC-SURF-12). v1.5 surface
-//   crates each export their own world (shell-surface, fs-surface,
-//   api-surface, native-surface).
+//   from `loom-surface-web.wasm`. v1.5 surface crates each export their
+//   own world (shell-surface, fs-surface, api-surface, native-surface).
 // - **10 verb methods.** One method per WIT-defined verb on
 //   `web-surface`. `WebSurfaceImpl::<verb>` delegates to the
-//   corresponding verb module's `execute` function (IC-SURF-12 +
-//   SR-SURF-01).
+//   corresponding verb module's `execute` function.
 // - **No business logic.** Pure delegation; the trait body is the only
 //   place where the verb dispatch table lives. Adding an 11th verb
 //   requires a WIT change + regen.
-// - **No mode awareness (SR-SURF-05).** The bytecode this file produces
+// - **No mode awareness .** The bytecode this file produces
 //   is identical between live and replay; the host swaps the linker.
 //
-// # Banned in this module (BC-SURF-04)
+// # Banned in this module
 // - All the usual platform-symbol bans apply; here doubly so because
 //   GuestBindings is the WASM export boundary.
 
@@ -106,7 +104,7 @@ impl WebSurface for WebSurfaceImpl {
 /// Compile-time enumeration of the 10 verb names exported from the
 /// `web-surface` WIT interface. Used by integration tests +
 /// `tools/lint-surface-bindings.py` to assert WIT-vs-impl agreement
-/// (SR-SURF-01).
+/// .
 pub const WEB_SURFACE_VERBS: &[&str] = &[
     "navigate",
     "click",

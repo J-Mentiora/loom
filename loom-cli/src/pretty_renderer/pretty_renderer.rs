@@ -1,9 +1,9 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/PrettyRenderer/interfaces.rs` instead.
 // PrettyRenderer — schema-driven tabular renderer for `--pretty`.
 //
 // # Contract semantics
-// - **IC-CLI-02 / AC-CLI-04.2.** Reads the response schema from
+// - Reads the response schema from
 //   `SchemaCache` (populated from `rpc.schemas` once at startup) and
 //   derives the column list mechanically from JSON-Schema field
 //   order. No hand-rolled per-method tables. Clippy lint forbids
@@ -71,7 +71,7 @@ impl<'a> PrettyRenderer<'a> {
         // color_enabled controls ANSI output (NO_COLOR / TERM=dumb compliance).
         // Bold header reserved for future enhancement; suppressed when !color_enabled.
         let _ = self.color_enabled;
-        // One key-value pair per line: schema-derived column order per IC-CLI-02.
+        // One key-value pair per line: schema-derived column order.
         for col in &columns {
             let v = value.get(col).unwrap_or(&serde_json::Value::Null);
             let v_str = match v {

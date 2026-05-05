@@ -1,21 +1,21 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/module_library/interfaces.rs` instead.
 // ModuleLibrary — preloaded `Arc<wasmtime::component::Component>` per
 // surface. Populated at `WasmHost::new`; never mutated on the dispatch
-// hot path (IC-HOST-07).
+// hot path.
 //
 // # Contract semantics
-// - **Cache miss is NOT a lazy compile.** Per IC-HOST-07, dispatch to a
-//   missing surface returns `LoomErrorCode::SurfaceUnavailable` —
-//   `Compiler::compile` is NEVER invoked from `dispatch`.
+// - **Cache miss is NOT a lazy compile.** Dispatch to a missing surface
+//   returns `LoomErrorCode::SurfaceUnavailable` — `Compiler::compile` is
+//   NEVER invoked from `dispatch`.
 // - **`RwLock` for recovery rebuild ONLY.** The dispatch path
 //   `get(name)` takes the read lock and returns `Arc<Component>` clone.
-//   The write lock is taken only by `StartupManager` recovery
-//   (§3.3) when a corrupted artifact must be re-compiled and reloaded.
+//   The write lock is taken only by `StartupManager` recovery when a
+//   corrupted artifact must be re-compiled and reloaded.
 // - **Cwasm artifact path includes engine hash.** Built by
 //   `Compiler` from `WasmRuntime::precompile_compatibility_hash()` so a
 //   wasmtime upgrade naturally invalidates artifacts.
-// - **Storage layout (BC §1):**
+// - **On-disk storage layout:**
 //     macOS: `~/Library/Application Support/loom/surfaces/<name>.cwasm`
 //     Linux: `$XDG_DATA_HOME/loom/surfaces/<name>.cwasm`
 
@@ -98,13 +98,14 @@ impl ModuleLibrary {
 
     /// Load one surface from a given artifact path. Used by recovery and
     /// `load_all`. Checks the SHA-256 sidecar against the compile-time
-    /// `LOOM_SURFACE_WEB_SHA256` constant (AC-WASMB-05).
+    /// `LOOM_SURFACE_WEB_SHA256` constant.
     pub fn load_one(&self, name: &SurfaceName, path: &Path) -> Result<(), LoomError> {
         self.load_one_with_expected_sha(name, path, env!("LOOM_SURFACE_WEB_SHA256"))
     }
 
-    /// Testability shim for AC-WASMB-05: load one surface while supplying the
-    /// expected SHA-256 directly instead of reading the compile-time constant.
+    /// Testability shim for SHA-mismatch tests: load one surface while
+    /// supplying the expected SHA-256 directly instead of reading the
+    /// compile-time constant.
     ///
     /// Logic:
     /// - If `expected_sha` is empty → skip integrity check (dev builds where
@@ -121,7 +122,7 @@ impl ModuleLibrary {
 
         if !expected_sha.is_empty() {
             // Sidecar convention: <name>.sha256 alongside the .cwasm artifact.
-            // Built by compile_step; named consistently with AC-WASMB-02.
+            // Built by compile_step; named to match the cwasm artifact.
             let sidecar = path.with_extension("sha256");
             if sidecar.exists() {
                 let actual = std::fs::read_to_string(&sidecar)
@@ -149,7 +150,7 @@ impl ModuleLibrary {
     }
 
     /// Read-lock lookup. Returns `LoomError::Unsupported` (surface unavailable)
-    /// when the surface was not loaded — NEVER compiles on demand (IC-HOST-07).
+    /// when the surface was not loaded — NEVER compiles on demand.
     pub fn get(
         &self,
         name: &SurfaceName,

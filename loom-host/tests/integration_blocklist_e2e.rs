@@ -1,4 +1,4 @@
-//! End-to-end blocklist enforcement test (AC-DET-05.1, AC-BLOCKLIST-05).
+//! End-to-end blocklist enforcement test.
 //!
 //! Drives `ShimManager::send_navigate` against the real
 //! `loom-shim-chromium` binary, which spawns the test-only
@@ -100,14 +100,14 @@ fn make_manager(session_label: &str) -> (std::sync::Arc<ShimManager>, ShimId, te
     (mgr, id, user_data_dir)
 }
 
-// ── AC-BLOCKLIST-05 ─────────────────────────────────────────────────────────
+// ── Blocklist sub-resource is blocked and recorded ─────────────────────────
 
 /// Drive a full PageNavigate through the real shim binary; assert the
 /// returned `NavigateOutcome` carries a `BlockedEvent` for the GA
 /// sub-resource that fake-chromium synthesized.
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_blocklist_05_ga_subresource_is_blocked_and_recorded() {
+async fn blocklist_ga_subresource_is_blocked_and_recorded() {
     assert_binaries_built();
     let (mgr, id, _udd) = make_manager("blocklist-05-ga");
 
@@ -151,13 +151,13 @@ async fn ac_blocklist_05_ga_subresource_is_blocked_and_recorded() {
     mgr.shutdown_session("blocklist-05-ga").await;
 }
 
-/// AC-BLOCKLIST-04: with `blocklist_enabled = false`, the same
-/// fake-chromium fixture produces ZERO BlockedEvents because the shim
-/// never issues `Fetch.enable` (no interception → no Fetch.* events
-/// → no gate decisions).
+/// With `blocklist_enabled = false`, the same fake-chromium fixture
+/// produces ZERO BlockedEvents because the shim never issues
+/// `Fetch.enable` (no interception → no Fetch.* events → no gate
+/// decisions).
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_blocklist_04_no_blocklist_disables_enforcement() {
+async fn no_blocklist_disables_enforcement() {
     assert_binaries_built();
     let (mgr, id, _udd) = make_manager("blocklist-04-disabled");
 

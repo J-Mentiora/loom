@@ -1,5 +1,4 @@
 // Interface tests for BenchmarkArgs and run_benchmark contract.
-// AC-PERF-01.1, AC-PERF-02.1, AC-PERF-04.1 (CLI surface tests).
 
 use super::benchmark_commands::{run_benchmark, BenchmarkArgs};
 use crate::cli_config::CliConfig;
@@ -68,7 +67,7 @@ fn test_benchmark_command_binary_required_error() {
     );
 }
 
-/// AC-BENCH-02: --binary given without meta.json → uses stat fallback, no error.
+/// --binary given without meta.json → uses stat fallback, no error.
 #[test]
 fn test_benchmark_with_binary_no_meta_json() {
     use tempfile::TempDir;
@@ -87,12 +86,12 @@ fn test_benchmark_with_binary_no_meta_json() {
     let result = run_benchmark(&args, &default_config());
     assert!(
         result.is_ok(),
-        "AC-BENCH-02: --binary given without meta.json should succeed via stat fallback, got {:?}",
+        "--binary given without meta.json should succeed via stat fallback, got {:?}",
         result
     );
 }
 
-/// AC-BENCH-04: explicit --meta-json pointing at missing file → Usage error with remediation.
+/// explicit --meta-json pointing at missing file → Usage error with remediation.
 #[test]
 fn test_benchmark_explicit_meta_json_missing() {
     use tempfile::TempDir;
@@ -115,12 +114,9 @@ fn test_benchmark_explicit_meta_json_missing() {
         Err(CliError::Usage(msg)) => {
             assert!(
                 msg.contains("just gen-meta") || msg.contains("meta.json not found"),
-                "AC-BENCH-04: remediation message should mention gen-meta, got: {msg}"
+                "remediation message should mention gen-meta, got: {msg}"
             );
         }
-        other => panic!(
-            "AC-BENCH-04: expected Usage error with remediation, got {:?}",
-            other
-        ),
+        other => panic!("expected Usage error with remediation, got {:?}", other),
     }
 }

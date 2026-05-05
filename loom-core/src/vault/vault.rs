@@ -1,7 +1,7 @@
-// Vault — credential mediation. Stays in `loom-core` (BC-CORE-02 HARD).
+// Vault — credential mediation. Stays in `loom-core`.
 //
 // # Contract semantics
-// - **Vault isolation (IC-CORE-05 / BC-CORE-02 HARD).** Raw secret bytes
+// - **Vault isolation.** Raw secret bytes
 //   appear in EXACTLY ONE call site: `Vault::substitute`. The bytes
 //   live in a `Zeroizing<Vec<u8>>` local, are written into the outbound
 //   `NetRequest::headers["Authorization"]` slot, and zeroize on drop.
@@ -10,11 +10,11 @@
 // - **Substitution mutates in-place.** `substitute(&mut NetRequest)` per
 //   the per-task instructions: the substitution writes to `req.headers`
 //   directly so secret bytes never sit in a return value.
-// - **OAuth-only at v1 (BC-CORE-03).** `grant()` rejects non-OAuth
+// - **OAuth-only at v1.** `grant()` rejects non-OAuth
 //   credential types with `VaultCredentialTypeUnsupported`.
-// - **4-check sequence in substitute (SR-CORE-15):** alive → origin
+// - **4-check sequence in substitute:** alive → origin
 //   match → scopes superset → ttl. Order is fixed.
-// - **Audit entries (BC-CORE-07).** Every grant/consume/revoke/expire
+// - **Audit entries.** Every grant/consume/revoke/expire
 //   appends a typed audit entry to the same manifest hash chain via
 //   `ManifestWriter::append_audit`.
 // - **Platform leaf in external crate.** Keychain access lives in
@@ -34,7 +34,7 @@ use zeroize::Zeroizing;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct GrantId(pub String);
 
-/// Network request struct. WIT-derived (BC-CORE-05). The shape shown
+/// Network request struct. WIT-derived. The shape shown
 /// here is the wit-bindgen output; all numeric fields are integers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetRequest {
@@ -54,7 +54,7 @@ pub struct NetResp {
     pub body: Vec<u8>,
 }
 
-/// Supported credential types. Only `OAuth` is allowed at v1 (BC-CORE-03).
+/// Supported credential types. Only `OAuth` is allowed at v1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialType {
@@ -79,7 +79,7 @@ pub struct RevokeReason {
     pub reason: String,
 }
 
-/// Options for `Vault::add_credential`. Session-less per AC-VAULTRPC-02 —
+/// Options for `Vault::add_credential`. Session-less:
 /// `loom vault add` has no `--session` flag; the receipt does not
 /// participate in audit chains until the real OAuth device flow lands.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,8 +129,8 @@ pub(crate) struct Grant {
 }
 
 /// External keychain interface. The IMPL of this trait lives in the
-/// out-of-crate, feature-gated `loom-keychain` crate (BC-CORE-02 +
-/// SR-CORE-01: no platform symbols inside `loom-core`).
+/// out-of-crate, feature-gated `loom-keychain` crate (no platform
+/// symbols inside `loom-core`).
 pub trait KeychainAccess: Send + Sync {
     /// Return the raw secret bytes for `label`, wrapped in `Zeroizing`.
     /// The returned buffer drops zeroize when it leaves scope.
@@ -181,7 +181,7 @@ pub trait Vault: Send + Sync {
     /// Revoke a grant. Subsequent `substitute` returns VaultGrantRevoked.
     fn revoke(&self, grant: GrantId, reason: RevokeReason) -> Result<(), LoomError>;
 
-    /// Add an OAuth-only credential. Session-less per AC-VAULTRPC-02 — the
+    /// Add an OAuth-only credential. Session-less: the
     /// CLI `loom vault add` has no `--session` flag, and the receipt does
     /// not participate in audit chains until the real OAuth device flow
     /// lands. Allowlisted providers (`OAUTH_PROVIDER_ALLOWLIST`) return a
@@ -189,14 +189,13 @@ pub trait Vault: Send + Sync {
     /// non-allowlisted providers reject with
     /// `LoomErrorCode::VaultRejection` and structured context
     /// `{ code: "vault_credential_type_unsupported",
-    ///    details.allowed_types: ["oauth2_authorization_code_pkce"] }`
-    /// (AC-VAULT-04.1 envelope).
+    ///    details.allowed_types: ["oauth2_authorization_code_pkce"] }`.
     fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError>;
 
     /// List alive grants, optionally filtered by `session`. "Alive" means
     /// `!revoked` AND `now <= issued_at_ms + ttl_ms`. Empty result is a
-    /// valid outcome (AC-VAULTRPC-01 admits the "possibly empty" case).
+    /// valid outcome.
     fn list_grants(&self, session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError>;
 }
 
-// impl Vault for LocalVault is in impl_local.rs (Phase 6 feature-DAG impl).
+// impl Vault for LocalVault is in impl_local.rs.

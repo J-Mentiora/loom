@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/LaunchdPlistWriter/interface_tests.rs` instead.
-// Interface tests for `LaunchdPlistWriter`. Verifies SR-CLI-05
+// Interface tests for `LaunchdPlistWriter`. Verifies
 // plist constants and the cfg gating.
 
 use super::launchd_plist_writer::{
@@ -8,7 +8,7 @@ use super::launchd_plist_writer::{
     PLIST_LABEL, PLIST_RUN_AT_LOAD,
 };
 
-// === SR-CLI-05: plist constants locked ===
+// === plist constants locked ===
 #[test]
 fn plist_label_is_com_loom_daemon() {
     assert_eq!(PLIST_LABEL, "com.loom.daemon");
@@ -56,7 +56,7 @@ fn writer_constructor_stores_config() {
     });
 }
 
-// === BC-CLI-04: cfg(target_os = "macos") gating ===
+// === cfg(target_os = "macos") gating ===
 //
 // On non-macOS targets, `write` must still compile (callers depend on
 // the symbol) but is documented to return `CliError::Internal`.

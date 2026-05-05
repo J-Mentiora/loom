@@ -1,18 +1,18 @@
 // Behavior tests for replay-engine extension to AuditEntry::BlockedUrl.
 //
-// AC coverage:
-//   AC-BLOCKLIST-03: replay produces the same blocked-set and the
-//                    BlockedUrl audit entries participate in the
-//                    manifest hash chain (validated end-to-end).
-//   Negative:        OTHER AuditEntry variants (Vault grant lifecycle)
-//                    are intentionally NOT re-emitted — replay drops
-//                    them today and that behavior is unchanged.
+// Coverage:
+//   - replay produces the same blocked-set and the BlockedUrl audit
+//     entries participate in the manifest hash chain (validated
+//     end-to-end).
+//   - Negative: OTHER AuditEntry variants (Vault grant lifecycle)
+//     are intentionally NOT re-emitted — replay drops them today and
+//     that behavior is unchanged.
 //
-// Note on "bit-equal replay": existing AC-REPLAY-01.1 covers bit-equal
-// `receipt_canonical_bytes`. The Header bytes differ across replay
-// (session_id changes), so prev_hash strings of subsequent lines also
-// differ — that is by design and not in scope here. AC-BLOCKLIST-03
-// asserts: same blocked URLs at the same canonical_bytes content,
+// Note on "bit-equal replay": existing receipt-bit-equal behaviour
+// covers bit-equal `receipt_canonical_bytes`. The Header bytes differ
+// across replay (session_id changes), so prev_hash strings of subsequent
+// lines also differ — that is by design and not in scope here. These
+// tests assert: same blocked URLs at the same canonical_bytes content,
 // chained into the replay's own valid hash chain.
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
@@ -82,7 +82,7 @@ fn make_engine_and_writer() -> (
 
 /// Build a source manifest with `Header` + 2 `ActionReceipt` + 1
 /// `AuditEntry { kind: BlockedUrl }` (between the receipts) +
-/// `SessionTerminal`. The interleaving is what makes AC-BLOCKLIST-03
+/// `SessionTerminal`. The interleaving is what makes this scenario
 /// non-trivial: replay must preserve the LINE ORDER and hash chain
 /// across mixed variant types.
 fn build_session_with_blocked_url(
@@ -206,7 +206,7 @@ fn extract_audit_entries(
     out
 }
 
-// === AC-BLOCKLIST-03 ===
+// === blocked-url replay ===
 
 #[test]
 fn test_replay_preserves_blocked_url_audit_entry_in_chain() {
@@ -249,7 +249,7 @@ fn test_replay_preserves_blocked_url_audit_entry_in_chain() {
         "replay manifest layout must preserve audit-entry interleaving"
     );
 
-    // AC-BLOCKLIST-03 — same blocked-set content. Audit entry
+    // Same blocked-set content. Audit entry
     // canonical_bytes are byte-equal between source and replay (the
     // replay engine copies them verbatim).
     let source_audits = extract_audit_entries(&sessions_root, &source_id);
@@ -293,7 +293,7 @@ fn test_replay_preserves_blocked_url_audit_entry_in_chain() {
 }
 
 /// Negative regression — Vault grant audit entries are NOT re-emitted
-/// during replay (out of scope for AC-BLOCKLIST-03; existing behavior
+/// during replay (out of scope for this test file; existing behavior
 /// preserved). This pins the "explicit allowlist" decision so a future
 /// fall-through pattern would fail this test.
 #[test]
@@ -342,7 +342,7 @@ fn test_replay_does_not_re_emit_vault_audit_entry() {
 
     let replay_kinds = read_kinds(&sessions_root, &replay_id);
     // Header + ActionReceipt + SessionTerminal — the GrantConsumed
-    // AuditEntry is NOT in the replay manifest. AC-BLOCKLIST-03 only
+    // AuditEntry is NOT in the replay manifest. Replay only
     // covers BlockedUrl; Vault audit replay scope is a separate
     // out-of-scope concern.
     assert_eq!(

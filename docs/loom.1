@@ -13,16 +13,16 @@ Loom command\-line interface
 Override config file path. Highest precedence after CLI flags
 .TP
 \fB\-\-pretty\fR
-Force human\-readable colored multi\-line output, even when stdout is piped. (Was indented JSON pre\-AC\-TTY\-01; see CHANGELOG.) The auto\-detect default emits this format only when stdout is a TTY
+Force human\-readable colored multi\-line output, even when stdout is piped. (Was indented JSON in earlier versions; see CHANGELOG.) The auto\-detect default emits this format only when stdout is a TTY
 .TP
 \fB\-\-json\fR
-Force canonical JSON output, even when stdout is a TTY. Bypasses the auto\-detected pretty\-print path (AC\-TTY\-03). Mutually exclusive with `\-\-pretty`
+Force canonical JSON output, even when stdout is a TTY. Bypasses the auto\-detected pretty\-print path. Mutually exclusive with `\-\-pretty`
 .TP
 \fB\-q\fR, \fB\-\-quiet\fR
 Suppress non\-error output. For commands that produce a single resource (session create, action), prints only the canonical id. For list commands (session list, vault list), prints one id per line — may be a large amount of data on big result sets. Errors always go to stderr
 .TP
 \fB\-\-color\fR \fI<COLOR>\fR
-Color choice: `auto` (default), `always`, or `never`. Honours `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, and `TERM=dumb` env conventions in `auto` mode (AC\-TTY\-04). Mutually exclusive with `\-\-no\-color`
+Color choice: `auto` (default), `always`, or `never`. Honours `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, and `TERM=dumb` env conventions in `auto` mode. Mutually exclusive with `\-\-no\-color`
 .br
 
 .br
@@ -53,22 +53,22 @@ loom\-action(1)
 Action invocation (RPC)
 .TP
 loom\-vault(1)
-Vault commands (RPC). Only `add` may prompt (IC\-CLI\-10)
+Vault commands (RPC). Only `add` may prompt
 .TP
 loom\-gc(1)
 Garbage collection (RPC)
 .TP
 loom\-serve(1)
-Spawn the daemon. RPC\-free local action (IC\-CLI\-05)
+Spawn the daemon. RPC\-free local action
 .TP
 loom\-postinstall(1)
-Idempotent installer. RPC\-free local action (IC\-CLI\-06)
+Idempotent installer. RPC\-free local action
 .TP
 loom\-doctor(1)
-Health checks. RPC\-free local action (IC\-CLI\-07)
+Health checks. RPC\-free local action
 .TP
 loom\-mcp(1)
-MCP delegation entry. RPC\-free; delegates to loom\-mcp (SR\-CLI\-02)
+MCP delegation entry. RPC\-free; delegates to loom\-mcp
 .TP
 loom\-import(1)
 Import external recordings as non\-replayable Loom sessions (RPC)

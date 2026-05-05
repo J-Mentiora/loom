@@ -1,14 +1,14 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/error_translator/interfaces.rs` instead.
 // ErrorTranslator — single conversion point from `LoomError` to JSON-RPC
-// error envelope. Mirrors `LoomErrorCode` 1:1 (BC-RPC-03 / IC-RPC-06).
+// error envelope. Mirrors `LoomErrorCode` 1:1.
 //
 // # Contract semantics
-// - **Single point of translation (IC-RPC-06).** `From<LoomError> for
+// - **Single point of translation.** `From<LoomError> for
 //   JsonRpcError` is the ONLY allowed `LoomError → wire` impl in this
 //   crate. Clippy lint bans `serde_json::to_string` and free-form
 //   `JsonRpcError::custom` calls outside this module.
-// - **Stable enum (BC-RPC-03).** `code` field is the `LoomErrorCode`
+// - **Stable enum.** `code` field is the `LoomErrorCode`
 //   variant name in `snake_case`. `message` is at most 280 chars
 //   (truncated with ellipsis if longer). `data` carries the variant's
 //   structured fields verbatim — no free-form prose.
@@ -30,7 +30,7 @@ use serde::{Deserialize, Serialize};
 // module_kind: type-bridge
 
 /// Stable error code mirroring `loom_core::error::LoomErrorCode` 1:1.
-/// Encoded as snake_case strings on the wire (BC-RPC-03).
+/// Encoded as snake_case strings on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LoomErrorCode {
@@ -53,27 +53,25 @@ pub enum LoomErrorCode {
     VaultCredentialTypeUnsupported,
     StoreIntegrityFailed,
     InternalError,
-    // Session-create typed validation (AC-PROFVAL-01/02/03,
-    // parent AC-PROTO-02.1). Carry structured `data: {provided,
-    // available}` via the matching `ErrorTranslator::from_*`
-    // constructors. Additive variants are SemVer-compatible per
-    // BC-RPC-03.
+    // Session-create typed validation. Carries structured
+    // `data: {provided, available}` via the matching
+    // `ErrorTranslator::from_*` constructors. Additive variants are
+    // SemVer-compatible.
     UnknownProfile,
     InvalidNetworkMode,
     InvalidBudgetKey,
     InvalidCapturePolicy,
-    /// AC-SAFEPROF-01: action rejected because the active session profile
+    /// Action rejected because the active session profile
     /// (e.g. `"safe"`) forbids it. `data` carries
     /// `{matched_pattern, profile, violation}` so callers distinguish
     /// evaluate-denylist hits from download blocks. Wire string:
     /// `"profile_restricted"`.
     ProfileRestricted,
-    /// AC-DIST-05: chromium binary not located by any resolver search
+    /// Chromium binary not located by any resolver search
     /// path during session.create. Wire string: `"browser_not_found"`
     /// (snake_case via `rename_all = "snake_case"`; matches the
     /// canonical loom-shared enum's kebab-case `"browser-not-found"`
-    /// modulo separator). Additive variant; SemVer-compatible per
-    /// BC-RPC-03.
+    /// modulo separator). Additive variant; SemVer-compatible.
     BrowserNotFound,
 }
 
@@ -89,7 +87,7 @@ pub struct SchemaViolationDetail {
 
 /// JSON-RPC error envelope as it appears on the wire.
 /// `{"error": {"code": "...", "message": "...", "data": ...}}`.
-/// (IC-RPC-06: code == variant name, message ≤ 280 chars, data ==
+/// (code == variant name, message ≤ 280 chars, data ==
 /// variant structured fields.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcError {
@@ -99,7 +97,7 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-/// Maximum message length (IC-RPC-06).
+/// Maximum message length on the wire.
 pub const MAX_MESSAGE_LEN: usize = 280;
 
 /// The translator. Stateless; operates as a function namespace.
@@ -112,8 +110,8 @@ pub struct LoomErrorRef<'a>(pub &'a dyn LoomErrorLike);
 
 /// Minimal trait surfacing the variant + structured data we need to
 /// build the JSON-RPC envelope. `loom_core::error::LoomError`
-/// implements this via a build-time-generated impl (BC-RPC-02 +
-/// BC-RPC-03; the impl is emitted alongside `errors.json` schema).
+/// implements this via a build-time-generated impl (the impl is
+/// emitted alongside `errors.json` schema).
 pub trait LoomErrorLike: Send + Sync {
     fn code(&self) -> LoomErrorCode;
     fn message(&self) -> String;

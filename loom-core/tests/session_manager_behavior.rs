@@ -1,20 +1,19 @@
-// Behavior tests for LocalSessionManager — TDD Red phase.
-// All tests call unimplemented!() stubs and therefore panic (fail).
-// They will pass once Phase 5.4 implementation is complete.
+// Behavior tests for LocalSessionManager.
+// (Originally TDD Red-phase scaffolding; all tests now exercise real impl.)
 //
-// AC coverage:
-//   AC-CORE-01.1: test_create_returns_ulid_session_id,
-//                 test_create_persists_manifest_header
-//   AC-CORE-01.2: test_unknown_session_returns_session_not_found_error,
-//                 test_no_implicit_session_creation_on_unknown_id
-//   AC-CORE-01.3: test_close_transitions_to_closed_status,
-//                 test_close_finalizes_manifest_with_terminal_entry,
-//                 test_action_on_closed_session_returns_session_already_closed
-//   AC-CORE-01.4: test_profile_mutation_returns_session_profile_immutable
-//   AC-CORE-08.1: test_abort_sets_abort_flag_and_notifies,
-//                 test_abort_appends_terminal_entry_to_manifest,
-//                 test_abort_completes_within_1s_wall_clock
-//   AC-CORE-08.2: test_abort_all_aborts_every_active_session
+// Coverage:
+//   - test_create_returns_ulid_session_id
+//   - test_create_persists_manifest_header
+//   - test_unknown_session_returns_session_not_found_error
+//   - test_no_implicit_session_creation_on_unknown_id
+//   - test_close_transitions_to_closed_status
+//   - test_close_finalizes_manifest_with_terminal_entry
+//   - test_action_on_closed_session_returns_session_already_closed
+//   - test_profile_mutation_returns_session_profile_immutable
+//   - test_abort_sets_abort_flag_and_notifies
+//   - test_abort_appends_terminal_entry_to_manifest
+//   - test_abort_completes_within_1s_wall_clock
+//   - test_abort_all_aborts_every_active_session
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
@@ -79,7 +78,7 @@ fn default_opts() -> SessionCreateOpts {
     }
 }
 
-// === AC-CORE-01.1: session creation + ULID ===
+// === session creation + ULID ===
 
 #[test]
 fn test_create_returns_ulid_session_id() {
@@ -111,7 +110,7 @@ fn test_create_persists_manifest_header() {
     assert_eq!(first_line["session_id"], id.0.as_str());
 }
 
-// === AC-CORE-01.2: unknown session returns error ===
+// === unknown session returns error ===
 
 #[test]
 fn test_unknown_session_returns_session_not_found_error() {
@@ -138,7 +137,7 @@ fn test_no_implicit_session_creation_on_unknown_id() {
     );
 }
 
-// === AC-CORE-01.3: close lifecycle ===
+// === close lifecycle ===
 
 #[tokio::test]
 async fn test_close_transitions_to_closed_status() {
@@ -180,7 +179,7 @@ fn test_action_on_closed_session_returns_session_already_closed() {
     assert_eq!(err.code, LoomErrorCode::SessionAlreadyClosed);
 }
 
-// === AC-CORE-01.4: profile immutability ===
+// === profile immutability ===
 
 #[test]
 fn test_profile_mutation_returns_session_profile_immutable() {
@@ -193,7 +192,7 @@ fn test_profile_mutation_returns_session_profile_immutable() {
     assert_eq!(loom_err.code, LoomErrorCode::InvalidArgument);
 }
 
-// === AC-CORE-08.1: abort signal ===
+// === abort signal ===
 
 #[tokio::test]
 async fn test_abort_sets_abort_flag_and_notifies() {
@@ -269,7 +268,7 @@ fn test_abort_completes_within_1s_wall_clock() {
     );
 }
 
-// === AC-CORE-08.2: abort_all ===
+// === abort_all ===
 
 #[test]
 fn test_abort_all_aborts_every_active_session() {

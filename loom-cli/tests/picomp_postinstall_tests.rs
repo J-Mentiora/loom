@@ -1,22 +1,22 @@
-// TDD integration tests for postinstall-completeness ACs (AC-PICOMP-01 .. 06).
+// Integration tests for postinstall completeness.
 //
-// Run with: cargo test -p loom-cli --test ac_picomp_postinstall
+// Run with: cargo test -p loom-cli --test picomp_postinstall_tests
 //
-// AC-PICOMP-01: Default cargo build (no --features) produces binary whose
+// - Default cargo build (no --features) produces binary whose
 //   `loom postinstall` actually compiles WASM sources to .cwasm.
-// AC-PICOMP-02: `loom postinstall` creates ~/.config/loom/schemas/ and
+// - `loom postinstall` creates ~/.config/loom/schemas/ and
 //   populates it with the JSON schemas the action client needs.
-// AC-PICOMP-03: `loom action` succeeds (SchemaCache::load ok) after postinstall.
-// AC-PICOMP-04: WASM sources discovered without LOOM_WASM_DIR (embedded bytes).
-// AC-PICOMP-05: BC-CLI-01 preserved — compile_module unreachable from action path.
-// AC-PICOMP-06: Integration test: postinstall -> SchemaCache::load round-trip.
+// - `loom action` succeeds (SchemaCache::load ok) after postinstall.
+// - WASM sources discovered without LOOM_WASM_DIR (embedded bytes).
+// - compile_module unreachable from action path.
+// - Integration test: postinstall -> SchemaCache::load round-trip.
 
 use loom_cli::postinstall_runner::{compile_step, schema_step, SchemaStepOutcome, StepOutcome};
 use loom_cli::schema_cache::SchemaCache;
 use tempfile::TempDir;
 
 // ---------------------------------------------------------------------------
-// AC-PICOMP-01: compile_step works in the default build (no --features flag)
+// compile_step works in the default build (no --features flag)
 // ---------------------------------------------------------------------------
 // Before fix: compile_step returns Ok([Skipped]) regardless in non-postinstall
 // build because it is the no-op stub.
@@ -24,10 +24,10 @@ use tempfile::TempDir;
 // This test runs WITHOUT --features because it's an integration test (not
 // gated on cfg(feature)); the cargo feature is now a default.
 #[test]
-fn test_ac_picomp_01_compile_step_works_without_feature_flag() {
+fn test_compile_step_works_without_feature_flag() {
     let surfaces_dir = TempDir::new().unwrap();
 
-    // No LOOM_WASM_DIR set → falls back to embedded bytes path (AC-PICOMP-04).
+    // No LOOM_WASM_DIR set → falls back to embedded bytes path.
     // Clear LOOM_WASM_DIR to force the embedded-bytes path.
     let prev_wasm_dir = std::env::var("LOOM_WASM_DIR").ok();
     std::env::remove_var("LOOM_WASM_DIR");
@@ -40,7 +40,7 @@ fn test_ac_picomp_01_compile_step_works_without_feature_flag() {
         None => std::env::remove_var("LOOM_WASM_DIR"),
     }
 
-    let outcomes = result.expect("AC-PICOMP-01: compile_step must not return Err");
+    let outcomes = result.expect("compile_step must not return Err");
 
     // Must have at least one Compiled outcome — NOT all Skipped.
     let has_compiled = outcomes
@@ -48,7 +48,7 @@ fn test_ac_picomp_01_compile_step_works_without_feature_flag() {
         .any(|o| matches!(o, StepOutcome::Compiled(_)));
     assert!(
         has_compiled,
-        "AC-PICOMP-01: compile_step in default build must return StepOutcome::Compiled, got: {:?}",
+        "compile_step in default build must return StepOutcome::Compiled, got: {:?}",
         outcomes
     );
 
@@ -56,37 +56,30 @@ fn test_ac_picomp_01_compile_step_works_without_feature_flag() {
     let cwasm = surfaces_dir.path().join("loom_surface_web.cwasm");
     assert!(
         cwasm.exists(),
-        "AC-PICOMP-01: loom_surface_web.cwasm must exist in surfaces_dir after compile_step"
+        "loom_surface_web.cwasm must exist in surfaces_dir after compile_step"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-PICOMP-02: schema_step creates + populates schemas_dir
+// schema_step creates + populates schemas_dir
 // ---------------------------------------------------------------------------
 #[test]
-fn test_ac_picomp_02_schema_step_creates_and_populates_dir() {
+fn test_schema_step_creates_and_populates_dir() {
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
 
-    let outcome = schema_step(&v1_dir).expect("AC-PICOMP-02: schema_step must not return Err");
+    let outcome = schema_step(&v1_dir).expect("schema_step must not return Err");
 
     // Dir must now exist.
-    assert!(
-        v1_dir.exists(),
-        "AC-PICOMP-02: schema_step must create schemas_dir"
-    );
+    assert!(v1_dir.exists(), "schema_step must create schemas_dir");
 
     // Must report populated with at least the 10 web surface methods.
     match outcome {
         SchemaStepOutcome::Populated(count) => {
-            assert!(
-                count >= 10,
-                "AC-PICOMP-02: expected >= 10 schema files, got {}",
-                count
-            );
+            assert!(count >= 10, "expected >= 10 schema files, got {}", count);
         }
         SchemaStepOutcome::Skipped => {
-            panic!("AC-PICOMP-02: schema_step returned Skipped on empty dir — expected Populated");
+            panic!("schema_step returned Skipped on empty dir — expected Populated");
         }
     }
 
@@ -99,62 +92,60 @@ fn test_ac_picomp_02_schema_step_creates_and_populates_dir() {
         }
         file_count += 1;
         let content = std::fs::read_to_string(&path).unwrap();
-        let json: serde_json::Value = serde_json::from_str(&content).unwrap_or_else(|e| {
-            panic!("AC-PICOMP-02: {} is not valid JSON: {}", path.display(), e)
-        });
+        let json: serde_json::Value = serde_json::from_str(&content)
+            .unwrap_or_else(|e| panic!("{} is not valid JSON: {}", path.display(), e));
         assert!(
             json.get("request").is_some(),
-            "AC-PICOMP-02: {} missing 'request' key",
+            "{} missing 'request' key",
             path.display()
         );
         assert!(
             json.get("response").is_some(),
-            "AC-PICOMP-02: {} missing 'response' key",
+            "{} missing 'response' key",
             path.display()
         );
     }
     assert!(
         file_count >= 10,
-        "AC-PICOMP-02: expected >= 10 .json files in schemas_dir, found {}",
+        "expected >= 10 .json files in schemas_dir, found {}",
         file_count
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-PICOMP-03: SchemaCache::load succeeds after schema_step
+// SchemaCache::load succeeds after schema_step
 // ---------------------------------------------------------------------------
 #[test]
-fn test_ac_picomp_03_schema_cache_load_succeeds_after_postinstall() {
+fn test_schema_cache_load_succeeds_after_postinstall() {
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
 
     // Run schema_step to populate.
-    schema_step(&v1_dir).expect("AC-PICOMP-03: schema_step failed");
+    schema_step(&v1_dir).expect("schema_step failed");
 
     // SchemaCache::load must succeed.
-    let cache = SchemaCache::load(&v1_dir).expect(
-        "AC-PICOMP-03: SchemaCache::load must succeed after schema_step — 'schema dir missing' error",
-    );
+    let cache = SchemaCache::load(&v1_dir)
+        .expect("SchemaCache::load must succeed after schema_step — 'schema dir missing' error");
 
     // Cache must have at least the 10 web surface methods.
     assert!(
         cache.len() >= 10,
-        "AC-PICOMP-03: cache must have >= 10 methods, got {}",
+        "cache must have >= 10 methods, got {}",
         cache.len()
     );
 
     // web.navigate must be present.
     assert!(
         cache.request_schema("web.navigate").is_some(),
-        "AC-PICOMP-03: web.navigate schema must be present"
+        "web.navigate schema must be present"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-PICOMP-04: WASM discovered without LOOM_WASM_DIR (embedded bytes path)
+// WASM discovered without LOOM_WASM_DIR (embedded bytes path)
 // ---------------------------------------------------------------------------
 #[test]
-fn test_ac_picomp_04_wasm_discovered_without_loom_wasm_dir() {
+fn test_wasm_discovered_without_loom_wasm_dir() {
     let surfaces_dir = TempDir::new().unwrap();
 
     // Ensure both discovery paths are unavailable.
@@ -178,20 +169,20 @@ fn test_ac_picomp_04_wasm_discovered_without_loom_wasm_dir() {
         None => std::env::remove_var("CARGO_MANIFEST_DIR"),
     }
 
-    let outcomes = result.expect("AC-PICOMP-04: compile_step must not Err with no LOOM_WASM_DIR");
+    let outcomes = result.expect("compile_step must not Err with no LOOM_WASM_DIR");
 
     let has_compiled = outcomes
         .iter()
         .any(|o| matches!(o, StepOutcome::Compiled(_)));
     assert!(
         has_compiled,
-        "AC-PICOMP-04: embedded-bytes fallback must produce StepOutcome::Compiled, got: {:?}",
+        "embedded-bytes fallback must produce StepOutcome::Compiled, got: {:?}",
         outcomes
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-PICOMP-05: BC-CLI-01 — compile_module unreachable from action dispatch
+// compile_module unreachable from action dispatch
 // ---------------------------------------------------------------------------
 // This is a structural invariant enforced by code review, not by a runtime
 // assertion. The test documents it and verifies the postinstall_runner does
@@ -201,8 +192,8 @@ fn test_ac_picomp_04_wasm_discovered_without_loom_wasm_dir() {
 // never calls compile_step; compile_step is only reachable from
 // Command::Postinstall arm. This is confirmed by the module dependency graph.
 #[test]
-fn test_ac_picomp_05_bc_cli_01_structural_invariant_documented() {
-    // BC-CLI-01: compile_module is unreachable from the default CLI action
+fn test_compile_module_structural_invariant_documented() {
+    // compile_module is unreachable from the default CLI action
     // dispatch path. Enforcement is by code structure (PostinstallRunner is
     // the only caller of compile_step; action_commands/rpc path has no edge
     // into compile_step). This test documents the invariant.
@@ -216,18 +207,18 @@ fn test_ac_picomp_05_bc_cli_01_structural_invariant_documented() {
     //
     // loom_host::compiler::Compiler::compile_module is an internal dep of
     // compile_step — invisible to action_commands caller path.
-    // BC-CLI-01: compile_module is structurally unreachable from action dispatch.
+    // compile_module is structurally unreachable from action dispatch.
     // Enforcement is by module dependency graph — no runtime assertion needed.
 }
 
 // ---------------------------------------------------------------------------
-// AC-PICOMP-06: Postinstall → action round-trip (clean home dir)
+// Postinstall → action round-trip (clean home dir)
 // ---------------------------------------------------------------------------
 // Verifies that after compile_step + schema_step, SchemaCache::load succeeds
 // and can validate a web.navigate action args structure.
 // No LOOM_WASM_DIR override; no --features flag (uses default = ["postinstall"]).
 #[test]
-fn test_ac_picomp_06_postinstall_action_roundtrip() {
+fn test_postinstall_action_roundtrip() {
     let surfaces_dir = TempDir::new().unwrap();
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
@@ -236,9 +227,8 @@ fn test_ac_picomp_06_postinstall_action_roundtrip() {
     let prev_wasm_dir = std::env::var("LOOM_WASM_DIR").ok();
     std::env::remove_var("LOOM_WASM_DIR");
 
-    // Step 1: compile WASM (AC-PICOMP-01 path).
-    let compile_outcomes =
-        compile_step(surfaces_dir.path()).expect("AC-PICOMP-06: compile_step must succeed");
+    // Step 1: compile WASM.
+    let compile_outcomes = compile_step(surfaces_dir.path()).expect("compile_step must succeed");
 
     // Restore env.
     match prev_wasm_dir {
@@ -249,21 +239,15 @@ fn test_ac_picomp_06_postinstall_action_roundtrip() {
     let has_compiled = compile_outcomes
         .iter()
         .any(|o| matches!(o, StepOutcome::Compiled(_)));
-    assert!(
-        has_compiled,
-        "AC-PICOMP-06: compile_step must produce Compiled outcome"
-    );
+    assert!(has_compiled, "compile_step must produce Compiled outcome");
 
-    // Step 2: populate schemas (AC-PICOMP-02 path).
-    schema_step(&v1_dir).expect("AC-PICOMP-06: schema_step must succeed");
+    // Step 2: populate schemas.
+    schema_step(&v1_dir).expect("schema_step must succeed");
 
-    // Step 3: SchemaCache::load succeeds (AC-PICOMP-03 path).
+    // Step 3: SchemaCache::load succeeds.
     let cache = SchemaCache::load(&v1_dir)
-        .expect("AC-PICOMP-06: SchemaCache::load must succeed — no 'schema dir missing' error");
-    assert!(
-        cache.len() >= 10,
-        "AC-PICOMP-06: cache must have >= 10 schemas"
-    );
+        .expect("SchemaCache::load must succeed — no 'schema dir missing' error");
+    assert!(cache.len() >= 10, "cache must have >= 10 schemas");
 
     // Step 4: args validation works for a known method.
     use loom_cli::action_commands::validate_args;
@@ -276,12 +260,12 @@ fn test_ac_picomp_06_postinstall_action_roundtrip() {
     let navigate_schema = cache.request_schema("web.navigate");
     assert!(
         navigate_schema.is_some(),
-        "AC-PICOMP-06: web.navigate schema must be present in cache"
+        "web.navigate schema must be present in cache"
     );
 
     // The schema exists; validate_args is testable.
     // (Full RPC dispatch is not tested here — that requires a running daemon.)
     let _ = validate_args(&cache, "web.navigate", &args);
 
-    // If we get here without 'schema dir missing', AC-PICOMP-06 is satisfied.
+    // If we get here without 'schema dir missing', the round-trip is satisfied.
 }

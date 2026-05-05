@@ -1,4 +1,4 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/wasm_runtime/interface_tests.rs` instead.
 // Interface tests for `WasmRuntime`. Verifies singleton shape,
 // component-model + fuel + AOT config defaults, and the engine
@@ -22,7 +22,7 @@ fn new_returns_arc_runtime() {
 #[test]
 fn default_config_is_sensible() {
     let c = WasmRuntimeConfig::default();
-    assert_eq!(c.mem_limit_mib, 64); // BC §6 soft default
+    assert_eq!(c.mem_limit_mib, 64); // soft default
     assert!(c.fuel_per_invocation.is_none() || c.fuel_per_invocation.is_some());
     assert!(matches!(
         c.opt_level.as_str(),
@@ -43,7 +43,7 @@ fn engine_accessor_returns_borrow_not_clone() {
     let _ = _ck;
 }
 
-// === Cwasm cache coherency (IC-HOST-07 + §3.3) ===
+// === Cwasm cache coherency ===
 
 #[test]
 fn precompile_compatibility_hash_returns_string() {
@@ -79,7 +79,7 @@ fn fuel_per_invocation_is_optional_u64() {
 }
 
 #[test]
-fn mem_limit_mib_is_u32_per_bc_hard_3() {
+fn mem_limit_mib_is_u32() {
     // Integer-only fields. No floats.
     let c = WasmRuntimeConfig::default();
     let _: u32 = c.mem_limit_mib;

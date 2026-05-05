@@ -1,14 +1,14 @@
 // Output mode resolved from --quiet/--json/--pretty + TTY detection.
 // Per D-7 precedence: quiet > json > pretty > auto-detect.
 //
-// `Json` is the canonical-JSON path AC-TTY-02 pins byte-for-byte.
+// `Json` is the canonical-JSON path pinned byte-for-byte.
 // `PrettyCurated` routes through the curated registry; `PrettyFallback`
 // is reached only internally when no curated renderer matches OR when a
 // curated renderer returns an error (D-23).
 
 use serde::{Deserialize, Serialize};
 
-// IC-CLI-01: canonical JSON is the default when nothing else is
+// Canonical JSON is the default when nothing else is
 // resolvable (e.g. compiled defaults before flag/env resolution).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

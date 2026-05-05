@@ -1,13 +1,13 @@
 // ReplayEngine — bit-equal structural replay.
 //
 // # Contract semantics
-// - **Reads CAS only (IC-CORE-07 / SR-CORE-20).** During replay,
+// - **Reads CAS only.** During replay,
 //   `DeterminismHarness::install_replay_mode(tape)` swaps clock_now /
 //   rng_next / net_request to tape-driven implementations. The surface
 //   .wasm cannot reach live network.
-// - **Replay ≥ 5× real-time (SR-CORE-05).** No virtual-clock real-time
+// - **Replay ≥ 5× real-time.** No virtual-clock real-time
 //   honoring — tape pops happen at WASM-call rate.
-// - **Bit-equal structural (SR-CORE-06 / Hard binding 5).** Hash chain
+// - **Bit-equal structural.** Hash chain
 //   compared between source and replay, screenshots excluded from
 //   `differences[]`.
 // - **Replay missing blob.** Tape references a content_ref not in CAS →

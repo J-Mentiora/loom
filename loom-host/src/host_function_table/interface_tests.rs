@@ -1,9 +1,9 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/host_function_table/interface_tests.rs` instead.
-// Interface tests for `HostFunctionTable`. Verifies IC-HOST-03 (sole
-// WASM↔core bridge), IC-HOST-04 HARD (no secret in WASM linear memory),
-// IC-HOST-05 (every host-fn writes to tape), BC-HOST-02 HARD (WIT-derived
-// signatures), BC-HOST-05 (no audit-entry writes from host body).
+// Interface tests for `HostFunctionTable`. Verifies the sole WASM↔core
+// bridge, the no-secret-in-WASM-linear-memory invariant, that every
+// host-fn writes to tape, the WIT-derived signatures, and the no-audit-
+// entry-writes-from-host-body invariant.
 
 use super::host_function_table::{
     HostFnsTrait, HostState, LiveHostFns, LogLevel, ReplayHostFns, WitReceipt,
@@ -12,7 +12,7 @@ use crate::error_mapper::HostError;
 use loom_core::content_store::ContentRef;
 use loom_core::vault::{NetRequest, NetResp};
 
-// === IC-HOST-03: enumerate exactly 8 host fns from the trait ===
+// === Enumerate exactly 8 host fns from the trait ===
 
 #[test]
 fn host_fns_trait_has_eight_methods() {
@@ -32,12 +32,12 @@ fn host_fns_trait_has_eight_methods() {
     _enum_methods::<ReplayHostFns>();
 }
 
-// === IC-HOST-04 HARD: NetResp does NOT carry Authorization header ===
+// === NetResp does NOT carry Authorization header ===
 
 #[test]
 fn net_request_returns_net_resp_without_authorization_field() {
     // Compile-time pin: the return type is NetResp (not NetRequest).
-    // NetResp's `headers: BTreeMap<String, String>` will, by Phase 5.4
+    // NetResp's `headers: BTreeMap<String, String>` will, in the live
     // impl, exclude the substituted Authorization header.
     fn _ck(state: &mut HostState, req: NetRequest) -> Result<NetResp, HostError> {
         LiveHostFns::net_request(state, req)
@@ -58,7 +58,7 @@ fn net_resp_struct_has_no_authorization_specific_field() {
     assert!(r.headers.is_empty());
 }
 
-// === IC-HOST-05: every host-fn appends to tape ===
+// === Every host-fn appends to tape ===
 
 #[test]
 fn doc_pin_every_host_fn_writes_tape_before_side_effect() {
@@ -69,7 +69,7 @@ fn doc_pin_every_host_fn_writes_tape_before_side_effect() {
     assert!(pin.contains("BEFORE"));
 }
 
-// === IC-HOST-08: live + replay impls are distinct types, both impl HostFnsTrait ===
+// === Live + replay impls are distinct types, both impl HostFnsTrait ===
 
 #[test]
 fn live_and_replay_are_separate_types_implementing_same_trait() {
@@ -80,16 +80,16 @@ fn live_and_replay_are_separate_types_implementing_same_trait() {
 
 #[test]
 fn replay_blob_put_signature_exists_and_is_unreachable_in_practice() {
-    // The replay impl panics with unimplemented in 5.3 and will return
-    // a structural error in 5.4 — but the SIGNATURE matches live so the
-    // wit-bindgen `add_to_linker<HostState>` call works for both.
+    // The replay impl will return a structural error — but the
+    // SIGNATURE matches live so the wit-bindgen
+    // `add_to_linker<HostState>` call works for both.
     fn _ck(state: &mut HostState, bytes: Vec<u8>) -> Result<ContentRef, HostError> {
         ReplayHostFns::blob_put(state, bytes)
     }
     let _ = _ck;
 }
 
-// === BC-HOST-03: errors emerge as HostError, never anyhow ===
+// === Errors emerge as HostError, never anyhow ===
 
 #[test]
 fn host_fn_returns_typed_host_error_not_anyhow() {
@@ -101,7 +101,7 @@ fn host_fn_returns_typed_host_error_not_anyhow() {
     let _ = _ck;
 }
 
-// === BC-HOST-05: net_request body must NOT call ManifestWriter::append_audit ===
+// === net_request body must NOT call ManifestWriter::append_audit ===
 
 #[test]
 fn doc_pin_audit_writes_owned_by_vault_not_net_request_body() {

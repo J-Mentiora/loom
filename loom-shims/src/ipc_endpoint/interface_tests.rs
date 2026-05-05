@@ -1,7 +1,7 @@
 // Interface tests for `IPC_Endpoint`.
-// Verifies IC-SHIM-02 (posix_spawn + socketpair), IC-SHIM-03
-// (length-prefixed CBOR), IC-SHIM-10 (stable error envelope),
-// BC-SHIM-03 (closed enum), BC-SHIM-04 (no grant_id in CdpSend).
+// Verifies posix_spawn + socketpair transport,
+// length-prefixed CBOR wire format, stable error envelope,
+// closed enum invariant, no grant_id in CdpSend.
 
 use super::ipc_endpoint::{
     ciborium_from_slice, ciborium_to_vec, decode_frame, encode_frame, CdpMessage, IpcEndpoint,
@@ -10,7 +10,7 @@ use super::ipc_endpoint::{
 };
 use ciborium::value::Value as CborValue;
 
-// === IC-SHIM-03: length-prefixed CBOR wire format ===
+// === length-prefixed CBOR wire format ===
 
 #[test]
 fn frame_layout_is_4_byte_be_length_prefix() {
@@ -71,7 +71,7 @@ fn decode_frame_rejects_oversize_frame() {
     }
 }
 
-// === IC-SHIM-10: stable error envelope (5 variants) ===
+// === stable error envelope (5 variants) ===
 
 #[test]
 fn shim_error_code_has_exactly_five_variants() {
@@ -112,7 +112,7 @@ fn shim_error_code_serialises_snake_case() {
     assert_eq!(json, "\"chromium_unavailable\"");
 }
 
-// === BC-SHIM-04 (HARD): no grant_id in CdpSend ===
+// === no grant_id in CdpSend (HARD) ===
 
 #[test]
 fn cdp_send_payload_has_no_grant_id_field() {
@@ -141,7 +141,7 @@ fn cdp_send_payload_has_no_grant_id_field() {
     }
 }
 
-// === IC-SHIM-02: socketpair-only construction ===
+// === socketpair-only construction ===
 
 #[test]
 fn endpoint_constructs_from_inherited_fd() {
@@ -178,7 +178,7 @@ fn encode_frame_rejects_oversize_response() {
     matches!(err, IpcError::FrameTooLarge { .. });
 }
 
-// === IC-SHIM-07: cdp_event variant exists ===
+// === cdp_event variant exists ===
 
 #[test]
 fn shim_response_has_cdp_event_variant() {
@@ -200,7 +200,7 @@ fn ipc_endpoint_trait_object_is_send_sync() {
 }
 
 #[test]
-#[should_panic(expected = "Phase 5.4 implementation")]
+#[should_panic(expected = "v5.4 implementation")]
 fn shutdown_panics_until_implemented() {
     let ep = SocketpairEndpoint::from_inherited_fd(0);
     let _ = ep.shutdown();

@@ -8,7 +8,7 @@
 //! `J.7b` (real V8 evaluate against the rendered template) is a
 //! `#[ignore]` integration test in `loom-host/tests/v8_seed_determinism.rs`.
 //!
-//! AC-RNGDET-01..04 (seed-threading half).
+//! Covers the seed-threading half of the RNG-determinism contract.
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
@@ -72,7 +72,7 @@ fn opts(seed: Option<u64>) -> SessionCreateOpts {
 
 #[test]
 fn explicit_seed_threads_through_to_session() {
-    // AC-RNGDET-01: `--seed 42` reaches `Session.seed` byte-equal.
+    // `--seed 42` reaches `Session.seed` byte-equal.
     let tmp = tempfile::tempdir().unwrap();
     let sm = make_sm(tmp.path().to_str().unwrap(), 99);
     let id = sm.create(opts(Some(42))).unwrap();
@@ -100,7 +100,7 @@ fn missing_seed_falls_back_to_default_seed() {
 
 #[test]
 fn two_sessions_with_same_seed_are_byte_identical_on_seed() {
-    // AC-RNGDET-01 prerequisite: seed identity is preserved across
+    // Prerequisite: seed identity is preserved across
     // independent session creates with the same explicit seed.
     let tmp = tempfile::tempdir().unwrap();
     let sm = make_sm(tmp.path().to_str().unwrap(), 99);
@@ -117,7 +117,7 @@ fn two_sessions_with_same_seed_are_byte_identical_on_seed() {
 
 #[test]
 fn different_seeds_produce_different_session_seed() {
-    // AC-RNGDET-02 prerequisite: explicit seeds are NOT collapsed to the
+    // Prerequisite: explicit seeds are NOT collapsed to the
     // default. seed=0 ≠ seed=42 ≠ default_seed.
     let tmp = tempfile::tempdir().unwrap();
     let sm = make_sm(tmp.path().to_str().unwrap(), 99);

@@ -1,7 +1,7 @@
 // TargetManager — `target_id` lifecycle + R3-ordering enforcer.
 //
 // # Contract semantics
-// - **R3 load-bearing ordering (IC-SHIM-05, KILL).**
+// - **R3 load-bearing ordering (KILL).**
 //   `create_new_target` calls `DeterminismInjector::inject(target_id)`
 //   BEFORE `Network.enable` BEFORE `Page.enable` BEFORE the daemon
 //   issues `page_navigate`. Deferred injection (post-`Page.loadEventFired`)
@@ -10,7 +10,7 @@
 //   defaults `false`. Any subsequent navigation against a target
 //   whose flag is still `false` panic-aborts (process exit) — defensive
 //   guardrail against R3-ordering regression.
-// - **One target per session (SR-SHIM-01).** Cross-session contamination
+// - **One target per session.** Cross-session contamination
 //   is structurally prevented: `BTreeMap<SessionId, TargetId>` is the
 //   source of truth; `create_new_target` returns the existing target_id
 //   if a session already has one.
@@ -18,7 +18,7 @@
 //   `invalidate_targets()`; the BTreeMap is cleared and any pending
 //   action against an invalidated target resolves to
 //   `ShimErrorCode::TargetUnknown`.
-// - **`cdp_event` upstream dispatch (IC-SHIM-07).** TargetManager owns
+// - **`cdp_event` upstream dispatch.** TargetManager owns
 //   the `target_id → ResponseSender` upstream channel for events; on
 //   each event from `CdpConnection`, it pushes
 //   `ShimResponse::CdpEvent{target_id, message}` to the daemon.
@@ -87,7 +87,7 @@ pub trait TargetManager: Send + Sync {
     /// R3 ordering: `await inject(target_id, seed, epoch_ms)` →
     /// `Network.enable` → `Page.enable` → return. Idempotent: if
     /// `session_id` already has a target, returns the existing target_id
-    /// (SR-SHIM-01) without re-injecting.
+    /// without re-injecting.
     ///
     /// `seed` and `epoch_ms` are rendered into the determinism JS
     /// template per-target. The flag `TargetState.determinism_injected`
@@ -161,15 +161,15 @@ impl TargetManager for ChromiumTargetManager {
         seed: Seed,
         epoch_ms: EpochMs,
     ) -> Result<TargetId, TargetError> {
-        // Idempotent: return existing target if session already has one (SR-SHIM-01)
+        // Idempotent: return existing target if session already has one
         if let Some(existing) = self.by_session.read().get(&session_id).copied() {
             return Ok(existing);
         }
-        // Phase 6: Target.createTarget via chromiumoxide
-        // Phase 5.4: synthesize target_id from session_id
+        // Future: Target.createTarget via chromiumoxide.
+        // Current: synthesize target_id from session_id.
         let target_id = session_id.wrapping_mul(0x9e3779b97f4a7c15);
         let mut state = TargetState::new(session_id, target_id, profile);
-        // R3 LOAD-BEARING (IC-SHIM-05). Await the inject; flag flips ONLY on
+        // R3 LOAD-BEARING. Await the inject; flag flips ONLY on
         // Ok. A failed inject leaves the flag false AND does not insert into
         // by_target/by_session — a retry runs cleanly without leaking state.
         self.determinism
@@ -216,7 +216,7 @@ impl TargetManager for ChromiumTargetManager {
 }
 
 /// Pure helper: the canonical ordered domain-enable sequence for a new
-/// target. Phase 5.4's `create_new_target` runs these AFTER injection.
+/// target. `create_new_target` runs these AFTER injection.
 /// Returns the CDP method names, in order.
 pub fn ordered_domain_enables() -> &'static [&'static str] {
     &["Network.enable", "Page.enable", "Log.enable"]

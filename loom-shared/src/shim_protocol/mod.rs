@@ -7,12 +7,12 @@
 //! `loom-shims`, which is forbidden — `loom-shims` is the only crate allowed
 //! to link `chromiumoxide` (cargo-deny enforced).
 //!
-//! # Wire format (IC-SHIM-03)
+//! # Wire format
 //! Length-prefixed CBOR. Every frame is `[4 bytes big-endian length][CBOR
 //! payload]`. JSON / unprefixed framing → KILL.
 //!
 //! # Closed enums
-//! `ShimErrorCode` is a 5-variant closed enum (BC-SHIM-03). Adding a variant
+//! `ShimErrorCode` is a 5-variant closed enum . Adding a variant
 //! requires a `loom-host::ErrorMapper` update.
 
 use crate::types::{EpochMs, Seed};
@@ -34,7 +34,7 @@ pub fn ciborium_from_slice<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Resu
 /// this are a protocol violation → fatal.
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024;
 
-/// Length-prefix size in bytes (big-endian u32). IC-SHIM-03.
+/// Length-prefix size in bytes (big-endian u32)..
 pub const LENGTH_PREFIX_BYTES: usize = 4;
 
 /// Session identity assigned by `loom-host`. Opaque to the shim.
@@ -43,7 +43,7 @@ pub type SessionId = u64;
 /// Chromium target id from CDP. Opaque to the daemon.
 pub type TargetId = u64;
 
-/// Closed `ShimErrorCode` enum (IC-SHIM-10, BC-SHIM-03). 5 variants only.
+/// Closed `ShimErrorCode` enum. 5 variants only.
 /// New variants require schema bump + `loom-host::ErrorMapper` update.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -109,7 +109,7 @@ pub enum ShimRequest {
     },
     /// Issue a CDP command against a previously-spawned target.
     /// Note: no `grant_id` field. Vault substitution is upstream
-    /// (BC-SHIM-04, HARD).
+    /// (a hard invariant of the shim protocol).
     CdpSend {
         request_id: u64,
         session_id: SessionId,
@@ -121,10 +121,10 @@ pub enum ShimRequest {
     /// is unknown to the shim's `TargetManager`, the shim lazily calls
     /// `create_new_target(session_id, "default", seed, epoch_ms)` to obtain
     /// a real target; otherwise the existing target is reused
-    /// (SR-SHIM-01 idempotency). `seed`/`epoch_ms` are EXPLICIT (no
+    /// (idempotency). `seed`/`epoch_ms` are EXPLICIT (no
     /// `serde(default)`).
     ///
-    /// `blocklist_enabled` (AC-DET-05.1, AC-BLOCKLIST-04) — DELIBERATE
+    /// `blocklist_enabled` — DELIBERATE
     /// DIVERGENCE from the seed/epoch_ms explicit-field convention:
     /// this field uses `serde(default = "default_blocklist_enabled")`
     /// returning `true` to preserve safe behavior under host/shim
@@ -161,7 +161,7 @@ pub enum ShimRequest {
 }
 
 /// Outbound frames from the shim to `loom-host::ShimManager`.
-/// `cdp_event` and `log_line` are async upstream channels (IC-SHIM-07);
+/// `cdp_event` and `log_line` are async upstream channels ;
 /// they are NOT correlated to a specific request and so do not carry
 /// `request_id`. `Ok` and `Error` ARE correlated.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -176,14 +176,14 @@ pub enum ShimResponse {
         session_id: Option<SessionId>,
         payload: ciborium::value::Value,
     },
-    /// Stable-envelope error (IC-SHIM-10).
+    /// Stable-envelope error .
     Error {
         request_id: u64,
         session_id: Option<SessionId>,
         code: ShimErrorCode,
         detail: String,
     },
-    /// Async CDP event push (IC-SHIM-07). The shim does NOT buffer
+    /// Async CDP event push . The shim does NOT buffer
     /// events; they are pushed as they arrive. Daemon correlates by
     /// `target_id`. NOT request-correlated.
     CdpEvent {
@@ -461,7 +461,7 @@ mod tests {
         );
     }
 
-    // === AC-DET-05.1 / AC-BLOCKLIST-04: blocklist_enabled wire-protocol ===
+    // === blocklist_enabled wire-protocol ===
     //
     // Unlike seed/epoch_ms (which are EXPLICIT and fail-decode on
     // absence), `blocklist_enabled` defaults to `true` to preserve
@@ -471,7 +471,7 @@ mod tests {
     // tests below remain untouched (they construct payloads omitting
     // seed, not blocklist_enabled).
 
-    /// AC-BLOCKLIST-04: explicit `blocklist_enabled=false` round-trips.
+    /// explicit `blocklist_enabled=false` round-trips.
     #[test]
     fn page_navigate_with_blocklist_disabled_round_trips() {
         let req = ShimRequest::PageNavigate {
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(back, req);
     }
 
-    /// AC-BLOCKLIST-04 / safe-default-on policy: a payload that omits
+    /// Safe-default-on policy: a payload that omits
     /// `blocklist_enabled` (e.g. emitted by a pre-feature host) is
     /// decoded as `true` — enforcement-on. This is the deliberate
     /// asymmetry from the seed/epoch_ms explicit-field convention.

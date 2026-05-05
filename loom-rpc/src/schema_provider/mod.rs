@@ -1,5 +1,5 @@
 //! `schema_provider` — see `systems/loom-rpc/modules/schema_provider/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod schema_provider;
 pub use schema_provider::*;
@@ -53,8 +53,8 @@ impl SchemaProvider {
                     reason: e.to_string(),
                 })?;
 
-            // AC-RPCSCHEMAS2-01: derive method name from the filename
-            // when the file body doesn't carry an explicit `method` key.
+            // Derive method name from the filename when the file body
+            // doesn't carry an explicit `method` key.
             // The postinstall runner currently writes `{request, response}`
             // shapes (sans method field); falling back to file stem keeps
             // the schemas loadable end-to-end without a postinstall rewrite.

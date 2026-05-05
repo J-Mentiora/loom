@@ -1,5 +1,5 @@
 //! Integration tests for `navigate-receipt-tier2-still-missing`
-//! (AC-NAVRECEIPT2-01..05) — Phase 8 round-2 retest follow-up.
+//! (AC-NAVRECEIPT2-01..05) — v8 round-2 retest follow-up.
 //!
 //! Brief mapping (the brief used the older AC-NAVRECEIPT-* numbering;
 //! the registry tracks AC-NAVRECEIPT2-* — both refer to the same

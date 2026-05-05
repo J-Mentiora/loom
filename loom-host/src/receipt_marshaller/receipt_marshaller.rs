@@ -1,17 +1,17 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/receipt_marshaller/interfaces.rs` instead.
 // ReceiptMarshaller — assemble `Receipt` post-WASM-return; queue
 // `ManifestWriter::append` on a background tokio task.
 //
 // # Contract semantics
-// - **Off the synchronous return (SR-HOST-01).** `WasmHost::dispatch`
+// - **Off the synchronous return.** `WasmHost::dispatch`
 //   returns IMMEDIATELY when the WASM export resolves. This module is
 //   invoked AFTERWARDS on a background tokio task spawned on the
-//   session's `receipt_pool` (BC-HOST-01: not on a global pool, never
+//   session's `receipt_pool` (per-session, not on a global pool, never
 //   per host-fn).
-// - **Receipt overhead p95 ≤ 50 ms (IC-HOST-02).** Bound by manifest
+// - **Receipt overhead p95 ≤ 50 ms.** Bound by manifest
 //   write latency only — assembly is in-memory string + integer ops.
-// - **Canonical JSON (BC-CORE-04).** Final payload is
+// - **Canonical JSON.** Final payload is
 //   `serde_jcs::to_string(receipt)` — never `serde_json::to_string`.
 // - **Trap-receipt fast path.** `emit_trap_receipt` is the entry point
 //   for `TrapHandler`; assembles a typed `LoomErrorCode::SurfaceTrap`
@@ -35,7 +35,7 @@ use tokio::runtime::Handle as TokioHandle;
 /// `result<receipt, host-error>` returned by the WASM guest.
 ///
 /// The `navigate_*` fields are populated from the optional WIT receipt fields
-/// when the WASM guest returns a navigate-tier-2 receipt (AC-NAVRECEIPT-01..05).
+/// when the WASM guest returns a navigate-tier-2 receipt.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReceiptBuilder {
     pub action_id: u64,
@@ -49,7 +49,7 @@ pub struct ReceiptBuilder {
     pub action_hash: String,
     pub outcome_hash: String,
     pub emitted_at_ms: u64,
-    // ---- Navigate tier-2 fields (AC-NAVRECEIPT-01..05) ----
+    // ---- Navigate tier-2 fields ----
     // Populated by decode_typed_receipt when the WIT receipt carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_url: Option<String>,
@@ -67,18 +67,17 @@ pub struct ReceiptBuilder {
     pub navigate_console_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_network_count: Option<u64>,
-    /// JSON bytes of `Vec<LoomNetworkEvent>` (AC-NAVRECEIPT-03).
+    /// JSON bytes of `Vec<LoomNetworkEvent>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_side_effects_json: Option<Vec<u8>>,
-    /// JSON bytes of `Vec<ShimConsoleLine>` (brief AC-NAVRECEIPT2-01
-    /// extension). Empty list today (Phase 6 shim console-capture stub).
+    /// JSON bytes of `Vec<ShimConsoleLine>`.
+    /// Empty list today (current shim console-capture stub).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_console_lines_json: Option<Vec<u8>>,
-    /// JSON bytes of `loom_core::NetworkSummary` (brief AC-NAVRECEIPT2-01
-    /// extension).
+    /// JSON bytes of `loom_core::NetworkSummary`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_network_summary_json: Option<Vec<u8>>,
-    // ---- Evaluate tier fields (AC-EVALRESULT-01..04) ----
+    // ---- Evaluate tier fields ----
     // Populated by decode_typed_receipt when the WIT receipt carries them.
     // Truncation discriminator: evaluate_return_value_blob_ref.is_some().
     /// Canonical-JSON of the evaluated value. None when truncated.
@@ -197,15 +196,15 @@ impl ReceiptMarshaller {
 
     /// Synchronous assemble step. Pure: takes a builder, returns
     /// canonical-JSON bytes ready for `ManifestWriter::append`.
-    /// `serde_jcs` is the ONLY canonicalizer (BC HARD #3).
+    /// `serde_jcs` is the ONLY canonicalizer.
     ///
     /// When navigate tier-2 fields are present, builds a
     /// `loom_core::ReceiptPayload` to get canonical field names and the
-    /// unified serialization path (AC-NAVRECEIPT-01..05).
+    /// unified serialization path.
     pub fn assemble_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
         use loom_core::error::LoomErrorCode;
 
-        // AC-NAVERR-01/02/03: a typed navigate error receipt (structured
+        // A typed navigate error receipt (structured
         // shim-failure detail with a `kind` field) takes the navigate
         // assembly path even when `navigate_url` / `navigate_dom_snapshot_hash`
         // are unset (the WIT error variant doesn't carry the URL — it's
@@ -216,8 +215,8 @@ impl ReceiptMarshaller {
         // `assemble_navigate_canonical_bytes` below.
         // Restrict the kind check to the navigate-specific shim-failure
         // kinds so an evaluate js_throw error (kind=js_throw) doesn't get
-        // routed through the navigate-friendly-message path. AC-EVALRESULT-03
-        // routes evaluate errors via assemble_evaluate_canonical_bytes.
+        // routed through the navigate-friendly-message path. Evaluate
+        // errors route via assemble_evaluate_canonical_bytes.
         let detail_kind: Option<String> = builder
             .error_details
             .as_deref()
@@ -247,9 +246,9 @@ impl ReceiptMarshaller {
                 .map(|k| EVALUATE_ERROR_KINDS.contains(&k))
                 .unwrap_or(false);
 
-        // AC-INTEROP-02.1 / AC-HAREXPORT-01..05: ensure shim-captured network
-        // events make it into ReceiptPayload.network_events even when tier-2
-        // fields aren't wired yet (decouples HAR export from
+        // Ensure shim-captured network events make it into
+        // ReceiptPayload.network_events even when tier-2 fields aren't
+        // wired yet (decouples HAR export from
         // navigate-receipt-tier2-still-missing).
         if builder.navigate_url.is_some()
             || builder.navigate_dom_snapshot_hash.is_some()
@@ -300,8 +299,7 @@ impl ReceiptMarshaller {
 }
 
 /// Build canonical-JSON bytes for navigate tier-2 receipts via
-/// `loom_core::ReceiptPayload` so field names match the core schema
-/// (AC-NAVRECEIPT-01..05, BC HARD #3).
+/// `loom_core::ReceiptPayload` so field names match the core schema.
 fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
     use loom_core::error_types::{ReceiptCode, ReceiptSurface};
     use loom_core::receipt_builder::receipt_builder::{
@@ -321,7 +319,7 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         "assemble_navigate_canonical_bytes invoked but no navigate signal present on builder"
     );
 
-    // AC-HAREXPORT-01..05 degraded-path tracing: when the navigate path is
+    // Degraded-path tracing: when the navigate path is
     // taken solely because navigate_side_effects_json is populated (i.e.
     // tier-2 fields are still unset; see navigate-receipt-tier2-still-missing),
     // emit a single warn so operators can see why the resulting receipt has
@@ -343,7 +341,7 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
 
     // Decode shim-captured network events into the canonical receipt's
     // `network_events` so HAR/JSON exporters have per-event url/status/
-    // size/mime to render (AC-HAREXPORT-01..05). The bytes here are the
+    // size/mime to render. The bytes here are the
     // JSON encoding of `Vec<LoomNetworkEvent>` written by host_impl.rs.
     // Sub-resource events with `error_reason.is_some()` are mapped too,
     // so DevTools waterfalls can render failed requests; their status
@@ -361,7 +359,7 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
             response_body_sha256_hex: e.response_hash,
             response_body_size_bytes: e.response_bytes,
             response_body_ref: None,
-            // AC-NFR-DET-05.1: timing_ticks is microseconds; shim
+            // timing_ticks is microseconds; shim
             // duration_ms is milliseconds.
             timing_ticks: e.duration_ms.saturating_mul(1000),
             content_type: e.content_type,
@@ -370,14 +368,14 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
 
     let is_error = builder.status == crate::receipt_marshaller::ReceiptStatus::Error;
 
-    // For typed-error receipts (AC-NAVERR-01/02/03):
+    // For typed-error receipts:
     //  - `code` flips to WebNavigationFailed (still in the stable
-    //    ReceiptCode enum — AC-CORE-05.2).
+    //    ReceiptCode enum).
     //  - `details` is the parsed JSON object the surface emitted
     //    (`{"kind":"http_status","status_code":404,"url":"..."}` or
     //    `{"kind":"dns_failure","url":"...","chromium_error":"..."}`).
-    //  - `message` is a SHORT human-readable string (≤ 280 chars per
-    //    AC-CORE-05.1) — NOT the raw JSON blob, which would be hard to
+    //  - `message` is a SHORT human-readable string (≤ 280 chars)
+    //    — NOT the raw JSON blob, which would be hard to
     //    read in operator dashboards.
     let (code, details, message) = if is_error {
         let parsed: Option<serde_json::Value> = builder
@@ -398,7 +396,7 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
                     .unwrap_or(0);
                 format!("navigate failed: HTTP {sc}")
             }
-            // AC-NETERR-01: typed message names the failure mode + helps
+            // Typed message names the failure mode + helps
             // operators triage (DNS vs reachability vs TLS).
             "dns_failure" => "navigate failed: DNS resolution failed".to_string(),
             "connect_refused" => "navigate failed: connection refused".to_string(),
@@ -438,7 +436,7 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         llm_cache_hit: None,
         status,
         surface: ReceiptSurface::Web,
-        // AC-NFR-DET-05.1: timing_ticks unit is microseconds.
+        // timing_ticks unit is microseconds.
         // builder.finished_at_ms is session-elapsed ms from
         // DeterminismHarness::clock_now() (NOT wall-clock UNIX-EPOCH).
         timing_ticks: builder.finished_at_ms.saturating_mul(1000),
@@ -460,7 +458,7 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
     payload.canonical_bytes()
 }
 
-/// Build canonical-JSON bytes for evaluate-tier receipts (AC-EVALRESULT-01..04).
+/// Build canonical-JSON bytes for evaluate-tier receipts.
 /// Mirrors `assemble_navigate_canonical_bytes` shape but for the evaluate
 /// path. js_throw / cbor_unrepresentable errors carry typed `details` JSON.
 fn assemble_evaluate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
@@ -469,12 +467,12 @@ fn assemble_evaluate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
 
     let is_error = builder.status == crate::receipt_marshaller::ReceiptStatus::Error;
 
-    // For typed-error evaluate receipts (AC-EVALRESULT-03):
+    // For typed-error evaluate receipts:
     //  - `code` flips to WebActionFailed (existing enum variant).
     //  - `details` is the parsed JSON object the host emitted
     //    (`{"kind":"js_throw","exception":"...","line":N,"column":N}` or
     //    `{"kind":"cbor_unrepresentable","reason":"..."}`).
-    //  - `message` is short human-readable (≤ 280 chars per AC-CORE-05.1).
+    //  - `message` is short human-readable (≤ 280 chars).
     let (code, details, message) = if is_error {
         let parsed: Option<serde_json::Value> = builder
             .error_details

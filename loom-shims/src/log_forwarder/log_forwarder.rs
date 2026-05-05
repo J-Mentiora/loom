@@ -86,7 +86,7 @@ pub enum ForwarderError {
 
 impl LogForwarder for ChromiumLogForwarder {
     fn spawn_pumps(&self, _stdout_fd: i32, _stderr_fd: i32) -> Result<(), ForwarderError> {
-        // Phase 6: pipe FD pump tasks
+        // pipe FD pump tasks — not yet implemented
         Ok(())
     }
 

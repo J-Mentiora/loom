@@ -1,4 +1,4 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/wasm_runtime/interfaces.rs` instead.
 // WasmRuntime — singleton `Arc<wasmtime::Engine>`.
 //
@@ -26,7 +26,7 @@ use std::sync::Arc;
 /// `WasmHost::new`; not mutable thereafter.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WasmRuntimeConfig {
-    /// Per-WASM-instance memory cap (BC §6 soft default 64 MiB).
+    /// Per-WASM-instance memory cap (soft default 64 MiB).
     pub mem_limit_mib: u32,
     /// Fuel budget per surface invocation (None = disabled).
     pub fuel_per_invocation: Option<u64>,

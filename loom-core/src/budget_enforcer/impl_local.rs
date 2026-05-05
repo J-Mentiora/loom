@@ -1,9 +1,10 @@
 // LocalBudgetEnforcer implementation.
-// AC-BUDGET-01.1: session wall-clock total kill (600s default).
-// AC-BUDGET-01.2: per-action wall-clock pre-check (60s default).
-// AC-BUDGET-01.3: cumulative network bytes kill (50MB default).
-// AC-BUDGET-01.4: DOM node gauge check kill (50k default).
-// AC-BUDGET-01.5: JS heap gauge check kill (512MB default).
+// Enforces:
+//   - session wall-clock total kill (600s default).
+//   - per-action wall-clock pre-check (60s default).
+//   - cumulative network bytes kill (50MB default).
+//   - DOM node gauge check kill (50k default).
+//   - JS heap gauge check kill (512MB default).
 
 use crate::budget_enforcer::budget_enforcer::{
     Action, BudgetEnforcer, BudgetLimits, KillCallback, KillReason, LocalBudgetEnforcer,
@@ -68,10 +69,10 @@ fn fire_kill(entry: &SessionBudgetEntry, id: SessionId, reason: KillReason) {
 }
 
 impl BudgetEnforcer for LocalBudgetEnforcer {
-    /// Pre-action budget check (IC-CORE-06).
+    /// Pre-action budget check.
     /// Returns Err immediately if:
-    ///  - session total walltime already at/over session_walltime_ms (AC-BUDGET-01.1)
-    ///  - action's estimated walltime exceeds action_walltime_ms (AC-BUDGET-01.2)
+    ///  - session total walltime already at/over session_walltime_ms
+    ///  - action's estimated walltime exceeds action_walltime_ms
     fn check(&self, session: SessionId, action: &Action) -> Result<(), LoomError> {
         let guard = self.per_session.read();
         let entry = match guard.get(&session) {
@@ -105,7 +106,7 @@ impl BudgetEnforcer for LocalBudgetEnforcer {
         Ok(())
     }
 
-    /// Post-effect accounting (IC-CORE-06).
+    /// Post-effect accounting.
     /// Walltime and network: cumulative (fetch_add).
     /// DomNodes and JsHeap: gauge / high-water-mark (store then check).
     fn account(&self, session: SessionId, kind: ResourceKind, delta: u64) -> Result<(), LoomError> {

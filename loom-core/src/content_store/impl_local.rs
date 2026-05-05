@@ -73,7 +73,7 @@ fn sha256_from_shard_path(path: &std::path::Path) -> Option<String> {
 ///    the receipt is stored as canonical-JSON bytes inside the WAL line,
 ///    not unrolled into the WAL JSON itself. Without this decode pass
 ///    GC happily deleted blobs that active sessions still referenced
-///    — a data-loss bug surfaced by Phase 8 round-23 testing
+///    — a data-loss bug surfaced during late-stage testing
 ///    (`gc --ttl 0` after a `web.navigate` deleted the navigate's
 ///    DOM + screenshot blobs even though the session's manifest still
 ///    pointed at them).
@@ -207,7 +207,7 @@ impl ContentStore for LocalContentStore {
             Err(e) => return Err(LoomError::from(e)),
         };
 
-        // Mandatory integrity re-verification (IC-CORE-03).
+        // Mandatory integrity re-verification.
         let actual = sha256_hex(&bytes);
         if actual != r.sha256 {
             return Err(LoomError::new(

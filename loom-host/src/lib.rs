@@ -33,13 +33,13 @@ pub mod mocks;
 pub use wasm_host::*;
 
 #[cfg(test)]
-mod ac_tests;
+mod host_compile_gate_tests;
 
 #[cfg(test)]
-mod ac_tests_wasmb;
+mod wasm_surface_build_tests;
 
 #[cfg(test)]
-mod ac_tests_wasi;
+mod wasi_linker_tests;
 
 #[cfg(test)]
-mod ac_tests_navigate_receipt;
+mod navigate_receipt_tests;

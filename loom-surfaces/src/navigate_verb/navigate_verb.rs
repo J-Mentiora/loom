@@ -1,15 +1,14 @@
 // NavigateVerb — implements `web-surface::navigate`.
 //
 // # Contract semantics
-// - **Tier:** full DOM blob + full screenshot + full network events
-//   (IC-SURF-07; tier table row `navigate`).
-// - **Determinism injection (SR-SURF-03).** STEP 2 calls
+// - **Tier:** full DOM blob + full screenshot + full network events.
+// - **Determinism injection.** STEP 2 calls
 //   `host::shim_call("chromium", Page.AddScriptToEvaluateOnNewDocument
 //   { source: DET_INIT_JS, run_immediately: true })` BEFORE STEP 3's
 //   `Page.Navigate`. Deferred injection (post-page-load) is a KILL.
 // - **Two clock_now reads.** STEP 1 captures `t_start`; STEP 5 captures
-//   `t_end`; `timing_ticks = t_end - t_start` (integer, BC-SURF-05).
-// - **Receipt path (IC-SURF-09).** Final operation is
+//   `t_end`; `timing_ticks = t_end - t_start` (integer).
+// - **Receipt path.** Final operation is
 //   `host::receipt_emit(receipt)`. The `Result<Receipt, HostError>`
 //   return preserves the receipt for the WIT boundary too.
 // - **No retry, no panic, no `catch_unwind`.** Host-fn errors propagate
@@ -54,7 +53,7 @@ impl NavigateVerb {
     /// where Receipt assembly itself failed (e.g., malformed action
     /// before ReceiptBuilder is reachable).
     ///
-    /// Per IC-SURF-09 the verb's last operation is `host::receipt_emit`;
+    /// The verb's last operation is `host::receipt_emit`;
     /// the returned `Receipt` is also the WIT result payload.
     pub fn execute(action: NavigateAction) -> Result<Receipt, HostError> {
         use crate::cdp_message_encoder::cdp_message_encoder::{
@@ -70,7 +69,7 @@ impl NavigateVerb {
         let action_id = action.action_id.clone();
 
         let inner = || -> Result<Receipt, HostError> {
-            // SR-SURF-03: inject det_init BEFORE Page.navigate (KILL criterion)
+            // Inject det_init BEFORE Page.navigate (KILL criterion)
             host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::PageAddScriptToEvaluateOnNewDocument(
@@ -88,7 +87,7 @@ impl NavigateVerb {
                     transition_type: "typed".into(),
                 })),
             )?;
-            // DOM capture — full blob (IC-SURF-07 full-blob tier)
+            // DOM capture — full blob
             let dom_bytes = host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::DomGetDocument(DomGetDocument {
@@ -145,7 +144,7 @@ impl NavigateVerb {
 }
 
 /// Inspectable trace of host-fn invocations the verb makes, in order.
-/// Exposed for interface testing of the SR-SURF-03 ordering invariant
+/// Exposed for interface testing of the ordering invariant
 /// (det_init injection happens BEFORE Page.navigate).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NavigateStep {

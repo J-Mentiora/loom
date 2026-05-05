@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/startup_manager/interface_tests.rs` instead.
-// Interface tests for `StartupManager`. Verifies SR-CORE-07 atomic
-// writes / partial-write recovery, BC-CORE-01 storage layout sweep,
+// Interface tests for `StartupManager`. Verifies atomic
+// writes / partial-write recovery, storage layout sweep,
 // design.md §3.5 crash-recovery flow.
 
 use super::startup_manager::{FailedSession, RecoveryReport, StartupManager};
@@ -56,7 +56,7 @@ fn failed_session_carries_error_code_and_details_strings() {
     assert_eq!(f.error_code, "manifest_integrity_failed");
 }
 
-// === SR-CORE-07: partial-write recovery ===
+// === partial-write recovery ===
 
 #[test]
 fn perform_recovery_sweep_signature_returns_recovery_report() {

@@ -1,4 +1,4 @@
-//! Integration tests — `loom-rpc` contract (AC-PROTO-01 / IC-RPC-04 / IC-RPC-05).
+//! Integration tests — `loom-rpc` contract.
 //!
 //! Contract: `projects/loom/architecture/contracts/loom-rpc_contract.md`
 //!
@@ -313,8 +313,8 @@ impl loom_rpc::host_service_adapter::host_service_adapter::WasmHostBridge for St
 
 // ─── Test 1: Happy path — HELLO + rpc.schemas returns registry ───────────────
 
-/// Contract: AC-PROTO-01 — first message MUST be `HELLO {token}`.
-/// Contract: FR-PROTO-02 — `rpc.schemas()` returns the in-memory schema registry.
+/// Contract: — first message MUST be `HELLO {token}`.
+/// Contract: — `rpc.schemas()` returns the in-memory schema registry.
 ///
 /// This test validates the full happy path: bind socket → connect → HELLO token →
 /// send `rpc.schemas` request → receive JSON response with method registry.
@@ -327,11 +327,11 @@ async fn test_hello_auth_and_rpc_schemas() {
 
     let mut framed = connect(&srv.socket_path).await;
 
-    // Step 1: send valid HELLO token (AC-PROTO-01.1)
+    // Step 1: send valid HELLO token
     let hello = format!("HELLO {}", srv.token.0);
     send_frame(&mut framed, hello.as_bytes()).await;
 
-    // Step 2: request rpc.schemas (FR-PROTO-02)
+    // Step 2: request rpc.schemas
     let request = serde_json::json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -354,7 +354,7 @@ async fn test_hello_auth_and_rpc_schemas() {
 
 // ─── Test 2: Error path — wrong HELLO token closes connection ────────────────
 
-/// Contract: AC-PROTO-01.1 — token mismatch → `code = "protocol_auth_required"`.
+/// Contract: — token mismatch → `code = "protocol_auth_required"`.
 ///
 /// Validates that the server rejects a connection with a wrong HELLO token
 /// and returns the typed auth error envelope before closing.
@@ -374,7 +374,7 @@ async fn test_wrong_hello_token_returns_auth_error() {
     let resp: serde_json::Value =
         serde_json::from_slice(&resp_bytes).expect("auth error response must be valid JSON");
 
-    // Must include code = "protocol_auth_required" (AC-PROTO-01.1)
+    // Must include code = "protocol_auth_required"
     let code = resp.get("code").and_then(|v| v.as_str()).unwrap_or("");
     assert_eq!(
         code, "protocol_auth_required",
@@ -384,7 +384,7 @@ async fn test_wrong_hello_token_returns_auth_error() {
 
 // ─── Test 3: Error path — malformed HELLO (no space) ─────────────────────────
 
-/// Contract: IC-RPC-05 — first frame must be `HELLO {token}` (exactly).
+/// Contract: — first frame must be `HELLO {token}` (exactly).
 /// A malformed frame (no space, wrong prefix) must close with auth error.
 #[tokio::test]
 async fn test_malformed_hello_frame_returns_auth_error() {
@@ -409,7 +409,7 @@ async fn test_malformed_hello_frame_returns_auth_error() {
 
 // ─── Test 4: Error path — malformed JSON after auth ──────────────────────────
 
-/// Contract: IC-RPC-04 — invalid JSON → `code = "protocol_malformed"`.
+/// Contract: — invalid JSON → `code = "protocol_malformed"`.
 /// After a valid HELLO, sending non-JSON must return ProtocolMalformed.
 #[tokio::test]
 async fn test_authenticated_malformed_json_returns_protocol_error() {
@@ -441,7 +441,7 @@ async fn test_authenticated_malformed_json_returns_protocol_error() {
 
 // ─── Test 5: Concurrent connections are independent ──────────────────────────
 
-/// Contract: BC-RPC-01 — each connection runs on its own tokio task.
+/// Contract: — each connection runs on its own tokio task.
 /// Two simultaneous connections with different tokens should each get
 /// their respective responses independently.
 #[tokio::test]

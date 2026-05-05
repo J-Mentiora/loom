@@ -1,7 +1,7 @@
 // HoverVerb — implements `web-surface::hover`.
 //
 // # Contract semantics
-// - **Tier:** hash-only (IC-SURF-07 row `hover`).
+// - **Tier:** hash-only.
 // - **CDP method:** `Input.dispatchMouseEvent` with
 //   `event_type: "mouseMoved"` at the element's bounding-box centre,
 //   resolved via `hit_test::resolve_centre_for_selector`.

@@ -1,13 +1,13 @@
 // Interface tests for `NetworkInterceptor`.
-// Verifies IC-SHIM-04 (decompress before SHA-256, KILL-CRITERION),
-// IC-SHIM-06 (typed `LoomNetworkEvent` shape — no CDP payload escape),
+// Verifies decompress before SHA-256 (KILL-CRITERION),
+// typed `LoomNetworkEvent` shape (no CDP payload escape),
 // Hard binding 3 (integer-only numeric fields).
 
 use super::network_interceptor::{
     compute_response_hash, strip_content_encoding, LoomNetworkEvent, SHA256_HEX_LEN,
 };
 
-// === IC-SHIM-04 (KILL): hash is over decompressed bytes ===
+// === hash is over decompressed bytes (KILL) ===
 
 #[test]
 fn compute_response_hash_returns_64_char_hex() {
@@ -29,14 +29,14 @@ fn compute_response_hash_known_value_matches_sha256_of_input() {
 
 #[test]
 fn different_decompressed_bytes_produce_different_hashes() {
-    // Crucial replay-parity test: if Phase 5.4 ever hashed compressed
+    // Crucial replay-parity test: if the implementation ever hashed compressed
     // bytes by mistake, two different decompressions could collide.
     let h1 = compute_response_hash(b"<html>a</html>");
     let h2 = compute_response_hash(b"<html>b</html>");
     assert_ne!(h1, h2);
 }
 
-// === IC-SHIM-04 (KILL): strip Content-Encoding from request before hash ===
+// === strip Content-Encoding from request before hash (KILL) ===
 
 #[test]
 fn strip_content_encoding_removes_the_header_case_insensitive() {
@@ -73,7 +73,7 @@ fn strip_content_encoding_preserves_unrelated_headers() {
     assert_eq!(stripped, headers);
 }
 
-// === IC-SHIM-06: LoomNetworkEvent is typed (no CDP escape) ===
+// === LoomNetworkEvent is typed (no CDP escape) ===
 
 #[test]
 fn loom_network_event_has_typed_fields() {
@@ -193,7 +193,7 @@ fn classify_chromium_nav_error_tls_error() {
     );
 }
 
-// AC-BLOCKKIND-01..04: blocklist-blocked URLs return "blocked" (distinct
+// blocklist-blocked URLs return "blocked" (distinct
 // from "network_error") so agent retry logic can differentiate.
 #[test]
 fn classify_chromium_nav_error_blocked() {
@@ -208,7 +208,7 @@ fn classify_chromium_nav_error_blocked() {
     );
 }
 
-/// AC-BLOCKKIND-04: real DNS-failure URLs continue to return kind='dns_failure',
+/// Real DNS-failure URLs continue to return kind='dns_failure',
 /// not 'blocked' (regression guard).
 #[test]
 fn classify_chromium_nav_error_dns_not_blocked() {
@@ -237,7 +237,7 @@ fn classify_chromium_nav_error_catchall_network_error() {
     assert_eq!(classify_chromium_nav_error(""), "network_error");
 }
 
-// === AC-NAVERR-01..03: parse_network_event extracts status / errorText ===
+// === parse_network_event extracts status / errorText ===
 
 #[test]
 fn parse_response_received_extracts_document_status_code() {

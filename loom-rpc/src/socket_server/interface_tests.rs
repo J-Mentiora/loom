@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/socket_server/interface_tests.rs` instead.
-// Interface tests for `SocketServer`. Verifies AC-PROTO-01.1 socket
-// mode, IC-RPC-04 default path resolution, BC-RPC-01 shared-runtime
+// Interface tests for `SocketServer`. Verifies.1 socket
+// mode, default path resolution, shared-runtime
 // signature, BindError categorisation.
 
 use super::socket_server::{BindError, SocketServer, SocketServerConfig, SOCKET_MODE};
@@ -45,7 +45,7 @@ fn bind_error_distinguishes_address_in_use_perm_denied_io() {
 
 #[test]
 fn server_exposes_token_field_for_loom_serve_to_print() {
-    // IC-RPC-05: token is printed once on `loom serve` stdout.
+    // token is printed once on `loom serve` stdout.
     fn _ck(s: &SocketServer) -> Arc<Token> {
         Arc::clone(&s.token)
     }
@@ -70,7 +70,7 @@ fn default_socket_path_resolves_per_platform() {
 
 #[test]
 fn serve_signature_takes_runtime_handle_and_shutdown_future() {
-    // BC-RPC-01: shared multi-threaded runtime (no fresh runtime
+    // shared multi-threaded runtime (no fresh runtime
     // inside loom-rpc).
     fn _assert_async() {
         async fn _ck<S: std::future::Future<Output = ()> + Send + 'static>(

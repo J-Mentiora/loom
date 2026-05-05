@@ -1,7 +1,6 @@
-// Interface tests for `McpMain`. Verifies SR-MCP-01 (clap subcommand,
-// `--help` works), AC-NFR-DX-01 (zero-config defaults), BC-MCP-04
-// (single tokio runtime -- `run` is `async`, not `#[tokio::main]`),
-// and signal-handling shape.
+// Interface tests for `McpMain`. Verifies the clap subcommand wiring
+// (`--help` works zero-config), the single tokio runtime invariant
+// (`run` is `async`, not `#[tokio::main]`), and signal-handling shape.
 
 use super::mcp_main::{ServeArgs, SHUTDOWN_DRAIN_TIMEOUT};
 use super::{build_dispatcher, config_from_args, install_panic_hook, install_signal_handler, run};
@@ -14,7 +13,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-// === SR-MCP-01: clap subcommand, --help works zero-config ===
+// === clap subcommand, --help works zero-config ===
 
 #[test]
 fn serve_args_has_clap_parser_impl() {
@@ -71,7 +70,7 @@ fn config_from_args_signature() {
     let _ = _ck;
 }
 
-// === BC-MCP-04: run() is async, not #[tokio::main] ===
+// === run() is async, not #[tokio::main] ===
 
 #[test]
 fn run_is_async_function() {

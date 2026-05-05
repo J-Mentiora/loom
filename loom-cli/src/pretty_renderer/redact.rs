@@ -1,7 +1,7 @@
 // Recursive sensitive-field redaction for pretty/curated/tail rendering.
 //
 // Per D-29: applied uniformly to curated, tail, and PrettyFallback paths.
-// The `--json` (canonical) path is NEVER redacted — AC-TTY-02 byte-exactness
+// The `--json` (canonical) path is NEVER redacted — byte-exactness
 // preserved. Pretty paths walk the receipt before formatting, replacing
 // any nested object value whose KEY name matches the sensitive regex with
 // the JSON string `"<redacted>"`.

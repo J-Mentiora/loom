@@ -1,5 +1,5 @@
 //! `error_translator` — see `systems/loom-rpc/modules/error_translator/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod error_translator;
 pub use error_translator::*;
@@ -45,7 +45,7 @@ impl ErrorTranslator {
         }
     }
 
-    /// Construct an `unknown_profile` envelope (AC-PROFVAL-01).
+    /// Construct an `unknown_profile` envelope.
     /// `data` carries the provided value plus the canonical allowlist.
     pub fn from_unknown_profile(provided: &str, available: &[&str]) -> JsonRpcError {
         let message = Self::truncate_message(&format!("unknown profile: {provided}"));
@@ -59,7 +59,7 @@ impl ErrorTranslator {
         }
     }
 
-    /// Construct an `invalid_network_mode` envelope (AC-PROFVAL-02).
+    /// Construct an `invalid_network_mode` envelope.
     pub fn from_invalid_network_mode(provided: &str, available: &[&str]) -> JsonRpcError {
         let message = Self::truncate_message(&format!("invalid network mode: {provided}"));
         JsonRpcError {
@@ -72,7 +72,7 @@ impl ErrorTranslator {
         }
     }
 
-    /// Construct an `invalid_budget_key` envelope (AC-PROFVAL-03).
+    /// Construct an `invalid_budget_key` envelope.
     pub fn from_invalid_budget_key(provided: &str, available: &[&str]) -> JsonRpcError {
         let message = Self::truncate_message(&format!("invalid budget key: {provided}"));
         JsonRpcError {
@@ -85,7 +85,7 @@ impl ErrorTranslator {
         }
     }
 
-    /// Construct an `invalid_capture_policy` envelope (AC-CAPPOL-04).
+    /// Construct an `invalid_capture_policy` envelope.
     pub fn from_invalid_capture_policy(provided: &str, available: &[&str]) -> JsonRpcError {
         let message = Self::truncate_message(&format!("invalid capture policy: {provided}"));
         JsonRpcError {

@@ -1,8 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/session_executor/interface_tests.rs` instead.
-// Interface tests for `SessionExecutor`. Verifies BC-HOST-01 (no
-// extra spawns inside dispatch — caller's tokio handle is borrowed),
-// IC-HOST-06 (typed-receipt trap propagation), and per-dispatch
+// Interface tests for `SessionExecutor`. Verifies the no-extra-spawns
+// invariant inside dispatch (caller's tokio handle is borrowed),
+// typed-receipt trap propagation, and per-dispatch
 // `Store<HostState>` ownership.
 
 use super::session_executor::{Action, ActionOutcome, SessionExecutor, SessionHandle};
@@ -18,13 +18,13 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-// === BC-HOST-01: SessionHandle carries TWO tokio Handles ===
+// === SessionHandle carries TWO tokio Handles ===
 
 #[test]
 fn session_handle_has_handle_and_receipt_pool_both_tokio_handles() {
     // Two distinct handles: `handle` for the surface invocation,
     // `receipt_pool` for the post-return receipt spawn. Per
-    // BC-HOST-01, neither is a global pool reference.
+    // Neither is a global pool reference.
     fn _ck(s: &SessionHandle) -> (&tokio::runtime::Handle, &tokio::runtime::Handle) {
         (&s.handle, &s.receipt_pool)
     }
@@ -33,7 +33,7 @@ fn session_handle_has_handle_and_receipt_pool_both_tokio_handles() {
 
 #[test]
 fn session_handle_carries_abort_signal_and_flag() {
-    // IC-CORE-02 abort plumbing: SessionExecutor must observe both
+    // Abort plumbing: SessionExecutor must observe both
     // (atomic bool fast-path + Notify wakeup).
     fn _ck(s: &SessionHandle) -> (&Arc<AtomicBool>, &Arc<Notify>) {
         (&s.abort_flag, &s.abort_signal)
@@ -41,7 +41,7 @@ fn session_handle_carries_abort_signal_and_flag() {
     let _ = _ck;
 }
 
-// === BC-HOST-01: run takes mode + linker, no internal `tokio::spawn` ===
+// === run takes mode + linker, no internal `tokio::spawn` ===
 
 #[test]
 fn run_signature_takes_pre_built_linker_reference() {
@@ -69,7 +69,7 @@ fn doc_pin_no_extra_tokio_spawn_per_dispatch() {
     assert!(pin.contains("NO `tokio::spawn` per dispatch"));
 }
 
-// === IC-HOST-06: trap returns typed Trapped outcome, never panics ===
+// === Trap returns typed Trapped outcome, never panics ===
 
 #[test]
 fn action_outcome_has_success_trapped_aborted_variants() {
@@ -372,7 +372,7 @@ fn decode_typed_receipt_rejects_err_with_non_variant_payload_as_internal() {
 // shim-failure variant carrying a STRUCTURED JSON detail (with `kind`)
 // flips builder.status to Error and returns Ok(()) so the receipt path
 // continues; downstream `assemble_canonical_bytes` then emits a typed
-// navigate-error receipt (AC-NAVERR-01..03). All other shapes preserve
+// navigate-error receipt. All other shapes preserve
 // the existing Err return for backwards compatibility.
 
 #[test]
@@ -391,12 +391,12 @@ fn decode_typed_receipt_shim_failure_with_structured_detail_sets_status_error() 
     assert_eq!(
         b.status,
         crate::receipt_marshaller::ReceiptStatus::Error,
-        "AC-NAVERR-01: structured shim-failure must flip status to Error"
+        "structured shim-failure must flip status to Error"
     );
     assert_eq!(
         b.error_code.as_deref(),
         Some("shim-failure"),
-        "error_code must remain 'shim-failure' (AC-CORE-05.2 stable enum)"
+        "error_code must remain 'shim-failure' (stable enum)"
     );
     assert_eq!(
         b.error_details.as_deref(),
@@ -446,14 +446,13 @@ fn decode_typed_receipt_other_variant_with_structured_detail_returns_err() {
     assert_eq!(err.code, LoomErrorCode::BudgetExceeded);
 }
 
-// AC-HAREXPORT-03 / AC-INTEROP-02.1 (P0): when host_impl embeds the
-// captured network events in the typed-error detail under
-// `_network_events`, decode_typed_receipt must hoist them onto
-// builder.navigate_side_effects_json AND strip the field from
+// When host_impl embeds the captured network events in the typed-error
+// detail under `_network_events`, decode_typed_receipt must hoist them
+// onto builder.navigate_side_effects_json AND strip the field from
 // builder.error_details so the receipt's operator-facing error context
 // stays clean.
 #[test]
-fn ac_harexport_03_typed_error_preserves_network_events() {
+fn typed_error_preserves_network_events() {
     use loom_shared::navigate_outcome::LoomNetworkEvent;
 
     let events = vec![LoomNetworkEvent {

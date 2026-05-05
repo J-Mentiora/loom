@@ -1,4 +1,4 @@
-// AC-TTY-03 — `--quiet` per-command identity output. Universal rule
+// `--quiet` per-command identity output. Universal rule
 // per D-8 / D-19: single-resource → id; list → newline-joined ids;
 // no-id-commands → silent.
 

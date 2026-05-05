@@ -10,8 +10,8 @@ pub const MOCK_RECEIPT_HASH: &str =
 pub struct MockWasmHost;
 
 impl MockWasmHost {
-    /// Returns a stable Ok-shaped placeholder. Phase 6 will widen this
-    /// to a full ActionOutcome shape once compile_module is wired.
+    /// Returns a stable Ok-shaped placeholder. A future revision will
+    /// widen this to a full ActionOutcome shape once compile_module is wired.
     pub fn dispatch_ok() -> &'static str {
         "mock-action-outcome"
     }

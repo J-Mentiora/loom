@@ -1,4 +1,4 @@
-//! Integration tests — `loom-core` contract (AC-CORE-01 / NFR-PERF-01 / IC-CORE-02).
+//! Integration tests — `loom-core` contract.
 //!
 //! Contract: `projects/loom/architecture/contracts/loom-core_contract.md`
 //!
@@ -41,7 +41,7 @@ fn default_session_opts() -> SessionCreateOpts {
 
 // ─── Test 1: Happy — create session returns a ULID session_id ────────────────
 
-/// Contract: SessionManager::create returns a 26-char lowercase ULID (AC-CORE-01.1).
+/// Contract: SessionManager::create returns a 26-char lowercase ULID.
 /// SLA: p50 ≤ 500ms warm (NFR-PERF-01).
 #[test]
 fn test_session_create_returns_ulid() {
@@ -81,7 +81,7 @@ fn test_session_create_returns_ulid() {
 
 // ─── Test 2: Happy — create + get returns Active session ─────────────────────
 
-/// Contract: get(id) returns the session in Active status after create (AC-CORE-01.2).
+/// Contract: get(id) returns the session in Active status after create.
 #[test]
 fn test_get_session_after_create_is_active() {
     use loom_core::session_manager::session_manager::SessionStatus;
@@ -110,7 +110,7 @@ fn test_get_session_after_create_is_active() {
 
 // ─── Test 3: Error — get with unknown session returns SessionNotFound ─────────
 
-/// Contract: get(unknown_id) → LoomError with code = SessionNotFound (AC-CORE-01.2).
+/// Contract: get(unknown_id) → LoomError with code = SessionNotFound.
 #[test]
 fn test_get_unknown_session_returns_not_found() {
     let dir = TempDir::new().unwrap();
@@ -133,7 +133,7 @@ fn test_get_unknown_session_returns_not_found() {
 
 // ─── Test 4: Happy — create + close transitions to Closed ────────────────────
 
-/// Contract: close(id) → session status = Closed, no further actions accepted (AC-CORE-01.3).
+/// Contract: close(id) → session status = Closed, no further actions accepted.
 #[test]
 fn test_close_session_transitions_to_closed() {
     use loom_core::session_manager::session_manager::SessionStatus;
@@ -158,8 +158,8 @@ fn test_close_session_transitions_to_closed() {
 
 // ─── Test 5: Happy — ContentStore put + get roundtrip is idempotent ──────────
 
-/// Contract: ContentStore::put is idempotent; get verifies hash (AC-CORE-03 / IC-CORE-05).
-/// SLA: p95 read ≤ 20ms for blobs ≤ 1MB (NFR-PERF-01).
+/// Contract: ContentStore::put is idempotent; get verifies hash.
+/// SLA: p95 read ≤ 20ms for blobs ≤ 1MB.
 #[test]
 fn test_content_store_put_get_roundtrip() {
     let dir = TempDir::new().unwrap();
@@ -204,7 +204,7 @@ fn test_content_store_put_get_roundtrip() {
 
 // ─── Test 6: Error — ContentStore get with wrong hash → StoreIntegrityFailed ─
 
-/// Contract: ContentStore::get with tampered hash → StoreIntegrityFailed (AC-CORE-03).
+/// Contract: ContentStore::get with tampered hash → StoreIntegrityFailed.
 #[test]
 fn test_content_store_get_with_wrong_hash_fails() {
     use loom_core::content_store::ContentRef;

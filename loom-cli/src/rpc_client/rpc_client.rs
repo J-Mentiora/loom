@@ -1,24 +1,24 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/RpcClient/interfaces.rs` instead.
 // RpcClient — jsonrpsee Unix-socket client owned by `loom-cli`.
 //
 // Separate from loom-mcp's RpcClient — the CLI carries its own client
-// so SR-CLI-02's no-MCP-framing rule remains structural.
+// so the no-MCP-framing rule remains structural.
 //
 // # Contract semantics
-// - **AC-PROTO-01.1.** JSON-RPC 2.0 over Unix domain socket. HELLO
+// - **Wire protocol.** JSON-RPC 2.0 over Unix domain socket. HELLO
 //   token handshake before any method dispatch.
 // - **Fresh connection per invocation.** No pooling; the CLI is a
 //   single-shot process. `call` opens, HELLOs, sends, awaits, closes.
 // - **Auth via `AuthManager`.** `RpcClient::call` reads the HELLO
 //   token from `AuthManager::read_hello_token()` (per-startup
 //   artefact). Token never persisted across daemon restarts.
-// - **Retry policy (design §4).** Default = no retry; one connect
+// - **Retry policy.** Default = no retry; one connect
 //   retry on `ECONNREFUSED` after 100 ms (covers daemon
 //   just-restarted race). Anything else fails fast through
 //   `ErrorMapper`.
-// - **`From<RpcError> for CliError`** mirrors `LoomErrorCode` 1:1
-//   (BC-CLI-05); enforced by `tools/lint-error-codes.py`.
+// - **`From<RpcError> for CliError`** mirrors `LoomErrorCode` 1:1;
+//   enforced by `tools/lint-error-codes.py`.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -37,7 +37,7 @@ pub struct RpcClientConfig {
     pub request_timeout: Duration,
 }
 
-/// Typed wire error used by `From<RpcError> for CliError` (BC-CLI-05).
+/// Typed wire error used by `From<RpcError> for CliError`.
 /// 1:1 mirror of `loom-rpc::error::LoomErrorCode`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcError {
@@ -187,9 +187,9 @@ impl From<RpcError> for CliError {
                 CliError::Connection(crate::error_mapper::ConnectionError::SchemaVersionSkew)
             }
             "io" => CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning),
-            // AC-AESF-04: surface_unavailable is a distinct error class (exit 5).
+            // surface_unavailable is a distinct error class (exit 5).
             "surface_unavailable" => CliError::SurfaceUnavailable(e.message.clone()),
-            // AC-DIST-05: browser_not_found is a distinct error class (exit 1)
+            // browser_not_found is a distinct error class (exit 1)
             // with a fixed actionable install message rendered by Display.
             // Wire string is snake_case per loom-rpc's rename_all; the shared
             // canonical kebab-case `"browser-not-found"` is for non-RPC sinks.

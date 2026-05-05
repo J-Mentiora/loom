@@ -1,4 +1,4 @@
-//! AC-HAREXPORT-05 / AC-INTEROP-02.1 — end-to-end integration test.
+//! HAR export end-to-end integration test.
 //!
 //! Exercises the loom-host marshaller + loom-core WAL-writer + loom-core
 //! exporter together for a 2-navigate session: one `WebActionCompleted`
@@ -24,13 +24,13 @@
 //!
 //! Why no fake-chromium / WIT runtime: the host_impl + session_executor
 //! transforms are covered end-to-end by the unit tests
-//! `ac_harexport_03_typed_error_preserves_network_events` (P0c) and
-//! `ac_harexport_marshaller_preserves_network_events_when_tier2_unset`
-//! (P2). Adding a fake-chromium-driven WIT-runtime path would require
+//! `typed_error_preserves_network_events` and
+//! `harexport_marshaller_preserves_network_events_when_tier2_unset`.
+//! Adding a fake-chromium-driven WIT-runtime path would require
 //! building the loom-surface-web WASM artifact at test time, which is
 //! out of scope for this PR. This test exercises the marshaller →
 //! WAL-writer → exporter pipeline that those unit tests don't reach.
-//! AC-HAREXPORT-05 is satisfied: a 2-receipt session round-trips
+//! The HAR export contract is satisfied: a 2-receipt session round-trips
 //! through the export path and yields HAR entries matching navigated
 //! URLs + statuses, with full schema validation.
 //!
@@ -211,14 +211,13 @@ fn ac_harexport_05_two_navigate_session_har_contents() {
     assert_eq!(
         entries.len(),
         2,
-        "AC-HAREXPORT-01 / AC-HAREXPORT-05: expected exactly 2 entries (one document \
-         request per navigate); got {}",
+        "expected exactly 2 entries (one document request per navigate); got {}",
         entries.len()
     );
 
-    // AC-HAREXPORT-02 + AC-HAREXPORT-03: at least one entry per navigated
-    // URL, with response.status equal to the actual HTTP status the shim
-    // captured. The 404 case is the new one this PR enables.
+    // At least one entry per navigated URL, with response.status equal
+    // to the actual HTTP status the shim captured. The 404 case is the
+    // regression scenario that the typed-error fix enables.
     let entry_for = |url: &str, status: u64| -> bool {
         entries.iter().any(|e| {
             e["request"]["url"].as_str() == Some(url)
@@ -227,15 +226,15 @@ fn ac_harexport_05_two_navigate_session_har_contents() {
     };
     assert!(
         entry_for("http://fake.test/status/200", 200),
-        "AC-HAREXPORT-02 + AC-HAREXPORT-03: expected entry for /status/200 with status=200"
+        "expected entry for /status/200 with status=200"
     );
     assert!(
         entry_for("http://fake.test/status/404", 404),
-        "AC-HAREXPORT-03 (the regression case fixed by P0): expected entry for /status/404 \
-         with status=404 — typed-error navigates must propagate captured network_events to HAR"
+        "expected entry for /status/404 with status=404 — typed-error \
+         navigates must propagate captured network_events to HAR"
     );
 
-    // AC-HAREXPORT-04: HAR validates against the vendored Draft-04 schema.
+    // HAR validates against the vendored Draft-04 schema.
     let schema = load_har_schema();
     let validator =
         jsonschema::validator_for(&schema).expect("vendored HAR 1.2 schema must compile");
@@ -245,7 +244,7 @@ fn ac_harexport_05_two_navigate_session_har_contents() {
         .collect();
     assert!(
         errors.is_empty(),
-        "AC-HAREXPORT-04: HAR must validate against HAR 1.2 schema; got {} error(s):\n{}",
+        "HAR must validate against HAR 1.2 schema; got {} error(s):\n{}",
         errors.len(),
         errors.join("\n")
     );

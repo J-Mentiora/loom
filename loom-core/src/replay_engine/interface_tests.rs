@@ -1,8 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/replay_engine/interface_tests.rs` instead.
-// Interface tests for `ReplayEngine`. Verifies IC-CORE-07 host-fn swap,
-// SR-CORE-05 ≥ 5× real-time shape, SR-CORE-20 reads-CAS-only,
-// Hard binding 5 screenshots excluded.
+// Interface tests for `ReplayEngine`. Verifies host-fn swap,
+// ≥ 5× real-time shape, reads-CAS-only, screenshots excluded.
 
 use super::replay_engine::{
     DiffOpts, DiffReport, FieldDiff, LocalReplayEngine, ReplayEngine, ReplayOpts, ReplayReport,
@@ -68,7 +67,7 @@ fn replay_opts_action_walltime_budget_is_u64() {
     let _u: u64 = o.action_walltime_budget_ms;
 }
 
-// === IC-CORE-07: replay signature ===
+// === replay signature ===
 
 #[test]
 fn replay_signature_takes_source_and_opts_returns_session_id() {
@@ -88,7 +87,7 @@ fn replay_returns_manifest_corrupt_when_source_chain_broken() {
     let _e = LoomErrorCode::ManifestCorrupt;
 }
 
-// === SR-CORE-20: reads CAS only ===
+// === reads CAS only ===
 
 #[test]
 fn replay_engine_holds_content_store_dependency_no_network_client() {

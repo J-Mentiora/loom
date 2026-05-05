@@ -1,5 +1,5 @@
 // Interface tests for error_types.
-// Verifies: AC-CORE-05.2 stable code enum, as_wire() parity with serde.
+// Verifies: stable code enum, as_wire() parity with serde.
 
 #[cfg(test)]
 mod tests {

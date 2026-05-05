@@ -2,7 +2,7 @@
 //!
 //! - `error_format` — canonical `LoomError` + `LoomErrorCode` enum
 //!   (binding-constraints §5).
-//! - `llm_types` — LLM passthrough types shared across loom-core/rpc/mcp (FR-DET-07).
+//! - `llm_types` — LLM passthrough types shared across loom-core/rpc/mcp .
 //! - `logging` — `tracing_subscriber` setup with secret-redaction layer.
 //! - `auth_token` — `HelloToken` shared by daemon + CLI + MCP.
 

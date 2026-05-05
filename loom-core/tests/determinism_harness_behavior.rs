@@ -1,16 +1,16 @@
-// Behavior tests for DeterminismHarness — TDD Red phase.
+// Behavior tests for DeterminismHarness.
 //
-// AC coverage:
-//   AC-DET-01.1: test_clock_now_frozen_within_action (100 calls → same value)
-//   AC-DET-02.1: test_rng_same_seed_identical_sequence
-//   AC-DET-03.1: test_tape_records_net_response_on_cache_miss (receipt code)
-//   IC-CORE-04:  test_canonicalize_rfc8785_key_ordering,
-//                test_hash_canonical_is_64_char_hex,
-//                test_canonicalize_roundtrip_deterministic
-//   IC-CORE-07:  test_replay_table_pop_clock_returns_recorded_value,
-//                test_replay_table_pop_rng_returns_recorded_value,
-//                test_replay_table_pop_clock_wrong_frame_returns_internal_err,
-//                test_tape_writer_snapshot_is_stable_clone
+// Coverage:
+//   - test_clock_now_frozen_within_action (100 calls → same value)
+//   - test_rng_same_seed_identical_sequence
+//   - test_tape_records_net_response_on_cache_miss (receipt code)
+//   - test_canonicalize_rfc8785_key_ordering
+//   - test_hash_canonical_is_64_char_hex
+//   - test_canonicalize_roundtrip_deterministic
+//   - test_replay_table_pop_clock_returns_recorded_value
+//   - test_replay_table_pop_rng_returns_recorded_value
+//   - test_replay_table_pop_clock_wrong_frame_returns_internal_err
+//   - test_tape_writer_snapshot_is_stable_clone
 
 use loom_core::determinism_harness::{DeterminismHarness, SideEffectTape, TapeFrame};
 use loom_core::error::LoomErrorCode;
@@ -26,7 +26,7 @@ fn make_harness(seed: u64) -> DeterminismHarness {
     DeterminismHarness::new(seed, mw)
 }
 
-// === AC-DET-01.1: virtual clock frozen within action ===
+// === virtual clock frozen within action ===
 
 #[test]
 fn test_clock_now_frozen_within_action() {
@@ -72,7 +72,7 @@ fn test_begin_action_advances_clock() {
     );
 }
 
-// === AC-DET-02.1: seeded RNG produces deterministic sequence ===
+// === seeded RNG produces deterministic sequence ===
 
 #[test]
 fn test_rng_same_seed_identical_sequence() {
@@ -96,7 +96,7 @@ fn test_rng_different_seeds_produce_different_sequences() {
     assert_ne!(s1, s2, "Different seeds must produce different sequences");
 }
 
-// === IC-CORE-04 / SR-CORE-17: canonicalization ===
+// === canonicalization ===
 
 #[test]
 fn test_canonicalize_rfc8785_key_ordering() {
@@ -150,7 +150,7 @@ fn test_hash_canonical_same_input_same_output() {
     assert_eq!(h1, h2);
 }
 
-// === IC-CORE-07: ReplayHostFnTable ===
+// === ReplayHostFnTable ===
 
 #[test]
 fn test_replay_table_pop_clock_returns_recorded_value() {

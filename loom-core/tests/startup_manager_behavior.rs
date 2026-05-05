@@ -363,12 +363,12 @@ fn ac_nfr_rel_03_1_list_sessions_info_shows_closed_status() {
     assert_eq!(status, "closed");
 }
 
-/// AC-ABORTREASON-01: aborted sessions surface their reason via the
+/// Aborted sessions surface their reason via the
 /// `aborted:<reason>` status-string convention. The bridge layer
 /// splits this back into `(status="aborted", reason=Some("X"))` for
 /// the wire `SessionInfo`.
 #[test]
-fn ac_abortreason_01_list_sessions_info_encodes_abort_reason() {
+fn list_sessions_info_encodes_abort_reason() {
     let (_sm, tmp) = fixture();
     let sessions_root = tmp.path().join("sessions");
 
@@ -400,10 +400,10 @@ fn ac_abortreason_01_list_sessions_info_encodes_abort_reason() {
     );
 }
 
-/// AC-ABORTREASON-03: replay_complete is its own lifecycle marker, not
+/// replay_complete is its own lifecycle marker, not
 /// an abort. Distinct status string preserved end-to-end.
 #[test]
-fn ac_abortreason_03_replay_complete_is_not_aborted() {
+fn replay_complete_is_not_aborted() {
     let (_sm, tmp) = fixture();
     let sessions_root = tmp.path().join("sessions");
 

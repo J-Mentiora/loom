@@ -1,6 +1,6 @@
-//! AC-driven integration tests for the `playwright-import` feature.
+//! Integration tests for the `playwright-import` feature.
 //!
-//! AC-INTEROP-01.1 — Playwright trace import produces a Loom session
+//! Playwright trace import produces a Loom session:
 //!   Given a Playwright trace `trace.zip` with K events,
 //!   When `PlaywrightImporter::import(trace_bytes)` is called,
 //!   Then a new session is created with `actions[]` length = K;
@@ -62,7 +62,7 @@ fn action_receipts(entries: &[ManifestEntry]) -> Vec<&ManifestEntry> {
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-01.1 — actions[] length = K
+// actions[] length = K
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -98,7 +98,7 @@ fn ac_interop_01_1_action_count_equals_k_events() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-01.1 — each action.source = "playwright_import"
+// each action.source = "playwright_import"
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -133,7 +133,7 @@ fn ac_interop_01_1_each_action_source_is_playwright_import() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-01.1 — session.replayable = false
+// session.replayable = false
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -168,7 +168,7 @@ fn ac_interop_01_1_session_replayable_false() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-01.1 — edge case: K=0 events
+// edge case: K=0 events
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -209,7 +209,7 @@ fn ac_interop_01_1_empty_trace_creates_zero_action_session() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-01.1 — invalid zip bytes → Err
+// invalid zip bytes → Err
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -227,7 +227,7 @@ fn ac_interop_01_1_invalid_zip_returns_error() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-INTEROP-01.1 — zip missing trace.trace → Err
+// zip missing trace.trace → Err
 // ---------------------------------------------------------------------------
 
 #[test]

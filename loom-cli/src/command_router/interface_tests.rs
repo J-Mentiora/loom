@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/CommandRouter/interface_tests.rs` instead.
 // Interface tests for `CommandRouter`. Verifies clap-derive shape and
-// IC-CLI-03 subcommand-coverage invariant.
+// the subcommand-coverage invariant.
 
 use super::command_router::{Cli, Command, ImportCmd, SessionCmd, VaultCmd};
 use clap::CommandFactory;
@@ -34,9 +34,9 @@ fn config_flag_is_global() {
     assert!(cfg.is_global_set(), "--config must be global");
 }
 
-// === IC-CLI-03: every subcommand variant maps to a single handler ===
+// === every subcommand variant maps to a single handler ===
 //
-// We don't enumerate the RPC mapping here (that's design §6), but we
+// We don't enumerate the RPC mapping here, but we
 // can lock the variant set so a missing variant breaks compilation.
 
 #[test]

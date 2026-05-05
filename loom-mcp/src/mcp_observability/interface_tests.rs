@@ -1,6 +1,6 @@
-// Interface tests for `McpObservability`. Verifies AC-ARCH-38 span
-// fields, stderr-only discipline (BC-MCP-04 adjacent -- stdout reserved
-// for MCP framing per IC-MCP-09), and vault redaction.
+// Interface tests for `McpObservability`. Verifies per-request span
+// fields, stderr-only logging discipline (stdout is reserved for MCP
+// framing), and vault redaction.
 
 use super::mcp_observability::{
     duration_to_us, McpObservability, Outcome, RequestSpan, REDACTED_TOOL_NAMES,
@@ -21,7 +21,7 @@ fn redact_vault_flag_persists() {
     let _ = McpObservability::new(false);
 }
 
-// === AC-ARCH-38: per-request span fields ===
+// === per-request span fields ===
 
 #[test]
 fn span_request_start_signature() {

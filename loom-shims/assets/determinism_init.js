@@ -1,5 +1,5 @@
 // determinism_init.js — injected via Page.addScriptToEvaluateOnNewDocument
-// with runImmediately: true (IC-SHIM-05). Overrides non-deterministic browser
+// with runImmediately: true. Overrides non-deterministic browser
 // APIs so session replay is bit-equal.
 //
 // Three template tokens are substituted by `render_determinism_script`
@@ -7,9 +7,9 @@
 // `is_determinism_template` validator gates boot.
 //
 // AC coverage:
-//   AC-DET-04.1: animation-duration: 0 + requestAnimationFrame clamping
-//   AC-DET-01.1: Date.now / performance.now frozen to session-fixed epoch
-//   AC-DET-02.1: Math.random seeded (sfc32 from per-session seed)
+//   animation-duration: 0 + requestAnimationFrame clamping
+//   Date.now / performance.now frozen to session-fixed epoch
+//   Math.random seeded (sfc32 from per-session seed)
 
 (function () {
   'use strict';
@@ -47,7 +47,7 @@
   for (var _i = 0; _i < 12; _i++) { _sfc32(); }
   Math.random = _sfc32;
 
-  // --- Animation disabling (AC-DET-04.1) ---
+  // --- Animation disabling ---
   function injectAnimationCss() {
     if (typeof document === 'undefined' || !document.head) { return; }
     var style = document.createElement('style');

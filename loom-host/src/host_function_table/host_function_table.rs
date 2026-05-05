@@ -1,25 +1,25 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/host_function_table/interfaces.rs` instead.
 // HostFunctionTable — `wit-bindgen`-generated `impl host::Host for HostState`.
 //
 // # Contract semantics
-// - **The SOLE WASM↔core bridge (IC-HOST-03).** The 8 host functions
+// - **The SOLE WASM↔core bridge.** The 8 host functions
 //   defined in `wit/loom-surface.wit::interface host` are the only
 //   cross-boundary calls. WASM cannot import any other host symbol.
 // - **Generated trait, hand-written body.** The trait `host::Host` is
-//   produced by `wit-bindgen` (BC-HOST-02 HARD); the impl body lives
+//   produced by `wit-bindgen`; the impl body lives
 //   here. The two impls (live + replay) are referenced by
 //   `HostFunctionRegistry::new` to build two `Linker<HostState>`
 //   instances.
-// - **Per-host-fn tape (IC-HOST-05).** Every host-fn appends to the
+// - **Per-host-fn tape.** Every host-fn appends to the
 //   `DeterminismHarness` tape BEFORE invoking its side effect.
-// - **No audit-entry writes from host body (BC-HOST-05).** Audit
+// - **No audit-entry writes from host body.** Audit
 //   writes are owned by `Vault::substitute` in loom-core; the
 //   `net_request` body NEVER calls `ManifestWriter::append_audit`.
-// - **Boundary translation (BC-HOST-03).** Errors leave via
+// - **Boundary translation.** Errors leave via
 //   `ErrorMapper::loom_error_to_host_error`. No `anyhow::Error`
 //   propagation.
-// - **Vault isolation (IC-HOST-04 HARD).** The `net_request` body
+// - **Vault isolation.** The `net_request` body
 //   strips the `Authorization` header from `NetResp` before the
 //   marshaller serializes it back to WASM. Raw secret bytes appear
 //   ONLY inside `Vault::substitute`'s scope.
@@ -81,16 +81,17 @@ pub struct HostState {
     /// Per-session Unix epoch milliseconds; substituted into the shim
     /// JS template's `Date.now` constant.
     pub epoch_ms: EpochMs,
-    /// Operator's `--no-blocklist` opt-out (AC-DET-05.1, AC-BLOCKLIST-04).
+    /// Operator's `--no-blocklist` opt-out.
     /// Threaded from `Session.no_blocklist`. Read by `navigate_execute`
     /// to compute `blocklist_enabled = !no_blocklist` for each
     /// `ShimRequest::PageNavigate`.
     pub no_blocklist: bool,
     /// Operator's `--profile` choice. Threaded from `SessionHandle.profile`
-    /// for AC-SAFEPROF-04 — the lazy-clone shim-config sites in
-    /// `host_impl.rs` read this to inject `LOOM_SHIM_PROFILE` into the
-    /// per-session shim subprocess env so Chromium-side download
-    /// confinement activates only under safe profile.
+    /// for the safe-profile download-confinement path — the lazy-clone
+    /// shim-config sites in `host_impl.rs` read this to inject
+    /// `LOOM_SHIM_PROFILE` into the per-session shim subprocess env so
+    /// Chromium-side download confinement activates only under safe
+    /// profile.
     pub profile: String,
     /// Session-scoped downloads directory (`<sessions_root>/<ulid>/downloads/`),
     /// populated only when `profile == "safe"`. Read at shim-spawn time
@@ -110,8 +111,8 @@ impl WasiView for HostState {
 /// Construct the WASI context every dispatch uses. The builder must
 /// stay at its safe defaults — no preopened directories, no inherited
 /// env, no inherited stdio, no network. Adding any inherit_/preopen_/
-/// allow_ip API call here widens the sandbox and breaks AC-WASI-02
-/// (the malicious-guest unit test pins this textually).
+/// allow_ip API call here widens the sandbox and breaks the
+/// malicious-guest unit test that pins this textually.
 pub fn build_sandboxed_wasi_ctx() -> WasiCtx {
     WasiCtxBuilder::new().build()
 }
@@ -167,10 +168,10 @@ pub struct WitReceipt {
 
 /// Live-mode host-fn dispatcher. Each method:
 ///   1. Marshals input via `WitTypeMarshaller`.
-///   2. Appends a tape frame BEFORE the live side-effect (IC-HOST-05).
+///   2. Appends a tape frame BEFORE the live side-effect.
 ///   3. Performs the side-effect (Vault / ContentStore / ShimManager / DH).
 ///   4. Marshals output (with `Authorization` stripped from `NetResp`
-///      per IC-HOST-04 HARD).
+///      to keep the secret out of WASM linear memory).
 pub struct LiveHostFns;
 
 impl HostFnsTrait for LiveHostFns {
@@ -210,12 +211,12 @@ impl HostFnsTrait for LiveHostFns {
             .map_err(crate::error_mapper::loom_error_to_host_error)
     }
     fn net_request(state: &mut HostState, req: NetRequest) -> Result<NetResp, HostError> {
-        // Full vault+HTTP wiring is Phase 6 (IC-HOST-04 HARD).
-        // Phase 5.4: return a stub error so surfaces that call net_request
-        // fail gracefully instead of panicking.
+        // Full vault+HTTP wiring is not yet implemented.
+        // Return a stub error so surfaces that call net_request fail
+        // gracefully instead of panicking.
         let _ = (state, req);
         Err(HostError::Internal(
-            "net_request: vault+HTTP wiring is Phase 6".to_string(),
+            "net_request: vault+HTTP wiring is not yet implemented".to_string(),
         ))
     }
     fn shim_call(

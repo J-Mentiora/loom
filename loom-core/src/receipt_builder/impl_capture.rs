@@ -8,13 +8,13 @@
 // `keep_field` table — the exhaustiveness test in `capture_policy`
 // guards drift.
 //
-// Minimal capture (AC-CORE-04.5):
+// Minimal capture:
 // - Strip all blob refs: `*_blob_ref` → None
 // - Downgrade navigate blob-after refs → hash-only fields
 // - Strip network event body refs (keep hash/metadata)
 // - Empty console_lines
 //
-// Full capture (AC-CORE-04.4):
+// Full capture:
 // - No-op. Before-refs must already be set by the caller on the struct.
 //
 // Default: no-op.
@@ -23,7 +23,7 @@ use super::capture_policy::{keep_field, CaptureField, CaptureScope};
 use super::receipt_builder::{CaptureProfile, ReceiptPayload};
 
 impl ReceiptPayload {
-    /// Apply capture-profile post-processing (AC-CORE-04.4, AC-CORE-04.5).
+    /// Apply capture-profile post-processing.
     ///
     /// - `Full`: no-op. The caller sets `dom_before_blob_ref` and
     ///   `screenshot_before_blob_ref` directly on the struct before calling Ship.
@@ -66,7 +66,7 @@ impl ReceiptPayload {
         }
 
         // Per-event body-ref strip; events themselves stay (counts +
-        // metadata still meaningful under Minimal per AC-CORE-04.5).
+        // metadata still meaningful under Minimal).
         if !keep_field(scope, profile, CaptureField::NetworkEventBodyRef) {
             for event in &mut self.network_events {
                 event.response_body_ref = None;

@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/manifest_writer/interface_tests.rs` instead.
-// Interface tests for `ManifestWriter`. Verifies IC-CORE-04 hash chain,
-// BC-CORE-07 audit-in-same-chain, BC HARD #3 integer-only fields.
+// Interface tests for `ManifestWriter`. Verifies the hash chain,
+// audit-in-same-chain, integer-only fields.
 
 use super::manifest_writer::{
     AuditKind, LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId,
@@ -31,7 +31,7 @@ fn header_entry_carries_optional_prev_hash_set_to_none() {
     }
 }
 
-// === AC-CAPPOL-03: capture_policy persistence in Header ===
+// === capture_policy persistence in Header ===
 
 #[test]
 fn header_serializes_capture_policy_with_skip_if_none() {
@@ -98,7 +98,7 @@ fn action_receipt_has_integer_only_numeric_fields() {
     }
 }
 
-// === IC-CORE-04: hash chain ===
+// === Hash chain ===
 
 #[test]
 fn append_signature_returns_unit_or_loomerror() {
@@ -123,7 +123,7 @@ fn validate_returns_manifest_corrupt_on_chain_break() {
     assert_eq!(code.as_wire(), "manifest-corrupt");
 }
 
-// === BC-CORE-07: audit entries in same hash chain ===
+// === Audit entries in same hash chain ===
 
 #[test]
 fn append_audit_accepts_grant_lifecycle_kinds() {
@@ -133,7 +133,7 @@ fn append_audit_accepts_grant_lifecycle_kinds() {
     }
     let _ = _ck::<LocalManifestWriter>;
     let _ = w;
-    // All lifecycle kinds compile, including the AC-DET-05.1 BlockedUrl.
+    // All lifecycle kinds compile, including BlockedUrl.
     let _kinds = [
         AuditKind::GrantIssued,
         AuditKind::GrantConsumed,
@@ -143,7 +143,7 @@ fn append_audit_accepts_grant_lifecycle_kinds() {
     ];
 }
 
-/// AC-DET-05.1 / AC-BLOCKLIST-02 — `BlockedUrl` round-trips through
+/// `BlockedUrl` round-trips through
 /// the JSON serde tag the same way other `AuditKind` variants do.
 #[test]
 fn audit_kind_blocked_url_serializes_snake_case() {

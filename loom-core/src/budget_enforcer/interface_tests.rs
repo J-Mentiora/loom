@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/budget_enforcer/interface_tests.rs` instead.
-// Interface tests for `BudgetEnforcer`. Verifies IC-CORE-06 two-phase,
-// SR-CORE-16 atomic counters, kill-callback cycle break.
+// Interface tests for `BudgetEnforcer`. Verifies the two-phase contract,
+// atomic counters, kill-callback cycle break.
 
 use super::budget_enforcer::{
     Action, BudgetEnforcer, BudgetLimits, KillCallback, KillReason, LocalBudgetEnforcer,
@@ -35,7 +35,7 @@ fn default_budget_limits_match_soft_binding_defaults() {
     assert_eq!(l.js_heap_bytes, 512 * 1024 * 1024);
 }
 
-// === SR-CORE-16: per-session AtomicU64 with fetch_add ===
+// === Per-session AtomicU64 with fetch_add ===
 
 #[test]
 fn session_counters_use_atomic_u64_for_each_resource() {
@@ -51,7 +51,7 @@ fn session_counters_use_atomic_u64_for_each_resource() {
     assert_eq!(h, 4096);
 }
 
-// === IC-CORE-06: two-phase ===
+// === Two-phase ===
 
 #[test]
 fn check_runs_before_dispatch_and_returns_unit_on_ok() {

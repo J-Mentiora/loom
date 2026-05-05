@@ -7,7 +7,7 @@ pub struct MockCommandRouter;
 
 impl MockCommandRouter {
     /// Canonical exit code for "command parsed + executed cleanly" in
-    /// the mock. Phase 6 maps real exit codes via `ErrorMapper`.
+    /// the mock. Real exit codes are mapped by `ErrorMapper`.
     pub fn exit_ok() -> i32 {
         0
     }

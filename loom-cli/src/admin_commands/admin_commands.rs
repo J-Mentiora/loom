@@ -1,12 +1,12 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/AdminCommands/interfaces.rs` instead.
 // AdminCommands — `gc` (RPC), `serve` / `postinstall` / `doctor`
 // (local), `mcp serve` (delegate), `--version` (special).
 //
 // # Contract semantics
-// - **IC-CLI-03.** `gc → gc.run` (RPC); `serve`, `postinstall`,
+// - **Routing.** `gc → gc.run` (RPC); `serve`, `postinstall`,
 //   `doctor` are the 3 RPC-free local-action subcommands; `mcp serve`
-//   is the delegate path; `--version` bypasses everything (SR-CLI-01).
+//   is the delegate path; `--version` bypasses everything.
 // - **Dispatcher only.** This module routes; the real work lives in
 //   `ServeRunner`, `PostinstallRunner`, `DoctorRunner`, `McpDelegate`,
 //   `VersionCommand`.
@@ -41,7 +41,7 @@ pub struct ServeArgs {
 
 /// `loom postinstall` arguments. Forwarded to `PostinstallRunner::run`.
 ///
-/// AC-DIST-01 added two skip flags so a brew/manual user (with the 3
+/// Two skip flags so a brew/manual user (with the 3
 /// sibling binaries already co-located) can `loom postinstall --skip-binaries`
 /// to avoid the GH Release fetch entirely. The detection in
 /// `loom_binaries_step` handles the no-flag case automatically (sentinel
@@ -89,13 +89,13 @@ pub async fn gc(rpc: &RpcClient, cfg: &CliConfig, args: GcArgs) -> Result<(), Cl
     Ok(())
 }
 
-/// `loom --version` dispatcher. Bypasses RPC entirely; SR-CLI-01
+/// `loom --version` dispatcher. Bypasses RPC entirely;
 /// p99 ≤ 200 ms. Concrete logic lives in `VersionCommand`.
 pub fn version_dispatch() -> Result<(), CliError> {
     crate::version_command::print()
 }
 
-/// IC-CLI-03 mapping for AdminCommands. The 3 RPC-free entries are
+/// Subcommand mapping for AdminCommands. The 3 RPC-free entries are
 /// flagged with `local:`.
 pub const SUBCOMMAND_MAP: &[(&str, &str)] = &[
     ("gc", "gc.run"),

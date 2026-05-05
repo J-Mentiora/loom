@@ -1,4 +1,4 @@
-//! AC-PROTO-02.2 — `rpc.schemas` introspection.
+//! `rpc.schemas` introspection.
 //!
 //! Given the server,
 //! When the client invokes `rpc.schemas`,
@@ -50,31 +50,28 @@ fn rpc_schemas_returns_per_method_schemas() {
 
     assert!(
         !snapshot.methods.is_empty(),
-        "AC-PROTO-02.2: registry must have at least one method"
+        "registry must have at least one method"
     );
 
     // Every method must have request_schema and response_schema.
     for entry in &snapshot.methods {
         assert!(
             entry.request.is_object() || entry.request.is_array(),
-            "AC-PROTO-02.2: method '{}' must have a request schema",
+            "method '{}' must have a request schema",
             entry.method
         );
         assert!(
             entry.response.is_object() || entry.response.is_array(),
-            "AC-PROTO-02.2: method '{}' must have a response schema",
+            "method '{}' must have a response schema",
             entry.method
         );
     }
 
-    // Methods must be sorted by name (BC §3 deterministic canonical-JSON).
+    // Methods must be sorted by name (per the wire-spec's deterministic canonical-JSON ordering rules).
     let names: Vec<&str> = snapshot.methods.iter().map(|m| m.method.as_str()).collect();
     let mut sorted = names.clone();
     sorted.sort();
-    assert_eq!(
-        names, sorted,
-        "AC-PROTO-02.2: methods must be sorted by name"
-    );
+    assert_eq!(names, sorted, "methods must be sorted by name");
 
     // Verify session.create is present.
     assert!(
@@ -82,7 +79,7 @@ fn rpc_schemas_returns_per_method_schemas() {
             .methods
             .iter()
             .any(|m| m.method == "session.create"),
-        "AC-PROTO-02.2: session.create must appear in registry"
+        "session.create must appear in registry"
     );
 }
 

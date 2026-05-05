@@ -1,14 +1,14 @@
-// AC tests for the budget-wall-clock-not-enforced feature.
+// Tests for the budget-wall-clock-not-enforced feature.
 //
-// AC coverage:
-//   AC-BUDGETKILL-01: --budget wall_clock=1s kills session at expiry;
-//                     subsequent dispatch rejects.
-//   AC-BUDGETKILL-02: kill receipt carries budget_kind + elapsed_ms via
-//                     `Session::kill_reason` field populated by the
-//                     SessionManager kill callback.
-//   AC-BUDGETKILL-03: --budget network=NMB enforces and kills similarly
-//                     (re-uses the same kill path).
-//   AC-BUDGETKILL-04: kill happens within 200ms of budget expiry.
+// Coverage:
+//   - --budget wall_clock=1s kills session at expiry; subsequent
+//     dispatch rejects.
+//   - kill receipt carries budget_kind + elapsed_ms via
+//     `Session::kill_reason` field populated by the SessionManager
+//     kill callback.
+//   - --budget network=NMB enforces and kills similarly
+//     (re-uses the same kill path).
+//   - kill happens within 200ms of budget expiry.
 
 use loom_core::budget_enforcer::{
     BudgetEnforcer, BudgetLimits, KillReason, LocalBudgetEnforcer, ResourceKind,
@@ -80,7 +80,7 @@ fn opts_with_limits(limits: BudgetLimits) -> SessionCreateOpts {
     }
 }
 
-// ─── AC-BUDGETKILL-01 ────────────────────────────────────────────────────────
+// ─── wall-clock kill ─────────────────────────────────────────────────────────
 
 /// Wall-clock budget expiry kills the session (Active → Killed) and trips
 /// the abort_flag so any in-flight action's `tokio::select!` race wakes.
@@ -134,7 +134,7 @@ async fn ac_budgetkill_01_subsequent_action_rejects_with_budget_exceeded() {
     assert_eq!(err.code, LoomErrorCode::BudgetExceeded);
 }
 
-// ─── AC-BUDGETKILL-02 ────────────────────────────────────────────────────────
+// ─── kill-reason metadata ───────────────────────────────────────────────────
 
 /// The kill callback writes a typed `KillReason::BudgetExceeded` into
 /// `Session::kill_reason` BEFORE flipping abort_flag — the executor reads
@@ -194,7 +194,7 @@ async fn ac_budgetkill_02_user_abort_leaves_kill_reason_none() {
     assert_eq!(*session.status.lock(), SessionStatus::Aborted);
 }
 
-// ─── AC-BUDGETKILL-03 ────────────────────────────────────────────────────────
+// ─── network-bytes kill ─────────────────────────────────────────────────────
 
 /// Network budget kill flows through the same plumbing as wall-clock:
 /// `account(Network, ...)` past threshold fires the kill callback, which
@@ -224,7 +224,7 @@ async fn ac_budgetkill_03_network_budget_uses_same_kill_path() {
     assert_eq!(*session.status.lock(), SessionStatus::Killed);
 }
 
-// ─── AC-BUDGETKILL-04 ────────────────────────────────────────────────────────
+// ─── kill latency ───────────────────────────────────────────────────────────
 
 /// Kill must happen within 200ms of budget expiry (wall-clock tolerance).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

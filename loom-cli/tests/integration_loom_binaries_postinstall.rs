@@ -1,4 +1,4 @@
-// Integration tests for AC-DIST-01 — `loom postinstall` extension that
+// Integration tests for the `loom postinstall` extension that
 // fetches `loom-daemon`, `loom-mcp`, `loom-shim-chromium` from the GH
 // Release matching `env!("CARGO_PKG_VERSION")`.
 //
@@ -21,7 +21,7 @@ use loom_cli::error_mapper::CliError;
 use loom_cli::loom_binaries_downloader::{ensure, host_target_triple};
 use tempfile::TempDir;
 
-/// AC-DIST-01: postinstall manifest 404 returns a typed error mentioning
+/// postinstall manifest 404 returns a typed error mentioning
 /// the version. Catches mid-development version-skew before the user has
 /// to dig through curl exit codes.
 #[tokio::test]
@@ -59,7 +59,7 @@ async fn ensure_returns_actionable_error_when_release_404s() {
     );
 }
 
-/// AC-DIST-01: target_triple resolution. Sanity-check that calling with a
+/// target_triple resolution. Sanity-check that calling with a
 /// triple that doesn't match any artifact in (a real, hypothetical)
 /// manifest returns an actionable error, not a panic.
 ///

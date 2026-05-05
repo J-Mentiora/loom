@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/core_api_facade/interface_tests.rs` instead.
 // Interface tests for `CoreApiFacade`. Verifies single-entry-point
-// property, BC-CORE-08 config wiring, design.md §3.5 startup health
+// property, config wiring, startup health
 // check delegation.
 
 use super::core_api_facade::{CoreApiFacade, CoreConfig};

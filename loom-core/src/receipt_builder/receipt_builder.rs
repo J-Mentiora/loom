@@ -5,10 +5,10 @@
 //   `Option` fields. Tier rules determine which are populated. serde_jcs
 //   produces lexicographically ordered JSON regardless of field presence.
 // - **Uses content_store::ContentRef (A1 fix).** No duplicate type.
-// - **Canonical-JSON via serde_jcs (AC-NFR-DET-04.1).**
+// - **Canonical-JSON via serde_jcs.**
 //   `canonical_bytes()` is the single point of serialization.
-// - **No floats (AC-NFR-DET-03.1).** All numeric fields are `u64` or `u32`.
-// - **Message truncation at 280 chars (AC-CORE-05.1, S1 fix).**
+// - **No floats.** All numeric fields are `u64` or `u32`.
+// - **Message truncation at 280 chars (S1 fix).**
 //   `build_error_receipt` enforces at construction time.
 // - **`ReceiptStatus` enum (S3 fix).** `Ok | Error` with lowercase serde wire.
 
@@ -17,7 +17,7 @@ use crate::error::LoomError;
 use crate::error_types::{ReceiptCode, ReceiptSurface};
 use serde::{Deserialize, Serialize};
 
-/// How much to capture per session (AC-CORE-04.4, AC-CORE-04.5).
+/// How much to capture per session.
 ///
 /// - `Default` — tier-assigned fields only (hash for click, blob for navigate, etc.)
 /// - `Full` — adds `dom_before_blob_ref` + `screenshot_before_blob_ref` to every action
@@ -29,7 +29,7 @@ pub enum CaptureProfile {
     Minimal,
 }
 
-/// Parse the wire form of `capture_policy` (AC-CAPPOL-01..04) into a
+/// Parse the wire form of `capture_policy` into a
 /// `CaptureProfile`. Wire form is the lowercased variant; unknown
 /// values yield `None` (server-side validation in
 /// `session_validation` rejects unknowns before reaching this layer).
@@ -42,7 +42,7 @@ pub fn capture_profile_from_str(s: &str) -> Option<CaptureProfile> {
     }
 }
 
-/// Receipt status (AC-CORE-05.1).
+/// Receipt status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReceiptStatus {
@@ -50,8 +50,8 @@ pub enum ReceiptStatus {
     Error,
 }
 
-/// Network event recorded during an action (navigate tier, AC-CORE-04.2).
-/// All numeric fields are integers (AC-NFR-DET-03.1).
+/// Network event recorded during an action (navigate tier).
+/// All numeric fields are integers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkEvent {
     pub method: String,
@@ -60,7 +60,7 @@ pub struct NetworkEvent {
     /// SHA-256 hex of the response body (64 lowercase hex chars). Always present.
     pub response_body_sha256_hex: String,
     pub response_body_size_bytes: u64,
-    /// Full blob ref — None in Minimal capture (AC-CORE-04.5).
+    /// Full blob ref — None in Minimal capture.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response_body_ref: Option<ContentRef>,
     pub timing_ticks: u64,
@@ -69,7 +69,7 @@ pub struct NetworkEvent {
     /// unknown. `serde(default)` keeps pre-feature receipts
     /// deserializable; `skip_serializing_if = "String::is_empty"` keeps
     /// canonical-JSON shape stable for non-navigate receipts whose
-    /// `network_events` is empty (AC-NFR-DET-04.1).
+    /// `network_events` is empty.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub content_type: String,
 }
@@ -82,10 +82,10 @@ pub struct ConsoleLine {
     pub timing_ticks: u64,
 }
 
-/// Aggregate network summary on the navigate-tier wire receipt
-/// (AC-NAVRECEIPT2-01 extension via brief). Per-request detail lives in
+/// Aggregate network summary on the navigate-tier wire receipt.
+/// Per-request detail lives in
 /// `network_events` (manifest) and `side_effects[]` (wire). All numeric
-/// fields are integers (AC-NFR-DET-03.1).
+/// fields are integers.
 ///
 /// **`total_bytes` is response-body bytes only** (sum of
 /// `LoomNetworkEvent.response_bytes`). The shim doesn't currently
@@ -105,72 +105,72 @@ pub struct NetworkSummary {
 /// Typed receipt payload. All fields populated by builder methods;
 /// `apply_capture_profile` post-processes per session capture setting.
 ///
-/// All numeric fields are integers (AC-NFR-DET-03.1).
-/// Field keys serialize in lexicographic order via `serde_jcs` (AC-NFR-DET-04.1).
+/// All numeric fields are integers.
+/// Field keys serialize in lexicographic order via `serde_jcs`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReceiptPayload {
     pub action_id: String,
-    /// Receipt status/error discriminator (AC-CORE-05.2).
+    /// Receipt status/error discriminator.
     pub code: ReceiptCode,
-    // ---- Error receipt fields (AC-CORE-05.1) ----
+    // ---- Error receipt fields ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub details: Option<serde_json::Value>,
-    // ---- Hash-only after-fields — click default tier (AC-CORE-04.1) ----
+    // ---- Hash-only after-fields — click default tier ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dom_after_hash: Option<String>,
-    // ---- Full-blob after-fields — navigate default tier (AC-CORE-04.2) ----
+    // ---- Full-blob after-fields — navigate default tier ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dom_after_blob_ref: Option<ContentRef>,
-    // ---- Full-blob before-fields — full capture override (AC-CORE-04.4) ----
+    // ---- Full-blob before-fields — full capture override ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dom_before_blob_ref: Option<ContentRef>,
-    // ---- Error receipt message (AC-CORE-05.1, ≤ 280 chars) ----
+    // ---- Error receipt message (≤ 280 chars) ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    // ---- Navigate arrays (AC-CORE-04.2) ----
+    // ---- Navigate arrays ----
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub network_events: Vec<NetworkEvent>,
-    // ---- Evaluate return value (AC-CORE-04.3, AC-EVALRESULT-01..04) ----
+    // ---- Evaluate return value ----
     // Canonical-JSON of evaluated value. None when value > 64KB
     // (offloaded to content store; see return_value_blob_ref).
     // Truncation discriminator = return_value_blob_ref.is_some().
     // serde alias preserves backward-compat with on-disk receipts that
-    // used the pre-rename `return_value` field (AC-EVALRESULT migration).
+    // used the pre-rename `return_value` field.
     #[serde(
         skip_serializing_if = "Option::is_none",
         default,
         alias = "return_value"
     )]
     pub return_value_json: Option<String>,
-    /// ContentRef when canonical-JSON bytes > 64KB (AC-EVALRESULT-04).
+    /// ContentRef when canonical-JSON bytes > 64KB.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub return_value_blob_ref: Option<ContentRef>,
-    // ---- Screenshot hash-only — click default tier (AC-CORE-04.1) ----
+    // ---- Screenshot hash-only — click default tier ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_after_hash: Option<String>,
-    // ---- Screenshot full-blob — navigate default tier (AC-CORE-04.2) ----
+    // ---- Screenshot full-blob — navigate default tier ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_after_blob_ref: Option<ContentRef>,
-    // ---- Screenshot before-blob — full capture override (AC-CORE-04.4) ----
+    // ---- Screenshot before-blob — full capture override ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_before_blob_ref: Option<ContentRef>,
-    // ---- LLM cache hit flag (AC-DET-07.1) ----
+    // ---- LLM cache hit flag ----
     /// True when an LLM call was served from the session LLM cache;
     /// None for non-LLM actions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_cache_hit: Option<bool>,
-    /// Receipt status: Ok or Error (AC-CORE-05.1).
+    /// Receipt status: Ok or Error.
     pub status: ReceiptStatus,
-    /// Surface that emitted this receipt (AC-CORE-05.1).
+    /// Surface that emitted this receipt.
     pub surface: ReceiptSurface,
-    /// Monotonically non-decreasing microsecond timestamp (AC-NFR-DET-05.1).
+    /// Monotonically non-decreasing microsecond timestamp.
     pub timing_ticks: u64,
     // ---- Console lines — navigate + evaluate tiers ----
     // Note: field name `console_lines` comes lexicographically between `code` and `details`,
     // but since serde_jcs sorts alphabetically it will appear in correct position.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub console_lines: Vec<ConsoleLine>,
-    // ---- Navigate tier-2 fields (AC-NAVRECEIPT-01..05) ----
+    // ---- Navigate tier-2 fields ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -179,15 +179,15 @@ pub struct ReceiptPayload {
     pub title: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status_code: Option<u32>,
-    /// SHA-256 hex of the DOM snapshot blob in ContentStore (AC-NAVRECEIPT-04).
+    /// SHA-256 hex of the DOM snapshot blob in ContentStore.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub dom_snapshot_hash: Option<String>,
-    /// Phase 6 stub: always 0 (console capture wired in Phase 7+).
+    /// Stub: always 0 (console capture wired in a later release).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub console_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network_count: Option<u64>,
-    /// Session-monotonic ms timestamp from DeterminismHarness (AC-NAVRECEIPT-02).
+    /// Session-monotonic ms timestamp from DeterminismHarness.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emitted_at_ms: Option<u64>,
 }
@@ -195,7 +195,7 @@ pub struct ReceiptPayload {
 impl ReceiptPayload {
     /// Canonical-JSON bytes for manifest storage. Uses serde_jcs (RFC 8785).
     /// Field keys are in lexicographic order. SHA-256 of output is stable across
-    /// runs and machines (AC-NFR-DET-04.1).
+    /// runs and machines.
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, LoomError> {
         serde_jcs::to_string(self)
             .map(|s| s.into_bytes())
@@ -209,7 +209,7 @@ impl ReceiptPayload {
 pub struct ReceiptBuilder;
 
 impl ReceiptBuilder {
-    /// Click default tier (AC-CORE-04.1): hash-only fields; code = WebActionCompleted.
+    /// Click default tier: hash-only fields; code = WebActionCompleted.
     pub fn build_click_receipt(
         action_id: String,
         timing_ticks: u64,
@@ -246,7 +246,7 @@ impl ReceiptBuilder {
         }
     }
 
-    /// Navigate default tier (AC-CORE-04.2): full blob refs + network events + console.
+    /// Navigate default tier: full blob refs + network events + console.
     pub fn build_navigate_receipt(
         action_id: String,
         timing_ticks: u64,
@@ -285,7 +285,7 @@ impl ReceiptBuilder {
         }
     }
 
-    /// Evaluate default tier (AC-CORE-04.3, AC-EVALRESULT-01..04).
+    /// Evaluate default tier.
     /// Exactly one of `return_value_json` / `return_value_blob_ref` is Some
     /// on success; truncation discriminator = `return_value_blob_ref.is_some()`.
     pub fn build_evaluate_receipt(
@@ -325,7 +325,7 @@ impl ReceiptBuilder {
         }
     }
 
-    /// Error receipt (AC-CORE-05.1): typed code + message (≤ 280 chars) + surface.
+    /// Error receipt: typed code + message (≤ 280 chars) + surface.
     pub fn build_error_receipt(
         action_id: String,
         timing_ticks: u64,
@@ -334,7 +334,7 @@ impl ReceiptBuilder {
         surface: ReceiptSurface,
         details: Option<serde_json::Value>,
     ) -> ReceiptPayload {
-        // S1 fix: enforce ≤ 280 char message (AC-CORE-05.1)
+        // S1 fix: enforce ≤ 280 char message
         let message = if message.len() > 280 {
             message.chars().take(280).collect()
         } else {
@@ -370,7 +370,7 @@ impl ReceiptBuilder {
         }
     }
 
-    /// LLM call receipt (AC-DET-07.1): records LLM response body + cache-hit flag.
+    /// LLM call receipt: records LLM response body + cache-hit flag.
     pub fn build_llm_receipt(
         action_id: String,
         timing_ticks: u64,

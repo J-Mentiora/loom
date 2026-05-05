@@ -10,7 +10,7 @@
 //! the `canonical` is what flows downstream. The literal kebab spelling
 //! `web.type-text` is intentionally absent — it is rejected with a hint that
 //! lists `web.type` and `web.type_text` from the alias-aware `methods()`
-//! enumeration (AC-CLIROUTE-03).
+//! enumeration .
 //!
 //! ## Adding a new alias
 //!
@@ -68,7 +68,7 @@ mod tests {
 
     #[test]
     fn canonicalise_does_not_resolve_kebab_literal() {
-        // AC-CLIROUTE-03: `web.type-text` (literal kebab) is NOT an alias —
+        // `web.type-text` (literal kebab) is NOT an alias —
         // it must surface as unknown so the CLI/RPC error path fires.
         assert_eq!(canonicalise("web.type-text"), "web.type-text");
     }

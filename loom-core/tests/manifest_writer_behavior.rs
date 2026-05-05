@@ -1,12 +1,12 @@
 // Behavior tests for LocalManifestWriter.
 //
-// AC coverage:
-//   AC-CORE-03.1 manifest.json public checkpoint: test_manifest_json_checkpoint_has_entries_array
-//   AC-CORE-06.1 hash chain (IC-CORE-04): test_manifest_hash_chain_validates_intact,
-//                                         test_manifest_hash_chain_detects_tampering
-//   AC-CORE-06.2 structured error context: test_validate_corrupt_error_has_structured_context
-//   AC-NFR-REL-01.1 atomic write:          test_manifest_atomic_write_no_tmp_file
-//   BC HARD #3 JCS compliance:             test_manifest_jcs_not_serde_json
+// Coverage:
+//   - manifest.json public checkpoint: test_manifest_json_checkpoint_has_entries_array
+//   - hash chain: test_manifest_hash_chain_validates_intact,
+//                 test_manifest_hash_chain_detects_tampering
+//   - structured error context: test_validate_corrupt_error_has_structured_context
+//   - atomic write: test_manifest_atomic_write_no_tmp_file
+//   - JCS compliance (HARD #3): test_manifest_jcs_not_serde_json
 
 use loom_core::error::LoomErrorCode;
 use loom_core::manifest_writer::{
@@ -20,7 +20,7 @@ fn make_mw(tmp: &str) -> LocalManifestWriter {
     LocalManifestWriter::new(PathBuf::from(format!("{tmp}/sessions")), obs)
 }
 
-// === IC-CORE-04: hash chain integrity ===
+// === hash chain integrity ===
 
 #[test]
 fn test_manifest_hash_chain_validates_intact() {
@@ -80,7 +80,7 @@ fn test_manifest_hash_chain_detects_tampering() {
     assert_eq!(err.code, LoomErrorCode::ManifestCorrupt);
 }
 
-// === AC-CORE-03.1: manifest.json public checkpoint ===
+// === manifest.json public checkpoint ===
 
 #[test]
 fn test_manifest_json_checkpoint_has_entries_array() {
@@ -165,7 +165,7 @@ fn test_manifest_json_checkpoint_has_entries_array() {
     }
 }
 
-// === AC-CORE-06.2: structured error context on hash chain break ===
+// === structured error context on hash chain break ===
 
 #[test]
 fn test_validate_corrupt_error_has_structured_context() {
@@ -194,7 +194,7 @@ fn test_validate_corrupt_error_has_structured_context() {
     let err = mw.validate(sid).unwrap_err();
     assert_eq!(err.code, LoomErrorCode::ManifestCorrupt);
 
-    // AC-CORE-06.2: context must carry failed_at_index, expected_hash, observed_hash.
+    // Context must carry failed_at_index, expected_hash, observed_hash.
     let ctx = err
         .context
         .expect("ManifestCorrupt must include structured context");

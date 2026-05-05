@@ -1,8 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/session_manager/interface_tests.rs` instead.
-// Interface tests for `SessionManager`. Verifies IC-CORE-01 warm-path
-// budget shape, IC-CORE-02 abort propagation primitives, FSM transitions,
-// BC-CORE-04 tokio per-session task isolation.
+// Interface tests for `SessionManager`. Verifies the warm-path
+// budget shape, abort propagation primitives, FSM transitions,
+// per-session tokio task isolation.
 
 use super::session_manager::{
     AbortReason, LocalSessionManager, Session, SessionCreateOpts, SessionError, SessionStatus,
@@ -52,7 +52,7 @@ fn fixture() -> Arc<LocalSessionManager> {
     )
 }
 
-// === IC-CORE-01: warm-path shape ===
+// === Warm-path shape ===
 
 #[test]
 fn create_signature_takes_opts_returns_session_id() {
@@ -85,9 +85,9 @@ fn create_opts_replay_of_field_is_optional_session_id() {
     assert!(opts2.replay_of.is_some());
 }
 
-// === AC-SAFEPROF-01..04: profile threading + downloads dir ===
+// === Profile threading + downloads dir ===
 
-/// AC-SAFEPROF-01 root-cause fix: profile reaches `Session.profile` when
+/// Root-cause fix: profile reaches `Session.profile` when
 /// passed via `SessionCreateOpts`. Pre-fix the daemon's `_profile: &str`
 /// dropped the value on the floor; this test pins the wire path.
 #[test]
@@ -107,7 +107,7 @@ fn session_profile_populated_from_opts() {
     let id = sm.create(opts).expect("session created");
     let session = sm.get(id).expect("session retrievable");
     assert_eq!(session.profile, "safe");
-    // AC-SAFEPROF-04: safe profile creates the session-scoped downloads
+    // Safe profile creates the session-scoped downloads
     // dir. Pre-fix this dir didn't exist; now Chromium uses it as the
     // confined download path.
     let downloads_dir = session
@@ -120,7 +120,7 @@ fn session_profile_populated_from_opts() {
     );
 }
 
-/// AC-SAFEPROF-04: non-safe profile does NOT create a downloads dir
+/// Non-safe profile does NOT create a downloads dir
 /// (no Chromium-side confinement to wire up).
 #[test]
 fn non_safe_profile_skips_downloads_dir() {
@@ -145,7 +145,7 @@ fn non_safe_profile_skips_downloads_dir() {
     );
 }
 
-/// AC-SAFEPROF-01 serde round-trip: SessionCreateOpts.profile survives
+/// Serde round-trip: SessionCreateOpts.profile survives
 /// JSON serialize+deserialize. The wire boundary `CreateSessionParams`
 /// defaults profile to "safe"; this test pins that the round-trip is
 /// stable so the value can't be silently dropped between the two
@@ -172,7 +172,7 @@ fn session_create_opts_profile_serde_round_trips() {
     assert_eq!(round.profile, "safe");
 }
 
-/// AC-SAFEPROF-01 serde default: missing `profile` field deserializes
+/// Serde default: missing `profile` field deserializes
 /// to "safe" (matches `CreateSessionParams::default_profile` at the
 /// wire boundary). Guards back-compat with any pre-fix opts blobs.
 #[test]
@@ -190,7 +190,7 @@ fn session_create_opts_profile_default_when_missing() {
     assert_eq!(round.profile, "safe");
 }
 
-// === IC-CORE-02: abort primitives present ===
+// === abort primitives present ===
 
 #[test]
 fn abort_signature_takes_session_id_and_reason() {
@@ -205,7 +205,7 @@ fn abort_signature_takes_session_id_and_reason() {
 #[test]
 fn session_struct_holds_arc_atomicbool_abort_flag_and_arc_notify() {
     // Compile-time guarantee that the abort primitives are present in the
-    // shape required by IC-CORE-02. Polling-only mechanisms would lack
+    // required shape. Polling-only mechanisms would lack
     // the Notify and would fail this test (variant absent).
     fn _ck(s: &Session) -> bool {
         s.abort_flag.load(Ordering::Acquire)
@@ -276,7 +276,7 @@ fn abort_all_signature_takes_reason_returns_unit_or_error() {
     let _ = sm;
 }
 
-// === BC-CORE-04: per-session tokio task ===
+// === per-session tokio task ===
 
 #[test]
 fn session_carries_tokio_task_handle() {

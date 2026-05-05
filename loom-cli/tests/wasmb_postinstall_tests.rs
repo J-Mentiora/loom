@@ -1,6 +1,6 @@
-// TDD tests for wasm-surface-build ACs covered by loom-cli:
-// AC-WASMB-01 — wasm32 build produces artifact (requires toolchain; #[ignore])
-// AC-WASMB-02 — compile_step AOTs .wasm → .cwasm + .sha256 sidecar
+// TDD tests for wasm-surface-build behaviour covered by loom-cli:
+// - wasm32 build produces artifact (requires toolchain; #[ignore])
+// - compile_step AOTs .wasm → .cwasm + .sha256 sidecar
 
 // postinstall-feature-gated imports (compile_step real impl requires loom-host)
 #[cfg(feature = "postinstall")]
@@ -17,14 +17,14 @@ const MINIMAL_COMPONENT_BYTES: &[u8] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// AC-WASMB-01 — cargo build --target wasm32-wasip2 -p loom-surface-web
+// cargo build --target wasm32-wasip2 -p loom-surface-web
 // ---------------------------------------------------------------------------
 // Requires the wasm32-wasip2 target toolchain and a full Cargo build;
 // gated behind LOOM_WASM_BUILD_TEST=1 to avoid CI failures when the
 // toolchain is absent.
 #[test]
-#[ignore = "AC-WASMB-01: requires wasm32-wasip2 toolchain + LOOM_WASM_BUILD_TEST=1"]
-fn test_ac_wasmb_01_wasm32_build_produces_artifact() {
+#[ignore = "requires wasm32-wasip2 toolchain + LOOM_WASM_BUILD_TEST=1"]
+fn test_wasm32_build_produces_artifact() {
     if std::env::var("LOOM_WASM_BUILD_TEST").as_deref() != Ok("1") {
         println!("LOOM_WASM_BUILD_TEST not set — test skipped");
         return;
@@ -50,34 +50,27 @@ fn test_ac_wasmb_01_wasm32_build_produces_artifact() {
         .status()
         .expect("failed to spawn cargo build");
 
-    assert!(
-        status.success(),
-        "AC-WASMB-01: cargo build for wasm32-wasip2 failed"
-    );
+    assert!(status.success(), "cargo build for wasm32-wasip2 failed");
 
     let artifact = workspace_src
         .parent() // projects/loom/
         .unwrap()
         .join("src/target/wasm32-wasip2/release/loom_surface_web.wasm");
-    assert!(
-        artifact.exists(),
-        "AC-WASMB-01: artifact not found at {:?}",
-        artifact
-    );
+    assert!(artifact.exists(), "artifact not found at {:?}", artifact);
 }
 
 // ---------------------------------------------------------------------------
-// AC-WASMB-02 — compile_step writes .cwasm + .sha256 sidecar
+// compile_step writes .cwasm + .sha256 sidecar
 // ---------------------------------------------------------------------------
 // Gated behind the `postinstall` cargo feature because compile_step's real
 // implementation (the one that calls loom_host::compiler::Compiler) is
 // only compiled when `postinstall` is enabled. Without the feature the
-// function returns StepOutcome::Skipped (BC-CLI-01 isolation guard).
+// function returns StepOutcome::Skipped (loom-host isolation guard).
 //
-// Run with: cargo test -p loom-cli --test ac_wasmb_postinstall --features postinstall
+// Run with: cargo test -p loom-cli --test wasmb_postinstall_tests --features postinstall
 #[cfg(feature = "postinstall")]
 #[test]
-fn test_ac_wasmb_02_compile_step_writes_cwasm() {
+fn test_compile_step_writes_cwasm() {
     // Point LOOM_WASM_DIR at a tempdir containing a minimal .wasm component.
     let wasm_src_dir = TempDir::new().expect("wasm_src_dir tempdir");
     let wasm_path = wasm_src_dir.path().join("loom_surface_web.wasm");
@@ -105,7 +98,7 @@ fn test_ac_wasmb_02_compile_step_writes_cwasm() {
         .any(|o| matches!(o, StepOutcome::Compiled(_)));
     assert!(
         has_compiled,
-        "AC-WASMB-02: expected StepOutcome::Compiled, got: {:?}",
+        "expected StepOutcome::Compiled, got: {:?}",
         outcomes
     );
 
@@ -113,26 +106,26 @@ fn test_ac_wasmb_02_compile_step_writes_cwasm() {
     let cwasm = surfaces_dir.path().join("loom_surface_web.cwasm");
     assert!(
         cwasm.exists(),
-        "AC-WASMB-02: loom_surface_web.cwasm not found in surfaces_dir"
+        "loom_surface_web.cwasm not found in surfaces_dir"
     );
 
     // Assert: .sha256 sidecar exists next to the .cwasm.
     let sidecar = surfaces_dir.path().join("loom_surface_web.sha256");
     assert!(
         sidecar.exists(),
-        "AC-WASMB-02: loom_surface_web.sha256 sidecar not found"
+        "loom_surface_web.sha256 sidecar not found"
     );
 
     // Assert: sidecar is non-empty hex string.
     let sha_content = std::fs::read_to_string(&sidecar).expect("read sidecar");
     assert!(
         !sha_content.trim().is_empty(),
-        "AC-WASMB-02: SHA-256 sidecar must not be empty"
+        "SHA-256 sidecar must not be empty"
     );
     assert_eq!(
         sha_content.trim().len(),
         64,
-        "AC-WASMB-02: SHA-256 sidecar must be 64 hex chars, got {}",
+        "SHA-256 sidecar must be 64 hex chars, got {}",
         sha_content.trim().len()
     );
 }

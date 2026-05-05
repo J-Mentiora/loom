@@ -1,7 +1,7 @@
 // ProcessMonitor — Chromium liveness watchdog.
 //
 // # Contract semantics
-// - **Periodic ping (SR-SHIM-04).** Issues `Browser.getVersion` via
+// - **Periodic ping.** Issues `Browser.getVersion` via
 //   `CdpConnection` every 30s (soft default; tunable).
 // - **Hang detection.** 3 consecutive timeouts → invokes the
 //   registered `ForceRestartCallback`. The callback is owned by
@@ -120,7 +120,7 @@ impl ProcessMonitor for ChromiumProcessMonitor {
         if self.callback.read().is_none() {
             return Err(MonitorError::NoCallback);
         }
-        // Phase 6: tokio interval ticker for CDP ping watchdog
+        // tokio interval ticker for CDP ping watchdog
         Ok(())
     }
 
@@ -132,7 +132,7 @@ impl ProcessMonitor for ChromiumProcessMonitor {
     }
 
     fn shutdown(&self) {
-        // Phase 6: signal watchdog task to stop
+        // signal watchdog task to stop
     }
 
     fn counters(&self) -> Arc<MonitorCounters> {

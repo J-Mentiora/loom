@@ -20,8 +20,8 @@
 // - **8 host-fns and only 8** (matching `wit/loom-surface.wit::interface host`):
 //   `clock_now`, `rng_next_u64`, `blob_put`, `blob_get`, `net_request`,
 //   `shim_call`, `log_emit`, `receipt_emit`. Adding a 9th host-fn requires
-//   a WIT change and a regen — IC-SURF-12.
-// - **No hand-rolled `extern "C"` declarations** — IC-SURF-12. Surface
+//   a WIT change and a regen.
+// - **No hand-rolled `extern "C"` declarations.** Surface
 //   crate has zero `unsafe extern "C"` blocks; CI lint
 //   `tools/lint-surface-bindings.py` greps and fails on any match.
 // - **Synchronous trampolines.** Each function blocks on host return per
@@ -33,7 +33,7 @@
 //   `result<T, host-error>` → Rust `Result<T, HostError>` translation
 //   inside the generated trampolines (per design.md §2 dependency block).
 //
-// # Banned in this module (BC-SURF-04)
+// # Banned in this module
 // - `std::time`, `std::net`, `getrandom`, `std::fs::write` — the whole
 //   point of HostBindings is that it is the SOLE legitimate path to time,
 //   net, RNG, and storage from inside WASM.
@@ -52,13 +52,13 @@ use crate::receipt_builder::receipt_builder::{ContentRef, Receipt};
 
 /// `instant` — monotonic virtual clock value sourced from
 /// `loom-core::DeterminismHarness`. Tape-backed in live mode; tape-read
-/// in replay (SR-SURF-05).
+/// in replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Instant {
     pub ticks: u64,
 }
 
-/// Log severity for `host::log_emit` (IC-SURF-10).
+/// Log severity for `host::log_emit`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Trace,
@@ -82,8 +82,8 @@ pub struct NetReq {
 
 /// Vault-mediated network response. `body_ref` points into CAS via
 /// `host.blob_put`; `Authorization` and other secret-bearing headers are
-/// stripped by the host before returning to surface (BC-SURF-06).
-/// `body_size_bytes` reflects the **decompressed** size (SR-SURF-04).
+/// stripped by the host before returning to surface.
+/// `body_size_bytes` reflects the **decompressed** size.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetResp {
     pub status: u32,
@@ -93,7 +93,7 @@ pub struct NetResp {
 }
 
 // ---------------------------------------------------------------------
-// The 8 host-fns (sole imports per IC-SURF-12)
+// The 8 host-fns (sole imports)
 // ---------------------------------------------------------------------
 
 /// Module-level alias for the WIT `host` import surface. Every verb
@@ -102,15 +102,15 @@ pub struct NetResp {
 pub mod host {
     use super::*;
 
-    /// Virtual clock read. Source of all time in surface code (IC-SURF-02).
+    /// Virtual clock read. Source of all time in surface code.
     pub fn clock_now() -> Instant {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
-    /// Seeded RNG read. Source of all randomness in surface code (IC-SURF-03).
+    /// Seeded RNG read. Source of all randomness in surface code.
     pub fn rng_next_u64() -> u64 {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
-    /// Append bytes to CAS. Returns hash + size (IC-SURF-04).
+    /// Append bytes to CAS. Returns hash + size.
     pub fn blob_put(_bytes: &[u8]) -> Result<ContentRef, HostError> {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
@@ -118,19 +118,19 @@ pub mod host {
     pub fn blob_get(_ref_: &ContentRef) -> Result<Vec<u8>, HostError> {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
-    /// Vault-mediated outbound request (IC-SURF-05).
+    /// Vault-mediated outbound request.
     pub fn net_request(_req: &NetReq) -> Result<NetResp, HostError> {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
-    /// Bridge to out-of-process shim (IC-SURF-06).
+    /// Bridge to out-of-process shim.
     pub fn shim_call(_shim_id: &str, _msg: &[u8]) -> Result<Vec<u8>, HostError> {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
-    /// Sole logging path (IC-SURF-10).
+    /// Sole logging path.
     pub fn log_emit(_level: LogLevel, _msg: &str, _fields: &[(String, String)]) {
         // no-op trampoline; replaced at build time
     }
-    /// Sole Receipt emission path (IC-SURF-09).
+    /// Sole Receipt emission path.
     pub fn receipt_emit(_r: &Receipt) {
         // no-op trampoline; replaced at build time
     }

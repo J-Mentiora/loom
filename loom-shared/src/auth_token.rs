@@ -1,7 +1,8 @@
 //! `auth_token` — `HelloToken` for daemon HELLO-token issuance + CLI/MCP consumption.
 //!
-//! Phase 5.4 stub: minimal type + placeholder file IO. Phase 6 wires
-//! atomic-rename, fs perms 0600, and rotation per loom-rpc auth_middleware.
+//! Currently a stub: minimal type + placeholder file IO. The full
+//! implementation will wire atomic-rename, fs perms 0600, and rotation
+//! per loom-rpc auth_middleware.
 
 use crate::error_format::{LoomError, LoomErrorCode};
 use std::path::Path;
@@ -29,12 +30,12 @@ impl HelloToken {
 /// Read the HELLO-token from `path`, or generate a fresh random token,
 /// persist it (mode 0600), and return.
 ///
-/// Phase 5.4: stub — Phase 6 wires `ring::rand::SecureRandom` + atomic
-/// write + fs perms + tracing.
+/// Currently a stub. The real implementation will wire
+/// `ring::rand::SecureRandom` + atomic write + fs perms + tracing.
 pub fn read_or_generate(path: &Path) -> Result<HelloToken, LoomError> {
     let _ = path;
     Err(LoomError::new(
         LoomErrorCode::Internal,
-        "HelloToken::read_or_generate: Phase 5.4 stub — Phase 6 implements",
+        "HelloToken::read_or_generate: not yet implemented (stub)",
     ))
 }

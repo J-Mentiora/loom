@@ -1,5 +1,5 @@
-// Interface tests for `EvaluateVerb`. Verifies IC-SURF-07 console-only
-// tier (no DOM/screenshot/network) + carries return value.
+// Interface tests for `EvaluateVerb`. Verifies the console-only tier
+// (no DOM/screenshot/network) + carries return value.
 
 extern crate alloc;
 
@@ -54,7 +54,7 @@ fn evaluate_execute_returns_console_receipt() {
 
     let receipt = EvaluateVerb::execute(action).expect("evaluate must return Ok");
 
-    // Console-only tier (IC-SURF-07): no DOM, no screenshot (AC-WEB-02.2)
+    // Console-only tier: no DOM, no screenshot
     assert!(
         receipt.dom_after_ref.is_none(),
         "evaluate must not capture DOM"
@@ -72,7 +72,7 @@ fn evaluate_execute_returns_console_receipt() {
     assert!(!rv.is_empty(), "return value must be non-empty");
 }
 
-// === AC-WEB-07.1: safe profile blocks destructive evaluate ===
+// === Safe profile blocks destructive evaluate ===
 
 #[test]
 fn safe_profile_blocks_denylist_evaluate() {
@@ -92,7 +92,7 @@ fn safe_profile_blocks_denylist_evaluate() {
 
     let receipt = EvaluateVerb::execute(action).expect("execute must return Ok");
 
-    // Must be an error receipt (AC-WEB-07.1: script NOT executed)
+    // Must be an error receipt (script NOT executed)
     assert_eq!(
         receipt.status,
         ReceiptStatus::Error,

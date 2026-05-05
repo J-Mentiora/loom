@@ -36,7 +36,7 @@ pub async fn run(args: ServeArgs) -> Result<(), LoomError> {
     let dispatcher = build_dispatcher(rpc.clone(), obs.clone(), shutdown_flag.clone()).await;
     // Attempt initial connect; proceed even if daemon is down (graceful degradation).
     let _ = rpc.connect().await;
-    // AC-MCPTOOLS-01..04: prime the tool cache from the daemon's
+    // prime the tool cache from the daemon's
     // `rpc.schemas` snapshot so `tools/list` returns the real method
     // set. Failure is non-fatal — the dispatcher gracefully degrades
     // to an empty list if the daemon is unreachable. Log to stderr

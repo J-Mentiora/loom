@@ -1,13 +1,13 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ServeRunner/interfaces.rs` instead.
 // ServeRunner — `loom serve` local action.
 //
 // # Contract semantics
-// - **IC-CLI-05.** Spawns `loom-daemon` as a subprocess with the
+// - **Spawn.** Spawns `loom-daemon` as a subprocess with the
 //   resolved socket path; reads daemon's HELLO token from stdout once
 //   and prints to user. Token never persisted across daemon restarts;
 //   `AuthManager` re-reads the per-startup artefact every invocation.
-// - **RPC-free.** One of the 3 local-action exceptions (IC-CLI-03).
+// - **RPC-free.** One of the 3 local-action exceptions.
 // - **SLA.** Socket ready within 200 ms (per loom-cli contract).
 
 use std::path::PathBuf;
@@ -87,7 +87,7 @@ pub fn format_hello_line(token: &str) -> String {
 
 /// Default daemon binary path resolution.
 ///
-/// AC-DIST-01: cargo-install path drops the daemon into
+/// The cargo-install path drops the daemon into
 /// `dirs::data_local_dir()/loom/bin/`, while brew/manual co-locate it next
 /// to `loom`. `loom_shared::binary_resolver` walks both locations so the
 /// daemon is found regardless of install method.

@@ -1,5 +1,5 @@
-// Tests for the wasmtime-wasi linker wiring (AC-WASI-01, AC-WASI-02,
-// AC-WASI-03). Without these the daemon's `wasmtime::Linker` only has
+// Tests for the wasmtime-wasi linker wiring. Without these the daemon's
+// `wasmtime::Linker` only has
 // `loom:surface/host` registered, so any surface compiled for the
 // `wasm32-wasip2` target fails to instantiate with
 //
@@ -70,21 +70,20 @@ fn try_load_surface_web_component() -> Option<(Arc<WasmRuntime>, wasmtime::compo
 }
 
 // ---------------------------------------------------------------------------
-// AC-WASI-01 — `loom action web.navigate` succeeds end-to-end
+// `loom action web.navigate` succeeds end-to-end
 // ---------------------------------------------------------------------------
 //
 // The full E2E (CLI → daemon → wasm guest → shim → real Chromium →
 // receipt) is covered by the operator-driven smoke runbook documented in
-// `ac_tests_wasmb.rs::test_ac_wasmb_04_web_navigate_dispatches_into_surface`
-// (AC-WASMB-04 / AC-WGUEST-04).
+// `wasm_surface_build_tests.rs::test_web_navigate_dispatches_into_surface`.
 //
-// The CI-runnable slice of AC-WASI-01 is the line that previously broke:
+// The CI-runnable slice is the line that previously broke:
 // `linker.instantiate_pre(&loom_surface_web_component)`. That call
 // validates every import the component declares against the linker's
 // registered interfaces. Before the wasmtime-wasi wiring it failed with
 // `wasi:io/poll@0.2.6 not found in linker`. After, it must succeed.
 #[test]
-fn ac_wasi_01_loom_surface_web_satisfies_live_linker_imports() {
+fn loom_surface_web_satisfies_live_linker_imports() {
     let Some((runtime, component)) = try_load_surface_web_component() else {
         return;
     };
@@ -95,16 +94,16 @@ fn ac_wasi_01_loom_surface_web_satisfies_live_linker_imports() {
     let live_linker = registry.linker_for(crate::wit_type_marshaller::Mode::Live);
     live_linker
         .instantiate_pre(&component)
-        .expect("AC-WASI-01: live linker must satisfy all wasi:* imports of loom_surface_web");
+        .expect("live linker must satisfy all wasi:* imports of loom_surface_web");
 
     let replay_linker = registry.linker_for(crate::wit_type_marshaller::Mode::Replay);
     replay_linker
         .instantiate_pre(&component)
-        .expect("AC-WASI-01: replay linker must also satisfy wasi:* imports (parity with live)");
+        .expect("replay linker must also satisfy wasi:* imports (parity with live)");
 }
 
 // ---------------------------------------------------------------------------
-// AC-WASI-02 — WASI ctx denies fs access, env reads, sockets
+// WASI ctx denies fs access, env reads, sockets
 // ---------------------------------------------------------------------------
 //
 // The deny-by-default contract is `WasiCtxBuilder::new().build()`:
@@ -116,10 +115,9 @@ fn ac_wasi_01_loom_surface_web_satisfies_live_linker_imports() {
 //
 // Pin that textually so a future change cannot silently widen the
 // sandbox without failing CI. The pin scans the source body of
-// `build_sandboxed_wasi_ctx` (delimited by an `// AC-WASI-02 begin`/
-// `// AC-WASI-02 end` pair in `host_function_table/interfaces.rs`).
+// `build_sandboxed_wasi_ctx` in `host_function_table/interfaces.rs`.
 #[test]
-fn ac_wasi_02_build_sandboxed_wasi_ctx_uses_only_safe_defaults() {
+fn build_sandboxed_wasi_ctx_uses_only_safe_defaults() {
     let src = include_str!("host_function_table/host_function_table.rs");
 
     let body_start = src
@@ -147,7 +145,7 @@ fn ac_wasi_02_build_sandboxed_wasi_ctx_uses_only_safe_defaults() {
     ] {
         assert!(
             !body.contains(forbidden),
-            "AC-WASI-02: build_sandboxed_wasi_ctx must not call `{}` — that widens the sandbox.\nBody was:\n{}",
+            "build_sandboxed_wasi_ctx must not call `{}` — that widens the sandbox.\nBody was:\n{}",
             forbidden,
             body
         );
@@ -157,7 +155,7 @@ fn ac_wasi_02_build_sandboxed_wasi_ctx_uses_only_safe_defaults() {
     let _ = crate::host_function_table::build_sandboxed_wasi_ctx();
 }
 
-// AC-WASI-02 (cont.) — the resource table starts empty.
+// The resource table starts empty.
 //
 // `wasmtime_wasi` exposes preopened directories as resources in the
 // component-model `ResourceTable`. The deny-by-default builder
@@ -165,22 +163,23 @@ fn ac_wasi_02_build_sandboxed_wasi_ctx_uses_only_safe_defaults() {
 // `wasi:filesystem/preopens.get-directories` return an empty list,
 // which is what blocks fs access at the guest layer.
 #[test]
-fn ac_wasi_02_fresh_host_state_resource_table_is_empty() {
+fn fresh_host_state_resource_table_is_empty() {
     let table = wasmtime::component::ResourceTable::new();
     // ResourceTable doesn't expose `len()`, but `is_empty()` is enough
     // to pin "no preopens were inserted by the builder".
     assert!(
         table.is_empty(),
-        "AC-WASI-02: ResourceTable::new() must yield an empty table"
+        "ResourceTable::new() must yield an empty table"
     );
 }
 
-// AC-WASI-03 is asserted globally by `cargo test --workspace` going
-// green. No local test body needed — if any other crate's behaviour
-// regressed under the wasi wiring, the workspace suite would fail.
+// Workspace-wide regression coverage is asserted globally by
+// `cargo test --workspace` going green. No local test body needed — if
+// any other crate's behaviour regressed under the wasi wiring, the
+// workspace suite would fail.
 
 // ---------------------------------------------------------------------------
-// AC-WASTOR-04 — engine async-config + instantiate_async path are aligned
+// engine async-config + instantiate_async path are aligned
 // ---------------------------------------------------------------------------
 //
 // The wasmtime engine is built with `Config::async_support(true)` (see
@@ -203,10 +202,10 @@ fn ac_wasi_02_fresh_host_state_resource_table_is_empty() {
 // `instantiate_surface` to sync would fail to compile that test.
 //
 // The end-to-end fitness function is the operator-driven manual smoke
-// (AC-WASMB-04 / AC-WGUEST-04) which exercises the real wasm32-wasip2
-// loom_surface_web component through the daemon → guest → shim chain.
+// which exercises the real wasm32-wasip2 loom_surface_web component
+// through the daemon → guest → shim chain.
 #[test]
-fn ac_wastor_04_doc_pin() {
+fn async_instantiate_doc_pin() {
     // Doc-anchor only. The actual constraint is enforced by:
     //   1. session_executor/interfaces.rs:`async fn instantiate_surface`
     //      → returns a Future and calls `linker.instantiate_async(...).await`

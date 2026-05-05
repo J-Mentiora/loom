@@ -1,4 +1,4 @@
-//! End-to-end integration test for AC-NAVERR-01..05.
+//! End-to-end integration test for typed navigate-error receipts.
 //!
 //! Drives `ShimManager::send_navigate` against the real
 //! `loom-shim-chromium` binary, which spawns the test-only
@@ -9,10 +9,10 @@
 //!   `http://fake.test/error/<CDP>` → Network.loadingFailed (errorText=CDP) +
 //!                                    Page.navigate response.errorText=CDP
 //!
-//! This is the AC-NAVERR-05 fitness function: the prior fix only had
-//! manifest-level tests with hand-crafted ReceiptBuilder fixtures, so
-//! the live CDP-event ingestion path was never validated. This test
-//! covers it.
+//! This is the fitness function for the live CDP-event ingestion path.
+//! Prior coverage had only manifest-level tests with hand-crafted
+//! ReceiptBuilder fixtures, so the ingestion path itself was never
+//! validated. This test covers it.
 //!
 //! Run:
 //!   cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium
@@ -118,88 +118,85 @@ async fn navigate(
     .expect("send_navigate returned an error")
 }
 
-// ── AC-NAVERR-04: 200 → success path with status_code populated ─────────────
+// ── 200 → success path with status_code populated ──────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_naverr_04_status_200_propagates_status_code() {
+async fn naverr_status_200_propagates_status_code() {
     assert_binaries_built();
-    let (mgr, id, _udd) = make_manager("naverr-04-200");
+    let (mgr, id, _udd) = make_manager("naverr-200");
 
     let outcome = navigate(&mgr, id.clone(), "http://fake.test/status/200").await;
 
     assert_eq!(
         outcome.status_code, 200,
-        "AC-NAVERR-04: status_code must be 200 for a successful 200 navigate"
+        "status_code must be 200 for a successful 200 navigate"
     );
     let doc = outcome
         .network_events
         .iter()
         .find(|e| e.error_reason.is_none())
-        .expect("AC-NAVERR-04: a network event must be present");
+        .expect("a network event must be present");
     assert_eq!(doc.status, 200u16);
     assert_eq!(doc.url, "http://fake.test/status/200");
 
-    mgr.shutdown_session("naverr-04-200").await;
+    mgr.shutdown_session("naverr-200").await;
 }
 
-// ── AC-NAVERR-01: 404 → status_code surfaces ────────────────────────────────
+// ── 404 → status_code surfaces ─────────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_naverr_01_status_404_propagates_status_code() {
+async fn naverr_status_404_propagates_status_code() {
     assert_binaries_built();
-    let (mgr, id, _udd) = make_manager("naverr-01-404");
+    let (mgr, id, _udd) = make_manager("naverr-404");
 
     let outcome = navigate(&mgr, id.clone(), "http://fake.test/status/404").await;
 
     assert_eq!(
         outcome.status_code, 404,
-        "AC-NAVERR-01: status_code must be 404 — this is the regression that the prior fix missed"
+        "status_code must be 404 — this is the regression that the prior fix missed"
     );
     let doc = outcome
         .network_events
         .iter()
         .find(|e| e.status == 404)
-        .expect("AC-NAVERR-01: a Document network event with status=404 must be present");
+        .expect("a Document network event with status=404 must be present");
     assert_eq!(doc.status, 404u16);
     assert_eq!(doc.url, "http://fake.test/status/404");
     assert_eq!(doc.error_reason, None);
 
-    mgr.shutdown_session("naverr-01-404").await;
+    mgr.shutdown_session("naverr-404").await;
 }
 
-// ── AC-NAVERR-02: 500 → status_code surfaces ────────────────────────────────
+// ── 500 → status_code surfaces ─────────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_naverr_02_status_500_propagates_status_code() {
+async fn naverr_status_500_propagates_status_code() {
     assert_binaries_built();
-    let (mgr, id, _udd) = make_manager("naverr-02-500");
+    let (mgr, id, _udd) = make_manager("naverr-500");
 
     let outcome = navigate(&mgr, id.clone(), "http://fake.test/status/500").await;
 
-    assert_eq!(
-        outcome.status_code, 500,
-        "AC-NAVERR-02: status_code must be 500"
-    );
+    assert_eq!(outcome.status_code, 500, "status_code must be 500");
     let doc = outcome
         .network_events
         .iter()
         .find(|e| e.status == 500)
-        .expect("AC-NAVERR-02: a Document network event with status=500 must be present");
+        .expect("a Document network event with status=500 must be present");
     assert_eq!(doc.status, 500u16);
 
-    mgr.shutdown_session("naverr-02-500").await;
+    mgr.shutdown_session("naverr-500").await;
 }
 
-// ── AC-NAVERR-03: DNS failure → error_reason + error_kind classified ────────
+// ── DNS failure → error_reason + error_kind classified ─────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_naverr_03_dns_failure_emits_classified_error_event() {
+async fn naverr_dns_failure_emits_classified_error_event() {
     assert_binaries_built();
-    let (mgr, id, _udd) = make_manager("naverr-03-dns");
+    let (mgr, id, _udd) = make_manager("naverr-dns");
 
     let outcome = navigate(
         &mgr,
@@ -212,32 +209,32 @@ async fn ac_naverr_03_dns_failure_emits_classified_error_event() {
         .network_events
         .iter()
         .find(|e| e.error_reason.is_some())
-        .expect("AC-NAVERR-03: a network event with error_reason must be present");
+        .expect("a network event with error_reason must be present");
     assert!(
         err_event
             .error_reason
             .as_deref()
             .unwrap()
             .contains("ERR_NAME_NOT_RESOLVED"),
-        "AC-NAVERR-03: error_reason must carry the chromium error code (got {:?})",
+        "error_reason must carry the chromium error code (got {:?})",
         err_event.error_reason
     );
     assert_eq!(
         err_event.error_kind.as_deref(),
         Some("dns_failure"),
-        "AC-NAVERR-03: error_kind must be 'dns_failure'"
+        "error_kind must be 'dns_failure'"
     );
 
-    mgr.shutdown_session("naverr-03-dns").await;
+    mgr.shutdown_session("naverr-dns").await;
 }
 
-// ── AC-NAVERR-03 (extension): connect-refused classifies separately ─────────
+// ── Connect-refused classifies separately ──────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_naverr_03_connect_refused_classified_separately() {
+async fn naverr_connect_refused_classified_separately() {
     assert_binaries_built();
-    let (mgr, id, _udd) = make_manager("naverr-03-conn-refused");
+    let (mgr, id, _udd) = make_manager("naverr-conn-refused");
 
     let outcome = navigate(
         &mgr,
@@ -250,12 +247,12 @@ async fn ac_naverr_03_connect_refused_classified_separately() {
         .network_events
         .iter()
         .find(|e| e.error_reason.is_some())
-        .expect("AC-NAVERR-03 (ext): a network event with error_reason must be present");
+        .expect("a network event with error_reason must be present");
     assert_eq!(
         err_event.error_kind.as_deref(),
         Some("connect_refused"),
-        "AC-NAVERR-03 (ext): error_kind must be 'connect_refused' for ERR_CONNECTION_REFUSED"
+        "error_kind must be 'connect_refused' for ERR_CONNECTION_REFUSED"
     );
 
-    mgr.shutdown_session("naverr-03-conn-refused").await;
+    mgr.shutdown_session("naverr-conn-refused").await;
 }

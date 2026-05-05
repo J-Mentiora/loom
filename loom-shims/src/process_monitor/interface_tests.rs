@@ -1,5 +1,5 @@
 // Interface tests for `ProcessMonitor`.
-// Verifies SR-SHIM-04 hang detection, callback-based one-way edge,
+// Verifies hang detection, callback-based one-way edge,
 // lock-free counter exposure.
 
 use super::process_monitor::{
@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
 
-// === SR-SHIM-04: hang threshold = 3 consecutive timeouts ===
+// === hang threshold = 3 consecutive timeouts ===
 
 #[test]
 fn default_threshold_is_three() {
@@ -38,7 +38,7 @@ fn restart_triggers_above_threshold() {
     assert!(should_trigger_restart(u8::MAX, 3));
 }
 
-// === Lock-free counter exposure (BC §3 internal core async) ===
+// === Lock-free counter exposure (internal core async) ===
 
 #[test]
 fn monitor_counters_are_atomic() {

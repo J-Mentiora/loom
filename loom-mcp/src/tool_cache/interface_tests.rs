@@ -1,11 +1,10 @@
-// Interface tests for `ToolCache`. Verifies IC-MCP-01 count parity
-// envelope, IC-MCP-02 canonicalisation step, IC-MCP-03 name
-// transformation, IC-MCP-04 description sourcing, and BC-MCP-02
-// single-constructor discipline.
+// Interface tests for `ToolCache`. Verifies count-parity envelope,
+// canonicalisation, name transformation, description sourcing from
+// the RPC method's doc comment, and single-constructor discipline.
 
 use super::tool_cache::{RpcMethodSchema, SchemaRegistry, Tool, ToolCache, TOOL_NAME_PREFIX};
 
-// === IC-MCP-03: snake_case dotted, prefix `loom.` ===
+// === snake_case dotted, prefix `loom.` ===
 
 #[test]
 fn tool_name_prefix_is_loom_dot() {
@@ -37,7 +36,7 @@ fn is_snake_case_dotted_signature_present() {
     let _ = _ck;
 }
 
-// === IC-MCP-02: canonicalisation helper named ===
+// === canonicalisation helper named ===
 
 #[test]
 fn canonicalise_signature_returns_result() {
@@ -47,7 +46,7 @@ fn canonicalise_signature_returns_result() {
     let _ = _ck;
 }
 
-// === BC-MCP-02: single Tool constructor — tool_from_method ===
+// === single Tool constructor — tool_from_method ===
 
 #[test]
 fn tool_from_method_signature_takes_rpc_method_schema() {
@@ -81,7 +80,7 @@ fn tool_has_name_description_input_schema_fields() {
     };
 }
 
-// === IC-MCP-04: description is sourced from RPC method's doc_comment ===
+// === description is sourced from RPC method's doc_comment ===
 
 #[test]
 fn rpc_method_schema_has_doc_comment_field() {
@@ -94,7 +93,7 @@ fn rpc_method_schema_has_doc_comment_field() {
     assert_eq!(m.doc_comment, "WIT /// chain");
 }
 
-// === IC-MCP-01: list() returns the full slice (no filter) ===
+// === list() returns the full slice (no filter) ===
 
 #[test]
 fn list_returns_vec_tool() {

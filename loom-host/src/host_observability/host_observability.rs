@@ -1,4 +1,4 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/host_observability/interfaces.rs` instead.
 // HostObservability — sink module for `tracing` spans + redaction layer.
 //
@@ -10,7 +10,8 @@
 //   session_id=…, host_fn=…, latency_us=…, tape_offset=…)`.
 // - **Redaction layer.** A custom `tracing::Layer` strips fields named
 //   `Authorization`, `Cookie`, `Set-Cookie` from any structured event
-//   before export. Defense-in-depth atop IC-HOST-04 (the secret never
+//   before export. Defense-in-depth on the vault-isolation invariant
+//   (the secret never
 //   reached the log path in the first place, but the redaction layer
 //   catches future regressions).
 // - **Drop counter.** A process-wide `AtomicU64` counts dropped events
@@ -35,7 +36,7 @@ pub struct HostCallMetric {
     pub error: Option<String>,
 }
 
-/// Trap event payload. Pure-integer + string — no floats per BC-HOST §3.
+/// Trap event payload. Pure-integer + string — no floats by convention.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrapEvent {
     pub session_id: String,
@@ -90,7 +91,7 @@ impl HostObservability {
 }
 
 /// The redaction layer. Implements `tracing_subscriber::Layer` (left
-/// abstract here — Phase 5.4 wires the concrete impl). Strips:
+/// abstract here — the concrete impl is wired in the implementation). Strips:
 ///   - "authorization", "Authorization"
 ///   - "cookie", "Cookie", "set-cookie", "Set-Cookie"
 ///   - any field with name in the `extra_redacted_keys` set

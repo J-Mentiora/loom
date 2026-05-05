@@ -40,7 +40,7 @@ pub struct LoomNetworkEvent {
     pub error_kind: Option<String>,
 }
 
-/// Console line captured by the shim (Phase 6: always empty; real capture Phase 7+).
+/// Console line captured by the shim (currently always empty; real capture is followup work).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShimConsoleLine {
     pub level: String,
@@ -50,7 +50,7 @@ pub struct ShimConsoleLine {
 /// Sub-resource request that the shim's `NetworkInterceptor` blocked
 /// against the default blocklist. Surfaced through `NavigateOutcome`
 /// so the host can write a typed `AuditEntry { kind: BlockedUrl, ... }`
-/// into the manifest hash chain (AC-DET-05.1, AC-BLOCKLIST-01..05).
+/// into the manifest hash chain.
 ///
 /// `reason` is the lowercased section header from `default_blocklist.txt`
 /// (e.g. `"analytics"`, `"advertising / ad networks"`); `matched_pattern`
@@ -74,9 +74,9 @@ pub struct BlockedEvent {
 pub struct NavigateOutcome {
     /// The URL originally requested (from `PageNavigate.url`).
     pub url: String,
-    /// The final URL after redirects. Phase 6 stub: same as `url`.
+    /// The final URL after redirects. Currently a stub: same as `url`.
     pub final_url: String,
-    /// Page title. Phase 6 stub: empty string.
+    /// Page title. Currently a stub: empty string.
     pub page_title: String,
     /// HTTP status code of the main document.
     /// Falls back to 0 when `network_events` is empty.
@@ -87,10 +87,10 @@ pub struct NavigateOutcome {
     pub screenshot_bytes: Vec<u8>,
     /// Network events captured by the shim's NetworkInterceptor.
     pub network_events: Vec<LoomNetworkEvent>,
-    /// Console lines captured by the shim. Phase 6: always empty.
+    /// Console lines captured by the shim. Currently always empty.
     pub console_lines: Vec<ShimConsoleLine>,
-    /// Sub-resource requests blocked by the default blocklist
-    /// (AC-DET-05.1, AC-BLOCKLIST-02). Each entry becomes a manifest
+    /// Sub-resource requests blocked by the default blocklist.
+    /// Each entry becomes a manifest
     /// `AuditEntry { kind: BlockedUrl }` on the host side. `serde(default)`
     /// keeps the CBOR wire backward-compatible — pre-feature payloads
     /// decode unchanged with an empty vec.

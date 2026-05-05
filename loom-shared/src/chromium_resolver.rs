@@ -1,7 +1,7 @@
 //! `loom-shared::chromium_resolver` — locate a Chromium browser binary
 //! across install channels.
 //!
-//! AC-DIST-05 (`loom session create` first-run UX). Mirrors the layout of
+//! Powers the `loom session create` first-run UX. Mirrors the layout of
 //! the sibling [`crate::binary_resolver`] module but resolves a *browser*
 //! binary, not a loom-sibling.
 //!
@@ -11,7 +11,7 @@
 //!      `loom postinstall` writes to) → `Pinned`
 //!   3. Parent-dir scan: any executable inside
 //!      `<chromium_dir>/Chromium.app/Contents/MacOS/` (covers symlink-renamed
-//!      bundles like `Google Chrome`, AC-CHBS-01) → `Pinned`
+//!      bundles like `Google Chrome`) → `Pinned`
 //!   4. PATH lookup for `chromium`, `chromium-browser`, `chrome`,
 //!      `google-chrome` → `Path`
 //!   5. macOS standard installs → `Applications`:
@@ -40,8 +40,7 @@ use std::path::{Path, PathBuf};
 
 /// Where the resolved chromium came from. Used by the daemon to emit a
 /// `tracing::warn!` when source is not `Pinned` so users know they've
-/// lost replay-bit-equality (per CONTRIBUTING.md "Determinism is sacred"
-/// + SR-SHIM-03).
+/// lost replay-bit-equality (per CONTRIBUTING.md "Determinism is sacred").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChromiumSource {
     /// `LOOM_CHROMIUM_PATH` env was set and pointed at a valid executable.
@@ -116,8 +115,8 @@ pub fn resolve_chromium(chromium_dir: &Path) -> Result<(PathBuf, ChromiumSource)
         return Ok((pinned, ChromiumSource::Pinned));
     }
 
-    // 3. AC-CHBS-01 parent-dir scan: any executable in MacOS/ (handles
-    // bundles where the inner binary is named `Google Chrome` instead of
+    // 3. Parent-dir scan: any executable in MacOS/ (handles bundles
+    // where the inner binary is named `Google Chrome` instead of
     // `Chromium` — symlinks/renamed casks).
     if let Some(parent) = pinned.parent() {
         if parent.is_dir() {

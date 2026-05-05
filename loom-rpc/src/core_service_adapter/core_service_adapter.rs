@@ -1,5 +1,5 @@
 // CoreServiceAdapter — routes `session.*` + `vault.*` methods to
-// loom-core via the locked `CoreApiFacade` (IC-RPC-09, design.md §7).
+// loom-core via the locked `CoreApiFacade` (see design.md §7).
 //
 // # Contract semantics
 // - **Single facade handle (loom-core single entry point).** This
@@ -9,14 +9,14 @@
 //   `ContentStore`, `ManifestWriter`, `ReplayEngine`,
 //   `BudgetEnforcer`, `DeterminismHarness`, `StartupManager`,
 //   `Observability`.
-// - **No action.* routing here (IC-RPC-09).** This adapter is
+// - **No action.* routing here.** This adapter is
 //   structurally incompatible with `Receipt` payloads — `action.*`
 //   methods route through `HostServiceAdapter` instead. Misrouting
 //   would not type-check.
-// - **Vault response shape (IC-RPC-10).** `vault_grant` returns
+// - **Vault response shape.** `vault_grant` returns
 //   `GrantInfo` with `grant_id` only. The raw secret never enters
 //   loom-rpc; `Vault::substitute` (loom-core) is the sole call site
-//   for raw bytes per binding-constraints.md §2.
+//   for raw bytes per the wire-spec's secret-handling rules.
 // - **Errors propagate via `LoomError` → `JsonRpcError`.** This
 //   adapter never constructs envelopes itself; it returns
 //   `Result<T, LoomError>` and `RpcHandlers` calls
@@ -29,12 +29,12 @@ use std::sync::Arc;
 // `Arc<loom_core::CoreApiFacade>` — the locked single entry point.
 // We declare the dep abstractly here so the interface tests do not
 // require the full loom-core crate. The concrete `Arc` type binds
-// in Phase 5.4 implementation.
+// in v5.4 implementation.
 //
 // module_kind: cross-system-bridge
 
 /// Marker trait satisfied by `loom_core::CoreApiFacade` once the
-/// crate dep is wired in Phase 5.4. Lets sibling modules write
+/// crate dep is wired in v5.4. Lets sibling modules write
 /// `Arc<dyn CoreFacadeBridge>` for testability without leaking the
 /// loom-core types.
 pub trait CoreFacadeBridge: Send + Sync {
@@ -78,7 +78,7 @@ pub trait CoreFacadeBridge: Send + Sync {
     ) -> Result<(bool, Vec<String>), AdapterError>;
 
     /// Import a Playwright trace.zip from raw bytes. Creates a non-replayable
-    /// session and returns its id + action count. AC-INTEROP-01.1.
+    /// session and returns its id + action count.
     fn import_playwright_from_bytes(
         &self,
         trace_bytes: &[u8],
@@ -86,12 +86,10 @@ pub trait CoreFacadeBridge: Send + Sync {
 
     /// Create a new session. Returns `(session_id, created_at_ms)`.
     /// `capture_policy` carries the operator's `--capture-policy` choice
-    /// (`"minimal" | "default" | "full"`); `None` means "use server default"
-    /// (AC-CAPPOL-01..04).
+    /// (`"minimal" | "default" | "full"`); `None` means "use server default".
     /// `budget` carries the optional per-session BudgetLimits as a
     /// serde_json::Value (the daemon's CoreBridge deserialises it into
-    /// loom_core::budget_enforcer::BudgetLimits). AC-BUDGETKILL-01/03,
-    /// AC-BUDGET-04.1.
+    /// loom_core::budget_enforcer::BudgetLimits).
     #[allow(clippy::too_many_arguments)]
     fn create_session_raw(
         &self,
@@ -109,7 +107,7 @@ pub trait CoreFacadeBridge: Send + Sync {
     /// Abort an active session with a reason string.
     fn abort_session_raw(&self, session_id: &str, reason: &str) -> Result<(), AdapterError>;
 
-    /// Issue a grant (`vault.grant`). Returns `GrantInfo` per IC-RPC-10
+    /// Issue a grant (`vault.grant`). Returns `GrantInfo`
     /// (`grant_id` only — never the secret).
     fn vault_grant(&self, params: GrantParams) -> Result<GrantInfo, AdapterError>;
 
@@ -117,19 +115,18 @@ pub trait CoreFacadeBridge: Send + Sync {
     fn vault_revoke(&self, grant_id: &str, reason: &str) -> Result<(), AdapterError>;
 
     /// List alive grants (`vault.list_grants`). Empty result is valid
-    /// (AC-VAULTRPC-01 admits the "possibly empty" case).
+    /// (the wire contract admits the "possibly empty" case).
     fn vault_list_grants(&self, session_id: Option<&str>) -> Result<Vec<GrantInfo>, AdapterError>;
 
     /// Add an OAuth-only credential (`vault.add`). Allowlisted providers
     /// return a typed `VaultAddInfo` receipt with `status="oauth_required"`;
-    /// non-allowlisted reject with the canonical AC-VAULT-04.1 envelope.
+    /// non-allowlisted reject with the canonical vault-rejection envelope.
     fn vault_add(&self, params: VaultAddParams) -> Result<VaultAddInfo, AdapterError>;
 
     /// Run garbage collection on the content store (`gc.run`). `ttl_days`
     /// is the maximum age (in days) of unreferenced blobs to retain;
     /// blobs older than `ttl_days` whose referenced-by set is empty are
     /// removed. `None` means use the daemon-default TTL.
-    /// AC-GCRPC-01..04, AC-STORE-01.1.
     fn gc_run(
         &self,
         ttl_days: Option<u64>,
@@ -137,7 +134,7 @@ pub trait CoreFacadeBridge: Send + Sync {
     ) -> Result<GcRunReport, AdapterError>;
 }
 
-/// Wire shape for `gc.run`. AC-GCRPC-01: `{removed, kept, freed_bytes}`.
+/// Wire shape for `gc.run`: `{removed, kept, freed_bytes}`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GcRunReport {
     pub blobs_scanned: u64,
@@ -146,7 +143,7 @@ pub struct GcRunReport {
 }
 
 // === Wire types (WIT-derived; mirrored here for adapter return
-// shapes). In Phase 5.4 these are replaced by the wit-bindgen output
+// shapes). In v5.4 these are replaced by the wit-bindgen output
 // in `loom-rpc/src/types/`. ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,7 +151,7 @@ pub struct SessionInfo {
     pub session_id: String,
     pub status: String,
     pub created_at_ms: u64,
-    /// AC-ABORTREASON-01..03: free-form reason carried by `session.abort`.
+    /// Free-form reason carried by `session.abort`.
     /// Populated for aborted sessions; `None` for active/closed/crashed.
     /// Skipped during JSON serialisation when absent so existing parsers
     /// that don't know the field still validate.
@@ -209,7 +206,7 @@ pub struct ContentData {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrantInfo {
-    /// Per IC-RPC-10: the response carries `grant_id` only.
+    /// The response carries `grant_id` only.
     pub grant_id: String,
     pub origin: String,
     pub scopes: Vec<String>,
@@ -225,13 +222,13 @@ pub struct CreateSessionParams {
     pub profile: String,
     #[serde(default = "default_network_mode")]
     pub network_mode: String,
-    /// Operator's `--capture-policy` choice (AC-CAPPOL-01..04).
+    /// Operator's `--capture-policy` choice.
     /// Wire form: `"minimal" | "default" | "full"`. `None` → server default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_policy: Option<String>,
     pub seed: Option<u64>,
     pub budget: Option<serde_json::Value>,
-    /// Operator's `--no-blocklist` opt-out (AC-DET-05.1, AC-BLOCKLIST-04).
+    /// Operator's `--no-blocklist` opt-out.
     /// Default `false` (blocklist enforced). Pre-feature CLI clients
     /// omit the field entirely → defaults to `false` → enforcement on.
     #[serde(default)]
@@ -254,7 +251,7 @@ pub struct GrantParams {
     pub label: String,
 }
 
-/// Wire params for `vault.add` — session-less per AC-VAULTRPC-02.
+/// Wire params for `vault.add` — session-less.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultAddParams {
     pub provider: String,
@@ -273,7 +270,7 @@ pub struct VaultAddInfo {
 }
 
 // Stub LoomError reference — replaced by `loom_core::error::LoomError`
-// in Phase 5.4 wiring.
+// in v5.4 wiring.
 pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode;
 
 /// Trait surface for `CoreServiceAdapter` so `RpcHandlers` can be
@@ -317,7 +314,7 @@ pub trait CoreServiceAdapterApi: Send + Sync {
     fn validate_session(&self, session_id: &str) -> Result<ValidationResult, AdapterError>;
 
     /// Import a Playwright trace.zip (raw bytes). Returns the new
-    /// non-replayable session id + action count. AC-INTEROP-01.1.
+    /// non-replayable session id + action count.
     fn import_playwright(&self, trace_bytes: &[u8]) -> Result<PlaywrightImportInfo, AdapterError>;
 
     fn vault_grant(&self, params: GrantParams) -> Result<GrantInfo, AdapterError>;
@@ -328,8 +325,7 @@ pub trait CoreServiceAdapterApi: Send + Sync {
 
     fn vault_add(&self, params: VaultAddParams) -> Result<VaultAddInfo, AdapterError>;
 
-    /// Run GC on the content store. Returns scanned/collected/bytes-freed
-    /// per AC-GCRPC-01.
+    /// Run GC on the content store. Returns scanned/collected/bytes-freed.
     fn gc_run(
         &self,
         ttl_days: Option<u64>,

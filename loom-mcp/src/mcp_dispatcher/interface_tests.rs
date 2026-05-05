@@ -1,7 +1,6 @@
-// Interface tests for `McpDispatcher`. Verifies IC-MCP-05 dispatch
-// shape (tools/call → RpcClient), IC-MCP-07 prompts/list empty, and
-// IC-MCP-08 (unknown tool surfaces as ToolResult.isError, not
-// McpProtocolError).
+// Interface tests for `McpDispatcher`. Verifies dispatch shape
+// (tools/call → RpcClient), prompts/list empty, and unknown-tool
+// behavior (surfaces as ToolResult.isError, not McpProtocolError).
 
 use super::mcp_dispatcher::{
     InitializeResult, McpDispatcher, PromptsCapability, ResourcesCapability, ResourcesReadParams,
@@ -32,7 +31,7 @@ fn protocol_version_pinned() {
     assert_eq!(MCP_PROTOCOL_VERSION, "2024-11-05");
 }
 
-// === IC-MCP-07: prompts/list returns empty list ===
+// === prompts/list returns empty list ===
 
 #[test]
 fn prompts_list_returns_empty_vec() {
@@ -44,7 +43,7 @@ fn prompts_list_returns_empty_vec() {
     let _ = _ck;
 }
 
-// === IC-MCP-05: tools/call dispatches to ToolResult ===
+// === tools/call dispatches to ToolResult ===
 
 #[test]
 fn tools_call_signature_returns_tool_result() {
@@ -67,7 +66,7 @@ fn tools_call_params_has_name_and_arguments() {
     assert!(p.arguments.is_object());
 }
 
-// === tools/list returns Tool[] (IC-MCP-01) ===
+// === tools/list returns Tool[] ===
 
 #[test]
 fn tools_list_returns_vec_tool() {
@@ -77,7 +76,7 @@ fn tools_list_returns_vec_tool() {
     let _ = _ck;
 }
 
-// === resources/list + resources/read (IC-MCP-06) ===
+// === resources/list + resources/read ===
 
 #[test]
 fn resources_list_returns_result_vec_resource() {

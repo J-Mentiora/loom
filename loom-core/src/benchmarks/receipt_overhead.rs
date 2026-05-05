@@ -1,4 +1,4 @@
-//! Receipt-generation overhead benchmark — AC-PERF-02.1.
+//! Receipt-generation overhead benchmark.
 //!
 //! Times the receipt_builder + manifest_append pipeline for a synthetic
 //! 10-action corpus × `iterations` rounds.
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// Number of synthetic actions in the benchmark corpus.
 const CORPUS_SIZE: u32 = 10;
 
-/// Result of the receipt-overhead benchmark (AC-PERF-02.1).
+/// Result of the receipt-overhead benchmark.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceiptOverheadReport {
     /// p95 overhead (wall_clock - t_platform) per action in milliseconds.
@@ -141,7 +141,7 @@ mod tests {
         }
     }
 
-    /// AC-PERF-02.1: p95 ≤ 50ms on fast in-process mock.
+    /// p95 ≤ 50ms on fast in-process mock.
     #[test]
     fn test_receipt_overhead_bench_pass() {
         let config = fast_config(5);
@@ -154,7 +154,7 @@ mod tests {
         assert!(!report.nfr_kill);
     }
 
-    /// AC-PERF-02.1: p95 > 200ms triggers NFR-KILL.
+    /// p95 > 200ms triggers NFR-KILL.
     #[test]
     fn test_receipt_overhead_bench_nfr_kill() {
         // Inject 250ms delay per manifest append to push overhead over NFR-KILL.

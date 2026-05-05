@@ -1,4 +1,4 @@
-//! AC-DIST-05 integration tests for the BrowserNotFound flow.
+//! Integration tests for the BrowserNotFound flow.
 //!
 //! Covers:
 //! - `CliError::BrowserNotFound` round-trips from a JSON-RPC error envelope
@@ -10,13 +10,13 @@
 use loom_cli::error_mapper::{map_exit_code, CliError, EXIT_RECEIPT_ERROR};
 
 #[test]
-fn ac_dist_05_browser_not_found_maps_exit_1() {
+fn browser_not_found_maps_exit_1() {
     let r: Result<(), CliError> = Err(CliError::BrowserNotFound("install via brew".to_string()));
     assert_eq!(map_exit_code(&r), EXIT_RECEIPT_ERROR);
 }
 
 #[test]
-fn ac_dist_05_browser_not_found_display_mentions_install_command() {
+fn browser_not_found_display_mentions_install_command() {
     let e = CliError::BrowserNotFound("any daemon-side detail".to_string());
     let msg = format!("{e}");
     assert!(
@@ -32,7 +32,7 @@ fn ac_dist_05_browser_not_found_display_mentions_install_command() {
 }
 
 #[test]
-fn ac_dist_05_browser_not_found_display_says_chromium_not_found() {
+fn browser_not_found_display_says_chromium_not_found() {
     let e = CliError::BrowserNotFound("anything".into());
     let msg = format!("{e}");
     assert!(
@@ -42,7 +42,7 @@ fn ac_dist_05_browser_not_found_display_says_chromium_not_found() {
 }
 
 #[test]
-fn ac_dist_05_browser_not_found_does_not_leak_daemon_detail() {
+fn browser_not_found_does_not_leak_daemon_detail() {
     // The carried `_msg` is daemon-side raw text (e.g. searched paths);
     // the user-facing Display synthesizes a fixed actionable message
     // and should not surface the raw detail string verbatim.

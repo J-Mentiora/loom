@@ -2,10 +2,10 @@
 //
 // # Contract semantics
 // - **Tier:** hash-only DOM + hash-only screenshot + action-scoped
-//   network events + console lines (IC-SURF-07 row `click`).
+//   network events + console lines.
 // - **CDP method:** `Input.dispatchMouseEvent` with
 //   `event_type: "mousePressed"` then `"mouseReleased"` (one click =
-//   two CDP messages). Coordinates are integer CSS pixels (BC-SURF-05).
+//   two CDP messages). Coordinates are integer CSS pixels.
 // - **Selector resolution.** The verb resolves the selector to the
 //   element's bounding-box centre via `hit_test::resolve_centre_for_selector`
 //   (DOM.getDocument → DOM.querySelector → DOM.scrollIntoViewIfNeeded →
@@ -37,7 +37,7 @@ pub struct ClickVerb;
 
 impl ClickVerb {
     /// Run the click verb. Hash-only Receipt tier on success; error
-    /// Receipt on host-fn failure (per IC-SURF-09 path).
+    /// Receipt on host-fn failure.
     pub fn execute(action: ClickAction) -> Result<Receipt, HostError> {
         use crate::cdp_message_encoder::cdp_message_encoder::{
             CdpMessage, CdpMessageEncoder, DomGetDocument, InputDispatchMouseEvent,
@@ -77,7 +77,7 @@ impl ClickVerb {
                     )),
                 )?;
             }
-            // DOM hash (IC-SURF-07 hash-only tier)
+            // DOM hash (hash-only tier)
             let dom_bytes = host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::DomGetDocument(DomGetDocument {

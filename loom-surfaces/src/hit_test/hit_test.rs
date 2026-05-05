@@ -1,6 +1,6 @@
 // hit_test — resolve a CSS selector to its element's bounding-box centre
-// and emit `Input.dispatchMouseEvent` at integer CSS-pixel coordinates
-// (BC-SURF-05). Shared by Click, Hover, Scroll.
+// and emit `Input.dispatchMouseEvent` at integer CSS-pixel coordinates.
+// Shared by Click, Hover, Scroll.
 //
 // # Why this module exists
 //
@@ -26,7 +26,7 @@
 //        - missing field / wrong arity → `WebHitTestFailed`
 //        - collapsed quad / zero-area parallelogram → `WebHitTestFailed`
 //   5. centre = `((quad[0]+quad[4])/2, (quad[1]+quad[5])/2)`,
-//      rounded f64 → i64 (BC-SURF-05 integer wire constraint).
+//      rounded f64 → i64 (integer wire constraint).
 //
 // # Wire shape decoding
 //
@@ -97,8 +97,8 @@ struct ViewportRect {
 /// Resolve `selector` to the integer CSS-pixel centre of its
 /// bounding-box. Errors map to typed `HostError` variants per the
 /// header contract. Coordinates are rounded (not truncated) to honour
-/// BC-SURF-05's integer wire constraint while staying as close as
-/// possible to the f64 quad Chromium reports.
+/// the integer wire constraint while staying as close as possible to
+/// the f64 quad Chromium reports.
 pub fn resolve_centre_for_selector(selector: &str) -> Result<(i64, i64), HostError> {
     // 1. Root document nodeId.
     let doc_bytes = host::shim_call(
@@ -224,8 +224,8 @@ pub fn resolve_centre_for_selector(selector: &str) -> Result<(i64, i64), HostErr
 ///   non-axis-aligned but still-parallelogram quads), the diagonals
 ///   bisect each other.
 /// - Rounding: `f64::round()` (round-half-away-from-zero), then `as i64`.
-///   This honours BC-SURF-05's integer wire constraint while staying
-///   within 0.5 px of the f64 centre.
+///   This honours the integer wire constraint while staying within
+///   0.5 px of the f64 centre.
 pub(crate) fn centre_from_content_quad(q: &[f64]) -> Option<(i64, i64)> {
     if q.len() != 8 {
         return None;

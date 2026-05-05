@@ -1,11 +1,11 @@
 // CoreApiFacade replay/diff/inspect/validate — bridges CoreFacadeBridge methods
 // to loom-core internals.
 //
-// AC coverage:
-//   AC-REPLAY-01.1 / AC-NFR-DET-01.1: replay_session_to_id → ReplayEngine::replay
-//   AC-REPLAY-02.1-02.3: diff_sessions_json → ReplayEngine::diff
-//   AC-REPLAY-03.1: inspect_session_json → WAL read (read-only)
-//   AC-REPLAY-01.2 precondition: validate_session_result → chain + CAS check
+// Behaviour:
+//   replay_session_to_id → ReplayEngine::replay
+//   diff_sessions_json → ReplayEngine::diff
+//   inspect_session_json → WAL read (read-only)
+//   validate_session_result → chain + CAS check (replay precondition)
 
 use crate::content_store::ContentRef;
 use crate::core_api_facade::CoreApiFacade;

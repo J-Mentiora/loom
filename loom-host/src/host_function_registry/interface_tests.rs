@@ -1,14 +1,13 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/host_function_registry/interface_tests.rs` instead.
-// Interface tests for `HostFunctionRegistry`. Verifies IC-HOST-08
-// (two pre-built linkers; mode-flip is a pointer choice) and the
-// BC-HOST-02 invariant that linkers are populated via the generated
-// `add_to_linker`.
+// Interface tests for `HostFunctionRegistry`. Verifies the two-linkers
+// contract (mode-flip is a pointer choice) and the invariant that
+// linkers are populated via the generated `add_to_linker`.
 
 use super::host_function_registry::HostFunctionRegistry;
 use crate::wit_type_marshaller::Mode;
 
-// === IC-HOST-08: exactly two linkers, fixed at startup ===
+// === Exactly two linkers, fixed at startup ===
 
 #[test]
 fn registry_holds_exactly_two_linkers() {
@@ -18,8 +17,8 @@ fn registry_holds_exactly_two_linkers() {
 #[test]
 fn linker_for_returns_distinct_pointers_for_live_and_replay() {
     // Compile-time pin: `linker_for(Mode::Live)` and `linker_for(Mode::Replay)`
-    // are different references. Phase 5.4 will verify pointer inequality
-    // with a real `Linker`. Here we just pin the signature.
+    // are different references. Pointer inequality is verified with a
+    // real `Linker` in the implementation. Here we just pin the signature.
     fn _ck(
         r: &HostFunctionRegistry,
         m: Mode,
@@ -65,7 +64,7 @@ fn registry_constructor_takes_only_engine_no_module_library_or_runtime_handle() 
     let _ = _ck;
 }
 
-// === BC-HOST-02 HARD: add_to_linker is the registration mechanism ===
+// === add_to_linker is the registration mechanism ===
 
 #[test]
 fn doc_pin_uses_generated_add_to_linker_not_hand_rolled_extern_fn() {
@@ -76,13 +75,13 @@ fn doc_pin_uses_generated_add_to_linker_not_hand_rolled_extern_fn() {
     // host signatures live in `loom-host`.
 }
 
-// === IC-HOST-08 HARD: replay never reaches live side-effects ===
+// === Replay never reaches live side-effects ===
 
 #[test]
 fn doc_pin_replay_linker_registers_replay_host_fns_not_live() {
-    // Once Phase 5.4 implements `new`, the `replay_linker` MUST have
-    // its host-fns registered against `ReplayHostFns`, NOT
-    // `LiveHostFns`. The doc string and the impl pin this.
+    // Once `new` is implemented, the `replay_linker` MUST have its
+    // host-fns registered against `ReplayHostFns`, NOT `LiveHostFns`.
+    // The doc string and the impl pin this.
     let pin = "replay_linker registers `ReplayHostFns`";
     assert!(pin.contains("ReplayHostFns"));
 }

@@ -3,16 +3,17 @@
 // This crate produces `loom_surface_web.wasm` via:
 //   cargo build --target wasm32-wasip2 -p loom-surface-web
 //
-// Phase 6 scope: navigate uses the typed `navigate-execute` host function;
-// all other verbs forward via `shim_call`. Phase 8 wires full dispatch.
+// Current dispatch: navigate uses the typed `navigate-execute` host
+// function; all other verbs forward via `shim_call`. Full typed dispatch
+// for the remaining verbs is followup work.
 //
 // Note: WIT-binding items are gated on `target_arch = "wasm32"` because
 // `wit_bindgen::generate!()` and the `export!()` macro emit symbols that
 // only link on wasm32. The `hex_sha256` helper and its unit tests are
 // target-agnostic so `cargo test -p loom-surface-web` exercises them on
 // the host target — SHA-256 output must match Python's hashlib.sha256
-// byte-for-byte (AC-SHA-03), be 64 lowercase hex chars (AC-SHA-02), and
-// be deterministic across calls (AC-SHA-04).
+// byte-for-byte, be 64 lowercase hex chars, and be deterministic across
+// calls.
 
 #[cfg(target_arch = "wasm32")]
 wit_bindgen::generate!({
@@ -29,7 +30,7 @@ use exports::loom::surface::web_surface::{Action, HostError, Receipt};
 use loom::surface::host;
 
 /// Navigate verb: calls the typed `navigate-execute` host function and
-/// populates all navigate tier-2 receipt fields (AC-NAVRECEIPT-01..05).
+/// populates all navigate tier-2 receipt fields.
 /// The action payload bytes are interpreted as a UTF-8 URL string.
 #[cfg(target_arch = "wasm32")]
 fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
@@ -43,9 +44,9 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
     let action_hash = hex_sha256(&a.payload);
 
     // Host's `navigate_execute` is now the sole HTTP 4xx/5xx + transport-
-    // error gate (AC-NAVERR-01..03). It returns Err(HostError::ShimFailure)
-    // for those cases — which we propagate via `?`. The guest never sees
-    // a `result.status_code >= 400` value: the host short-circuits first.
+    // error gate. It returns Err(HostError::ShimFailure) for those cases
+    // — which we propagate via `?`. The guest never sees a
+    // `result.status_code >= 400` value: the host short-circuits first.
     let result = host::navigate_execute(&action_hash, &url, a.deadline_ms)?;
 
     // Deterministic outcome hash: digest of dom + screenshot hashes concatenated.
@@ -76,7 +77,7 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
 }
 
 /// Evaluate verb: calls the typed `evaluate-execute` host function and
-/// populates the evaluate-tier receipt fields (AC-EVALRESULT-01..04).
+/// populates the evaluate-tier receipt fields.
 /// The action payload bytes are interpreted as a UTF-8 JS expression.
 #[cfg(target_arch = "wasm32")]
 fn evaluate_verb(a: Action) -> Result<Receipt, HostError> {
@@ -148,7 +149,7 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
     // querySelector('#missing').click() raises TypeError on null),
     // CDP returns `exceptionDetails` in the response. Without checking
     // for it the receipt would falsely report status="success" — the
-    // agent thinks the click landed when it didn't (AC-WEBVERBS-03..05).
+    // agent thinks the click landed when it didn't.
     //
     // The check is byte-pattern based to avoid pulling a CBOR decoder
     // into the wasm guest. CBOR text strings are length-prefixed; the
@@ -184,9 +185,9 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
 
     let now = host::clock_now();
     let response_hash = hex_sha256(&response);
-    // AC-SCREENSHOT-01 / AC-SNAPSHOT-01: surface the CDP response hash
-    // on the receipt for screenshot + snapshot verbs. This is a
-    // deterministic identifier of the captured artifact (bytes →
+    // Surface the CDP response hash on the receipt for screenshot +
+    // snapshot verbs. This is a deterministic identifier of the captured
+    // artifact (bytes →
     // SHA-256). NOTE: at this layer we don't push the bytes into the
     // content store — that's a future host-side enhancement (a typed
     // `record_blob` host function). Today the hash gives agents
@@ -276,7 +277,7 @@ fn contains_value_false(bytes: &[u8]) -> bool {
 /// produces canonical CBOR for every web verb's `Action.payload` via
 /// `build_chromium_args` (loom-daemon/src/main.rs), so SHA-256 over
 /// `a.payload` IS SHA-256 of the canonical CBOR action payload that
-/// AC-SHA-01 requires.
+/// the host conventions require.
 //
 // dead_code on host target because navigate_verb / dispatch are
 // wasm32-gated; the helper is exercised on host via the `tests` module.
@@ -332,7 +333,7 @@ export!(SurfaceWebImpl);
 mod tests {
     use super::hex_sha256;
 
-    /// AC-SHA-03 — equality with Python `hashlib.sha256`.
+    /// Equality with Python `hashlib.sha256`.
     /// Vector from FIPS 180-4: SHA-256("abc") =
     ///   ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
     /// Identical to `hashlib.sha256(b"abc").hexdigest()`.
@@ -344,7 +345,7 @@ mod tests {
         );
     }
 
-    /// AC-SHA-03 — empty input vector.
+    /// Empty input vector.
     /// SHA-256("") = e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855.
     /// Same as `hashlib.sha256(b"").hexdigest()`.
     #[test]
@@ -355,7 +356,7 @@ mod tests {
         );
     }
 
-    /// AC-SHA-02 — output is 64 lowercase hex chars across input sizes.
+    /// Output is 64 lowercase hex chars across input sizes.
     #[test]
     fn sha256_output_is_64_lowercase_hex_chars() {
         for bytes in [
@@ -380,7 +381,7 @@ mod tests {
         }
     }
 
-    /// AC-SHA-04 / AC-NFR-DET-01.1 — deterministic across calls.
+    /// Deterministic across calls.
     #[test]
     fn sha256_is_deterministic_across_calls() {
         let input = b"loom-surface-web payload bytes";

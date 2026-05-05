@@ -44,7 +44,7 @@ fn registry_required_flags_match_router() {
 fn descriptions_are_multi_paragraph() {
     // Defends against accidental truncation: every description should contain
     // at least one paragraph break (\n\n), proving it carries the substance
-    // promised by AC-DOCS-01 ("descriptions from #[doc]") rather than a single
+    // promised by "descriptions from #[doc]" rather than a single
     // sentence that could just live in `summary`. This is a structural check
     // — not a keyword assertion — so legitimate prose edits don't false-fire.
     for action in ACTIONS {

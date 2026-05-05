@@ -1,6 +1,6 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/PrettyRenderer/interface_tests.rs` instead.
-// Interface tests for `PrettyRenderer`. Verifies IC-CLI-02
+// Interface tests for `PrettyRenderer`. Verifies
 // schema-driven column derivation and NO_COLOR handling.
 
 use super::pretty_renderer::{detect_color_enabled, PrettyRenderer};
@@ -43,7 +43,7 @@ fn detect_color_enabled_signature() {
     let _ = _ck;
 }
 
-// === IC-CLI-02: schema-driven column list ===
+// === schema-driven column list ===
 //
 // `columns_from_schema` is a pure function over a JSON-Schema object;
 // the test below documents the input shape (a JSON Schema with
@@ -59,8 +59,8 @@ fn columns_from_schema_signature_lock() {
         }
     });
     let _ = PrettyRenderer::columns_from_schema(&schema);
-    // Phase 5.4 will assert byte-equal column ordering. For now the
-    // signature is the contract surface.
+    // A future iteration will assert byte-equal column ordering. For
+    // now the signature is the contract surface.
 }
 
 // === D-16 NO_COLOR spec correctness ===

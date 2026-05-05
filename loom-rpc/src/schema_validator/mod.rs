@@ -1,5 +1,5 @@
 //! `schema_validator` — see `systems/loom-rpc/modules/schema_validator/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod schema_validator;
 pub use schema_validator::*;
@@ -135,7 +135,7 @@ impl SchemaValidatorApi for SchemaValidator {
         // legacy spellings (e.g. `web.type_text`) resolve to their canonical
         // form (`web.type`) BEFORE we consult `registered_methods` —
         // otherwise validation would reject the alias as MethodNotFound and
-        // dispatch-level canonicalisation would never fire (AC-CLIROUTE-02).
+        // dispatch-level canonicalisation would never fire .
         let method = loom_shared::action_aliases::canonicalise(method);
 
         // Built-in core RPC methods (session.*, vault.*, content.*, gc.*,
@@ -188,7 +188,7 @@ impl SchemaValidatorApi for SchemaValidator {
 
     fn validate_response(&self, method: &str, response: &serde_json::Value) -> ValidationOutcome {
         // Mirror request-side canonicalisation so a response from an
-        // alias-spelled method finds its schema (AC-CLIROUTE-02).
+        // alias-spelled method finds its schema .
         let method = loom_shared::action_aliases::canonicalise(method);
         let schema = match self.provider.lookup_response_schema(method) {
             Some(s) => s,

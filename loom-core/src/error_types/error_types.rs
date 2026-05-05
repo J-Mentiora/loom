@@ -4,16 +4,16 @@
 // - **Separate from LoomErrorCode (design decision Q1).** `ReceiptCode` is a
 //   public-facing action outcome discriminator; `LoomErrorCode` is for
 //   internal daemon-level infrastructure errors. They coexist without aliasing.
-// - **Stable 22-code enum (AC-CORE-05.2).** Adding a variant is SemVer-minor;
+// - **Stable 22-code enum.** Adding a variant is SemVer-minor;
 //   removing one is major. The wire string is snake_case (serde rename_all).
-// - **`WebActionCompleted` is an OK-status code** (AC-CORE-04.1). `ReceiptCode`
+// - **`WebActionCompleted` is an OK-status code.** `ReceiptCode`
 //   covers both success discriminators and error codes.
 // - **`as_wire()` matches serde output (P1 fix).** Both use snake_case; tests
 //   verify parity.
 
 use serde::{Deserialize, Serialize};
 
-/// Stable 22-code receipt status/error discriminator (AC-CORE-05.2).
+/// Stable 22-code receipt status/error discriminator.
 ///
 /// Emitted in the `code` field of every receipt. `WebActionCompleted` is the
 /// sentinel used by OK receipts across all action tiers.
@@ -94,7 +94,7 @@ impl ReceiptCode {
     }
 }
 
-/// Receipt surface discriminator (AC-CORE-05.1).
+/// Receipt surface discriminator.
 /// One of: web, core, vault, budget, protocol.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

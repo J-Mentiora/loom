@@ -7,9 +7,10 @@
 // - Response forwarded verbatim to `OutputFormatter` (receipt pass-through).
 // - Exit codes per loom-cli_contract.md: 0 = ok, 1 = error receipt, 2 = usage error.
 //
-// # Phase 7 note
-// `import.playwright` RPC method registration lives in loom-rpc — Phase 7 integration
-// task. The CLI → daemon path is tested end-to-end in Phase 7 wire-boundary tests.
+// # RPC integration note
+// `import.playwright` RPC method registration lives in loom-rpc and is a
+// follow-up integration task. The CLI → daemon path will be tested
+// end-to-end in wire-boundary tests.
 
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -34,7 +35,7 @@ pub async fn import_playwright(
     cfg: &CliConfig,
     args: ImportPlaywrightArgs,
 ) -> Result<(), CliError> {
-    // AC-PWIMPORT-01: typed error envelope when the trace file is missing
+    // typed error envelope when the trace file is missing
     // or unreadable, instead of leaking the raw `os error 2`. Use Receipt
     // (exit 1) rather than Internal (exit 2): the file argument is well-
     // formed at the clap level — the user supplied a path, it just doesn't
@@ -68,8 +69,8 @@ pub async fn import_playwright(
         )
         .await?;
 
-    // Forward raw receipt to stdout (IC-CLI-03 verbatim; AC-TTY-* mode
-    // selection happens inside emit).
+    // Forward raw receipt to stdout (verbatim; TTY mode selection
+    // happens inside emit).
     emit_to_stdout("session.import", &resp, cfg, None)?;
     Ok(())
 }

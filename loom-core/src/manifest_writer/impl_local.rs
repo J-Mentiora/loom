@@ -1,6 +1,6 @@
 // LocalManifestWriter implementation — append-only WAL with JCS hash chain.
-// IC-CORE-04 / SR-CORE-17: prev_hash = sha256(serde_jcs::to_string(prev_entry)).
-// BC HARD #3: serde_json::to_string is BANNED; only serde_jcs::to_string used here.
+// prev_hash = sha256(serde_jcs::to_string(prev_entry)).
+// HARD #3: serde_json::to_string is BANNED; only serde_jcs::to_string used here.
 
 use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::manifest_writer::{
@@ -87,7 +87,7 @@ fn last_wal_line(wal_path: &Path) -> Result<Option<String>, LoomError> {
 /// Build the public entries list from the WAL — only `ActionReceipt` variants.
 /// Each entry has: `action_id` (u64), `action` (null), `receipt` (hex-encoded
 /// receipt_canonical_bytes), `content_refs` ([]).
-/// AC-CORE-03.1: used by `export_manifest_json` to produce the public checkpoint.
+/// Used by `export_manifest_json` to produce the public checkpoint.
 fn manifest_action_entries_as_json(wal_path: &Path) -> Result<Vec<serde_json::Value>, LoomError> {
     let content = match fs::read_to_string(wal_path) {
         Ok(c) => c,
@@ -128,7 +128,7 @@ fn manifest_action_entries_as_json(wal_path: &Path) -> Result<Vec<serde_json::Va
 impl LocalManifestWriter {
     /// Produce a public-facing `manifest.json` checkpoint in the session directory.
     /// Writes `{"entries": [...]}` with one entry per `ActionReceipt` in the WAL.
-    /// Atomic: write to `.json.tmp` → `sync_all` → `rename`. Per AC-CORE-03.1.
+    /// Atomic: write to `.json.tmp` → `sync_all` → `rename`.
     pub fn export_manifest_json(&self, session: SessionId) -> Result<(), LoomError> {
         let session_dir = self.sessions_root.join(&session.0);
         let wal_path = session_dir.join("manifest.wal");
@@ -229,7 +229,7 @@ impl ManifestWriter for LocalManifestWriter {
         writeln!(file, "{json_line}")?;
         file.sync_all()?;
 
-        // AC-CORE-03.1: produce manifest.json checkpoint when session closes.
+        // Produce manifest.json checkpoint when session closes.
         if is_terminal {
             self.export_manifest_json(session)?;
         }

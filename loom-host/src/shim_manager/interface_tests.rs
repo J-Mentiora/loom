@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/shim_manager/interface_tests.rs` instead.
-// Interface tests for `ShimManager`. Verifies BC-HOST-04 (no platform
-// symbols), the circuit-breaker state machine, and per-shim error code
+// Interface tests for `ShimManager`. Verifies the no-platform-symbols
+// boundary, the circuit-breaker state machine, and per-shim error code
 // mapping.
 
 use super::shim_manager::{BreakerState, ShimConfig, ShimId, ShimManager};
@@ -62,7 +62,7 @@ fn breaker_starts_unknown_until_first_send() {
 #[test]
 fn breaker_reset_clears_state_to_closed() {
     let (mgr, id) = fixture();
-    // Compile-time pin only; Phase 5.4 sets up open state then resets.
+    // Compile-time pin only; the implementation sets up open state then resets.
     mgr.breaker_reset(&id);
     let _ = BreakerState::Closed;
 }
@@ -92,7 +92,7 @@ fn spawn_retry_default_is_one() {
     assert_eq!(c.spawn_retry, 1); // single retry on posix_spawn race
 }
 
-// === Send is async (BC-HOST-01: borrows caller's tokio handle) ===
+// === Send is async (borrows caller's tokio handle) ===
 
 #[test]
 fn send_signature_is_async_and_returns_bytes() {
@@ -131,7 +131,7 @@ fn shim_unavailable_code_carries_retry_after_ms() {
     let _e = LoomErrorCode::ShimBreakerOpen;
 }
 
-// === BC-HOST-04: no platform-symbol imports ===
+// === No platform-symbol imports ===
 
 #[test]
 fn shim_id_is_a_plain_string_newtype_no_platform_types() {

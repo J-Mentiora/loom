@@ -1,8 +1,8 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/schema_validator/interface_tests.rs` instead.
-// Interface tests for `SchemaValidator`. Verifies IC-RPC-03 pre-dispatch
-// position, SR-RPC-02 strict-mode violation kinds, response-side
-// validation for IC-RPC-10.
+// Interface tests for `SchemaValidator`. Verifies pre-dispatch
+// position, strict-mode violation kinds, response-side
+// validation for.
 
 use super::schema_validator::{
     SchemaValidator, SchemaValidatorApi, ValidationOutcome, ViolationKind,
@@ -56,7 +56,7 @@ fn validate_request_signature_takes_method_and_params() {
 
 #[test]
 fn validate_response_signature_for_ic_rpc_10() {
-    // IC-RPC-10: vault.grant response stripped of secret-shaped fields.
+    // vault.grant response stripped of secret-shaped fields.
     fn _ck<V: SchemaValidatorApi>(v: &V, m: &str, r: &serde_json::Value) -> ValidationOutcome {
         v.validate_response(m, r)
     }
@@ -65,7 +65,7 @@ fn validate_response_signature_for_ic_rpc_10() {
 
 #[test]
 fn validation_outcome_distinguishes_pass_violation_method_not_found() {
-    // IC-RPC-03: failure short-circuits dispatch.
+    // failure short-circuits dispatch.
     let _: ValidationOutcome = ValidationOutcome::Pass;
     fn _ck_v(e: JsonRpcError) -> ValidationOutcome {
         ValidationOutcome::Violation(e)
@@ -79,7 +79,7 @@ fn validation_outcome_distinguishes_pass_violation_method_not_found() {
 
 #[test]
 fn violation_kind_covers_sr_rpc_02_categories() {
-    // SR-RPC-02 strict mode coverage.
+    // strict mode coverage.
     let _ = ViolationKind::FieldMissing;
     let _ = ViolationKind::FieldUnknown;
     let _ = ViolationKind::TypeMismatch;

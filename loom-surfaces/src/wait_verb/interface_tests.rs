@@ -1,5 +1,5 @@
-// Interface tests for `WaitVerb`. Verifies IC-SURF-02 (clock_now-driven
-// polling, no `std::thread::sleep`), IC-SURF-07 hash-only tier.
+// Interface tests for `WaitVerb`. Verifies clock_now-driven polling
+// (no `std::thread::sleep`) and the hash-only tier.
 
 extern crate alloc;
 

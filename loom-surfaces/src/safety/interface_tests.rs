@@ -1,13 +1,12 @@
 // Interface tests for SafetyPolicy.
-// AC-WEB-07.1 / AC-WEB-07.2 / AC-SAFETY-02.1
 
 use super::safety::{PolicyViolation, SafetyPolicy, SafetyProfile};
 
-// --- AC-WEB-07.1: safe profile blocks destructive evaluate ---
+// --- Safe profile blocks destructive evaluate ---
 
 #[test]
 fn safe_profile_blocks_cookie_write() {
-    // AC-WEB-07.1: action.evaluate({js: "document.cookie = ''"}) is blocked
+    // action.evaluate({js: "document.cookie = ''"}) is blocked
     let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document.cookie = ''");
     assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
 }
@@ -33,7 +32,7 @@ fn safe_profile_blocks_eval() {
 
 #[test]
 fn default_profile_allows_destructive_expressions() {
-    // AC-WEB-07.1: only safe profile blocks; default profile is unrestricted
+    // only safe profile blocks; default profile is unrestricted
     let result = SafetyPolicy::check_evaluate(SafetyProfile::Default, "document.cookie = ''");
     assert_eq!(result, None);
 }
@@ -53,11 +52,11 @@ fn safe_profile_allows_read_only_dom_query() {
     assert_eq!(result, None);
 }
 
-// --- AC-SAFEPROF-01 additions: window.location + serviceWorker ---
+// --- Additions: window.location + serviceWorker ---
 
 #[test]
 fn safe_profile_blocks_window_location_assignment() {
-    // AC-SAFEPROF-01 reproducer: the operator's exact bug.
+    // Reproducer: the operator's exact bug.
     let result = SafetyPolicy::check_evaluate(
         SafetyProfile::Safe,
         "window.location.href = \"https://evil.example.com\"",
@@ -99,7 +98,7 @@ fn safe_profile_blocks_service_worker_register() {
 
 #[test]
 fn safe_profile_allows_service_worker_feature_detect() {
-    // AC-SAFEPROF-01 deliberate carve-out (decisions.md Q11): tightening
+    // Deliberate carve-out (decisions.md Q11): tightening
     // the pattern from `navigator.serviceWorker` to
     // `navigator.serviceWorker.register` was specifically to leave this
     // common defensive pattern working under safe profile. If this test
@@ -113,7 +112,7 @@ fn safe_profile_allows_service_worker_feature_detect() {
 
 #[test]
 fn safe_profile_blocks_destructive_evaluate_via_window_location_full_repro() {
-    // AC-SAFEPROF-01 end-to-end on the `check_evaluate` boundary —
+    // End-to-end on the `check_evaluate` boundary —
     // mirrors the exact test the daemon-layer gate runs. If the
     // production gate ever diverges from this expectation, the substring
     // set is the source of truth.
@@ -126,8 +125,8 @@ fn safe_profile_blocks_destructive_evaluate_via_window_location_full_repro() {
 
 #[test]
 fn default_profile_allows_window_location_assignment_regression_guard() {
-    // AC-SAFEPROF-03: regression guard — without --profile safe, the
-    // session must NOT block destructive evaluates.
+    // Regression guard — without --profile safe, the session must NOT
+    // block destructive evaluates.
     let result = SafetyPolicy::check_evaluate(
         SafetyProfile::Default,
         "window.location.href = \"https://evil.example.com\"",
@@ -135,11 +134,11 @@ fn default_profile_allows_window_location_assignment_regression_guard() {
     assert_eq!(result, None);
 }
 
-// --- AC-WEB-07.2: safe profile restricts download paths ---
+// --- Safe profile restricts download paths ---
 
 #[test]
 fn download_outside_session_dir_is_not_scoped() {
-    // AC-WEB-07.2: download to /tmp/foo.bin is rejected
+    // Download to /tmp/foo.bin is rejected
     assert!(!SafetyPolicy::is_session_scoped_path(
         "/tmp/foo.bin",
         "/Users/alice/.loom/sessions/01abc/downloads",
@@ -171,11 +170,11 @@ fn download_path_check_handles_trailing_slash() {
     ));
 }
 
-// --- AC-SAFETY-02.1: all session data stays under ~/.loom/ ---
+// --- All session data stays under ~/.loom/ ---
 
 #[test]
 fn loom_data_path_accepts_under_root() {
-    // AC-SAFETY-02.1: sessions/<id>/manifest.wal is under ~/.loom/
+    // sessions/<id>/manifest.wal is under ~/.loom/
     assert!(SafetyPolicy::is_loom_data_path(
         "/Users/alice/.loom/sessions/01abc/manifest.wal",
         "/Users/alice/.loom",
@@ -192,7 +191,7 @@ fn loom_data_path_accepts_content_store() {
 
 #[test]
 fn loom_data_path_rejects_tmp() {
-    // AC-SAFETY-02.1: /tmp writes are not allowed
+    // /tmp writes are not allowed
     assert!(!SafetyPolicy::is_loom_data_path(
         "/tmp/foo.txt",
         "/Users/alice/.loom",
@@ -201,7 +200,7 @@ fn loom_data_path_rejects_tmp() {
 
 #[test]
 fn loom_data_path_rejects_documents() {
-    // AC-SAFETY-02.1: ~/Documents writes are not allowed
+    // ~/Documents writes are not allowed
     assert!(!SafetyPolicy::is_loom_data_path(
         "/Users/alice/Documents/file.txt",
         "/Users/alice/.loom",

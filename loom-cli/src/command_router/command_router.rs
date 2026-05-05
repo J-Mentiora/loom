@@ -1,14 +1,14 @@
 // CommandRouter — top-level clap-derived dispatch.
 //
 // # Contract semantics
-// - **IC-CLI-03 (subcommand → 1 RPC).** Every variant of the `Command`
-//   enum corresponds to exactly one entry in design §6's
+// - **Subcommand → 1 RPC.** Every variant of the `Command`
+//   enum corresponds to exactly one entry in the
 //   subcommand-table. The 3 RPC-free local-action variants
 //   (`Serve`, `Postinstall`, `Doctor`) plus `Version` and `Mcp` route
 //   to local runners, never to `RpcClient`.
 // - **clap derive.** `Command` is a `clap::Subcommand`; flag names
 //   are mechanically derived from JSON-Schema field names by
-//   `HelpGenerator` (IC-CLI-09). No hand-curated names.
+//   `HelpGenerator`. No hand-curated names.
 // - **Common preconditions.** `dispatch` enforces config-loaded and
 //   observability-initialised before handing off to a handler.
 
@@ -43,13 +43,13 @@ pub struct Cli {
     pub config: Option<std::path::PathBuf>,
 
     /// Force human-readable colored multi-line output, even when stdout
-    /// is piped. (Was indented JSON pre-AC-TTY-01; see CHANGELOG.) The
+    /// is piped. (Was indented JSON in earlier versions; see CHANGELOG.) The
     /// auto-detect default emits this format only when stdout is a TTY.
     #[arg(long, global = true)]
     pub pretty: bool,
 
     /// Force canonical JSON output, even when stdout is a TTY. Bypasses
-    /// the auto-detected pretty-print path (AC-TTY-03). Mutually
+    /// the auto-detected pretty-print path. Mutually
     /// exclusive with `--pretty`.
     #[arg(long, global = true)]
     pub json: bool,
@@ -64,7 +64,7 @@ pub struct Cli {
 
     /// Color choice: `auto` (default), `always`, or `never`. Honours
     /// `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, and `TERM=dumb` env
-    /// conventions in `auto` mode (AC-TTY-04). Mutually exclusive with
+    /// conventions in `auto` mode. Mutually exclusive with
     /// `--no-color`.
     #[arg(long, global = true, value_enum)]
     pub color: Option<ColorChoice>,
@@ -78,7 +78,7 @@ pub struct Cli {
 }
 
 /// Top-level command enum. One variant per subcommand family.
-/// IC-CLI-03's subcommand → 1 RPC mapping is enforced by routing
+/// The subcommand → 1 RPC mapping is enforced by routing
 /// each variant to exactly one handler in `dispatch`.
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -87,19 +87,18 @@ pub enum Command {
     Session(SessionCmd),
     /// Action invocation (RPC).
     Action(ActionArgs),
-    /// Vault commands (RPC). Only `add` may prompt (IC-CLI-10).
+    /// Vault commands (RPC). Only `add` may prompt.
     #[command(subcommand)]
     Vault(VaultCmd),
     /// Garbage collection (RPC).
     Gc(GcArgs),
-    /// Spawn the daemon. RPC-free local action (IC-CLI-05).
+    /// Spawn the daemon. RPC-free local action.
     Serve(ServeArgs),
-    /// Idempotent installer. RPC-free local action (IC-CLI-06).
+    /// Idempotent installer. RPC-free local action.
     Postinstall(PostinstallArgs),
-    /// Health checks. RPC-free local action (IC-CLI-07).
+    /// Health checks. RPC-free local action.
     Doctor(DoctorArgs),
-    /// MCP delegation entry. RPC-free; delegates to loom-mcp
-    /// (SR-CLI-02).
+    /// MCP delegation entry. RPC-free; delegates to loom-mcp.
     #[command(name = "mcp")]
     Mcp(McpArgs),
     /// Import external recordings as non-replayable Loom sessions (RPC).
@@ -112,7 +111,7 @@ pub enum Command {
 /// Import subcommand — one variant per supported source format.
 #[derive(Debug, Subcommand)]
 pub enum ImportCmd {
-    /// Import a Playwright trace.zip. (AC-INTEROP-01.1)
+    /// Import a Playwright trace.zip.
     Playwright(ImportPlaywrightArgs),
 }
 
@@ -204,7 +203,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
         }
 
         Command::Postinstall(args) => {
-            // AC-DIST-01: loom-binaries install dir defaults to
+            // The loom-binaries install dir defaults to
             // dirs::data_local_dir()/loom/bin/. If unavailable (HOME unset),
             // fall back to current_exe().parent() so brew/manual paths still
             // succeed (they'll skip via co-location detection anyway).
@@ -251,7 +250,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 keychain_label: "com.loom.auth".to_string(),
             };
             let result = crate::doctor_runner::run(&rpc, &chromium, &paths).await;
-            // IC-CLI-07: always emit the DoctorReport JSON to stdout (pass or fail).
+            // Always emit the DoctorReport JSON to stdout (pass or fail).
             let report = match &result {
                 Ok(r) => r,
                 Err(CliError::DoctorFailed(r)) => r,
@@ -260,7 +259,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
             let value = serde_json::to_value(report)
                 .unwrap_or_else(|_| serde_json::json!({"error":"serialization_failed"}));
             crate::output_formatter::emit_to_stdout("doctor", &value, config, None)?;
-            // AC-DOCS-03 advisory: soft-warn (NOT a check failure) when man
+            // Advisory: soft-warn (NOT a check failure) when man
             // pages aren't installed at the resolved man dir. Non-fatal —
             // doctor's exit code is unchanged. Helps users notice why
             // `man loom` doesn't work.

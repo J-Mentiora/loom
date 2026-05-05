@@ -1,24 +1,24 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-rpc/modules/host_service_adapter/interfaces.rs` instead.
 // HostServiceAdapter — routes `action.<surface>.<verb>` methods to
-// `loom-host::WasmHost::dispatch` (IC-RPC-07 / IC-RPC-09 / SR-RPC-05).
+// `loom-host::WasmHost::dispatch`.
 //
 // # Contract semantics
-// - **Single dispatch point (IC-RPC-09).** Every action method
+// - **Single dispatch point.** Every action method
 //   translates to a single `WasmHost::dispatch(action).await` call.
 //   This adapter awaits the host future on the connection's tokio
-//   task — no extra spawn (BC-RPC-01).
-// - **No CDP bytes (IC-RPC-07 / AC-WEB-01.1).** This adapter receives
+//   task — no extra spawn.
+// - **No CDP bytes.** This adapter receives
 //   only typed `Receipt` values from `WasmHost::dispatch`. CDP
 //   translation lives inside `loom-host::ReceiptMarshaller`. Any
 //   code path here that touched `serde_json::Value` of CDP shape
 //   would be a structural violation; this is enforced by the typed
 //   `Action` / `Receipt` Rust signatures emitted by wit-bindgen.
-// - **Latency partition (SR-RPC-05).** The await on
+// - **Latency partition.** The await on
 //   `WasmHost::dispatch` is the single boundary recorded as
 //   `host_dispatch_us` by `RpcObservability`; that interval is
-//   excluded from the IC-RPC-08 RPC-overhead budget.
-// - **Error mapping (IC-RPC-06).** `LoomError` returned by the host
+//   excluded from the RPC-overhead budget.
+// - **Error mapping.** `LoomError` returned by the host
 //   is propagated up; `RpcHandlers` invokes `ErrorTranslator`.
 
 use loom_core::receipt_builder::receipt_builder::NetworkSummary;
@@ -33,15 +33,15 @@ use std::sync::Arc;
 // module_kind: cross-system-bridge
 
 /// Marker trait satisfied by `loom_host::WasmHost`. The adapter holds
-/// `Arc<dyn WasmHostBridge>` for testability; in Phase 5.4 wiring
+/// `Arc<dyn WasmHostBridge>` for testability; in v5.4 wiring
 /// this becomes `Arc<loom_host::WasmHost>` directly.
 pub trait WasmHostBridge: Send + Sync {
     /// Dispatch an action to the WASM surface. Returns a typed
-    /// `Receipt` (CDP-free, per IC-RPC-07). This is the one and only
-    /// host-side entry point per IC-RPC-09.
+    /// `Receipt` (CDP-free, per the contract). This is the one and only
+    /// host-side entry point.
     fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, AdapterError>;
 
-    /// AC-DIST-05: true iff a chromium template was registered at host
+    /// true iff a chromium template was registered at host
     /// boot. False when the chromium_resolver returned `BrowserNotFound`
     /// at daemon boot. Default `true` keeps stub bridges (tests, mocks)
     /// behaving as today; production impls (`WasmBridge`, `StubHostBridge`)
@@ -51,7 +51,7 @@ pub trait WasmHostBridge: Send + Sync {
     }
 }
 
-/// WIT-derived action type (`wit/loom-surface.wit`). In Phase 5.4 the
+/// WIT-derived action type (`wit/loom-surface.wit`). In v5.4 the
 /// concrete fields are emitted by `wit-bindgen rust`; the variant
 /// names here mirror the contract's `action.<surface>.<verb>`
 /// canonical method-list block.
@@ -104,11 +104,11 @@ pub enum Action {
     },
     // Additional surface.verb pairs added as the WIT grows. The match
     // arm in `RpcHandlers` is exhaustive — adding a verb forces a
-    // handler addition (compile-time evidence for IC-RPC-09).
+    // handler addition (compile-time evidence).
 }
 
 /// WIT-derived receipt type. Always typed; never CDP-shaped
-/// (IC-RPC-07). `serde_json::Value` here is a domain payload (e.g.
+/// . `serde_json::Value` here is a domain payload (e.g.
 /// click coordinates), NOT the CDP wire envelope.
 ///
 /// `action_hash`, `outcome_hash`, `emitted_at_ms` mirror the WIT
@@ -116,7 +116,7 @@ pub enum Action {
 /// fixture/canned receipts (and trap-path receipts that never reach
 /// the guest) can leave them absent in the JSON output.
 ///
-/// Navigate tier-2 fields (AC-NAVRECEIPT-01..05): present only when the
+/// Navigate tier-2 fields : present only when the
 /// receipt was produced by a navigate action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
@@ -132,7 +132,7 @@ pub struct Receipt {
     pub outcome_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emitted_at_ms: Option<u64>,
-    // ---- Navigate tier-2 fields (AC-NAVRECEIPT-01) ----
+    // ---- Navigate tier-2 fields  ----
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -163,16 +163,16 @@ pub struct Receipt {
     /// roll-up so consumers don't need to scan the array.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_summary: Option<NetworkSummary>,
-    // ---- Evaluate tier fields (AC-EVALRESULT-01..04) ----
+    // ---- Evaluate tier fields  ----
     /// JS expression result, canonical-JSON encoded. `None` means either
     /// "not an evaluate action" or "result was offloaded to the content
     /// store" (in which case `return_value_blob_ref` carries the SHA-256).
-    /// AC-EVALRESULT-01.
+    ///.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_value_json: Option<String>,
     /// SHA-256 hex of the canonical-JSON evaluate result when its size
     /// exceeds the inline threshold (64 KB by default). `None` for
-    /// inline-sized results. AC-EVALRESULT-04.
+    /// inline-sized results..
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_value_blob_ref: Option<String>,
 }
@@ -190,7 +190,7 @@ pub enum ReceiptStatus {
 /// `"tls_error"`, `"shim_failure"`); `detail` carries kind-specific
 /// fields (e.g. `{status_code, url}` for `http_status`, `{url,
 /// chromium_error}` for transport-layer kinds). `detail` is `None` for
-/// kinds that have no kind-specific data. AC-NAVERR-01..03 specify
+/// kinds that have no kind-specific data...03 specify
 /// this exact shape for navigate receipts.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReceiptError {
@@ -204,13 +204,13 @@ pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode
 /// Trait surface so `RpcHandlers` can be unit-tested with a fake host.
 #[async_trait::async_trait]
 pub trait HostServiceAdapterApi: Send + Sync {
-    /// Single dispatch entry point (IC-RPC-09). Awaits the host
-    /// future on the caller's task (BC-RPC-01: no extra spawn).
+    /// Single dispatch entry point . Awaits the host
+    /// future on the caller's task (no extra spawn).
     /// The interval of this await is recorded as `host_dispatch_us`
-    /// and excluded from the IC-RPC-08 budget (SR-RPC-05).
+    /// and excluded from the budget .
     async fn dispatch_action(&self, action: Action) -> Result<Receipt, AdapterError>;
 
-    /// AC-DIST-05: true iff a chromium template was registered at host
+    /// true iff a chromium template was registered at host
     /// boot. False when the chromium_resolver returned `BrowserNotFound`
     /// or `current_exe()` failed (no shim_chromium config). Consumed by
     /// `session_create` to fail-fast with `BrowserNotFound` before any

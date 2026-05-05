@@ -3,7 +3,7 @@
 //
 // # Contract semantics
 // - Reads `sessions_root/<session_id>/manifest.wal` (JSONL, JCS-written).
-// - Blob retrieval via `ContentStore::get` (respects IC-CORE-03 integrity).
+// - Blob retrieval via `ContentStore::get` (respects content-integrity checks).
 // - `export_tarball`: gzip + tar with `manifest.json` + `cas/<sha256>` blobs.
 // - `export_har`: HAR 1.2 JSON, one entry per `ActionReceipt` in the WAL.
 // - `export_json`: JSON manifest with `manifest` + `content_blob_index` keys.
@@ -146,7 +146,7 @@ impl Exporter {
     /// One HAR entry per `NetworkEvent` recorded by the shim during a
     /// navigate; non-navigate receipts (click, evaluate, error) and
     /// navigate receipts with empty `network_events` contribute no
-    /// entries. (AC-HAREXPORT-01..05, AC-CLI-03.2, AC-INTEROP-02.1.)
+    /// entries.
     pub fn export_har(&self, session_id: &str) -> Result<Vec<u8>, LoomError> {
         let wal_path = self.sessions_root.join(session_id).join("manifest.wal");
         let content = std::fs::read_to_string(&wal_path)?;

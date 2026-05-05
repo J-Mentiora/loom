@@ -1,7 +1,6 @@
 //! Integration tests for `action-error-surfacing` feature.
-//! Covers AC-AESF-01 through AC-AESF-06.
 //!
-//! AC-AESF-06 requirement: invokes each error class and asserts
+//! Invokes each error class and asserts
 //! (a) exit code, (b) stderr is non-empty (via format_error), (c) stdout
 //! is empty (errors return before any println! in dispatch — structural guarantee).
 
@@ -39,7 +38,7 @@ fn schema_cache_with_navigate() -> (SchemaCache, TempDir) {
     (cache, dir) // return dir so it stays alive for the test
 }
 
-// ── AC-AESF-01: missing schemas dir error includes path + exit code 2 ───────
+// ── missing schemas dir error includes path + exit code 2 ───────
 
 #[test]
 fn test_ac_aesf_01_schema_cache_missing_dir_error_includes_path() {
@@ -92,14 +91,14 @@ fn test_ac_aesf_01_missing_schemas_format_error_non_empty() {
             let msg = format_error(&Err(e)).unwrap();
             assert!(
                 !msg.is_empty(),
-                "format_error for missing schemas must be non-empty (AC-AESF-06 (b))"
+                "format_error for missing schemas must be non-empty"
             );
         }
         Ok(_) => panic!("expected Err from missing schemas dir"),
     }
 }
 
-// ── AC-AESF-02: unknown method error names method + lists available ──────────
+// ── unknown method error names method + lists available ──────────
 
 #[test]
 fn test_ac_aesf_02_unknown_method_names_method() {
@@ -146,11 +145,11 @@ fn test_ac_aesf_02_unknown_method_format_error_non_empty() {
     let msg = format_error(&r).unwrap();
     assert!(
         !msg.is_empty(),
-        "AC-AESF-06 (b): format_error for unknown method must be non-empty"
+        "format_error for unknown method must be non-empty"
     );
 }
 
-// ── AC-AESF-03: malformed args error names failing param ────────────────────
+// ── malformed args error names failing param ────────────────────
 
 #[test]
 fn test_ac_aesf_03_malformed_args_names_missing_field() {
@@ -186,11 +185,11 @@ fn test_ac_aesf_03_malformed_args_format_error_non_empty() {
     let msg = format_error(&r).unwrap();
     assert!(
         !msg.is_empty(),
-        "AC-AESF-06 (b): format_error for malformed args must be non-empty"
+        "format_error for malformed args must be non-empty"
     );
 }
 
-// ── AC-AESF-04: SurfaceUnavailable — exit 5 + clear message ─────────────────
+// ── SurfaceUnavailable — exit 5 + clear message ─────────────────
 
 #[test]
 fn test_ac_aesf_04_surface_unavailable_exit_code_is_5() {
@@ -214,7 +213,7 @@ fn test_ac_aesf_04_surface_unavailable_format_error_mentions_surface() {
     assert!(!msg.is_empty());
 }
 
-// ── AC-AESF-05: every CliError variant has non-empty Display ────────────────
+// ── every CliError variant has non-empty Display ────────────────
 
 #[test]
 fn test_ac_aesf_05_every_variant_has_display() {
@@ -241,15 +240,11 @@ fn test_ac_aesf_05_every_variant_has_display() {
     ];
     for v in &variants {
         let s = format_error(&Err(v.clone())).unwrap();
-        assert!(
-            !s.is_empty(),
-            "format_error for {:?} must be non-empty (AC-AESF-05)",
-            v
-        );
+        assert!(!s.is_empty(), "format_error for {:?} must be non-empty", v);
     }
 }
 
-// ── AC-AESF-06: errors don't leak to stdout (structural guarantee test) ──────
+// ── errors don't leak to stdout (structural guarantee test) ──────
 
 #[test]
 fn test_ac_aesf_06_ok_result_produces_no_stderr_message() {

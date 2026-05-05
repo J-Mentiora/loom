@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/module_library/interface_tests.rs` instead.
-// Interface tests for `ModuleLibrary`. Verifies IC-HOST-07 (no lazy
-// JIT on dispatch), recovery semantics, and the read-lock-by-default
+// Interface tests for `ModuleLibrary`. Verifies the no-lazy-JIT-on-
+// dispatch contract, recovery semantics, and the read-lock-by-default
 // invariant.
 
 use super::module_library::{LoadFailure, ModuleLibrary, SurfaceName};
@@ -12,20 +12,20 @@ use std::sync::Arc;
 
 #[allow(dead_code)]
 fn fixture() -> Arc<ModuleLibrary> {
-    // Phase 5.4 will provide a real runtime + fixture builder. The
-    // tests in this file are compile-time signature pins only — none
-    // of them call `fixture()` directly.
+    // A real runtime + fixture builder is wired in the implementation.
+    // The tests in this file are compile-time signature pins only —
+    // none of them call `fixture()` directly.
     let _ = WasmRuntimeConfig::default();
-    panic!("test fixture pinned for Phase 5.4 — compile-time signatures only above")
+    panic!("test fixture pinned — compile-time signatures only above")
 }
 
-// === IC-HOST-07: cache miss → SurfaceUnavailable, NEVER lazy compile ===
+// === Cache miss → SurfaceUnavailable, NEVER lazy compile ===
 
 #[test]
 fn get_missing_surface_returns_surface_unavailable() {
     // Compile-time pin: the error code raised on cache miss is the
     // typed `LoomErrorCode::SurfaceUnavailable`. The actual return is
-    // verified by Phase 5.4 implementation.
+    // verified by the implementation.
     let _expected = LoomErrorCode::Unsupported;
     let _: Result<(), LoomError> = Err(LoomError::from(_expected));
 }
@@ -92,13 +92,13 @@ fn load_failure_carries_artifact_path_and_error_code() {
     assert!(f.artifact_path.ends_with("stocktwits.cwasm"));
 }
 
-// === Storage layout (BC §1) ===
+// === Storage layout ===
 
 #[test]
 fn surfaces_dir_is_passed_at_construction_not_resolved_internally() {
     // The library doesn't itself know about ~/Library/.../surfaces;
     // the binary entrypoint resolves the OS-specific path and passes it
-    // in. Keeps `loom-host` platform-symbol-free (BC-HOST-04).
+    // in. Keeps `loom-host` platform-symbol-free.
     fn _ck(rt: Arc<WasmRuntime>, dir: PathBuf) -> Arc<ModuleLibrary> {
         ModuleLibrary::new(rt, dir)
     }

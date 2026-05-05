@@ -1,9 +1,9 @@
-//! LLM passthrough shared types (FR-DET-07).
+//! LLM passthrough shared types .
 //! Shared here so loom-rpc/loom-mcp can reference without depending on loom-core.
 
 use serde::{Deserialize, Serialize};
 
-/// LLM passthrough mode for a session (FR-DET-07).
+/// LLM passthrough mode for a session .
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmMode {

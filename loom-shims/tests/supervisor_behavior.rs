@@ -1,7 +1,7 @@
 // Behavior tests for Supervisor locale env — TDD.
 //
 // AC coverage:
-//   AC-DET-06.1: test_lc_all_set_in_chromium_env
+//  .1: test_lc_all_set_in_chromium_env
 //                test_lang_set_in_chromium_env
 //                test_locale_scrub_removes_lc_messages
 //                test_restart_allowed_within_budget
@@ -9,7 +9,7 @@
 use loom_shims::supervisor::supervisor::{locale_scrub_env, restart_allowed, RestartBudget};
 use std::time::{Duration, Instant};
 
-// === AC-DET-06.1: locale-scrubbed env ===
+// === locale-scrubbed env ===
 
 #[test]
 fn test_lc_all_set_in_chromium_env() {
@@ -19,7 +19,7 @@ fn test_lc_all_set_in_chromium_env() {
     assert_eq!(
         lc_all.unwrap().1,
         "C.UTF-8",
-        "LC_ALL must be set to C.UTF-8 (AC-DET-06.1)"
+        "LC_ALL must be set to C.UTF-8"
     );
 }
 

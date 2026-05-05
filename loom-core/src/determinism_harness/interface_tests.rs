@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-core/modules/determinism_harness/interface_tests.rs` instead.
-// Interface tests for `DeterminismHarness`. Verifies SR-CORE-06 5
-// determinism mechanisms, IC-CORE-04 canonicalization, IC-CORE-07
+// Interface tests for `DeterminismHarness`. Verifies the 5
+// determinism mechanisms, canonicalization,
 // replay-mode host-fn swap.
 
 use super::determinism_harness::{DeterminismHarness, SideEffectTape, TapeFrame, TapeWriter};
@@ -20,7 +20,7 @@ fn fixture() -> DeterminismHarness {
     DeterminismHarness::new(42, mw)
 }
 
-// === IC-CORE-04 / SR-CORE-17: canonicalization ===
+// === Canonicalization ===
 
 #[test]
 fn canonicalize_signature_returns_vec_u8_loomerror() {
@@ -41,7 +41,7 @@ fn hash_canonical_returns_64_char_hex_string() {
     let _ = _ck;
 }
 
-// === SR-CORE-06: 5 determinism mechanisms ===
+// === 5 determinism mechanisms ===
 
 #[test]
 fn clock_now_returns_u64_nanoseconds_no_floats() {
@@ -104,7 +104,7 @@ fn tape_frame_numeric_fields_are_pure_integers() {
     }
 }
 
-// === IC-CORE-07: install_replay_mode swaps host-fn vtable ===
+// === install_replay_mode swaps host-fn vtable ===
 
 #[test]
 fn install_replay_mode_returns_host_fn_table_carrying_tape() {
@@ -139,7 +139,7 @@ fn replay_tape_exhaustion_surfaces_internal_tape_mismatch() {
     let _e: LoomErrorCode = LoomErrorCode::Internal;
 }
 
-// === Determinism by default (SR-CORE-14) ===
+// === Determinism by default ===
 
 #[test]
 fn harness_constructed_with_virtual_clock_and_seeded_rng_default_on() {

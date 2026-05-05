@@ -1,7 +1,7 @@
-// Re-export of the locked Phase 5.3 interface tests. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface tests. DO NOT EDIT here.
 // Edit `systems/loom-cli/modules/ConfigResolver/interface_tests.rs` instead.
-// Interface tests for `ConfigResolver`. Verifies BC-CLI-02 precedence
-// signature, AC-CFG-03.1 deny_unknown_fields posture, and the
+// Interface tests for `ConfigResolver`. Verifies precedence
+// signature, deny_unknown_fields posture, and the
 // schema-validation hook.
 
 use super::cli_config::{
@@ -43,7 +43,7 @@ fn validate_against_schema_signature() {
     let _ = _ck;
 }
 
-// === AC-CFG-03.1: deny_unknown_fields ===
+// === deny_unknown_fields ===
 //
 // Encoded structurally — `CliConfig` carries `#[serde(deny_unknown_fields)]`
 // at the type level. We assert this by deserialising a payload with an
@@ -69,11 +69,11 @@ fn cli_config_rejects_unknown_fields() {
     );
 }
 
-// === AC-CFG-02.1: zero-config startup ===
+// === zero-config startup ===
 
 #[test]
 fn test_zero_config_no_dir_succeeds() {
-    // AC-CFG-02.1: fresh install with no config dir → Ok with sensible defaults.
+    // fresh install with no config dir → Ok with sensible defaults.
     let inputs = ResolveInputs {
         cli_overrides: vec![],
         env_vars: vec![],
@@ -91,7 +91,7 @@ fn test_zero_config_no_dir_succeeds() {
 
 #[test]
 fn test_zero_config_defaults_have_sensible_values() {
-    // AC-CFG-02.1: compiled defaults are non-empty and have valid structure.
+    // compiled defaults are non-empty and have valid structure.
     let cfg = compiled_defaults();
     assert!(
         !cfg.socket_path.as_os_str().is_empty(),
@@ -116,11 +116,11 @@ fn test_zero_config_defaults_have_sensible_values() {
     assert!(!cfg.pretty, "pretty defaults to false");
 }
 
-// === AC-CFG-01.1: CLI flag > env var > config file precedence ===
+// === CLI flag > env var > config file precedence ===
 
 #[test]
 fn test_precedence_cli_wins_over_env_over_file() {
-    // AC-CFG-01.1: CLI flag wins over env var and config file.
+    // CLI flag wins over env var and config file.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let mut f = std::fs::File::create(&config_path).unwrap();
@@ -141,7 +141,7 @@ fn test_precedence_cli_wins_over_env_over_file() {
 
 #[test]
 fn test_precedence_env_wins_over_file_when_no_cli() {
-    // AC-CFG-01.1: env var wins over config file when no CLI override.
+    // env var wins over config file when no CLI override.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let mut f = std::fs::File::create(&config_path).unwrap();
@@ -162,7 +162,7 @@ fn test_precedence_env_wins_over_file_when_no_cli() {
 
 #[test]
 fn test_precedence_file_wins_when_no_env_no_cli() {
-    // AC-CFG-01.1: config file wins when no env var or CLI override.
+    // config file wins when no env var or CLI override.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let mut f = std::fs::File::create(&config_path).unwrap();
@@ -181,11 +181,11 @@ fn test_precedence_file_wins_when_no_env_no_cli() {
     );
 }
 
-// === AC-CFG-03.1: startup validation ===
+// === startup validation ===
 
 #[test]
 fn test_invalid_profile_fails_with_usage_error() {
-    // AC-CFG-03.1: invalid default_profile value → CliError::Usage naming the key.
+    // invalid default_profile value → CliError::Usage naming the key.
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let mut f = std::fs::File::create(&config_path).unwrap();
@@ -208,7 +208,7 @@ fn test_invalid_profile_fails_with_usage_error() {
 
 #[test]
 fn test_unknown_toml_key_fails_at_startup() {
-    // AC-CFG-03.1: unknown TOML key → startup failure (deny_unknown_fields).
+    // unknown TOML key → startup failure (deny_unknown_fields).
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     let mut f = std::fs::File::create(&config_path).unwrap();

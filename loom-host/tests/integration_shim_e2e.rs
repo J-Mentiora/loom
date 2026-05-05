@@ -1,4 +1,4 @@
-//! L15 — full host→shim end-to-end integration test (AC-SHCRT-06).
+//! Full host→shim end-to-end integration test.
 //!
 //! Drives `ShimManager::send` against the real `loom-shim-chromium`
 //! binary, which spawns the test-only `fake-chromium` binary that
@@ -151,11 +151,12 @@ async fn host_to_shim_to_fake_chromium_round_trip() {
     drop(user_data_dir);
 }
 
-/// Independent fitness signal for AC-WEBVERBS-01 — every non-navigate
-/// verb's CDP envelope makes it through ShimManager → loom-shim-chromium
-/// → fake-chromium and back as a CBOR Map. This complements the unit
-/// tests in `loom-daemon/src/main.rs::tests` (which assert envelope
-/// shape only) by validating the wire actually decodes downstream.
+/// Independent fitness signal for the web-verbs path — every
+/// non-navigate verb's CDP envelope makes it through ShimManager →
+/// loom-shim-chromium → fake-chromium and back as a CBOR Map. This
+/// complements the unit tests in `loom-daemon/src/main.rs::tests`
+/// (which assert envelope shape only) by validating the wire actually
+/// decodes downstream.
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first"]
 async fn host_to_shim_to_fake_chromium_round_trip_per_verb() {

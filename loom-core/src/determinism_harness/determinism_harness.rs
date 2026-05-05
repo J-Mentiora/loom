@@ -6,7 +6,7 @@
 // # Contract semantics
 // - `canonicalize` uses `serde_jcs` (RFC 8785). The ONLY canonicalizer
 //   in `loom-core`. `clippy::disallowed_methods` bans direct use of
-//   `serde_json::to_string` in manifest/receipt paths (SR-CORE-10).
+//   `serde_json::to_string` in manifest/receipt paths.
 // - `clock_now` returns virtual time (a monotonically advancing u64 of
 //   nanoseconds since session start). NEVER reads the wall clock during
 //   normal operation; honored when `--no-virtual-clock` flag flips it
@@ -45,7 +45,7 @@ pub enum TapeFrame {
         sha256: String,
         size_bytes: u64,
     },
-    /// AC-DET-07.1: LLM response recorded during a session.
+    /// LLM response recorded during a session.
     /// `ReplayEngine` uses this frame to seed the `LlmCache` on replay.
     LlmResponse {
         model: String,

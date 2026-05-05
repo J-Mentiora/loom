@@ -1,4 +1,4 @@
-//! End-to-end integration test for AC-EVALRESULT-01..05.
+//! End-to-end integration test for the evaluate-result path.
 //!
 //! Drives `ShimManager::send_evaluate` against the real
 //! `loom-shim-chromium` binary, which spawns the test-only
@@ -6,17 +6,17 @@
 //! Runtime.evaluate `expression` field and emits synthetic CDP
 //! response bodies (see `bin/fake-chromium.rs::build_fake_evaluate_response`).
 //!
-//! AC mapping:
-//!   AC-EVALRESULT-01: integer result (`1+1` analogue) → return_value
-//!   AC-EVALRESULT-02: string result (`document.title` analogue) → return_value
-//!   AC-EVALRESULT-03: page-side throw → exception with kind=js_throw
-//!   AC-EVALRESULT-04: large value > 64KB → host offloads to content store
-//!   AC-EVALRESULT-05: this file IS the integration test (fitness function)
+//! Behaviours covered:
+//!   - integer result (`1+1` analogue) → return_value
+//!   - string result (`document.title` analogue) → return_value
+//!   - page-side throw → exception with kind=js_throw
+//!   - large value > 64KB → host offloads to content store
+//!   - this file IS the integration test (fitness function)
 //!
-//! Plus boundary cases (skeptic council finding):
+//! Plus boundary cases:
 //!   - null / undefined / empty-string results
 //!   - 65_535 / 65_536 / 65_537 byte canonical-JSON boundary
-//!   - float result (string-coerce per Q6 / AC-NFR-DET-03.1)
+//!   - float result (string-coerce)
 //!
 //! Run:
 //!   cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium
@@ -122,11 +122,11 @@ async fn evaluate(
     .expect("send_evaluate did not return within 45s")
 }
 
-// ─── AC-EVALRESULT-01: integer result surfaces ─────────────────────────────
+// ─── Integer result surfaces ───────────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_evalresult_01_integer_result_surfaces_in_outcome() {
+async fn evalresult_integer_result_surfaces_in_outcome() {
     assert_binaries_built();
     let (mgr, id, _udd) = make_manager("evalresult-01-int");
 
@@ -139,11 +139,7 @@ async fn ac_evalresult_01_integer_result_surfaces_in_outcome() {
     // The shim returns CBOR; integer 2 round-trips as Value::Integer.
     match result {
         ciborium::value::Value::Integer(i) => {
-            assert_eq!(
-                i128::from(i),
-                2,
-                "AC-EVALRESULT-01: integer 1+1 must surface as the value 2"
-            );
+            assert_eq!(i128::from(i), 2, "integer 1+1 must surface as the value 2");
         }
         other => panic!("expected Value::Integer(2), got {other:?}"),
     }
@@ -151,11 +147,11 @@ async fn ac_evalresult_01_integer_result_surfaces_in_outcome() {
     mgr.shutdown_session("evalresult-01-int").await;
 }
 
-// ─── AC-EVALRESULT-02: string result surfaces ─────────────────────────────
+// ─── String result surfaces ────────────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_evalresult_02_string_result_surfaces_in_outcome() {
+async fn evalresult_string_result_surfaces_in_outcome() {
     assert_binaries_built();
     let (mgr, id, _udd) = make_manager("evalresult-02-str");
 
@@ -169,7 +165,7 @@ async fn ac_evalresult_02_string_result_surfaces_in_outcome() {
         ciborium::value::Value::Text(s) => {
             assert_eq!(
                 s, "My Page",
-                "AC-EVALRESULT-02: document.title analogue must surface as the string"
+                "document.title analogue must surface as the string"
             );
         }
         other => panic!("expected Value::Text(\"My Page\"), got {other:?}"),
@@ -178,11 +174,11 @@ async fn ac_evalresult_02_string_result_surfaces_in_outcome() {
     mgr.shutdown_session("evalresult-02-str").await;
 }
 
-// ─── AC-EVALRESULT-03: page-side throw → exception ─────────────────────────
+// ─── Page-side throw → exception ───────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_evalresult_03_js_throw_surfaces_as_exception() {
+async fn evalresult_js_throw_surfaces_as_exception() {
     assert_binaries_built();
     let (mgr, id, _udd) = make_manager("evalresult-03-throw");
 
@@ -191,12 +187,10 @@ async fn ac_evalresult_03_js_throw_surfaces_as_exception() {
         .expect("send_evaluate must return Ok with exception inside");
 
     assert!(outcome.result.is_none(), "no result expected on throw");
-    let ex = outcome
-        .exception
-        .expect("AC-EVALRESULT-03: exception must be Some");
+    let ex = outcome.exception.expect("exception must be Some");
     assert!(
         ex.message.contains('x'),
-        "AC-EVALRESULT-03: exception.message must contain 'x' (got {:?})",
+        "exception.message must contain 'x' (got {:?})",
         ex.message
     );
     assert_eq!(ex.text, "Uncaught", "exceptionDetails.text from CDP");
@@ -204,7 +198,7 @@ async fn ac_evalresult_03_js_throw_surfaces_as_exception() {
     mgr.shutdown_session("evalresult-03-throw").await;
 }
 
-// ─── AC-EVALRESULT-04: large result triggers content-store offload ─────────
+// ─── Large result triggers content-store offload ───────────────────────────
 // NOTE: This is a SHIM-LAYER test — the host's truncation/offload happens
 // in `evaluate_execute`, not in `send_evaluate`. So at this layer we
 // simply assert the shim returns the full large result; the host-layer
@@ -213,7 +207,7 @@ async fn ac_evalresult_03_js_throw_surfaces_as_exception() {
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]
-async fn ac_evalresult_04_large_result_round_trips_through_shim() {
+async fn evalresult_large_result_round_trips_through_shim() {
     assert_binaries_built();
     let (mgr, id, _udd) = make_manager("evalresult-04-large");
 
@@ -230,7 +224,7 @@ async fn ac_evalresult_04_large_result_round_trips_through_shim() {
             // (= "x"*81918 + 2 quote chars).
             assert!(
                 s.len() > 65_536,
-                "AC-EVALRESULT-04: result must exceed 64KB threshold (got {} bytes)",
+                "result must exceed 64KB threshold (got {} bytes)",
                 s.len()
             );
         }

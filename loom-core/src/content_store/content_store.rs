@@ -1,16 +1,16 @@
 // ContentStore — content-addressed blob store with verify-on-read.
 //
 // # Contract semantics
-// - Atomic writes via `O_TMPFILE` + `linkat` (BC-CORE-01, AC-ARCH-08).
-// - CAS path layout: `~/.../store/cas/<aa>/<bb>/<rest>` (BC-CORE-01).
-// - Every `get()` re-hashes and emits `StoreIntegrityFailed` on mismatch
-//   (IC-CORE-03 / AC-ARCH-37). NO BYPASS.
+// - Atomic writes via `O_TMPFILE` + `linkat`.
+// - CAS path layout: `~/.../store/cas/<aa>/<bb>/<rest>`.
+// - Every `get()` re-hashes and emits `StoreIntegrityFailed` on mismatch.
+//   NO BYPASS.
 // - GC traverses all session manifests; not a hot path.
 // - Errors at boundary translate to `LoomErrorCode` via `From<io::Error>`.
 //   `ENOSPC` becomes `StoreFullNoEvictable`.
 //
-// Crate type generation note: `ContentRef` is a WIT-derived type
-// (BC-CORE-05). The struct shown here is the shape `wit-bindgen` produces.
+// Crate type generation note: `ContentRef` is a WIT-derived type.
+// The struct shown here is the shape `wit-bindgen` produces.
 
 use loom_core::error::LoomError;
 use loom_core::observability::Observability;
@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// Content-addressed reference. SHA-256 hex (lowercase, 64 chars).
-/// BC-CORE-05: defined in `wit/loom-surface.wit`; this is the wit-bindgen shape.
+/// Defined in `wit/loom-surface.wit`; this is the wit-bindgen shape.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ContentRef {
     pub sha256: String,

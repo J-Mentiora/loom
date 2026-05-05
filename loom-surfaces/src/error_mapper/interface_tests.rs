@@ -1,5 +1,5 @@
 // Interface tests for `ErrorMapper`. Verifies the `host-error` →
-// `LoomErrorCode` table from design.md §4 and the IC-SURF-11 boundary
+// `LoomErrorCode` table from design.md §4 and the surface-side boundary
 // contract.
 
 extern crate alloc;
@@ -11,7 +11,7 @@ use super::error_mapper::{
 use alloc::string::String;
 use alloc::string::ToString;
 
-// === IC-SURF-11 / design.md §4 mapping table — budget-exceeded ===
+// === design.md §4 mapping table — budget-exceeded ===
 
 #[test]
 fn budget_wall_clock_maps_to_budget_wall_clock_exceeded() {
@@ -103,7 +103,7 @@ fn vault_revoked_maps_to_vault_grant_revoked() {
     assert_eq!(r, LoomErrorCode::VaultGrantRevoked);
 }
 
-// === shim-failure (web context — IC-SURF-06) ===
+// === shim-failure (web context) ===
 
 #[test]
 fn web_shim_timeout_maps_to_web_action_timeout() {
@@ -178,9 +178,9 @@ fn shim_navigation_failed_maps_to_web_navigation_failed() {
     assert_eq!(r, LoomErrorCode::WebNavigationFailed);
 }
 
-// AC-CLICK-03 / AC-HOVER-03 / AC-SCROLL-03: hit-test failure surfaces as
-// `WebHitTestFailed`. Constructed inside the WASM guest by the `hit_test`
-// helper when an element gives no usable box-model geometry.
+// Hit-test failure surfaces as `WebHitTestFailed`. Constructed inside
+// the WASM guest by the `hit_test` helper when an element gives no
+// usable box-model geometry.
 #[test]
 fn shim_hit_test_failed_maps_to_web_hit_test_failed() {
     let r = ErrorMapper::map(
@@ -227,7 +227,7 @@ fn internal_carries_reason() {
     }
 }
 
-// === ErrorMapper has no in-WASM panic-catch path (IC-SURF-11) ===
+// === ErrorMapper has no in-WASM panic-catch path ===
 // `std::panic::catch_unwind` is denied by `cargo-deny` at the crate
 // level. This file deliberately omits any unwind-catch usage; the
 // crate-level deny.toml is the structural enforcement.

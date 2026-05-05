@@ -1,10 +1,10 @@
 // IPC_Endpoint — sole external surface of `loom-shim-chromium`.
 //
 // # Contract semantics
-// - **Wire format (IC-SHIM-03).** Length-prefixed CBOR. Every frame is
+// - **Wire format.** Length-prefixed CBOR. Every frame is
 //   `[4 bytes big-endian length][CBOR payload]`. JSON / unprefixed
 //   framing → KILL.
-// - **Transport (IC-SHIM-02, HARD).** `socketpair(2)` FD inherited from
+// - **Transport (HARD).** `socketpair(2)` FD inherited from
 //   `loom-host::ShimManager` via `posix_spawn`. NO TCP, NO Unix-socket
 //   file, NO shared memory.
 // - **Sole boundary owner.** `IPC_Endpoint` is the SOLE module on the
@@ -15,7 +15,7 @@
 //   → fatal exit (daemon respawns).
 // - **Failure mode.** Wire-protocol errors are FATAL — `eof`, `cbor_decode`,
 //   `frame_too_large` all `std::process::exit(1)`. Daemon's `ShimManager`
-//   sees socketpair EOF and treats it as a crash (SR-SHIM-04).
+//   sees socketpair EOF and treats it as a crash.
 //
 // # CBOR schema (shared via `loom_shared::shim_protocol`)
 // `ShimRequest` / `ShimResponse` / `ShimErrorCode` / `CdpMessage` / framing
@@ -81,19 +81,21 @@ pub trait IpcEndpoint: Send + Sync {
 
 impl IpcEndpoint for SocketpairEndpoint {
     fn spawn_read_loop(&self, _request_tx: mpsc::Sender<ShimRequest>) -> Result<(), IpcError> {
-        // Phase 6: socketpair read-loop with CBOR framing
-        Err(IpcError::Io("socketpair read-loop wired in Phase 6".into()))
+        // socketpair read-loop with CBOR framing
+        Err(IpcError::Io(
+            "socketpair read-loop not yet implemented".into(),
+        ))
     }
 
     fn spawn_write_loop(&self, _response_rx: mpsc::Receiver<ShimResponse>) -> Result<(), IpcError> {
-        // Phase 6: socketpair write-loop with CBOR framing
+        // socketpair write-loop with CBOR framing
         Err(IpcError::Io(
-            "socketpair write-loop wired in Phase 6".into(),
+            "socketpair write-loop not yet implemented".into(),
         ))
     }
 
     fn shutdown(&self) -> Result<(), IpcError> {
-        panic!("Phase 5.4 implementation")
+        panic!("v5.4 implementation")
     }
 }
 

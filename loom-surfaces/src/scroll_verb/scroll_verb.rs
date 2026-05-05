@@ -1,10 +1,10 @@
 // ScrollVerb — implements `web-surface::scroll`.
 //
 // # Contract semantics
-// - **Tier:** hash-only (IC-SURF-07 row `scroll`).
+// - **Tier:** hash-only.
 // - **CDP method:** `Input.dispatchMouseEvent` with
 //   `event_type: "mouseWheel"` and signed integer `deltaX` / `deltaY`
-//   in CSS pixels (BC-SURF-05 — no floats).
+//   in CSS pixels (no floats).
 // - **Scope:**
 //   - `Some(selector)` → resolve to the element's bounding-box centre
 //     via `hit_test::resolve_centre_for_selector` and dispatch the
@@ -60,7 +60,7 @@ impl ScrollVerb {
             };
 
             // mouseWheel at the chosen point with signed integer CSS-pixel
-            // deltas (BC-SURF-05).
+            // deltas.
             host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::InputDispatchMouseEvent(

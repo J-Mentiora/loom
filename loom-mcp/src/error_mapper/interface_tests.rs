@@ -1,10 +1,10 @@
-// Interface tests for `ErrorMapper`. Verifies IC-MCP-08 envelope shape
-// and BC-MCP-03 stable-enum mapping.
+// Interface tests for `ErrorMapper`. Verifies the envelope shape and
+// stable-enum mapping.
 
 use super::error_mapper::{ErrorMapper, McpContent, ToolResult, TypedReceipt, MAX_MESSAGE_CHARS};
 use loom_rpc::error::{LoomError, LoomErrorCode};
 
-// === IC-MCP-08: errors map to ToolResult { isError: true, content } ===
+// === errors map to ToolResult { isError: true, content } ===
 
 #[test]
 fn to_tool_result_signature() {
@@ -40,7 +40,7 @@ fn tool_result_has_is_error_flag_renamed_camel_case() {
 
 #[test]
 fn error_path_emits_exactly_one_content_block() {
-    // IC-MCP-08: a single typed-receipt content block per error.
+    // a single typed-receipt content block per error.
     // Encoded as a structural assertion about the constructor.
     fn _shape(code: LoomErrorCode) {
         let r = ErrorMapper::typed_receipt(code);
@@ -71,7 +71,7 @@ fn message_truncation_constant_is_280() {
     assert_eq!(MAX_MESSAGE_CHARS, 280);
 }
 
-// === BC-MCP-03: stable LoomErrorCode enum is the only input ===
+// === stable LoomErrorCode enum is the only input ===
 
 #[test]
 fn typed_receipt_signature_takes_loom_error_code() {

@@ -1,8 +1,7 @@
 // ScreenshotVerb — implements `web-surface::screenshot`.
 //
 // # Contract semantics
-// - **Tier:** full screenshot only (IC-SURF-07 row `screenshot`). No
-//   DOM, no network events.
+// - **Tier:** full screenshot only. No DOM, no network events.
 // - **CDP method:** `Page.captureScreenshot` with `format: "png"`
 //   default; jpeg quality is integer 0-100 if used.
 // - **Hashing.** Screenshot bytes go through `host::blob_put` →
@@ -46,7 +45,7 @@ impl ScreenshotVerb {
         let action_id = action.action_id.clone();
 
         let inner = || -> Result<Receipt, HostError> {
-            // Page.captureScreenshot → blob_put → content-addressed ref (AC-WEB-05.1)
+            // Page.captureScreenshot → blob_put → content-addressed ref
             let ss_bytes = host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::PageCaptureScreenshot(

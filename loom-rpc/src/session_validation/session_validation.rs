@@ -3,7 +3,7 @@
 //! `CoreServiceAdapter::create_session` call.
 //!
 //! # Contract semantics
-//! - **AC-PROTO-02.1 / AC-PROFVAL-01/02/03.** Reject unrecognized
+//! - **Reject unrecognized
 //!   profile / network-mode / budget-key values with typed envelopes
 //!   produced by `ErrorTranslator::from_*`. Schema-violation envelopes
 //!   are NOT used here because the AC text demands `error.kind` = the
@@ -40,7 +40,7 @@ pub fn validate_create_session_params(p: &CreateSessionParams) -> Result<(), Jso
         ));
     }
     if let Some(cp) = p.capture_policy.as_deref() {
-        // AC-CAPPOL-04: server-side rejection for non-CLI callers (mcp,
+        // server-side rejection for non-CLI callers (mcp,
         // sdk). CLI uses `clap::ValueEnum` and never sends bogus values.
         const ALLOWED: &[&str] = &["minimal", "default", "full"];
         if !ALLOWED.contains(&cp) {
@@ -49,7 +49,7 @@ pub fn validate_create_session_params(p: &CreateSessionParams) -> Result<(), Jso
     }
     if let Some(budget) = &p.budget {
         if let Some(obj) = budget.as_object() {
-            // AC-BUDGETCLI-04: the CLI parses `--budget wall_clock=1s`
+            // the CLI parses `--budget wall_clock=1s`
             // into a `BudgetLimits` struct whose serde field names are
             // the typed-internal names (`session_walltime_ms`,
             // `network_bytes`, etc.). When the JSON arrives here, those

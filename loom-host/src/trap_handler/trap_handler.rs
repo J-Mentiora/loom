@@ -1,10 +1,10 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/trap_handler/interfaces.rs` instead.
 // TrapHandler — catches `wasmtime::Trap`, resolves `.dwp` debug info,
 // converts to `LoomErrorCode::SurfaceTrap` typed receipt.
 //
 // # Contract semantics
-// - **IC-HOST-06.** Wasmtime surface traps NEVER unwind into the
+// - **Trap containment.** Wasmtime surface traps NEVER unwind into the
 //   daemon. They are caught at the `Func::call` boundary inside
 //   `SessionExecutor`, handed to this module, and converted into a
 //   typed `LoomError::SurfaceTrap` + queued trap receipt.
@@ -55,7 +55,7 @@ impl TrapHandler {
     /// queue a trap receipt. Returns the LoomError; `SessionExecutor`
     /// returns it as the dispatch failure.
     ///
-    /// The `pool` is the session's `receipt_pool` (BC-HOST-01) —
+    /// The `pool` is the session's `receipt_pool` —
     /// the trap-receipt spawn happens off the dispatch task.
     pub fn handle_trap(
         self: &Arc<Self>,
@@ -108,8 +108,8 @@ impl TrapHandler {
         dwp_path: Option<&PathBuf>,
         pcs: &[u64],
     ) -> Result<Vec<TrapFrame>, LoomError> {
-        // Full addr2line resolution is Phase 6.
-        // Phase 5.4: return raw-address-only frames.
+        // Full addr2line resolution is deferred to a later milestone.
+        // For now, return raw-address-only frames.
         if dwp_path.map(|p| !p.exists()).unwrap_or(true) {
             return Ok(pcs
                 .iter()

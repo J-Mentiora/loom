@@ -1,4 +1,4 @@
-// URL scheme allowlist for web.navigate (AC-URLSEC-01 through AC-URLSEC-06).
+// URL scheme allowlist for web.navigate.
 //
 // Checks the URL scheme before the RPC call, preventing file://, javascript:,
 // data:, and chrome: URLs from reaching the Chromium shim.

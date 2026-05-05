@@ -1,7 +1,7 @@
-// Interface tests for `HostBindings`. Verifies IC-SURF-12 (only 8
-// host-fns, all from `wit-bindgen` — no hand-rolled `extern "C"`),
-// IC-SURF-02/03/04/05/06/09/10 (the exhaustive host-fn enumeration),
-// and SR-SURF-05 (mode-agnostic — same trampoline shape live + replay).
+// Interface tests for `HostBindings`. Verifies that there are exactly 8
+// host-fns, all from `wit-bindgen` (no hand-rolled `extern "C"`), the
+// exhaustive host-fn enumeration, and that the trampoline shape is
+// mode-agnostic (same shape live + replay).
 //
 // These tests exercise type-level shape; the trampoline bodies are
 // panic stubs because the real bodies are wit-bindgen-generated
@@ -15,7 +15,7 @@ use crate::receipt_builder::receipt_builder::{ContentRef, Receipt};
 use alloc::string::ToString;
 use alloc::vec::Vec;
 
-// === IC-SURF-12: exactly 8 host-fns; all imports come from `host` mod ===
+// === Exactly 8 host-fns; all imports come from `host` mod ===
 
 #[test]
 fn host_module_exposes_exactly_eight_host_fns() {
@@ -32,7 +32,7 @@ fn host_module_exposes_exactly_eight_host_fns() {
     let _ = host::receipt_emit as fn(&Receipt);
 }
 
-// === IC-SURF-02: clock_now returns Instant with `ticks: u64` integer ===
+// === clock_now returns Instant with `ticks: u64` integer ===
 
 #[test]
 fn instant_is_integer_ticks_no_floats() {
@@ -40,7 +40,7 @@ fn instant_is_integer_ticks_no_floats() {
     let _: u64 = i.ticks;
 }
 
-// === IC-SURF-04: blob_put returns ContentRef carrying hash+size ===
+// === blob_put returns ContentRef carrying hash+size ===
 
 #[test]
 fn blob_put_signature_takes_byte_slice_returns_content_ref() {
@@ -48,7 +48,7 @@ fn blob_put_signature_takes_byte_slice_returns_content_ref() {
     let _: fn(&[u8]) -> Result<ContentRef, HostError> = host::blob_put;
 }
 
-// === IC-SURF-05: NetReq carries headers including opaque Grant strings ===
+// === NetReq carries headers including opaque Grant strings ===
 
 #[test]
 fn net_req_headers_are_string_pairs() {
@@ -62,7 +62,7 @@ fn net_req_headers_are_string_pairs() {
     assert!(req.headers[0].1.starts_with("Grant "));
 }
 
-// === IC-SURF-05 / SR-SURF-04: NetResp body_size_bytes is decompressed size ===
+// === NetResp body_size_bytes is decompressed size ===
 
 #[test]
 fn net_resp_body_size_is_post_decompression_integer() {
@@ -79,14 +79,14 @@ fn net_resp_body_size_is_post_decompression_integer() {
     assert_eq!(resp.body_ref.size_bytes, resp.body_size_bytes);
 }
 
-// === IC-SURF-06: shim_call takes shim_id `&str` + opaque message bytes ===
+// === shim_call takes shim_id `&str` + opaque message bytes ===
 
 #[test]
 fn shim_call_signature_is_str_plus_bytes() {
     let _: fn(&str, &[u8]) -> Result<Vec<u8>, HostError> = host::shim_call;
 }
 
-// === IC-SURF-10: log_emit accepts LogLevel + msg + structured fields ===
+// === log_emit accepts LogLevel + msg + structured fields ===
 
 #[test]
 fn log_emit_levels_cover_standard_severities() {
@@ -97,7 +97,7 @@ fn log_emit_levels_cover_standard_severities() {
     let _ = LogLevel::Error;
 }
 
-// === IC-SURF-09: receipt_emit takes &Receipt only; never returns Result ===
+// === receipt_emit takes &Receipt only; never returns Result ===
 
 #[test]
 fn receipt_emit_is_infallible_returns_unit() {
@@ -106,7 +106,7 @@ fn receipt_emit_is_infallible_returns_unit() {
     let _: fn(&Receipt) = host::receipt_emit;
 }
 
-// === SR-SURF-05: trampoline shape is mode-agnostic ===
+// === Trampoline shape is mode-agnostic ===
 //
 // The same `host::clock_now` symbol resolves to the live impl (calls
 // `DeterminismHarness::tape_append + clock_now`) or the replay impl
@@ -123,7 +123,7 @@ fn host_bindings_have_no_mode_argument() {
     let _: fn() -> u64 = host::rng_next_u64;
 }
 
-// === IC-SURF-12: HostBindings depends on ErrorMapper for translation ===
+// === HostBindings depends on ErrorMapper for translation ===
 
 #[test]
 fn fallible_host_fns_return_host_error_typed_result() {

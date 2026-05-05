@@ -1,13 +1,13 @@
-// LocalVault implementation — vault-core feature (Phase 6).
+// LocalVault implementation — vault-core feature.
 //
 // Implements `Vault` for `LocalVault` declared in `interfaces.rs`.
 //
 // Invariants enforced here:
-//   IC-CORE-05 / BC-CORE-02 HARD: raw secret bytes appear ONLY in substitute(),
+//   - raw secret bytes appear ONLY in substitute(),
 //     written to req.headers["Authorization"], zeroized on drop via Zeroizing<Vec<u8>>.
-//   BC-CORE-03: OAuth-only at v1.
-//   SR-CORE-15: 4-check sequence in substitute(): revoked → origin → scopes → ttl.
-//   BC-CORE-07: every vault event appends a typed audit entry via ManifestWriter::append_audit.
+//   - OAuth-only at v1.
+//   - 4-check sequence in substitute(): revoked → origin → scopes → ttl.
+//   - every vault event appends a typed audit entry via ManifestWriter::append_audit.
 
 use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::manifest_writer::{AuditKind, SessionId};
@@ -31,8 +31,8 @@ fn new_grant_id() -> GrantId {
 }
 
 /// Canonical audit payload for vault lifecycle events.
-/// Serialized to JCS bytes (BC-CORE-07 + SR-CORE-17).
-/// NEVER contains raw secret bytes (IC-CORE-05).
+/// Serialized to JCS bytes.
+/// NEVER contains raw secret bytes.
 #[derive(Serialize)]
 struct VaultAuditPayload<'a> {
     credential_label: &'a str,
@@ -45,7 +45,7 @@ struct VaultAuditPayload<'a> {
 }
 
 fn audit_bytes(payload: &VaultAuditPayload<'_>) -> Vec<u8> {
-    // JCS (sorted keys) required by SR-CORE-17 for hash-chain integrity.
+    // JCS (sorted keys) required for hash-chain integrity.
     serde_jcs::to_string(payload)
         .unwrap_or_else(|_| serde_json::to_string(payload).unwrap_or_default())
         .into_bytes()
@@ -53,7 +53,7 @@ fn audit_bytes(payload: &VaultAuditPayload<'_>) -> Vec<u8> {
 
 impl Vault for LocalVault {
     fn grant(&self, session: SessionId, opts: GrantOpts) -> Result<GrantId, LoomError> {
-        // Step 1: OAuth-only at v1 (BC-CORE-03 / AC-VAULT-04.1)
+        // Step 1: OAuth-only at v1
         if opts.credential_type != CredentialType::OAuth {
             return Err(
                 LoomError::new(LoomErrorCode::VaultRejection, "vault-oauth-only").with_context(
@@ -65,7 +65,7 @@ impl Vault for LocalVault {
             );
         }
 
-        // Step 2: Threat model acknowledgement gate (AC-VAULT-00.1)
+        // Step 2: Threat model acknowledgement gate
         if !opts.threat_model_acknowledged {
             return Err(LoomError::new(
                 LoomErrorCode::VaultRejection,
@@ -98,7 +98,7 @@ impl Vault for LocalVault {
             );
         }
 
-        // Step 6: Emit GrantIssued audit entry (BC-CORE-07 / AC-VAULT-03.1)
+        // Step 6: Emit GrantIssued audit entry
         let payload = VaultAuditPayload {
             grant_id: &grant_id.0,
             origin: &opts.origin,
@@ -137,7 +137,7 @@ impl Vault for LocalVault {
 
         let now = now_ms();
 
-        // SR-CORE-15: 4-check sequence — revoked → origin → scopes → ttl
+        // 4-check sequence — revoked → origin → scopes → ttl
 
         // Check 1: Revoked
         if revoked {
@@ -161,7 +161,7 @@ impl Vault for LocalVault {
             ));
         }
 
-        // Check 2: Origin match (AC-VAULT-02.2 / AC-NFR-SEC-02.1)
+        // Check 2: Origin match
         if req.origin != grant_origin {
             let payload = VaultAuditPayload {
                 grant_id: &grant.0,
@@ -189,7 +189,7 @@ impl Vault for LocalVault {
             );
         }
 
-        // Check 3: Scopes superset — grant.scopes ⊇ req.scopes (AC-VAULT-02.3)
+        // Check 3: Scopes superset — grant.scopes ⊇ req.scopes
         for req_scope in &req.scopes {
             if !grant_scopes.contains(req_scope) {
                 let payload = VaultAuditPayload {
@@ -220,7 +220,7 @@ impl Vault for LocalVault {
             }
         }
 
-        // Check 4: TTL (AC-VAULT-02.4)
+        // Check 4: TTL
         if now > issued_at_ms.saturating_add(ttl_ms) {
             let payload = VaultAuditPayload {
                 grant_id: &grant.0,
@@ -248,7 +248,7 @@ impl Vault for LocalVault {
             );
         }
 
-        // Fetch secret from keychain — Zeroizing<Vec<u8>> zeroizes on drop (IC-CORE-05)
+        // Fetch secret from keychain — Zeroizing<Vec<u8>> zeroizes on drop
         let secret: Zeroizing<Vec<u8>> = self.keychain.get_secret(&label)?;
 
         // Write Authorization header in-place — the SINGLE site for raw secret bytes.
@@ -257,9 +257,9 @@ impl Vault for LocalVault {
             "Authorization".to_string(),
             format!("Bearer {}", String::from_utf8_lossy(&secret)),
         );
-        drop(secret); // explicit zeroize — BC-CORE-02 HARD
+        drop(secret); // explicit zeroize
 
-        // Emit GrantConsumed audit (also covers "secret_fetched_from_keychain" per AC-NFR-SEC-03.1)
+        // Emit GrantConsumed audit (also covers "secret_fetched_from_keychain")
         let payload = VaultAuditPayload {
             grant_id: &grant.0,
             origin: &grant_origin,
@@ -312,7 +312,7 @@ impl Vault for LocalVault {
     }
 
     fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError> {
-        // Q2 + AC-VAULT-04.1: OAuth-only allowlist. Non-allowlisted providers
+        // OAuth-only allowlist. Non-allowlisted providers
         // reject with the canonical `vault_credential_type_unsupported`
         // envelope (`details.allowed_types = ["oauth2_authorization_code_pkce"]`).
         if !OAUTH_PROVIDER_ALLOWLIST.contains(&opts.provider.as_str()) {
@@ -459,7 +459,7 @@ mod tests {
         serde_json::from_slice(&bytes).ok()
     }
 
-    // ── AC-VAULT-00.1: Threat model document prerequisite ──────────────────
+    // ── Threat model document prerequisite ──────────────────
 
     #[test]
     fn vault_threat_model_prerequisite() {
@@ -469,14 +469,14 @@ mod tests {
         let threat_model = manifest_dir.join("../security/vault_threat_model.md");
         assert!(
             threat_model.exists(),
-            "AC-VAULT-00.1: vault_threat_model.md must exist; checked at {}",
+            "vault_threat_model.md must exist; checked at {}",
             threat_model.display()
         );
         let content =
             std::fs::read_to_string(&threat_model).expect("vault_threat_model.md must be readable");
         assert!(
             content.starts_with("# Vault Threat Model"),
-            "AC-VAULT-00.1: first line must be '# Vault Threat Model'"
+            "first line must be '# Vault Threat Model'"
         );
         for section in &[
             "## Attacker Classes",
@@ -486,12 +486,12 @@ mod tests {
         ] {
             assert!(
                 content.contains(section),
-                "AC-VAULT-00.1: vault_threat_model.md missing required section: {section}"
+                "vault_threat_model.md missing required section: {section}"
             );
         }
     }
 
-    // ── AC-VAULT-00.1 variant: threat_model_acknowledged gate ─────────────
+    // ── threat_model_acknowledged gate ─────────────
 
     #[test]
     fn grant_requires_threat_model_acknowledged() {
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(ctx["code"], "vault_threat_model_missing");
     }
 
-    // ── AC-VAULT-04.1: OAuth-only enforcement ─────────────────────────────
+    // ── OAuth-only enforcement ─────────────────────────────
 
     #[test]
     fn grant_rejects_api_key_type() {
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(err.code, LoomErrorCode::VaultRejection);
     }
 
-    // ── AC-VAULT-02.1: Grant issuance — no secret in GrantId ──────────────
+    // ── Grant issuance — no secret in GrantId ──────────────
 
     #[test]
     fn grant_returns_grant_id_not_containing_secret() {
@@ -553,7 +553,7 @@ mod tests {
             let sub = &secret_str[start..end];
             assert!(
                 !gid.0.contains(sub),
-                "AC-NFR-SEC-01.1: GrantId contains secret substring '{sub}'"
+                "GrantId contains secret substring '{sub}'"
             );
         }
     }
@@ -566,7 +566,7 @@ mod tests {
         assert_ne!(g1.0, g2.0);
     }
 
-    // ── AC-VAULT-02.2: Origin mismatch rejection ──────────────────────────
+    // ── Origin mismatch rejection ──────────────────────────
 
     #[test]
     fn substitute_rejects_origin_mismatch() {
@@ -585,7 +585,7 @@ mod tests {
         );
     }
 
-    // ── AC-VAULT-02.3: Scope escalation rejection ─────────────────────────
+    // ── Scope escalation rejection ─────────────────────────
 
     #[test]
     fn substitute_rejects_scope_escalation() {
@@ -600,7 +600,7 @@ mod tests {
         assert!(!r.headers.contains_key("Authorization"));
     }
 
-    // ── AC-VAULT-02.4: TTL expiry rejection ───────────────────────────────
+    // ── TTL expiry rejection ───────────────────────────────
 
     #[test]
     fn substitute_rejects_expired_grant() {
@@ -653,7 +653,7 @@ mod tests {
         let (vault, _mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        // Return type is () — no secret in return value (IC-CORE-05)
+        // Return type is () — no secret in return value
         let result: Result<(), LoomError> = vault.substitute(gid, &mut r);
         assert!(result.is_ok());
     }
@@ -678,7 +678,7 @@ mod tests {
         assert!(!r.headers.contains_key("Authorization"));
     }
 
-    // ── AC-VAULT-03.1: Audit entries in order ────────────────────────────
+    // ── Audit entries in order ────────────────────────────
 
     #[test]
     fn audit_entries_in_order_issued_consumed_revoked() {
@@ -710,15 +710,15 @@ mod tests {
         let issued_pos = kinds
             .iter()
             .position(|&k| k == "grant_issued")
-            .expect("AC-VAULT-03.1: missing grant_issued audit entry");
+            .expect("missing grant_issued audit entry");
         let consumed_pos = kinds
             .iter()
             .position(|&k| k == "grant_consumed")
-            .expect("AC-VAULT-03.1: missing grant_consumed audit entry");
+            .expect("missing grant_consumed audit entry");
         let revoked_pos = kinds
             .iter()
             .position(|&k| k == "grant_revoked")
-            .expect("AC-VAULT-03.1: missing grant_revoked audit entry");
+            .expect("missing grant_revoked audit entry");
 
         assert!(
             issued_pos < consumed_pos,
@@ -730,7 +730,7 @@ mod tests {
         );
     }
 
-    // ── AC-NFR-SEC-03.1: Audit payload completeness ───────────────────────
+    // ── Audit payload completeness ───────────────────────
 
     #[test]
     fn audit_payload_has_all_required_fields() {
@@ -756,13 +756,13 @@ mod tests {
             ] {
                 assert!(
                     !payload[field].is_null(),
-                    "AC-NFR-SEC-03.1: audit payload missing required field '{field}'"
+                    "audit payload missing required field '{field}'"
                 );
             }
         }
     }
 
-    // ── AC-NFR-SEC-01.1: No secret in grant response ─────────────────────
+    // ── No secret in grant response ─────────────────────
 
     #[test]
     fn no_secret_in_grant_id_response() {
@@ -771,7 +771,7 @@ mod tests {
         let secret_str = std::str::from_utf8(TEST_SECRET).unwrap();
         assert!(
             !gid.0.contains(secret_str),
-            "AC-NFR-SEC-01.1: GrantId must not contain secret"
+            "GrantId must not contain secret"
         );
     }
 
@@ -791,13 +791,13 @@ mod tests {
                 let sub = &secret_str[start..end];
                 assert!(
                     !entry_str.contains(sub),
-                    "AC-NFR-SEC-01.1: audit entry contains secret substring '{sub}'"
+                    "audit entry contains secret substring '{sub}'"
                 );
             }
         }
     }
 
-    // ── AC-VAULT-01.1: No plaintext store.bin ────────────────────────────
+    // ── No plaintext store.bin ────────────────────────────
 
     #[test]
     fn no_plaintext_vault_store_file() {
@@ -812,7 +812,7 @@ mod tests {
                 let sub = &secret_str[start..end];
                 assert!(
                     !content.contains(sub),
-                    "AC-VAULT-01.1: store.bin contains plaintext token substring '{sub}'"
+                    "store.bin contains plaintext token substring '{sub}'"
                 );
             }
         }
@@ -821,7 +821,7 @@ mod tests {
 
     // ── Grants are reusable until revoked/expired ─────────────────────────
 
-    // ── AC-VAULTRPC-02: add_credential allowlist + receipt ───────────────
+    // ── add_credential allowlist + receipt ───────────────
 
     #[test]
     fn add_credential_rejects_non_allowlisted_provider() {
@@ -854,7 +854,7 @@ mod tests {
 
     #[test]
     fn add_credential_rejects_with_oauth_only_details() {
-        // AC-VAULT-04.1 envelope shape: code = vault_credential_type_unsupported,
+        // Envelope shape: code = vault_credential_type_unsupported,
         // details.allowed_types = ["oauth2_authorization_code_pkce"].
         let (vault, _mw, _sid) = fixture();
         let err = vault
@@ -873,7 +873,7 @@ mod tests {
             .any(|v| v == "oauth2_authorization_code_pkce"));
     }
 
-    // ── AC-VAULTRPC-01: list_grants ──────────────────────────────────────
+    // ── list_grants ──────────────────────────────────────
 
     #[test]
     fn list_grants_returns_empty_when_none() {

@@ -1,15 +1,14 @@
 //! Integration tests for `chromium-bundle-search` feature.
-//! Covers AC-CHBS-02 and AC-CHBS-04.
 //!
-//! AC-CHBS-04: build a fake bundle with a binary at a non-default name
+//! Build a fake bundle with a binary at a non-default name
 //! and assert verify() succeeds.
-//! AC-CHBS-02: whole-bundle symlink scenario (simulated via rename).
+//! Whole-bundle symlink scenario (simulated via rename).
 
 use loom_cli::chromium_downloader::{ChromiumDownloader, ChromiumDownloaderConfig};
 use loom_cli::CliError;
 use tempfile::TempDir;
 
-// ── AC-CHBS-04: fake bundle with non-default binary name ────────────────────
+// ── fake bundle with non-default binary name ────────────────────
 
 /// Build a fake Chromium.app bundle where the binary inside Contents/MacOS/
 /// is named 'Google Chrome' (not 'Chromium'). ChromiumDownloader::verify()
@@ -41,15 +40,15 @@ async fn test_verify_ok_with_differently_named_binary_in_bundle() {
         binary_subpath: "Chromium.app/Contents/MacOS/Chromium".into(),
     });
 
-    // AC-CHBS-04: verify() must find 'Google Chrome' via fallback scan.
+    // verify() must find 'Google Chrome' via fallback scan.
     let result = downloader.verify("any-sha-unused").await;
     assert!(
         result.is_ok(),
-        "AC-CHBS-04: verify() must return Ok when non-default binary found in Contents/MacOS/; got: {result:?}"
+        "verify() must return Ok when non-default binary found in Contents/MacOS/; got: {result:?}"
     );
 }
 
-// ── AC-CHBS-02: symlinked bundle scenario ────────────────────────────────────
+// ── symlinked bundle scenario ────────────────────────────────────
 
 /// Simulate a whole-bundle symlink: install_dir/Chromium.app is a symlink
 /// to a 'Google Chrome.app' directory. The binary inside is 'Google Chrome'.
@@ -86,11 +85,11 @@ async fn test_verify_ok_with_symlinked_bundle() {
     let result = downloader.verify("any-sha-unused").await;
     assert!(
         result.is_ok(),
-        "AC-CHBS-02: verify() must return Ok against a whole-bundle symlink to Google Chrome.app; got: {result:?}"
+        "verify() must return Ok against a whole-bundle symlink to Google Chrome.app; got: {result:?}"
     );
 }
 
-// ── AC-CHBS-03: no executable anywhere → fail ────────────────────────────────
+// ── no executable anywhere → fail ────────────────────────────────
 
 /// When the literal binary_path is missing and Contents/MacOS/ contains
 /// no executables, verify() must return Err(Internal) — not Ok.
@@ -116,6 +115,6 @@ async fn test_verify_fails_when_no_executable_in_bundle() {
     let result = downloader.verify("any-sha-unused").await;
     assert!(
         matches!(result, Err(CliError::Internal(_))),
-        "AC-CHBS-03: must return Internal when no executable found; got: {result:?}"
+        "must return Internal when no executable found; got: {result:?}"
     );
 }

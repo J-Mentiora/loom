@@ -1,5 +1,5 @@
 //! `core_service_adapter` — see `systems/loom-rpc/modules/core_service_adapter/interfaces.rs`
-//! for the locked Phase 5.3 interface. Re-exports it verbatim via
+//! for the locked v5.3 interface. Re-exports it verbatim via
 //! `include!`, keeping `systems/` the single source of truth.
 pub mod core_service_adapter;
 pub use core_service_adapter::*;
@@ -43,7 +43,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
         Ok(infos
             .into_iter()
             .map(|(session_id, status, created_at_ms)| {
-                // AC-ABORTREASON-01: surface reason for aborted sessions.
+                // Surface reason for aborted sessions.
                 // The bridge encodes the reason inside the status string for
                 // backward-compat with the (status, created_at_ms) tuple
                 // shape: "aborted:<reason>" → status="aborted", reason=Some(<reason>).
@@ -94,8 +94,8 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
         Ok(SessionInfo {
             // The replay session is the NEW one created by the engine;
             // its created_at_ms is the source's started_at_ms (replay
-            // copies the header for hash-chain bit-equality per
-            // AC-SHCRT-08). Look it up the same way close/abort do.
+            // copies the header for hash-chain bit-equality).
+            // Look it up the same way close/abort do.
             created_at_ms: self.created_at_ms_for(&new_id),
             session_id: new_id,
             status: "replay_complete".to_string(),

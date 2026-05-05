@@ -6,7 +6,7 @@ use crate::CliError;
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// `loom action web.navigate` — 5-line layout per AC-TTY-01.
+/// `loom action web.navigate` — 5-line layout.
 pub struct WebNavigate;
 
 impl CuratedRenderer for WebNavigate {

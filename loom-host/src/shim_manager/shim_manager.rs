@@ -3,18 +3,18 @@
 // # Contract semantics
 // - **The only direct out-of-process actor in `loom-host`.** All
 //   chromium / ax interactions go through this module via
-//   length-prefixed CBOR over `socketpair` (BC §3).
+//   length-prefixed CBOR over `socketpair` for IPC framing.
 // - **Pooled connections.** One `socketpair` per ShimId; the host
 //   namespaces ShimId as `format!("{name}:{session_id}")` so each
-//   session gets its own subprocess (AC-SHCRT-04 reuse falls out
-//   naturally — second navigate hits the cached `ShimProcess`).
+//   session gets its own subprocess (reuse falls out naturally — a
+//   second navigate hits the cached `ShimProcess`).
 // - **Circuit breaker.** 3 consecutive spawn / IO / decode failures
 //   opens the breaker for 5 s. Subsequent `send` calls fail-fast with
 //   `ShimBreakerOpen` until the open window expires.
 // - **Spawn-retry budget.** Single retry on initial spawn failure.
 // - **No platform symbols here.** The shim binaries (chromium) contain
 //   the platform-specific code; `ShimManager` only spawns and speaks
-//   length-prefixed CBOR over the inherited socket FD (BC-HOST-04).
+//   length-prefixed CBOR over the inherited socket FD.
 
 use crate::host_observability::HostObservability;
 use crate::shim_manager::process::{send_and_await, shutdown_process, ShimProcess, SpawnConfig};
@@ -250,7 +250,7 @@ impl ShimManager {
     /// observability (Q5). The shim does not see action_id.
     /// `seed` and `epoch_ms` ride the wire to the shim where they're
     /// rendered into the determinism JS template at inject time.
-    /// `blocklist_enabled` (AC-DET-05.1, AC-BLOCKLIST-04) toggles the
+    /// `blocklist_enabled` toggles the
     /// shim's `Fetch.enable` interception path; affirmative form on the
     /// wire so logs read directly.
     #[allow(clippy::too_many_arguments)]
@@ -295,9 +295,8 @@ impl ShimManager {
             url,
             seed,
             epoch_ms,
-            // AC-DET-05.1 / AC-BLOCKLIST-04: per-session toggle from
-            // `--no-blocklist`. Default `true` (enforce); `false` when
-            // the operator opted out.
+            // Per-session toggle from `--no-blocklist`. Default `true`
+            // (enforce); `false` when the operator opted out.
             blocklist_enabled,
         };
 
@@ -356,7 +355,7 @@ impl ShimManager {
     }
 
     /// Send `Runtime.evaluate` against `id`'s target via CdpSend and parse
-    /// the response into a typed `EvaluateOutcome` (AC-EVALRESULT-01..04).
+    /// the response into a typed `EvaluateOutcome`.
     /// `action_id` is the WASM-guest-computed action hash — threaded for
     /// receipt correlation; not sent to the shim.
     ///
@@ -404,7 +403,7 @@ impl ShimManager {
         // route to the bootstrap about:blank context where Date.now /
         // Math.random still leak real wall-clock + unseeded values.
         // SpawnTarget is idempotent at the TargetManager level
-        // (SR-SHIM-01) so navigate-then-evaluate paths pay no extra cost.
+        // so navigate-then-evaluate paths pay no extra cost.
         let spawn_request = ShimRequest::SpawnTarget {
             request_id: 0,
             session_id,
@@ -586,7 +585,7 @@ fn map_shim_code(code: loom_shared::shim_protocol::ShimErrorCode) -> LoomErrorCo
     }
 }
 
-// ─── Evaluate types (AC-EVALRESULT-01..04) ─────────────────────────────────
+// ─── Evaluate types ─────────────────────────────────────────────────────────
 
 /// Parsed result of a `Runtime.evaluate` CDP call. Exactly one of `result`
 /// / `exception` is `Some` per CDP semantics.
@@ -604,8 +603,8 @@ pub struct EvaluateException {
     /// `exceptionDetails.text` — usually `"Uncaught"`.
     pub text: String,
     /// Extracted exception message (`exception.description` or
-    /// stringified `exception.value`). Used for AC-EVALRESULT-03's
-    /// `details.exception` field.
+    /// stringified `exception.value`). Used for the
+    /// `details.exception` field on page-side throws.
     pub message: String,
     pub line: u32,
     pub column: u32,

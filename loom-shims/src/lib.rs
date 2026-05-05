@@ -1,7 +1,7 @@
 //! `loom-shims` — out-of-process surface drivers (Chromium for v1).
 //! Reachable from `loom-host::shim_manager` over a private IPC.
 // Suppress WASM-compat boilerplate and stub struct fields in test builds.
-// Stub fields will be read once Phase 6 implementations fill in the methods.
+// Stub fields will be read once the real implementations fill in the methods.
 #![allow(unused_extern_crates, unused_imports, dead_code)]
 
 pub mod error {

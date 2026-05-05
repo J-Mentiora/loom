@@ -113,7 +113,7 @@ mod tests {
         );
     }
 
-    /// AC-CHRPIN-01: SHA-256 constants must not be placeholder values.
+    /// SHA-256 constants must not be placeholder values.
     /// Placeholder pattern: repeating hex pairs like a1b2c3d4e5f6... or
     /// aaaaaa... — real hashes have no such regularity.
     #[test]
@@ -127,16 +127,16 @@ mod tests {
         ];
         assert!(
             !known_placeholders.contains(&CHROMIUM_SHA256),
-            "AC-CHRPIN-01: CHROMIUM_SHA256 is still a placeholder value: {CHROMIUM_SHA256}"
+            "CHROMIUM_SHA256 is still a placeholder value: {CHROMIUM_SHA256}"
         );
     }
 
-    /// AC-CHRPIN-02: URL must return HTTP 200 after redirects.
+    /// URL must return HTTP 200 after redirects.
     /// Gated on LOOM_VERIFY_CHROMIUM_PINS=1 so offline builds are not blocked.
     #[test]
     fn verify_url_head() {
         if std::env::var("LOOM_VERIFY_CHROMIUM_PINS").as_deref() != Ok("1") {
-            eprintln!("AC-CHRPIN-02: skipped (set LOOM_VERIFY_CHROMIUM_PINS=1 to run)");
+            eprintln!("verify_url_head: skipped (set LOOM_VERIFY_CHROMIUM_PINS=1 to run)");
             return;
         }
         let status = std::process::Command::new("curl")
@@ -156,7 +156,7 @@ mod tests {
         let final_code = code.trim().lines().last().unwrap_or("").trim();
         assert_eq!(
             final_code, "200",
-            "AC-CHRPIN-02: CHROMIUM_URL HEAD returned {final_code}, expected 200: {CHROMIUM_URL}"
+            "CHROMIUM_URL HEAD returned {final_code}, expected 200: {CHROMIUM_URL}"
         );
     }
 }

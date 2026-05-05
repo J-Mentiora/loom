@@ -1,6 +1,6 @@
-// Interface tests for `GuestBindings`. Verifies SR-SURF-01 (10 web
-// verbs implemented), IC-SURF-12 (wit-bindgen-only — no hand-rolled
-// exports), SR-SURF-05 (no mode awareness).
+// Interface tests for `GuestBindings`. Verifies that all 10 web verbs
+// are implemented via wit-bindgen (no hand-rolled exports) and that
+// the bytecode is mode-agnostic (same bytes for live and replay).
 
 extern crate alloc;
 
@@ -18,7 +18,7 @@ use crate::snapshot_verb::snapshot_verb::SnapshotAction;
 use crate::type_text_verb::type_text_verb::TypeTextAction;
 use crate::wait_verb::wait_verb::WaitAction;
 
-// === SR-SURF-01: 10 verbs, names match the WIT contract ===
+// === 10 verbs, names match the WIT contract ===
 
 #[test]
 fn web_surface_exposes_exactly_ten_verbs() {
@@ -48,7 +48,7 @@ fn web_surface_verb_names_match_wit_contract() {
     }
 }
 
-// === IC-SURF-12: each WIT method has a corresponding impl method ===
+// === each WIT method has a corresponding impl method ===
 
 #[test]
 fn web_surface_impl_provides_all_ten_methods() {
@@ -67,7 +67,7 @@ fn web_surface_impl_provides_all_ten_methods() {
     let _: fn(SnapshotAction) -> Result<Receipt, HostError> = WebSurfaceImpl::snapshot;
 }
 
-// === SR-SURF-05: no mode-awareness — same bytecode for live + replay ===
+// === no mode-awareness — same bytecode for live + replay ===
 
 #[test]
 fn web_surface_methods_take_no_mode_argument() {
@@ -82,7 +82,7 @@ fn web_surface_methods_take_no_mode_argument() {
     assert_single_arg(WebSurfaceImpl::evaluate);
 }
 
-// === BC-SURF-02: WIT is source of truth — verb names use kebab-case ===
+// === WIT is source of truth — verb names use kebab-case ===
 
 #[test]
 fn type_text_verb_uses_kebab_case_in_wit_name_list() {

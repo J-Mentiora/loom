@@ -1,17 +1,17 @@
-// Re-export of the locked Phase 5.3 interface. DO NOT EDIT here.
+// Re-export of the locked v5.3 interface. DO NOT EDIT here.
 // Edit `systems/loom-host/modules/error_mapper/interfaces.rs` instead.
 // ErrorMapper — sole owner of cross-boundary error translation.
 //
 // # Contract semantics
-// - **Single translation site (BC-HOST-03).** This module owns every
+// - **Single translation site.** This module owns every
 //   `From<…>` impl that crosses a process boundary. No other module in
 //   `loom-host` may declare these conversions.
 // - **Three translation directions:**
 //     1. `From<LoomError> for HostError` — Rust → WIT at the WASM boundary.
 //     2. `From<wasmtime::Error> for LoomError` — wasmtime engine errors.
 //     3. `From<wasmtime::Trap> for LoomError` — surface traps → typed
-//        `SurfaceTrap` receipts (IC-HOST-06).
-// - **Closed mapping (BC-HOST-03).** Every `LoomErrorCode` variant maps
+//        `SurfaceTrap` receipts.
+// - **Closed mapping.** Every `LoomErrorCode` variant maps
 //   to one of `host-error::{budget-exceeded, vault-rejection, shim-failure,
 //   store-integrity-failed, internal}`. Adding a new `LoomErrorCode`
 //   without updating `From` is a compile-time failure (exhaustive match).

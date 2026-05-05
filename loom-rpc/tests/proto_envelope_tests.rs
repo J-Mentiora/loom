@@ -1,4 +1,4 @@
-//! AC-PROTO-01.3 — Socket creation failure exits cleanly.
+//! — Socket creation failure exits cleanly.
 //!
 //! Given `$LOOM_SOCKET_PATH` points at a directory that does not exist
 //! OR the parent directory is not writable,
@@ -23,7 +23,7 @@ fn bind_error_on_missing_parent_directory() {
 
     assert!(
         result.is_err(),
-        "AC-PROTO-01.3: bind must fail when parent directory is missing"
+        "bind must fail when parent directory is missing"
     );
     match result.unwrap_err() {
         BindError::Io { reason } => {
@@ -34,7 +34,7 @@ fn bind_error_on_missing_parent_directory() {
         }
         BindError::PermissionDenied => { /* also acceptable */ }
         BindError::AddressInUse => {
-            panic!("AC-PROTO-01.3: AddressInUse is wrong error for missing directory");
+            panic!("AddressInUse is wrong error for missing directory");
         }
     }
 }
@@ -64,14 +64,11 @@ fn bind_error_on_read_only_directory() {
         return;
     }
 
-    assert!(
-        result.is_err(),
-        "AC-PROTO-01.3: bind must fail on non-writable directory"
-    );
+    assert!(result.is_err(), "bind must fail on non-writable directory");
     match result.unwrap_err() {
         BindError::PermissionDenied | BindError::Io { .. } => { /* both valid */ }
         BindError::AddressInUse => {
-            panic!("AC-PROTO-01.3: wrong error variant for permission-denied path");
+            panic!("wrong error variant for permission-denied path");
         }
     }
 }

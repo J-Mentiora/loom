@@ -1,5 +1,5 @@
-// Interface tests for `SelectVerb`. Verifies IC-SURF-07 hash-only tier
-// and IC-SURF-06 typed-CDP usage.
+// Interface tests for `SelectVerb`. Verifies the hash-only tier and
+// typed-CDP usage.
 
 extern crate alloc;
 

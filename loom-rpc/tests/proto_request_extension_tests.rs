@@ -1,4 +1,4 @@
-//! AC-PROTO-02.1 — Schema validation rejects malformed requests.
+//! — Schema validation rejects malformed requests.
 //!
 //! Given the JSON-RPC server,
 //! When a client sends `{method: "web.click", params: {selector: 42}}`
@@ -64,7 +64,7 @@ fn schema_violation_detail_on_wrong_type_param() {
     });
     let validator = SchemaValidator::new(provider);
 
-    // AC-PROTO-02.1: selector is 42 (integer) but schema expects string.
+    // selector is 42 (integer) but schema expects string.
     let params = json!({ "selector": 42 });
     let outcome = validator.validate_request("web.click", &params);
 
@@ -74,28 +74,28 @@ fn schema_violation_detail_on_wrong_type_param() {
             assert_eq!(
                 err.code,
                 LoomErrorCode::SchemaViolation,
-                "AC-PROTO-02.1: error code must be schema_violation"
+                "error code must be schema_violation"
             );
-            let data = err.data.expect("AC-PROTO-02.1: violation must carry data");
+            let data = err.data.expect("violation must carry data");
             assert_eq!(
                 data["field"].as_str().unwrap_or(""),
                 "params.selector",
-                "AC-PROTO-02.1: field must be params.selector"
+                "field must be params.selector"
             );
             assert_eq!(
                 data["expected"].as_str().unwrap_or(""),
                 "string",
-                "AC-PROTO-02.1: expected must be 'string'"
+                "expected must be 'string'"
             );
             assert_eq!(
                 data["actual"].as_str().unwrap_or(""),
                 "integer",
-                "AC-PROTO-02.1: actual must be 'integer'"
+                "actual must be 'integer'"
             );
         }
-        ValidationOutcome::Pass => panic!("AC-PROTO-02.1: validator must reject integer selector"),
+        ValidationOutcome::Pass => panic!("validator must reject integer selector"),
         ValidationOutcome::MethodNotFound(_) => {
-            panic!("AC-PROTO-02.1: method web.click must be registered")
+            panic!("method web.click must be registered")
         }
     }
 }

@@ -161,7 +161,7 @@ async fn create_new_target_failed_inject_leaves_flag_false_and_no_session_bindin
 
 #[tokio::test]
 async fn create_new_target_idempotent_per_session() {
-    // SR-SHIM-01: same session_id → same target_id; second call reuses,
+    // same session_id → same target_id; second call reuses,
     // doesn't re-inject.
     let cdp = RecordingCdp::new();
     let injector = ChromiumDeterminismInjector::new(cdp.clone(), TEMPLATE.to_string());
