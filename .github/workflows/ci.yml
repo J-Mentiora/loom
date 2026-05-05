@@ -282,7 +282,13 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           set -euo pipefail
-          "$HOME/.config/loom/chromium/Chromium.app/Contents/MacOS/Chromium" --version | tee /tmp/chrome-version.txt
+          # The macOS Chromium zip extracts under a `chrome-mac/` prefix
+          # (sibling of the Linux `chrome-linux/` layout). Production
+          # `chromium_resolver` falls back to /Applications when the
+          # pinned bundle isn't at `<dir>/Chromium.app/...`; that
+          # fallback is tracked separately for v0.9.x. The CI version
+          # check just verifies the downloaded binary runs.
+          "$HOME/.config/loom/chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium" --version | tee /tmp/chrome-version.txt
           grep -F '132.0.6834.57' /tmp/chrome-version.txt
       - name: Verify pinned URLs are still reachable (CDN drift detector)
         # Cheap HEAD-only test from chromium_pin.rs — catches CDN expiry
