@@ -64,10 +64,15 @@ name = "loom_shims"
 path = "src/lib.rs"
 
 [[bin]]
-name = "loom-shim-chromium"
-path = "src/bin/loom-shim-chromium.rs"
-
-[[bin]]
 name = "fake-chromium"
 path = "src/bin/fake-chromium.rs"
 required-features = ["fake-chromium-bin"]
+
+# AC-DIST-01: The `loom-shim-chromium` binary now lives in `loom-cli` so
+# cargo-dist 0.30+ can ship all 4 loom binaries in a single tarball —
+# cargo-dist's docs require all `[[bin]]` entries to be in one Cargo
+# Package to bundle. `fake-chromium` is a test-only stub gated behind the
+# `fake-chromium-bin` feature; cargo-dist is told to skip this whole
+# package entirely so the test bin doesn't get auto-shipped.
+[package.metadata.dist]
+dist = false

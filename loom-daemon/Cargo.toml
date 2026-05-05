@@ -32,6 +32,14 @@ tracing-subscriber = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
 
-[[bin]]
-name = "loom-daemon"
-path = "src/main.rs"
+[lib]
+name = "loom_daemon"
+path = "src/lib.rs"
+
+# AC-DIST-01: This package is a library only. The `loom-daemon` binary is
+# built from `loom-cli/src/bin/loom-daemon.rs` (a thin shim calling
+# `loom_daemon::run()`) so cargo-dist 0.30+ can ship all 4 loom binaries
+# in a single tarball — its docs require all `[[bin]]` entries to be in
+# one Cargo Package to bundle.
+[package.metadata.dist]
+dist = false

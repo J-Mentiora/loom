@@ -13,6 +13,10 @@
 //!
 //! Optional env:
 //!   - `LOOM_SHIM_USER_DATA_DIR` — defaults to a per-pid temp dir.
+//!
+//! This file lives in `loom-cli/` (not `loom-shims/`) so cargo-dist can
+//! bundle all 4 loom binaries into one Cargo package and ship them in one
+//! tarball (AC-DIST-01).
 
 use std::os::unix::io::RawFd;
 use std::path::PathBuf;
@@ -38,7 +42,9 @@ fn main() -> ExitCode {
     };
     let user_data_dir = std::env::var("LOOM_SHIM_USER_DATA_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| std::env::temp_dir().join(format!("loom-chromium-{}", std::process::id())));
+        .unwrap_or_else(|_| {
+            std::env::temp_dir().join(format!("loom-chromium-{}", std::process::id()))
+        });
 
     let config = loom_shims::supervisor::SupervisorConfig::new(chromium_path, user_data_dir);
 

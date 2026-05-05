@@ -16,7 +16,7 @@
 //!
 //! Run:
 //!   cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium
-//!   cargo build -p loom-shims --bin loom-shim-chromium
+//!   cargo build -p loom-cli --bin loom-shim-chromium
 //!   cargo test -p loom-host --test integration_navigate_status_codes -- --ignored
 //!
 //! Marked `#[ignore]` so a default `cargo test --workspace` doesn't
@@ -58,7 +58,7 @@ fn assert_binaries_built() {
     }
     if !std::path::Path::new(&shim_path).exists() {
         panic!(
-            "loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-shims --bin loom-shim-chromium` first"
+            "loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-cli --bin loom-shim-chromium` first"
         );
     }
 }

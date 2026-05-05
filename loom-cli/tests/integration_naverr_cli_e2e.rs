@@ -34,7 +34,7 @@
 //! cargo build --release --bin loom -p loom-cli
 //! cargo build --release --bin loom-daemon -p loom-host
 //! cargo build --release -p loom-shims --features fake-chromium-bin --bin fake-chromium
-//! cargo build --release -p loom-shims --bin loom-shim-chromium
+//! cargo build --release -p loom-cli --bin loom-shim-chromium
 //! cargo build --release --target wasm32-wasip2 -p loom-surface-web
 //! cargo test -p loom-cli --test integration_naverr_cli_e2e -- --ignored
 //! ```
