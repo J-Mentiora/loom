@@ -339,7 +339,7 @@ async fn evalresult_float_result() {
     mgr.shutdown_session("evalresult-float").await;
 }
 
-// ─── 64KB threshold boundary tests (skeptic finding) ───────────────────────
+// ─── 64KB threshold boundary tests ─────────────────────────────────────────
 
 #[tokio::test]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]

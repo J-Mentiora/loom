@@ -5,10 +5,10 @@ Each system's mock module lives **inside the owning crate** at
 This keeps each mock co-located with the types it stubs and avoids a
 synthetic crate that would have to depend on every system simultaneously.
 
-To enable mocks during a feature worker's TDD phase:
+To enable mocks while building tests against a system's contract:
 
 ```toml
-# In the feature worker's dev-dependencies on the relevant crate:
+# In dev-dependencies on the relevant crate:
 loom-core = { workspace = true, features = ["mock"] }
 loom-host = { workspace = true, features = ["mock"] }
 # ... etc.

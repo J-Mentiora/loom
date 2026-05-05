@@ -1,26 +1,15 @@
 # Workspace-level Cargo configuration.
 
-[build]
-# Phase 6 may flip this to wasm32-wasi-preview2 for the loom-surfaces
-# target via per-crate triples; left commented at scaffold time so
-# host-side tests for surfaces compile by default.
-# target = "wasm32-wasi-preview2"
-
-# wasm32-wasi-preview2 runner — Phase 6 wires wasmtime as the test
-# runner for surface unit tests. Stubbed to a no-op error so a stray
-# `cargo test --target wasm32-wasi-preview2` fails loudly with
-# actionable text rather than silently.
+# wasm32-wasi-preview2 stray-target trap. The real WASM build target
+# for `loom-surface-web` is `wasm32-wasip2`; if someone runs
+# `cargo test --target wasm32-wasi-preview2` (the older spelling),
+# fail loudly with actionable text rather than silently.
 [target.wasm32-wasi-preview2]
-runner = ["bash", "-c", "echo 'wasm32-wasi-preview2 runner not configured (Phase 5.4 stub); Phase 6 wires wasmtime' >&2; exit 87"]
+runner = ["bash", "-c", "echo 'wasm32-wasi-preview2 is not the loom WASM target — use wasm32-wasip2 instead' >&2; exit 87"]
 
-# Workspace-wide rustflags. Conservative at scaffold time; Phase 6 may
-# tighten lints once feature workers are landing real impls.
+# Workspace-wide rustflags.
 [target.'cfg(all())']
 rustflags = [
     "-Dwarnings",   # treat warnings as errors in CI; comment out locally if noisy
     "-Wunused",
 ]
-
-[net]
-# Vendored deps not yet committed; Phase 6 may switch to offline.
-offline = false

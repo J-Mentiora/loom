@@ -221,7 +221,7 @@ fn ac_cdpatt_04_method_classifier_page_scope_methods() {
     }
 }
 
-/// Round-24 regression: bootstrap_page_session MUST issue Runtime.enable
+/// Regression: bootstrap_page_session MUST issue Runtime.enable
 /// alongside Page.enable and Network.enable. Without Runtime.enable the
 /// CDP target never fires Runtime.consoleAPICalled events, the
 /// action_executor's navigate-time console-collector subscribes to a

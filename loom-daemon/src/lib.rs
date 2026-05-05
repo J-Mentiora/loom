@@ -839,18 +839,13 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// Construct the wire `Receipt` for a successful action outcome. Pure
-/// function — extracted from `WasmHostBridge::dispatch_action_blocking`
-/// so the AC-NAVRECEIPT2-01..05 production path has direct test
-/// coverage rather than relying on hand-crafted `Receipt {...}`
-/// fixtures (the Potemkin shape that allowed `899357f82` to ship green
-/// while the wire receipt was empty).
+/// Construct the wire `Receipt` for a successful action outcome.
 ///
 /// Decodes the three navigate JSON blobs (`navigate_*_json`) into
 /// typed wire fields; degrades to empty / None with `tracing::warn` on
-/// decode failure (per plan v2 D14: observability fields shouldn't
-/// fail the navigate). Applies `apply_capture_profile_to_wire` last so
-/// `--capture-policy minimal` strips tier-2 fields per AC-NAVRECEIPT2-05.
+/// decode failure — observability fields shouldn't fail the navigate.
+/// Applies `apply_capture_profile_to_wire` last so `--capture-policy
+/// minimal` strips tier-2 fields per AC-NAVRECEIPT2-05.
 fn build_navigate_wire_receipt(
     builder: &loom_host::receipt_marshaller::ReceiptBuilder,
     session_id: &str,
@@ -1501,8 +1496,7 @@ mod tests {
         assert_eq!(matched, Some(&"window.location"));
     }
 
-    /// service-worker registration is gated; feature
-    /// detection is allowed (tightened pattern per skeptic review).
+    /// service-worker registration is gated; feature detection is allowed.
     #[test]
     fn evaluate_denylist_gates_service_worker_register_not_feature_detect() {
         let register = "navigator.serviceWorker.register('/sw.js')";
@@ -1827,7 +1821,7 @@ mod tests {
         );
     }
 
-    // ─── Tests for build_navigate_wire_receipt — anti-Potemkin coverage ──
+    // ─── Tests for build_navigate_wire_receipt ─────────────────────────
     //
     // These pin the production wire-receipt construction path that
     // `WasmHostBridge::dispatch_action_blocking` invokes. Required because
@@ -1835,8 +1829,7 @@ mod tests {
     // (`loom-rpc/tests/...`) or stops at the shim layer
     // (`loom-host/tests/integration_navigate_tier2_e2e.rs`); without
     // these, the `Receipt` construction + JSON-decode + capture-policy
-    // arms ship with no direct test coverage — the exact failure mode
-    // round-2 (AC-NAVRECEIPT2-*) exists to catch.
+    // arms would ship with no direct test coverage.
 
     use loom_core::receipt_builder::receipt_builder::NetworkSummary;
     use loom_host::receipt_marshaller::{ReceiptBuilder, ReceiptStatus as HostStatus};
@@ -1947,8 +1940,8 @@ mod tests {
     }
 
     /// `capture_policy_str = Some("default")` and `Some("full")` are
-    /// no-ops on the wire today (matches plan v2 D6 — Full will gain
-    /// `dom_full_text` semantics in a future PR).
+    /// no-ops on the wire today; Full will gain `dom_full_text`
+    /// semantics in a future PR.
     #[test]
     fn build_navigate_wire_receipt_default_and_full_are_noops() {
         let builder = navigate_builder_with_all_blobs();
@@ -1963,8 +1956,8 @@ mod tests {
 
     /// Decode-failure paths: malformed JSON in any of the three navigate
     /// blobs degrades to empty/None instead of failing the navigate
-    /// (per plan v2 D14 — observability fields shouldn't trap). This
-    /// pins the `tracing::warn` arms.
+    /// (observability fields shouldn't trap). This pins the
+    /// `tracing::warn` arms.
     #[test]
     fn build_navigate_wire_receipt_degrades_on_malformed_console_lines_json() {
         let mut builder = navigate_builder_with_all_blobs();

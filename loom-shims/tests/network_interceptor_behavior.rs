@@ -80,7 +80,7 @@ fn test_url_in_blocklist_strict_empty_patterns_returns_none() {
     assert!(url_in_blocklist_strict("https://www.google-analytics.com/ga.js", &[]).is_none());
 }
 
-// === NEW (Round-2 plan, item I1) ===
+// === Categorised blocklist parsing ===
 
 /// GA section entries are tagged `reason="analytics"`,
 /// DoubleClick advertising-section entries are tagged with the

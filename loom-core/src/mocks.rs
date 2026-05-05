@@ -1,6 +1,6 @@
 //! Mock harness for `loom-core`. Tagged `#[cfg(any(test, feature = "mock"))]`
-//! at the lib.rs declaration so feature workers can enable mocks during
-//! their TDD phase before real sibling features merge.
+//! at the lib.rs declaration so downstream tests can enable mocks
+//! without pulling in real I/O dependencies.
 //!
 //! Deterministic canned responses; no I/O, no time, no randomness.
 
