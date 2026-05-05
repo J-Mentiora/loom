@@ -8,15 +8,15 @@
 //! the trait/types re-exported via `core_api_facade` plus the canonical
 //! ID/error types in `manifest_writer` + `error`.
 
-// Stub phase: fields declared in design-time interface files are not yet read
-// by the `unimplemented!()` bodies; suppress until later releases fill them in.
+// Some struct fields exist for forthcoming features and aren't read yet;
+// silence the warning rather than scatter `#[allow(dead_code)]` per-item.
 #![allow(dead_code)]
 
-// Allow `use loom_core::…` inside the `include!`-embedded systems/ interface
-// files to resolve to `crate::…` without edits to the design-artifact sources.
+// Allow `use loom_core::…` inside crate-internal modules to resolve to
+// `crate::…` without churn at every import site.
 extern crate self as loom_core;
 
-// ---- Canonical error re-export (binding-constraints §5) ----
+// ---- Canonical error re-export ----
 // `loom_core::error::LoomError` is the universal error type referenced
 // by every other crate. The canonical definition lives in
 // `loom-shared` (cross-crate); we re-export here so the path
