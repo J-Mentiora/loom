@@ -125,7 +125,10 @@ fn mcp_content_from_json_serialises_as_text_tag() {
     let block = McpContent::from_json(serde_json::json!({"k": "v"}));
     let s = serde_json::to_string(&block).unwrap();
     assert!(s.contains("\"type\":\"text\""), "got {s}");
-    assert!(s.contains("\"k\""), "got {s}");
+    // The inner JSON value is JSON-stringified into the text field, so
+    // its quotes are escaped — assert the escaped form survives
+    // serialisation, not the bare 3-char `"k"` literal.
+    assert!(s.contains("\\\"k\\\""), "got {s}");
 }
 
 #[test]
