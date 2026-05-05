@@ -1,0 +1,28 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH loom-benchmark 1  "loom-benchmark " 
+.SH NAME
+loom\-benchmark \- Run performance benchmarks and validate SLAs. RPC\-free local action
+.SH SYNOPSIS
+\fBloom\-benchmark\fR [\fB\-\-iterations\fR] [\fB\-\-t\-platform\-ms\fR] [\fB\-\-binary\fR] [\fB\-\-meta\-json\fR] [\fB\-\-skip\-binary\-size\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Run performance benchmarks and validate SLAs. RPC\-free local action
+.SH OPTIONS
+.TP
+\fB\-\-iterations\fR \fI<ITERATIONS>\fR [default: 1000]
+Number of session\-create and receipt\-overhead iterations (min: 1)
+.TP
+\fB\-\-t\-platform\-ms\fR \fI<T_PLATFORM_MS>\fR [default: 5]
+Synthetic platform latency per action in ms for overhead measurement. This represents the expected CDP call latency, subtracted from total measured time to compute receipt\-generation overhead
+.TP
+\fB\-\-binary\fR \fI<BINARY>\fR
+Path to the loom binary for binary\-size check (defaults to argv[0])
+.TP
+\fB\-\-meta\-json\fR \fI<META_JSON>\fR
+Override path to meta.json for binary\-size check
+.TP
+\fB\-\-skip\-binary\-size\fR
+Skip the binary\-size check (useful in dev builds without meta.json)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
