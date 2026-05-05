@@ -1,7 +1,6 @@
 // Interface tests for `ScreenshotVerb`. Verifies IC-SURF-07
 // screenshot-only tier + BC-SURF-05 integer quality.
 
-
 extern crate alloc;
 
 use super::screenshot_verb::{ScreenshotAction, ScreenshotVerb};
@@ -57,7 +56,9 @@ fn screenshot_execute_returns_png_ref() {
     let receipt = ScreenshotVerb::execute(action).expect("screenshot must return Ok");
 
     // AC-WEB-05.1: screenshot_after_ref with 64-char SHA-256
-    let ss_ref = receipt.screenshot_after_ref.expect("screenshot_after_ref must be Some");
+    let ss_ref = receipt
+        .screenshot_after_ref
+        .expect("screenshot_after_ref must be Some");
     assert_eq!(ss_ref.sha256_hex.len(), 64);
     assert!(ss_ref.sha256_hex.chars().all(|c| c.is_ascii_hexdigit()));
     // Screenshot-only tier: no DOM blob

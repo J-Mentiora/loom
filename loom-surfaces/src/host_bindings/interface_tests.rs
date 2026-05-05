@@ -7,7 +7,6 @@
 // panic stubs because the real bodies are wit-bindgen-generated
 // at build time. Runtime behaviour is covered by integration tests.
 
-
 extern crate alloc;
 
 use super::host_bindings::{host, Instant, LogLevel, NetReq, NetResp};
@@ -29,8 +28,7 @@ fn host_module_exposes_exactly_eight_host_fns() {
     let _ = host::blob_get as fn(&ContentRef) -> Result<Vec<u8>, HostError>;
     let _ = host::net_request as fn(&NetReq) -> Result<NetResp, HostError>;
     let _ = host::shim_call as fn(&str, &[u8]) -> Result<Vec<u8>, HostError>;
-    let _ = host::log_emit
-        as fn(LogLevel, &str, &[(alloc::string::String, alloc::string::String)]);
+    let _ = host::log_emit as fn(LogLevel, &str, &[(alloc::string::String, alloc::string::String)]);
     let _ = host::receipt_emit as fn(&Receipt);
 }
 
@@ -57,10 +55,7 @@ fn net_req_headers_are_string_pairs() {
     let req = NetReq {
         method: "GET".to_string(),
         url: "https://api.example/x".to_string(),
-        headers: alloc::vec![(
-            "Authorization".to_string(),
-            "Grant abc123".to_string()
-        )],
+        headers: alloc::vec![("Authorization".to_string(), "Grant abc123".to_string())],
         body: None,
     };
     assert_eq!(req.headers[0].0, "Authorization");

@@ -4,11 +4,10 @@
 // McpProtocolError).
 
 use super::mcp_dispatcher::{
-    InitializeResult, McpDispatcher, PromptsCapability, ResourcesCapability,
-    ResourcesReadParams, ServerCapabilities, ServerInfo, ToolsCallParams, ToolsCapability,
-    MCP_PROTOCOL_VERSION, METHOD_INITIALIZE, METHOD_PING, METHOD_PROMPTS_LIST,
-    METHOD_RESOURCES_LIST, METHOD_RESOURCES_READ, METHOD_SHUTDOWN, METHOD_TOOLS_CALL,
-    METHOD_TOOLS_LIST,
+    InitializeResult, McpDispatcher, PromptsCapability, ResourcesCapability, ResourcesReadParams,
+    ServerCapabilities, ServerInfo, ToolsCallParams, ToolsCapability, MCP_PROTOCOL_VERSION,
+    METHOD_INITIALIZE, METHOD_PING, METHOD_PROMPTS_LIST, METHOD_RESOURCES_LIST,
+    METHOD_RESOURCES_READ, METHOD_SHUTDOWN, METHOD_TOOLS_CALL, METHOD_TOOLS_LIST,
 };
 use crate::error_mapper::ToolResult;
 use crate::resource_tracker::{Resource, ResourceContents};
@@ -72,9 +71,7 @@ fn tools_call_params_has_name_and_arguments() {
 
 #[test]
 fn tools_list_returns_vec_tool() {
-    fn _ck(
-        d: std::sync::Arc<McpDispatcher>,
-    ) -> Box<dyn std::future::Future<Output = Vec<Tool>>> {
+    fn _ck(d: std::sync::Arc<McpDispatcher>) -> Box<dyn std::future::Future<Output = Vec<Tool>>> {
         Box::new(async move { d.tools_list().await })
     }
     let _ = _ck;
@@ -98,11 +95,8 @@ fn resources_read_takes_uri_param() {
     fn _ck(
         d: std::sync::Arc<McpDispatcher>,
         p: ResourcesReadParams,
-    ) -> Box<
-        dyn std::future::Future<
-                Output = Result<ResourceContents, loom_rpc::error::LoomError>,
-            >,
-    > {
+    ) -> Box<dyn std::future::Future<Output = Result<ResourceContents, loom_rpc::error::LoomError>>>
+    {
         Box::new(async move { d.resources_read(p).await })
     }
     let _ = _ck;
@@ -131,12 +125,16 @@ fn initialize_returns_protocol_version_and_capabilities() {
 #[test]
 fn server_capabilities_has_tools_resources_prompts() {
     let c = ServerCapabilities {
-        tools: ToolsCapability { list_changed: false },
+        tools: ToolsCapability {
+            list_changed: false,
+        },
         resources: ResourcesCapability {
             list_changed: false,
             subscribe: false,
         },
-        prompts: PromptsCapability { list_changed: false },
+        prompts: PromptsCapability {
+            list_changed: false,
+        },
     };
     let s = serde_json::to_string(&c).unwrap();
     assert!(s.contains("\"tools\""));

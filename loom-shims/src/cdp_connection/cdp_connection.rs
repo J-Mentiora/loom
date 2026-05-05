@@ -247,16 +247,14 @@ impl CdpConnection for ChromiumCdpConnection {
                         if let Some(err) = value.get("error") {
                             let _ = tx.send(Err(err.to_string()));
                         } else {
-                            let result = value
-                                .get("result")
-                                .cloned()
-                                .unwrap_or(JsonValue::Null);
+                            let result = value.get("result").cloned().unwrap_or(JsonValue::Null);
                             let _ = tx.send(Ok(result));
                         }
                     }
-                } else if let (Some(method), Some(params)) =
-                    (value.get("method").and_then(|v| v.as_str()), value.get("params"))
-                {
+                } else if let (Some(method), Some(params)) = (
+                    value.get("method").and_then(|v| v.as_str()),
+                    value.get("params"),
+                ) {
                     let handlers = handlers_for_reader.read();
                     for (filter, handler) in handlers.iter() {
                         if method.starts_with(&filter.method_prefix) {
@@ -421,13 +419,7 @@ pub fn method_matches(filter: &EventFilter, method: &str) -> bool {
 pub fn is_browser_scope_method(method: &str) -> bool {
     matches!(
         method.split('.').next().unwrap_or(""),
-        "Browser"
-            | "Target"
-            | "Tracing"
-            | "Storage"
-            | "Schema"
-            | "SystemInfo"
-            | "Memory"
+        "Browser" | "Target" | "Tracing" | "Storage" | "Schema" | "SystemInfo" | "Memory"
     )
 }
 
@@ -524,9 +516,9 @@ impl ChromiumCdpConnection {
             self.raw_command(method, params, Duration::from_secs(10))
                 .await
                 .map_err(|e| match e {
-                    CdpError::Protocol(detail) => CdpError::ConnectFailed(format!(
-                        "{method} during bootstrap: {detail}"
-                    )),
+                    CdpError::Protocol(detail) => {
+                        CdpError::ConnectFailed(format!("{method} during bootstrap: {detail}"))
+                    }
                     other => other,
                 })?;
         }

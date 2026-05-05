@@ -143,9 +143,8 @@ impl StartupManager {
             if line.is_empty() {
                 continue;
             }
-            let entry: ManifestEntry = serde_json::from_str(line).map_err(|e| {
-                LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string())
-            })?;
+            let entry: ManifestEntry = serde_json::from_str(line)
+                .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
             match &entry {
                 ManifestEntry::ActionReceipt { action_id, .. } => {
                     last_action_id = *action_id;

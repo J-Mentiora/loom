@@ -24,10 +24,13 @@ fn socket_mode_is_0600_after_bind() {
     let deps = Arc::new(common::test_handler_deps());
     let server = SocketServer::new(config, deps).expect("bind must succeed in a writable tempdir");
 
-    let meta = std::fs::metadata(&socket_path)
-        .expect("socket file must exist after SocketServer::new");
+    let meta =
+        std::fs::metadata(&socket_path).expect("socket file must exist after SocketServer::new");
     let mode = meta.permissions().mode() & 0o777;
-    assert_eq!(mode, 0o600, "AC-PROTO-01.1: socket mode must be exactly 0600");
+    assert_eq!(
+        mode, 0o600,
+        "AC-PROTO-01.1: socket mode must be exactly 0600"
+    );
 
     // Ownership: socket must belong to the running user.
     use std::os::unix::fs::MetadataExt;

@@ -40,20 +40,12 @@ pub trait SchemaValidatorApi: Send + Sync {
     /// Validate request `params` against the registered schema for
     /// `method`. Returns `Pass` on success; `Violation` on schema
     /// failure; `MethodNotFound` if the method is not registered.
-    fn validate_request(
-        &self,
-        method: &str,
-        params: &serde_json::Value,
-    ) -> ValidationOutcome;
+    fn validate_request(&self, method: &str, params: &serde_json::Value) -> ValidationOutcome;
 
     /// Validate a response payload against the registered response
     /// schema. Used by `RpcHandlers::vault_grant` to assert IC-RPC-10
     /// (no `secret`/`token`/`value` fields ever leak in the response).
-    fn validate_response(
-        &self,
-        method: &str,
-        response: &serde_json::Value,
-    ) -> ValidationOutcome;
+    fn validate_response(&self, method: &str, response: &serde_json::Value) -> ValidationOutcome;
 }
 
 pub struct SchemaValidator {

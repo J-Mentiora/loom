@@ -61,8 +61,7 @@ impl ErrorTranslator {
 
     /// Construct an `invalid_network_mode` envelope (AC-PROFVAL-02).
     pub fn from_invalid_network_mode(provided: &str, available: &[&str]) -> JsonRpcError {
-        let message =
-            Self::truncate_message(&format!("invalid network mode: {provided}"));
+        let message = Self::truncate_message(&format!("invalid network mode: {provided}"));
         JsonRpcError {
             code: LoomErrorCode::InvalidNetworkMode,
             message,
@@ -75,8 +74,7 @@ impl ErrorTranslator {
 
     /// Construct an `invalid_budget_key` envelope (AC-PROFVAL-03).
     pub fn from_invalid_budget_key(provided: &str, available: &[&str]) -> JsonRpcError {
-        let message =
-            Self::truncate_message(&format!("invalid budget key: {provided}"));
+        let message = Self::truncate_message(&format!("invalid budget key: {provided}"));
         JsonRpcError {
             code: LoomErrorCode::InvalidBudgetKey,
             message,
@@ -89,8 +87,7 @@ impl ErrorTranslator {
 
     /// Construct an `invalid_capture_policy` envelope (AC-CAPPOL-04).
     pub fn from_invalid_capture_policy(provided: &str, available: &[&str]) -> JsonRpcError {
-        let message =
-            Self::truncate_message(&format!("invalid capture policy: {provided}"));
+        let message = Self::truncate_message(&format!("invalid capture policy: {provided}"));
         JsonRpcError {
             code: LoomErrorCode::InvalidCapturePolicy,
             message,

@@ -36,8 +36,7 @@ impl ResourceTracker {
             .await
         {
             Ok(raw) => {
-                let sessions: Vec<SessionInfo> =
-                    serde_json::from_value(raw).unwrap_or_default();
+                let sessions: Vec<SessionInfo> = serde_json::from_value(raw).unwrap_or_default();
                 let resources: Vec<Resource> =
                     sessions.iter().map(Self::resource_from_session).collect();
                 let mut cache = self.cache.write().await;
@@ -97,6 +96,8 @@ impl ResourceTracker {
 
     pub async fn cache_snapshot(&self) -> Option<(Vec<Resource>, std::time::Instant)> {
         let cache = self.cache.read().await;
-        cache.as_ref().map(|c| (c.resources.clone(), c.populated_at))
+        cache
+            .as_ref()
+            .map(|c| (c.resources.clone(), c.populated_at))
     }
 }

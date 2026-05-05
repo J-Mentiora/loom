@@ -7,8 +7,8 @@ mod interface_tests;
 use crate::error_mapper::ErrorMapper;
 use crate::stdio_transport::{McpProtocolError, McpRequest, McpResponse};
 use loom_rpc::error::LoomError;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 impl McpDispatcher {
     pub fn new(
@@ -70,10 +70,7 @@ impl McpDispatcher {
         if let Some(id) = guard.take() {
             let _ = self
                 .rpc
-                .call(
-                    "session.close",
-                    serde_json::json!({ "session_id": id }),
-                )
+                .call("session.close", serde_json::json!({ "session_id": id }))
                 .await;
         }
     }
@@ -102,8 +99,7 @@ impl McpDispatcher {
                         arguments: serde_json::Value::Null,
                     });
                 let tr = self.tools_call(params).await;
-                let v =
-                    serde_json::to_value(tr).unwrap_or(serde_json::Value::Null);
+                let v = serde_json::to_value(tr).unwrap_or(serde_json::Value::Null);
                 (Some(v), None)
             }
             METHOD_RESOURCES_LIST => match self.resources_list().await {
@@ -113,26 +109,21 @@ impl McpDispatcher {
                 }
                 Err(e) => {
                     let tr = ErrorMapper::to_tool_result(e);
-                    let v =
-                        serde_json::to_value(tr).unwrap_or(serde_json::Value::Null);
+                    let v = serde_json::to_value(tr).unwrap_or(serde_json::Value::Null);
                     (Some(v), None)
                 }
             },
             METHOD_RESOURCES_READ => {
-                let params: ResourcesReadParams =
-                    serde_json::from_value(req.params).unwrap_or(ResourcesReadParams {
-                        uri: String::new(),
-                    });
+                let params: ResourcesReadParams = serde_json::from_value(req.params)
+                    .unwrap_or(ResourcesReadParams { uri: String::new() });
                 match self.resources_read(params).await {
                     Ok(contents) => {
-                        let v = serde_json::to_value(contents)
-                            .unwrap_or(serde_json::Value::Null);
+                        let v = serde_json::to_value(contents).unwrap_or(serde_json::Value::Null);
                         (Some(v), None)
                     }
                     Err(e) => {
                         let tr = ErrorMapper::to_tool_result(e);
-                        let v = serde_json::to_value(tr)
-                            .unwrap_or(serde_json::Value::Null);
+                        let v = serde_json::to_value(tr).unwrap_or(serde_json::Value::Null);
                         (Some(v), None)
                     }
                 }
@@ -168,12 +159,16 @@ impl McpDispatcher {
         InitializeResult {
             protocol_version: MCP_PROTOCOL_VERSION.into(),
             capabilities: ServerCapabilities {
-                tools: ToolsCapability { list_changed: false },
+                tools: ToolsCapability {
+                    list_changed: false,
+                },
                 resources: ResourcesCapability {
                     list_changed: false,
                     subscribe: false,
                 },
-                prompts: PromptsCapability { list_changed: false },
+                prompts: PromptsCapability {
+                    list_changed: false,
+                },
             },
             server_info: ServerInfo {
                 name: "loom-mcp".into(),
@@ -225,10 +220,7 @@ impl McpDispatcher {
             if !args.contains_key("session") {
                 match self.ensure_implicit_session().await {
                     Ok(id) => {
-                        args.insert(
-                            "session".to_string(),
-                            serde_json::Value::String(id),
-                        );
+                        args.insert("session".to_string(), serde_json::Value::String(id));
                     }
                     Err(e) => return ErrorMapper::to_tool_result(e),
                 }

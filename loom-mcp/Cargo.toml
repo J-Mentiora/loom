@@ -44,3 +44,6 @@ path = "src/lib.rs"
 # be in one Cargo Package to bundle.
 [package.metadata.dist]
 dist = false
+
+[lints]
+workspace = true

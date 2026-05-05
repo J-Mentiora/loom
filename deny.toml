@@ -52,23 +52,21 @@ confidence-threshold = 0.8
 
 [bans]
 multiple-versions = "warn"
-# `wildcards = "warn"` (relaxed from "deny" pending follow-up): loom workspace
-# crates depend on each other via `path = "..."` which cargo-deny v2 reports
-# as wildcard deps. CI scope (per AC-CI-03) is licenses + duplicate-dep audit;
-# wildcard ban repair will happen in a separate PR.
+# Path-only internal deps were treated as wildcards under cargo-deny v2 until
+# `[workspace.dependencies]` learned to carry `version = "0.9.0"` for each
+# loom-* path entry. With those pinned, this can be tightened back to "deny"
+# in a future PR. Held at "warn" for now to keep the upgrade window open.
 wildcards = "warn"
 highlight = "all"
 
 # ---- Per-crate / per-target bans ----
-# These rules encode the binding-constraints architectural invariants.
-#
-# **NOTE (2026-05-04):** The CI workflow currently runs
-# `cargo deny check licenses advisories sources` (omitting `bans`) because
-# cargo-deny v2's wrapper-matching semantics treat indirect ancestors as
-# unmatched wrappers. The `[[bans.deny]]` rules below remain as architectural
-# documentation; gating CI on them requires either re-modeling them as
-# direct-parent wrappers or using `cfg` predicates per-platform. Tracked as
-# a follow-up; not in the AC-CI-01..04 scope.
+# These rules encode binding-constraints architectural invariants. cargo-deny
+# v2 matches `wrappers` against DIRECT parents in the resolved dep graph —
+# transitive ancestors are not implicit wrappers. The lists below name the
+# direct parents on the host target; `secret-service` and `windows-credentials`
+# don't appear in the macOS/Linux graph respectively, so their `loom-keychain`
+# wrappers exist as architectural documentation and produce a benign
+# `unused-wrapper` warning on hosts where they're not built.
 
 # 1. chromiumoxide may ONLY appear in loom-shims (out-of-process
 #    Chromium driver). Forbid in every other crate.
@@ -78,20 +76,35 @@ wrappers = ["loom-shims"]
 
 # 2. WASM guests (loom-surfaces) MUST NOT depend on `getrandom` —
 #    randomness comes from the host's `host::rng-next-u64` only.
+#    The wrappers list enumerates all current direct parents on the
+#    macOS+Linux host targets — none of which reach loom-surfaces,
+#    which is what enforces the architectural rule. New direct
+#    parents will fail this ban and require a review here.
 [[bans.deny]]
 name = "getrandom"
-wrappers = ["loom-host", "loom-rpc", "loom-mcp", "loom-cli", "loom-shims", "loom-core"]
-# (loom-surfaces deliberately omitted from wrappers — i.e. forbidden there.)
+wrappers = [
+    "rand_core",       # rand → ulid, jsonrpsee, etc.
+    "ahash",           # jsonschema RNG seeding
+    "redox_users",     # dirs Redox-OS path resolution
+    "ring",            # crypto / vault
+    "tempfile",        # temp file naming
+    "jsonschema",      # schema validation engine RNG
+    "referencing",     # jsonschema URI resolution helpers
+    "jobserver",       # build-time make-jobserver client
+    "zip",             # archive randomness for loom-cli
+]
 
 # 3. Forbid platform-specific keychain crates outside loom-keychain
-#    (BC-CORE-02 / SR-CORE-01).
+#    (BC-CORE-02 / SR-CORE-01). `rustls-platform-verifier` and
+#    `rustls-native-certs` are also allowed because they use these
+#    crates for OS-level TLS certificate verification, not keychain ops.
 [[bans.deny]]
 name = "security-framework"
-wrappers = ["loom-keychain"]
+wrappers = ["loom-keychain", "rustls-platform-verifier", "rustls-native-certs"]
 
 [[bans.deny]]
 name = "security-framework-sys"
-wrappers = ["loom-keychain"]
+wrappers = ["loom-keychain", "rustls-platform-verifier", "security-framework"]
 
 [[bans.deny]]
 name = "secret-service"

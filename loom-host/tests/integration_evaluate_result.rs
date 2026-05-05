@@ -29,9 +29,7 @@
 #![cfg(unix)]
 
 use loom_host::host_observability::HostObservability;
-use loom_host::shim_manager::{
-    EvaluateOutcome, ShimConfig, ShimId, ShimManager,
-};
+use loom_host::shim_manager::{EvaluateOutcome, ShimConfig, ShimId, ShimManager};
 use std::time::Duration;
 
 fn target_bin_dir() -> std::path::PathBuf {
@@ -71,9 +69,7 @@ fn assert_binaries_built() {
     }
 }
 
-fn make_manager(
-    session_label: &str,
-) -> (std::sync::Arc<ShimManager>, ShimId, tempfile::TempDir) {
+fn make_manager(session_label: &str) -> (std::sync::Arc<ShimManager>, ShimId, tempfile::TempDir) {
     let user_data_dir = tempfile::tempdir().expect("tempdir");
     let obs = HostObservability::new(true);
     let mgr = ShimManager::new(obs);

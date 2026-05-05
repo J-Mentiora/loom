@@ -103,11 +103,13 @@ jobs:
         # 0 tests.
         # `--include-ignored`: runs the 23 fake-chromium ignored tests on
         # stable cells (forms the e2e signal for AC-CI-01).
-        # `--skip v8_seed_determinism`: the two tests in
-        # loom-host/tests/v8_seed_determinism.rs are deferred Phase 6+ stubs
-        # that panic!() until real Chromium subprocess wiring lands. Drop
-        # this filter when those tests are implemented.
-        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip v8_seed_determinism
+        # The two ignored tests in `loom-host/tests/v8_seed_determinism.rs`
+        # are Phase 6+ stubs that `panic!()` until real Chromium subprocess
+        # wiring lands. libtest's `--skip` matches function names (not the
+        # test-binary file name), so we filter on the unique substrings
+        # of each function name. Drop both filters when those tests are
+        # implemented.
+        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42
       - name: Run tests (beta, baseline only)
         if: matrix.toolchain == 'beta'
         # Beta cells run the same baseline cargo test as the previous CI did,
@@ -282,7 +284,13 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           set -euo pipefail
-          "$HOME/.config/loom/chromium/Chromium.app/Contents/MacOS/Chromium" --version | tee /tmp/chrome-version.txt
+          # The macOS Chromium zip extracts under a `chrome-mac/` prefix
+          # (sibling of the Linux `chrome-linux/` layout). Production
+          # `chromium_resolver` falls back to /Applications when the
+          # pinned bundle isn't at `<dir>/Chromium.app/...`; that
+          # fallback is tracked separately for v0.9.x. The CI version
+          # check just verifies the downloaded binary runs.
+          "$HOME/.config/loom/chromium/chrome-mac/Chromium.app/Contents/MacOS/Chromium" --version | tee /tmp/chrome-version.txt
           grep -F '132.0.6834.57' /tmp/chrome-version.txt
       - name: Verify pinned URLs are still reachable (CDN drift detector)
         # Cheap HEAD-only test from chromium_pin.rs — catches CDN expiry
@@ -291,12 +299,13 @@ jobs:
           LOOM_VERIFY_CHROMIUM_PINS: '1'
         run: cargo test -p loom-cli verify_url_head -- --nocapture
 
-  # cargo-deny — license + advisory + supply-chain audit on the workspace.
+  # cargo-deny — license + advisory + supply-chain + ban audit on the workspace.
   # Scope per AC-CI-03 ("license + duplicate-dep audit. Fail on any GPL /
-  # unknown licenses."): runs `licenses advisories sources`. The `bans`
-  # group is intentionally omitted — the existing `[[bans.deny]]` rules in
-  # `deny.toml` are architectural documentation that cargo-deny v2's
-  # wrapper-matching semantics flag as unmatched; repair is a follow-up PR.
+  # unknown licenses.") plus the architectural bans encoded in `deny.toml`
+  # (no chromiumoxide outside loom-shims; no platform keychain crates outside
+  # loom-keychain; getrandom audit trail). The `bans` wrappers were rewritten
+  # to enumerate direct dep-graph parents — cargo-deny v2 doesn't treat
+  # transitive ancestors as wrappers.
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest
@@ -305,7 +314,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          command: check licenses advisories sources
+          command: check licenses advisories sources bans
 
   # AC-DIST-01: vendored-wasm staleness check. The committed
   # `loom-cli/vendor/loom_surface_web.wasm` makes `cargo install --git`

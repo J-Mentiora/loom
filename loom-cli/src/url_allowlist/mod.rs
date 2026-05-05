@@ -18,7 +18,11 @@ const ALLOWLIST_DISPLAY: &str = "[http, https, about:blank]";
 fn extract_scheme(url: &str) -> Option<&str> {
     let colon = url.find(':')?;
     let scheme = &url[..colon];
-    if scheme.is_empty() { None } else { Some(scheme) }
+    if scheme.is_empty() {
+        None
+    } else {
+        Some(scheme)
+    }
 }
 
 /// Check that `url`'s scheme is in the allowlist.

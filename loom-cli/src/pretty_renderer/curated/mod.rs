@@ -20,26 +20,26 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 
+mod benchmark;
+mod doctor;
+mod gc;
+mod import_playwright;
 pub(super) mod plural;
+mod session_abort;
+mod session_close;
 mod session_create;
+mod session_diff;
+mod session_export;
 mod session_inspect;
 mod session_list;
-mod session_close;
-mod session_abort;
 mod session_replay;
-mod session_diff;
 mod session_validate;
-mod session_export;
-mod web_navigate;
-mod web_generic_action;
-mod web_evaluate;
 mod vault_add;
-mod vault_list;
 mod vault_grant_revoke;
-mod gc;
-mod doctor;
-mod import_playwright;
-mod benchmark;
+mod vault_list;
+mod web_evaluate;
+mod web_generic_action;
+mod web_navigate;
 
 /// Output of a curated render: the formatted text plus the SET of input
 /// receipt keys the renderer consumed (D-23). The dispatcher uses
@@ -73,7 +73,10 @@ fn registry() -> &'static HashMap<&'static str, RendererBox> {
         m.insert("session.abort", Box::new(session_abort::SessionAbort));
         m.insert("session.replay", Box::new(session_replay::SessionReplay));
         m.insert("session.diff", Box::new(session_diff::SessionDiff));
-        m.insert("session.validate", Box::new(session_validate::SessionValidate));
+        m.insert(
+            "session.validate",
+            Box::new(session_validate::SessionValidate),
+        );
         m.insert("session.export", Box::new(session_export::SessionExport));
         m.insert("web.navigate", Box::new(web_navigate::WebNavigate));
         m.insert("web.evaluate", Box::new(web_evaluate::WebEvaluate));
@@ -92,11 +95,20 @@ fn registry() -> &'static HashMap<&'static str, RendererBox> {
         }
         m.insert("vault.add", Box::new(vault_add::VaultAdd));
         m.insert("vault.list", Box::new(vault_list::VaultList));
-        m.insert("vault.grant", Box::new(vault_grant_revoke::VaultGrantRevoke));
-        m.insert("vault.revoke", Box::new(vault_grant_revoke::VaultGrantRevoke));
+        m.insert(
+            "vault.grant",
+            Box::new(vault_grant_revoke::VaultGrantRevoke),
+        );
+        m.insert(
+            "vault.revoke",
+            Box::new(vault_grant_revoke::VaultGrantRevoke),
+        );
         m.insert("gc.run", Box::new(gc::Gc));
         m.insert("doctor", Box::new(doctor::Doctor));
-        m.insert("session.import", Box::new(import_playwright::ImportPlaywright));
+        m.insert(
+            "session.import",
+            Box::new(import_playwright::ImportPlaywright),
+        );
         m.insert("benchmark", Box::new(benchmark::Benchmark));
         m
     })

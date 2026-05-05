@@ -2,7 +2,6 @@
 // IC-SURF-09 receipt-emit path, IC-SURF-06 chromium shim usage,
 // BC-SURF-05 integer coordinates.
 
-
 extern crate alloc;
 
 use super::click_verb::{ClickAction, ClickVerb};

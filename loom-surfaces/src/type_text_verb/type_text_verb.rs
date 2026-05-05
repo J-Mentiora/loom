@@ -12,7 +12,6 @@
 // - **Selector failure.** `selector_not_found` →
 //   `WebSelectorNotFound` error Receipt (no retry, no recovery).
 
-
 extern crate alloc;
 
 use alloc::string::String;

@@ -111,7 +111,10 @@ async fn test_ac_chrpin_03_happy_path_download_and_extract() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let mode = std::fs::metadata(&binary_path).unwrap().permissions().mode();
+        let mode = std::fs::metadata(&binary_path)
+            .unwrap()
+            .permissions()
+            .mode();
         assert!(
             mode & 0o111 != 0,
             "AC-CHRPIN-03: binary must be executable, mode={mode:o}"
@@ -146,10 +149,17 @@ async fn test_ac_chrpin_04_supply_chain_tampered_archive() {
     let result = downloader.ensure(&url, &wrong_sha).await;
 
     // AC-CHRPIN-04: must be Err, and specifically CliError::SupplyChain.
-    assert!(result.is_err(), "AC-CHRPIN-04: ensure() must return Err on SHA mismatch");
+    assert!(
+        result.is_err(),
+        "AC-CHRPIN-04: ensure() must return Err on SHA mismatch"
+    );
 
     match result.unwrap_err() {
-        CliError::SupplyChain { expected_hash, actual_hash, .. } => {
+        CliError::SupplyChain {
+            expected_hash,
+            actual_hash,
+            ..
+        } => {
             assert_eq!(
                 expected_hash, wrong_sha,
                 "AC-CHRPIN-04: SupplyChain::expected_hash must be the SHA we passed"
@@ -159,9 +169,7 @@ async fn test_ac_chrpin_04_supply_chain_tampered_archive() {
                 "AC-CHRPIN-04: SupplyChain::actual_hash must differ from the wrong SHA"
             );
         }
-        other => panic!(
-            "AC-CHRPIN-04: expected CliError::SupplyChain, got: {other:?}"
-        ),
+        other => panic!("AC-CHRPIN-04: expected CliError::SupplyChain, got: {other:?}"),
     }
 
     // Binary must NOT exist after a failed ensure (archive not extracted).
@@ -194,7 +202,10 @@ async fn test_idempotent_second_ensure_returns_skipped() {
     });
 
     // First call: downloads.
-    downloader.ensure(&url, &expected_sha).await.expect("first ensure must succeed");
+    downloader
+        .ensure(&url, &expected_sha)
+        .await
+        .expect("first ensure must succeed");
 
     // Second call: sentinel present, should return Skipped without network.
     // We reuse the same downloader; no server running (port is closed).

@@ -15,6 +15,11 @@ use loom_shared::error_format::{LoomError, LoomErrorCode};
 /// on all platforms (so tests can exercise the check on Linux too).
 /// When `None` and on macOS, `sw_vers -productVersion` is spawned.
 /// When `None` and not on macOS, the check passes unconditionally.
+//
+// `manual_map` here only fires under `cfg(not(target_os = "macos"))`, where the
+// else branch reduces to `None`. On macOS the else runs `sw_vers`, so the
+// suggested `version_override.map(...)` rewrite would be wrong. Suppress.
+#[allow(clippy::manual_map)]
 pub(crate) fn check_platform_version(version_override: Option<&str>) -> Result<(), LoomError> {
     use loom_shared::error_format::LoomErrorCode;
 

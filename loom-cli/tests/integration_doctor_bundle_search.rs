@@ -32,11 +32,7 @@ async fn test_verify_ok_with_differently_named_binary_in_bundle() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(
-            &browser_binary,
-            std::fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
+        std::fs::set_permissions(&browser_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     // Downloader expects the standard subpath — literal binary doesn't exist.
@@ -71,11 +67,7 @@ async fn test_verify_ok_with_symlinked_bundle() {
     std::fs::write(&chrome_binary, b"fake-google-chrome-binary").unwrap();
 
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(
-        &chrome_binary,
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .unwrap();
+    std::fs::set_permissions(&chrome_binary, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     // Create install_dir and symlink Chromium.app → Google Chrome.app.
     let install_dir = dir.path().join("install");

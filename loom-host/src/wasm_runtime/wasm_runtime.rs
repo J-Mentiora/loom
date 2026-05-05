@@ -86,6 +86,10 @@ impl WasmRuntime {
     /// Precompile-compatibility hash. Folded into `.cwasm` artifact paths
     /// so a wasmtime version bump triggers `StartupManager` recovery.
     pub fn precompile_compatibility_hash(&self) -> Result<String, LoomError> {
-        Ok(format!("wh-{}-{}", std::env::consts::ARCH, self.config.opt_level))
+        Ok(format!(
+            "wh-{}-{}",
+            std::env::consts::ARCH,
+            self.config.opt_level
+        ))
     }
 }

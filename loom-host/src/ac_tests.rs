@@ -69,8 +69,8 @@ fn test_no_firefox_webkit_symbols_in_source() {
 #[test]
 fn test_single_binary_no_runtime_deps_reqwest_uses_rustls() {
     let workspace_toml_path = loom_src_root().join("Cargo.toml");
-    let workspace_toml = std::fs::read_to_string(&workspace_toml_path)
-        .expect("failed to read workspace Cargo.toml");
+    let workspace_toml =
+        std::fs::read_to_string(&workspace_toml_path).expect("failed to read workspace Cargo.toml");
     assert!(
         workspace_toml.contains("rustls-tls"),
         "AC-NFR-COMPAT-04.1: reqwest must declare rustls-tls feature in workspace Cargo.toml"
@@ -107,12 +107,7 @@ fn test_adapter_isolation_linter_passes() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn scan_for_pattern(
-    dir: &Path,
-    pattern: &str,
-    excluded_subdirs: &[&str],
-    out: &mut Vec<String>,
-) {
+fn scan_for_pattern(dir: &Path, pattern: &str, excluded_subdirs: &[&str], out: &mut Vec<String>) {
     scan_for_pattern_impl(dir, pattern, excluded_subdirs, false, out);
 }
 

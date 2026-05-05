@@ -12,7 +12,10 @@ pub struct SessionExport;
 
 impl CuratedRenderer for SessionExport {
     fn render(&self, value: &Value, cfg: &CliConfig) -> Result<RenderedReceipt, CliError> {
-        let r = value.get("artifact_ref").and_then(|v| v.as_str()).unwrap_or("?");
+        let r = value
+            .get("artifact_ref")
+            .and_then(|v| v.as_str())
+            .unwrap_or("?");
         let text = ansi::paint(
             &format!("artifact_ref={}", r),
             ansi::CYAN,

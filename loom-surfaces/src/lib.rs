@@ -23,12 +23,12 @@ pub mod host_bindings;
 pub mod hover_verb;
 pub mod navigate_verb;
 pub mod receipt_builder;
+pub mod safety;
 pub mod screenshot_verb;
 pub mod scroll_verb;
 pub mod select_verb;
 pub mod snapshot_verb;
 pub mod type_text_verb;
-pub mod safety;
 pub mod wait_verb;
 
 #[cfg(any(test, feature = "mock"))]

@@ -19,7 +19,6 @@
 // # Banned in this module
 // - `serde_json`, `std::time`, `std::net`, raw CDP JSON strings.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -209,42 +208,90 @@ impl CdpMessageEncoder {
     pub fn encode(msg: &CdpMessage) -> Vec<u8> {
         let mut buf = Vec::new();
         match msg {
-            CdpMessage::PageNavigate(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::PageAddScriptToEvaluateOnNewDocument(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::InputDispatchMouseEvent(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::InputDispatchKeyEvent(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::RuntimeEvaluate(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::RuntimeCallFunctionOn(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::DomQuerySelector(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::DomGetDocument(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::DomGetBoxModel(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::DomScrollIntoViewIfNeeded(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::PageGetLayoutMetrics(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
-            CdpMessage::PageCaptureScreenshot(p) => {
-                ciborium::ser::into_writer(&CdpEnvelope { method: msg.method_name(), params: p }, &mut buf)
-            }
+            CdpMessage::PageNavigate(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::PageAddScriptToEvaluateOnNewDocument(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::InputDispatchMouseEvent(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::InputDispatchKeyEvent(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::RuntimeEvaluate(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::RuntimeCallFunctionOn(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::DomQuerySelector(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::DomGetDocument(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::DomGetBoxModel(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::DomScrollIntoViewIfNeeded(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::PageGetLayoutMetrics(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::PageCaptureScreenshot(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
         }
         .expect("CBOR serialization is infallible for fixed-shape CDP structs");
         buf

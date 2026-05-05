@@ -2,11 +2,11 @@
 //! Covers AC-CLI-01.1, AC-CLI-02.1, AC-CLI-04.1, AC-CLI-04.2,
 //! AC-NFR-DX-01.1, AC-NFR-DX-02.1.
 
+use loom_cli::action_commands::parse_extra_to_json;
+use loom_cli::error_mapper::{map_exit_code, CliError, ConnectionError};
 use loom_cli::output_formatter::{OutputFormatter, OutputSink};
 use loom_cli::pretty_renderer::PrettyRenderer;
 use loom_cli::schema_cache::SchemaCache;
-use loom_cli::error_mapper::{CliError, ConnectionError, map_exit_code};
-use loom_cli::action_commands::parse_extra_to_json;
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -20,7 +20,9 @@ impl OutputSink for VecSink {
     }
 }
 impl VecSink {
-    fn as_str(&self) -> &str { std::str::from_utf8(&self.0).unwrap() }
+    fn as_str(&self) -> &str {
+        std::str::from_utf8(&self.0).unwrap()
+    }
 }
 
 // ── AC-CLI-04.1: Default output is machine-parseable canonical JSON ──────────
@@ -39,7 +41,10 @@ fn test_ac_cli_04_1_no_ansi_bytes() {
     let value = json!({"status": "ok"});
     let result = OutputFormatter::<'_, VecSink>::canonical_json(&value).unwrap();
     // No ESC byte (ANSI escape sequences start with \x1b)
-    assert!(!result.contains('\x1b'), "canonical_json must not emit ANSI codes");
+    assert!(
+        !result.contains('\x1b'),
+        "canonical_json must not emit ANSI codes"
+    );
 }
 
 #[test]
@@ -150,7 +155,8 @@ fn test_ac_nfr_dx_02_1_error_receipt_verbatim() {
     // The error receipt flows verbatim through OutputFormatter
     let mut sink = VecSink(Vec::new());
     let mut fmt = OutputFormatter::new(&mut sink);
-    let receipt = json!({"status": "error", "code": "SelectorNotFound", "message": "element not found"});
+    let receipt =
+        json!({"status": "error", "code": "SelectorNotFound", "message": "element not found"});
     fmt.write("web.click", &receipt).unwrap();
     let out = sink.as_str().trim_end();
     let parsed: serde_json::Value = serde_json::from_str(out).unwrap();
@@ -163,8 +169,10 @@ fn test_ac_nfr_dx_02_1_error_receipt_verbatim() {
 #[test]
 fn test_ac_cli_02_1_parse_extra_key_value_pairs() {
     let extra = vec![
-        "--selector".to_string(), "#btn".to_string(),
-        "--session".to_string(), "sid-1".to_string(),
+        "--selector".to_string(),
+        "#btn".to_string(),
+        "--session".to_string(),
+        "sid-1".to_string(),
     ];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["selector"], "#btn");
@@ -173,7 +181,11 @@ fn test_ac_cli_02_1_parse_extra_key_value_pairs() {
 
 #[test]
 fn test_ac_cli_02_1_parse_extra_boolean_flag() {
-    let extra = vec!["--verbose".to_string(), "--selector".to_string(), "#btn".to_string()];
+    let extra = vec![
+        "--verbose".to_string(),
+        "--selector".to_string(),
+        "#btn".to_string(),
+    ];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["verbose"], true);
     assert_eq!(val["selector"], "#btn");
@@ -181,7 +193,12 @@ fn test_ac_cli_02_1_parse_extra_boolean_flag() {
 
 #[test]
 fn test_ac_cli_02_1_parse_extra_repeated_key_last_wins() {
-    let extra = vec!["--k".to_string(), "a".to_string(), "--k".to_string(), "b".to_string()];
+    let extra = vec![
+        "--k".to_string(),
+        "a".to_string(),
+        "--k".to_string(),
+        "b".to_string(),
+    ];
     let val = parse_extra_to_json(&extra).unwrap();
     assert_eq!(val["k"], "b");
 }
@@ -218,7 +235,11 @@ fn test_schema_cache_load_from_dir() {
         "request": {"type": "object", "properties": {"profile": {"type": "string"}}},
         "response": {"type": "object", "properties": {"session_id": {"type": "string"}, "created_at": {"type": "integer"}, "profile": {"type": "string"}}}
     });
-    std::fs::write(dir.path().join("session.create.json"), serde_json::to_string(&schema).unwrap()).unwrap();
+    std::fs::write(
+        dir.path().join("session.create.json"),
+        serde_json::to_string(&schema).unwrap(),
+    )
+    .unwrap();
     let cache = SchemaCache::load(dir.path()).unwrap();
     assert_eq!(cache.len(), 1);
     assert!(cache.request_schema("session.create").is_some());
@@ -292,8 +313,16 @@ fn test_ac_cli_rt_02_help_exits_0() {
 #[test]
 fn test_ac_cli_rt_03_subcommand_help_no_unimplemented() {
     let subcommands = [
-        "session", "action", "vault", "gc", "serve",
-        "postinstall", "doctor", "mcp", "import", "benchmark",
+        "session",
+        "action",
+        "vault",
+        "gc",
+        "serve",
+        "postinstall",
+        "doctor",
+        "mcp",
+        "import",
+        "benchmark",
     ];
     for sub in &subcommands {
         let code = loom_cli::cli_main::run(vec![
@@ -311,7 +340,11 @@ fn test_ac_cli_rt_03_subcommand_help_no_unimplemented() {
 fn test_ac_cli_rt_05_early_init_returns_config() {
     let argv = vec!["loom".to_string()];
     let result = loom_cli::cli_main::early_init(&argv);
-    assert!(result.is_ok(), "early_init must return Ok(CliConfig); got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "early_init must return Ok(CliConfig); got: {:?}",
+        result.err()
+    );
 }
 
 /// HelpGenerator: json_field_to_clap_arg and clap_arg_to_json_field are
@@ -319,7 +352,12 @@ fn test_ac_cli_rt_05_early_init_returns_config() {
 #[test]
 fn test_help_generator_field_name_round_trip() {
     use loom_cli::help_generator::{clap_arg_to_json_field, json_field_to_clap_arg};
-    let fields = ["session_id", "network_mode", "default_profile", "trace_path"];
+    let fields = [
+        "session_id",
+        "network_mode",
+        "default_profile",
+        "trace_path",
+    ];
     for field in &fields {
         let arg = json_field_to_clap_arg(field);
         let back = clap_arg_to_json_field(&arg);

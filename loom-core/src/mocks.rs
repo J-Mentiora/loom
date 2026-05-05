@@ -66,7 +66,9 @@ pub struct MockContentStore {
 
 impl MockContentStore {
     pub fn new() -> Arc<Self> {
-        Arc::new(Self { blobs: Mutex::new(HashMap::new()) })
+        Arc::new(Self {
+            blobs: Mutex::new(HashMap::new()),
+        })
     }
 }
 
@@ -75,18 +77,28 @@ impl ContentStore for MockContentStore {
         let d = digest(&SHA256, bytes);
         let sha256: String = d.as_ref().iter().map(|b| format!("{b:02x}")).collect();
         let size_bytes = bytes.len() as u64;
-        self.blobs.lock().entry(sha256.clone()).or_insert_with(|| bytes.to_vec());
+        self.blobs
+            .lock()
+            .entry(sha256.clone())
+            .or_insert_with(|| bytes.to_vec());
         Ok(ContentRef { sha256, size_bytes })
     }
 
     fn get(&self, r: &ContentRef) -> Result<Vec<u8>, LoomError> {
         self.blobs.lock().get(&r.sha256).cloned().ok_or_else(|| {
-            LoomError::new(LoomErrorCode::StoreNotFound, format!("mock: blob not found: {}", r.sha256))
+            LoomError::new(
+                LoomErrorCode::StoreNotFound,
+                format!("mock: blob not found: {}", r.sha256),
+            )
         })
     }
 
     fn gc(&self, _ttl: Duration) -> Result<GcReport, LoomError> {
-        Ok(GcReport { blobs_scanned: 0, blobs_collected: 0, bytes_freed: 0 })
+        Ok(GcReport {
+            blobs_scanned: 0,
+            blobs_collected: 0,
+            bytes_freed: 0,
+        })
     }
 }
 

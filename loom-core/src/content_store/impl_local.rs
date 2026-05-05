@@ -153,7 +153,10 @@ impl ContentStore for LocalContentStore {
 
         // Idempotent: if the blob already exists, skip disk I/O.
         if target.exists() {
-            return Ok(ContentRef { sha256: sha256_hex, size_bytes });
+            return Ok(ContentRef {
+                sha256: sha256_hex,
+                size_bytes,
+            });
         }
 
         // Auto-GC check: if max_bytes is set and we'd exceed it, run GC first.
@@ -184,7 +187,10 @@ impl ContentStore for LocalContentStore {
         fs::write(tmp.path(), bytes)?;
         tmp.persist(&target).map_err(|e| LoomError::from(e.error))?;
 
-        Ok(ContentRef { sha256: sha256_hex, size_bytes })
+        Ok(ContentRef {
+            sha256: sha256_hex,
+            size_bytes,
+        })
     }
 
     fn get(&self, r: &ContentRef) -> Result<Vec<u8>, LoomError> {
@@ -219,19 +225,27 @@ impl ContentStore for LocalContentStore {
 
     fn gc(&self, ttl: Duration) -> Result<GcReport, LoomError> {
         let cas_root = self.root.join("cas");
-        let sessions_root = self.root.parent()
+        let sessions_root = self
+            .root
+            .parent()
             .map(|p| p.join("sessions"))
             .unwrap_or_else(|| self.root.join("sessions"));
 
         let referenced = collect_referenced_blobs(&sessions_root);
-        let cutoff = SystemTime::now().checked_sub(ttl).unwrap_or(SystemTime::UNIX_EPOCH);
+        let cutoff = SystemTime::now()
+            .checked_sub(ttl)
+            .unwrap_or(SystemTime::UNIX_EPOCH);
 
         let mut blobs_scanned: u64 = 0;
         let mut blobs_collected: u64 = 0;
         let mut bytes_freed: u64 = 0;
 
         if !cas_root.exists() {
-            return Ok(GcReport { blobs_scanned, blobs_collected, bytes_freed });
+            return Ok(GcReport {
+                blobs_scanned,
+                blobs_collected,
+                bytes_freed,
+            });
         }
 
         for entry in WalkDir::new(&cas_root).into_iter().flatten() {
@@ -262,6 +276,10 @@ impl ContentStore for LocalContentStore {
             }
         }
 
-        Ok(GcReport { blobs_scanned, blobs_collected, bytes_freed })
+        Ok(GcReport {
+            blobs_scanned,
+            blobs_collected,
+            bytes_freed,
+        })
     }
 }

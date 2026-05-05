@@ -19,8 +19,8 @@ use super::host_function_table::HostState;
 use crate::wit_type_marshaller::loom_surface_bindings::loom::surface::{
     host::Host,
     types::{
-        ContentRef, EvaluateResult, HostError, Instant, LogLevel, NavigateResult, NetReq,
-        NetResp, Receipt,
+        ContentRef, EvaluateResult, HostError, Instant, LogLevel, NavigateResult, NetReq, NetResp,
+        Receipt,
     },
 };
 use crate::wit_type_marshaller::Mode;
@@ -238,10 +238,7 @@ impl Host for HostState {
                             // downloadPath=<dir>)` at startup. Confines
                             // Chromium downloads to the session-scoped dir.
                             if profile_for_register == "safe" {
-                                config.env.push((
-                                    "LOOM_SHIM_PROFILE".into(),
-                                    "safe".into(),
-                                ));
+                                config.env.push(("LOOM_SHIM_PROFILE".into(), "safe".into()));
                                 match &downloads_dir_for_register {
                                     Some(d) => {
                                         config.env.push((
@@ -350,12 +347,11 @@ impl Host for HostState {
                     .map(|c| c.clone())
                 {
                     Some(mut config) => {
-                        let dir = std::env::temp_dir()
-                            .join(format!("loom-chromium-{}", session_id_str));
-                        config.env.push((
-                            "LOOM_SHIM_USER_DATA_DIR".into(),
-                            dir.display().to_string(),
-                        ));
+                        let dir =
+                            std::env::temp_dir().join(format!("loom-chromium-{}", session_id_str));
+                        config
+                            .env
+                            .push(("LOOM_SHIM_USER_DATA_DIR".into(), dir.display().to_string()));
                         // AC-SAFEPROF-04: same env-var contract as
                         // `shim_call`. The shim's CDP bootstrap reads these
                         // and sends Browser.setDownloadBehavior(allowAndName,
@@ -364,10 +360,7 @@ impl Host for HostState {
                         // Browser.downloadWillBegin visibility handler is
                         // a deferred follow-up; not implemented today.
                         if profile_for_register == "safe" {
-                            config.env.push((
-                                "LOOM_SHIM_PROFILE".into(),
-                                "safe".into(),
-                            ));
+                            config.env.push(("LOOM_SHIM_PROFILE".into(), "safe".into()));
                             match &downloads_dir_for_register {
                                 Some(d) => {
                                     config.env.push((
@@ -479,11 +472,7 @@ impl Host for HostState {
             let network_events_value = serde_json::to_value(&outcome.network_events)
                 .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
 
-            if let Some(ev) = outcome
-                .network_events
-                .iter()
-                .find(|e| e.status >= 400)
-            {
+            if let Some(ev) = outcome.network_events.iter().find(|e| e.status >= 400) {
                 let detail = serde_json::json!({
                     "kind": "http_status",
                     "url": url, // AC-NAVERR-01..02
@@ -593,37 +582,37 @@ impl Host for HostState {
 
         // Resolve effective shim ID and lazy-register if needed (same
         // pattern as navigate_execute).
-        let maybe_id: Result<ShimId, HostError> =
-            if self.mode == crate::wit_type_marshaller::Mode::Replay {
-                Err(HostError::Internal(
-                    "evaluate_execute not allowed in replay mode".to_owned(),
-                ))
-            } else {
-                let effective_id = ShimId(format!("chromium:{}", session_id_str));
-                if !shim_manager.is_registered(&effective_id) {
-                    match shim_manager
-                        .configs
-                        .get(&ShimId("chromium".to_owned()))
-                        .map(|c| c.clone())
-                    {
-                        Some(mut config) => {
-                            let dir = std::env::temp_dir()
-                                .join(format!("loom-chromium-{}", session_id_str));
-                            config.env.push((
-                                "LOOM_SHIM_USER_DATA_DIR".into(),
-                                dir.display().to_string(),
-                            ));
-                            shim_manager.register(effective_id.clone(), config);
-                            Ok(effective_id)
-                        }
-                        None => Err(HostError::ShimFailure(
-                            "no template config registered for shim chromium".to_owned(),
-                        )),
+        let maybe_id: Result<ShimId, HostError> = if self.mode
+            == crate::wit_type_marshaller::Mode::Replay
+        {
+            Err(HostError::Internal(
+                "evaluate_execute not allowed in replay mode".to_owned(),
+            ))
+        } else {
+            let effective_id = ShimId(format!("chromium:{}", session_id_str));
+            if !shim_manager.is_registered(&effective_id) {
+                match shim_manager
+                    .configs
+                    .get(&ShimId("chromium".to_owned()))
+                    .map(|c| c.clone())
+                {
+                    Some(mut config) => {
+                        let dir =
+                            std::env::temp_dir().join(format!("loom-chromium-{}", session_id_str));
+                        config
+                            .env
+                            .push(("LOOM_SHIM_USER_DATA_DIR".into(), dir.display().to_string()));
+                        shim_manager.register(effective_id.clone(), config);
+                        Ok(effective_id)
                     }
-                } else {
-                    Ok(effective_id)
+                    None => Err(HostError::ShimFailure(
+                        "no template config registered for shim chromium".to_owned(),
+                    )),
                 }
-            };
+            } else {
+                Ok(effective_id)
+            }
+        };
 
         async move {
             let effective_id = maybe_id?;
@@ -658,9 +647,9 @@ impl Host for HostState {
             }
 
             // Success path: convert CBOR result → canonical-JSON.
-            let cbor_value = outcome
-                .result
-                .ok_or_else(|| HostError::Internal("evaluate: no result and no exception".into()))?;
+            let cbor_value = outcome.result.ok_or_else(|| {
+                HostError::Internal("evaluate: no result and no exception".into())
+            })?;
             let json_value = cbor_value_to_json(cbor_value)?;
             let canonical_json = serde_jcs::to_string(&json_value).map_err(|e| {
                 HostError::Internal(format!("evaluate: canonical-JSON serialization: {e}"))
@@ -713,7 +702,11 @@ fn cbor_value_to_json(v: ciborium::value::Value) -> Result<serde_json::Value, Ho
             let s = if f.is_nan() {
                 "NaN".to_string()
             } else if f.is_infinite() {
-                if f.is_sign_negative() { "-Infinity".to_string() } else { "Infinity".to_string() }
+                if f.is_sign_negative() {
+                    "-Infinity".to_string()
+                } else {
+                    "Infinity".to_string()
+                }
             } else {
                 format!("{f}")
             };

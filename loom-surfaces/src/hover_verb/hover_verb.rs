@@ -10,7 +10,6 @@
 // - **Failure modes:** selector missing → `WebSelectorNotFound`;
 //   element has no usable geometry → `WebHitTestFailed`.
 
-
 extern crate alloc;
 
 use alloc::string::String;

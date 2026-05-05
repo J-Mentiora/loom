@@ -32,12 +32,14 @@ fn walltime_error(observed_ms: u64, limit_ms: u64, budget_name: &'static str) ->
 
 fn network_error(observed_bytes: u64, limit_bytes: u64) -> LoomError {
     use crate::error::LoomErrorCode;
-    LoomError::new(LoomErrorCode::BudgetExceeded, "budget exceeded: network bytes").with_context(
-        json!({
-            "observed_bytes": observed_bytes,
-            "limit_bytes": limit_bytes,
-        }),
+    LoomError::new(
+        LoomErrorCode::BudgetExceeded,
+        "budget exceeded: network bytes",
     )
+    .with_context(json!({
+        "observed_bytes": observed_bytes,
+        "limit_bytes": limit_bytes,
+    }))
 }
 
 fn dom_nodes_error(observed_nodes: u64, limit_nodes: u64) -> LoomError {
@@ -52,12 +54,10 @@ fn dom_nodes_error(observed_nodes: u64, limit_nodes: u64) -> LoomError {
 
 fn js_heap_error(observed_heap_bytes: u64, limit_heap_bytes: u64) -> LoomError {
     use crate::error::LoomErrorCode;
-    LoomError::new(LoomErrorCode::BudgetExceeded, "budget exceeded: js heap").with_context(
-        json!({
-            "observed_heap_bytes": observed_heap_bytes,
-            "limit_heap_bytes": limit_heap_bytes,
-        }),
-    )
+    LoomError::new(LoomErrorCode::BudgetExceeded, "budget exceeded: js heap").with_context(json!({
+        "observed_heap_bytes": observed_heap_bytes,
+        "limit_heap_bytes": limit_heap_bytes,
+    }))
 }
 
 /// Fire the kill callback once (idempotent via AtomicBool).
@@ -76,10 +76,12 @@ impl BudgetEnforcer for LocalBudgetEnforcer {
         let guard = self.per_session.read();
         let entry = match guard.get(&session) {
             Some(e) => Arc::clone(e),
-            None => return Err(LoomError::new(
-                crate::error::LoomErrorCode::SessionNotFound,
-                format!("budget check: session not found: {}", session.0),
-            )),
+            None => {
+                return Err(LoomError::new(
+                    crate::error::LoomErrorCode::SessionNotFound,
+                    format!("budget check: session not found: {}", session.0),
+                ))
+            }
         };
         drop(guard);
 
@@ -110,16 +112,22 @@ impl BudgetEnforcer for LocalBudgetEnforcer {
         let guard = self.per_session.read();
         let entry = match guard.get(&session) {
             Some(e) => Arc::clone(e),
-            None => return Err(LoomError::new(
-                crate::error::LoomErrorCode::SessionNotFound,
-                format!("budget account: session not found: {}", session.0),
-            )),
+            None => {
+                return Err(LoomError::new(
+                    crate::error::LoomErrorCode::SessionNotFound,
+                    format!("budget account: session not found: {}", session.0),
+                ))
+            }
         };
         drop(guard);
 
         match kind {
             ResourceKind::Walltime => {
-                let total = entry.counters.walltime_ms.fetch_add(delta, Ordering::Relaxed) + delta;
+                let total = entry
+                    .counters
+                    .walltime_ms
+                    .fetch_add(delta, Ordering::Relaxed)
+                    + delta;
                 if total >= entry.limits.session_walltime_ms {
                     fire_kill(
                         &entry,
@@ -138,8 +146,11 @@ impl BudgetEnforcer for LocalBudgetEnforcer {
                 }
             }
             ResourceKind::Network => {
-                let total =
-                    entry.counters.network_bytes.fetch_add(delta, Ordering::Relaxed) + delta;
+                let total = entry
+                    .counters
+                    .network_bytes
+                    .fetch_add(delta, Ordering::Relaxed)
+                    + delta;
                 if total >= entry.limits.network_bytes {
                     fire_kill(
                         &entry,

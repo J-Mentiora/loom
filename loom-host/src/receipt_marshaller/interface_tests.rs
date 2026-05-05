@@ -21,11 +21,7 @@ fn queue_signature_takes_pool_handle_and_returns_unit() {
     // `queue` accepts a `TokioHandle` (the session's receipt_pool, NOT
     // a global pool — BC-HOST-01) and returns `Result<(), LoomError>`
     // immediately after spawning.
-    fn _ck(
-        m: &Arc<ReceiptMarshaller>,
-        o: ActionOutcome,
-        h: TokioHandle,
-    ) -> Result<(), LoomError> {
+    fn _ck(m: &Arc<ReceiptMarshaller>, o: ActionOutcome, h: TokioHandle) -> Result<(), LoomError> {
         m.queue(o, h)
     }
     let _ = _ck;
@@ -35,11 +31,7 @@ fn queue_signature_takes_pool_handle_and_returns_unit() {
 fn queue_does_not_take_self_mut() {
     // The marshaller is `Arc<Self>` — concurrent dispatches share the
     // same instance. Compile-time pin: `&Arc<Self>` not `&mut Self`.
-    fn _ck(
-        m: &Arc<ReceiptMarshaller>,
-        o: ActionOutcome,
-        h: TokioHandle,
-    ) -> Result<(), LoomError> {
+    fn _ck(m: &Arc<ReceiptMarshaller>, o: ActionOutcome, h: TokioHandle) -> Result<(), LoomError> {
         m.queue(o, h)
     }
     let _ = _ck;

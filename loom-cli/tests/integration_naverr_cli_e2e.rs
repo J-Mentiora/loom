@@ -57,6 +57,45 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+/// Mirror of `loom-daemon::data_root_default()` semantics applied to a custom
+/// HOME (we can't call `dirs::data_dir()` because it reads the test process's
+/// HOME, not the daemon-subprocess's). macOS: `Library/Application Support`;
+/// Linux: XDG `.local/share` (the test sets XDG_DATA_HOME below to match).
+fn auth_dir_for(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library/Application Support/loom/auth")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        home.join(".local/share/loom/auth")
+    }
+}
+
+/// Mirror of `loom-rpc::socket_server::default_socket_path` semantics.
+/// macOS: `dirs::cache_dir()/loom/loom.sock` = `~/Library/Caches/loom/loom.sock`.
+/// Linux: `$XDG_RUNTIME_DIR/loom.sock`. The test sets XDG_RUNTIME_DIR below
+/// to point at this same dir so the CLI subprocess agrees with the daemon.
+fn socket_path_for(home: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        home.join("Library/Caches/loom/loom.sock")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        home.join(".runtime/loom.sock")
+    }
+}
+
+/// Parent dir of `socket_path_for(home)`, used both for creating the dir at
+/// sandbox setup and for the `XDG_RUNTIME_DIR` env var on Linux.
+fn socket_parent_for(home: &Path) -> PathBuf {
+    socket_path_for(home)
+        .parent()
+        .expect("socket parent")
+        .to_path_buf()
+}
+
 // ─── Fixture: built-once-per-test-binary state ──────────────────────────────
 
 /// Cached AOT-compiled cwasm path + binary paths. Computed on first
@@ -95,8 +134,7 @@ fn build_fixture() -> Fixture {
     }
 
     let workspace_root = workspace_root();
-    let wasm_path = workspace_root
-        .join("target/wasm32-wasip2/release/loom_surface_web.wasm");
+    let wasm_path = workspace_root.join("target/wasm32-wasip2/release/loom_surface_web.wasm");
     if !wasm_path.exists() {
         panic!(
             "wasm32-wasip2 surface artifact not built at {}; run \
@@ -107,16 +145,14 @@ fn build_fixture() -> Fixture {
 
     // AOT-compile to a shared cwasm under the test target dir. Per-test
     // HOME setup symlinks this into <HOME>/.config/loom/surfaces/.
-    let cwasm_path = workspace_root
-        .join("target/loom-naverr-e2e-cwasm/loom_surface_web.cwasm");
+    let cwasm_path = workspace_root.join("target/loom-naverr-e2e-cwasm/loom_surface_web.cwasm");
     std::fs::create_dir_all(cwasm_path.parent().unwrap()).expect("create cwasm cache dir");
     if !cwasm_path.exists() {
         // Use loom-host's Compiler to ensure compatibility with the runtime
         // the daemon will use (same wasmtime version, same engine settings).
         use loom_host::compiler::Compiler;
         use loom_host::wasm_runtime::{WasmRuntime, WasmRuntimeConfig};
-        let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
-            .expect("WasmRuntime::new");
+        let runtime = WasmRuntime::new(WasmRuntimeConfig::default()).expect("WasmRuntime::new");
         let compiler = Compiler::new(runtime);
         compiler
             .compile_module(&wasm_path, &cwasm_path)
@@ -162,15 +198,14 @@ struct Sandbox {
 impl Sandbox {
     fn new() -> Self {
         let home = tempfile::tempdir().expect("tempdir");
-        // Use the macOS-default socket path so both the daemon and the
-        // CLI agree without us having to override --socket on every CLI
-        // invocation (the `--socket` flag exists on `loom serve` but not
-        // on `loom action` / `loom session`). dirs::cache_dir() resolves
-        // to $HOME/Library/Caches on macOS — the HOME override below
-        // points it into the test sandbox.
-        let cache_loom = home.path().join("Library/Caches/loom");
-        std::fs::create_dir_all(&cache_loom).expect("mkdir cache/loom");
-        let socket = cache_loom.join("loom.sock");
+        // Daemon and CLI must agree on the socket path without us passing
+        // `--socket` to the CLI (that flag exists only on `loom serve`).
+        // socket_path_for() mirrors loom_rpc::socket_server::default_socket_path
+        // per platform: macOS uses dirs::cache_dir()/loom/loom.sock under HOME;
+        // Linux uses $XDG_RUNTIME_DIR/loom.sock — the daemon + CLI envs below
+        // both point XDG_RUNTIME_DIR at this dir so all three sides agree.
+        std::fs::create_dir_all(socket_parent_for(home.path())).expect("mkdir socket parent");
+        let socket = socket_path_for(home.path());
 
         // Layout the directories the daemon + CLI expect.
         let cfg_loom = home.path().join(".config/loom");
@@ -178,8 +213,7 @@ impl Sandbox {
         std::fs::create_dir_all(cfg_loom.join("schemas/v1")).expect("mkdir schemas/v1");
         let chromium_bundle = cfg_loom.join("chromium/Chromium.app/Contents/MacOS");
         std::fs::create_dir_all(&chromium_bundle).expect("mkdir chromium bundle");
-        std::fs::create_dir_all(home.path().join("Library/Application Support/loom/auth"))
-            .expect("mkdir auth");
+        std::fs::create_dir_all(auth_dir_for(home.path())).expect("mkdir auth");
 
         // Symlink fake-chromium into the path the daemon's
         // `build_host_bridge` resolves to (~/.config/loom/chromium/...).
@@ -198,8 +232,7 @@ impl Sandbox {
         // succeeds on the CLI side and the daemon's RequestRouter registers
         // them. This is what `loom postinstall` does at step 2.
         let schemas_dir = cfg_loom.join("schemas/v1");
-        loom_cli::postinstall_runner::schema_step(&schemas_dir)
-            .expect("schema_step");
+        loom_cli::postinstall_runner::schema_step(&schemas_dir).expect("schema_step");
 
         // BUILTIN_SCHEMAS doesn't include session.* / vault.* / etc. — the
         // daemon's SchemaValidator gates those as MethodNotFound when the
@@ -209,11 +242,8 @@ impl Sandbox {
         // `RequestRouter::dispatch`.
         let permissive = r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#;
         for method in ["session.create", "session.list", "session.close"] {
-            std::fs::write(
-                schemas_dir.join(format!("{method}.json")),
-                permissive,
-            )
-            .expect("write permissive schema");
+            std::fs::write(schemas_dir.join(format!("{method}.json")), permissive)
+                .expect("write permissive schema");
         }
 
         Sandbox { home, socket }
@@ -242,9 +272,13 @@ impl Daemon {
             .env("XDG_DATA_HOME", sandbox.home_path().join(".local/share"))
             .env("XDG_CONFIG_HOME", sandbox.home_path().join(".config"))
             .env("XDG_CACHE_HOME", sandbox.home_path().join(".cache"))
+            .env("XDG_RUNTIME_DIR", socket_parent_for(sandbox.home_path()))
             // Stream daemon stderr to a file in the sandbox; we drain it
             // into the panic message when something fails downstream.
-            .env("RUST_LOG", "loom_host=debug,loom_rpc=info,loom_daemon=info,warn")
+            .env(
+                "RUST_LOG",
+                "loom_host=debug,loom_rpc=info,loom_daemon=info,warn",
+            )
             .stdout(Stdio::piped())
             .stderr(
                 std::fs::File::create(sandbox.home_path().join("daemon.stderr"))
@@ -284,9 +318,7 @@ impl Daemon {
 
         // Wait for hello.token + daemon.pid files (AuthManager::daemon_alive
         // checks the pid via `kill -0`).
-        let auth_dir = sandbox
-            .home_path()
-            .join("Library/Application Support/loom/auth");
+        let auth_dir = auth_dir_for(sandbox.home_path());
         let token_path = auth_dir.join("hello.token");
         let pid_path = auth_dir.join("daemon.pid");
         let deadline = Instant::now() + Duration::from_secs(5);
@@ -315,7 +347,6 @@ impl Daemon {
         self._sandbox.home_path()
     }
 
-
     fn cli(&self, args: &[&str]) -> CliOutput {
         // No --socket flag: not all subcommands accept it. Both daemon
         // and CLI compute the same default socket path from HOME.
@@ -325,6 +356,7 @@ impl Daemon {
             .env("XDG_DATA_HOME", self.home_path().join(".local/share"))
             .env("XDG_CONFIG_HOME", self.home_path().join(".config"))
             .env("XDG_CACHE_HOME", self.home_path().join(".cache"))
+            .env("XDG_RUNTIME_DIR", socket_parent_for(self.home_path()))
             .env("RUST_LOG", "warn")
             .output()
             .expect("spawn loom CLI");
@@ -343,13 +375,9 @@ impl Daemon {
                 out.status, out.stdout, out.stderr, self.daemon_stderr()
             );
         }
-        let value: serde_json::Value = serde_json::from_str(&out.stdout)
-            .unwrap_or_else(|e| {
-                panic!(
-                    "session create stdout not JSON: {e}; raw={:?}",
-                    out.stdout
-                )
-            });
+        let value: serde_json::Value = serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
+            panic!("session create stdout not JSON: {e}; raw={:?}", out.stdout)
+        });
         value
             .get("session_id")
             .and_then(|v| v.as_str())
@@ -363,8 +391,7 @@ impl Daemon {
     }
 
     fn daemon_stderr(&self) -> String {
-        std::fs::read_to_string(self.home_path().join("daemon.stderr"))
-            .unwrap_or_default()
+        std::fs::read_to_string(self.home_path().join("daemon.stderr")).unwrap_or_default()
     }
 
     fn navigate(&self, session_id: &str, url: &str) -> serde_json::Value {
@@ -467,7 +494,8 @@ fn ac_naverr_04_status_200_through_cli() {
                 h.len()
             );
             assert!(
-                h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                h.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                 "AC-SHA-01: {field} must be lowercase hex only, got {h}"
             );
         }
@@ -547,7 +575,10 @@ fn ac_naverr_02_status_500_through_cli() {
         let sid = daemon.create_session();
         let receipt = daemon.navigate(&sid, "http://fake.test/status/500");
 
-        assert_eq!(receipt["status"], "error", "AC-NAVERR-02: status must be 'error' for 500");
+        assert_eq!(
+            receipt["status"], "error",
+            "AC-NAVERR-02: status must be 'error' for 500"
+        );
         assert_eq!(receipt["error"]["kind"], "http_status");
         assert_eq!(receipt["error"]["detail"]["status_code"], 500u64);
         assert_eq!(receipt["status_code"], 500u64);
@@ -596,7 +627,10 @@ fn ac_naverr_03_connect_refused_through_cli() {
         let url = "http://fake.test/error/ERR_CONNECTION_REFUSED";
         let receipt = daemon.navigate(&sid, url);
 
-        assert_eq!(receipt["status"], "error", "AC-NAVERR-03 (ext): status must be 'error'");
+        assert_eq!(
+            receipt["status"], "error",
+            "AC-NAVERR-03 (ext): status must be 'error'"
+        );
         assert_eq!(
             receipt["error"]["kind"], "connect_refused",
             "AC-NAVERR-03 (ext): connect-refused must classify as 'connect_refused'"

@@ -14,11 +14,7 @@ pub struct SessionInspect;
 impl CuratedRenderer for SessionInspect {
     fn render(&self, value: &Value, cfg: &CliConfig) -> Result<RenderedReceipt, CliError> {
         let _ = value;
-        let head = ansi::paint(
-            "manifest summary",
-            ansi::CYAN,
-            cfg.stdout_color_enabled,
-        );
+        let head = ansi::paint("manifest summary", ansi::CYAN, cfg.stdout_color_enabled);
         Ok(RenderedReceipt {
             text: head,
             consumed_keys: HashSet::new(),

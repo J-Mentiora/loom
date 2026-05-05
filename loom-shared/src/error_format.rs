@@ -158,7 +158,11 @@ pub struct LoomError {
 
 impl LoomError {
     pub fn new(code: LoomErrorCode, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), context: None }
+        Self {
+            code,
+            message: message.into(),
+            context: None,
+        }
     }
 
     pub fn with_context(mut self, ctx: serde_json::Value) -> Self {

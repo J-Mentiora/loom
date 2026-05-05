@@ -49,9 +49,8 @@ async fn connection_closed_when_no_hello_sent() {
     let server = SocketServer::new(config, Arc::clone(&deps)).unwrap();
 
     let handle = tokio::runtime::Handle::current();
-    let server_task = tokio::spawn(async move {
-        server.serve(handle, futures::future::pending::<()>()).await
-    });
+    let server_task =
+        tokio::spawn(async move { server.serve(handle, futures::future::pending::<()>()).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
 
@@ -59,12 +58,9 @@ async fn connection_closed_when_no_hello_sent() {
     let mut framed = FrameHandler::wrap_stream(client);
 
     // Send nothing — server must close after HELLO_IDLE_TIMEOUT (5s).
-    let result = tokio::time::timeout(
-        std::time::Duration::from_secs(6),
-        framed.next(),
-    )
-    .await
-    .expect("server must close unauthenticated connection within 6s (HELLO_IDLE_TIMEOUT=5s)");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(6), framed.next())
+        .await
+        .expect("server must close unauthenticated connection within 6s (HELLO_IDLE_TIMEOUT=5s)");
 
     match result {
         Some(Ok(bytes)) => {
@@ -93,9 +89,8 @@ async fn connection_closed_when_wrong_token_sent() {
     let server = SocketServer::new(config, Arc::clone(&deps)).unwrap();
 
     let handle = tokio::runtime::Handle::current();
-    let server_task = tokio::spawn(async move {
-        server.serve(handle, futures::future::pending::<()>()).await
-    });
+    let server_task =
+        tokio::spawn(async move { server.serve(handle, futures::future::pending::<()>()).await });
 
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
 
@@ -106,12 +101,9 @@ async fn connection_closed_when_wrong_token_sent() {
     write_frame(&mut framed, b"HELLO wrong-token-value").await;
 
     // Expect protocol_auth_required error frame.
-    let response = tokio::time::timeout(
-        std::time::Duration::from_secs(2),
-        read_json(&mut framed),
-    )
-    .await
-    .expect("server must respond within 2s after wrong HELLO");
+    let response = tokio::time::timeout(std::time::Duration::from_secs(2), read_json(&mut framed))
+        .await
+        .expect("server must respond within 2s after wrong HELLO");
 
     assert_eq!(
         response["code"].as_str().unwrap_or(""),
@@ -120,12 +112,9 @@ async fn connection_closed_when_wrong_token_sent() {
     );
 
     // Connection must close after auth failure.
-    let next = tokio::time::timeout(
-        std::time::Duration::from_secs(1),
-        framed.next(),
-    )
-    .await
-    .expect("server must close connection promptly after auth failure");
+    let next = tokio::time::timeout(std::time::Duration::from_secs(1), framed.next())
+        .await
+        .expect("server must close connection promptly after auth failure");
     assert!(
         next.map(|r| r.is_err()).unwrap_or(true),
         "AC-PROTO-01.2: connection must be closed after auth failure"

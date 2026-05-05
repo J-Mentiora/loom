@@ -26,8 +26,14 @@ impl CuratedRenderer for SessionDiff {
         if let Some(arr) = field_diffs {
             for d in arr {
                 let key = d.get("key").and_then(|v| v.as_str()).unwrap_or("?");
-                let old = d.get("old").map(json_inline).unwrap_or_else(|| "null".into());
-                let new = d.get("new").map(json_inline).unwrap_or_else(|| "null".into());
+                let old = d
+                    .get("old")
+                    .map(json_inline)
+                    .unwrap_or_else(|| "null".into());
+                let new = d
+                    .get("new")
+                    .map(json_inline)
+                    .unwrap_or_else(|| "null".into());
                 text.push('\n');
                 text.push_str("  ");
                 text.push_str(&ansi::paint(

@@ -17,7 +17,6 @@
 //
 // Sequence: design.md §3.1.
 
-
 extern crate alloc;
 
 use alloc::string::String;

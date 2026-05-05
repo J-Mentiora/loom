@@ -26,7 +26,10 @@ pub struct Exporter {
 
 impl Exporter {
     pub fn new(sessions_root: PathBuf, content_store: Arc<dyn ContentStore>) -> Self {
-        Self { sessions_root, content_store }
+        Self {
+            sessions_root,
+            content_store,
+        }
     }
 
     /// Export session as JSON manifest with content blob index.
@@ -46,7 +49,9 @@ impl Exporter {
             let entry: ManifestEntry = serde_json::from_str(line)
                 .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
             match entry {
-                ManifestEntry::Header { started_at_ms: t, .. } => {
+                ManifestEntry::Header {
+                    started_at_ms: t, ..
+                } => {
                     started_at_ms = t;
                 }
                 ManifestEntry::ActionReceipt {
@@ -100,7 +105,11 @@ impl Exporter {
             }
             let entry: ManifestEntry = serde_json::from_str(line)
                 .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
-            if let ManifestEntry::ActionReceipt { receipt_canonical_bytes, .. } = entry {
+            if let ManifestEntry::ActionReceipt {
+                receipt_canonical_bytes,
+                ..
+            } = entry
+            {
                 if let Ok(val) =
                     serde_json::from_slice::<serde_json::Value>(&receipt_canonical_bytes)
                 {
@@ -122,8 +131,10 @@ impl Exporter {
         append_bytes_to_tar(&mut tar_builder, "manifest.json", &manifest_bytes)?;
 
         for hash in &blob_hashes {
-            let blob =
-                self.content_store.get(&ContentRef { sha256: hash.clone(), size_bytes: 0 })?;
+            let blob = self.content_store.get(&ContentRef {
+                sha256: hash.clone(),
+                size_bytes: 0,
+            })?;
             append_bytes_to_tar(&mut tar_builder, &format!("cas/{hash}"), &blob)?;
         }
 

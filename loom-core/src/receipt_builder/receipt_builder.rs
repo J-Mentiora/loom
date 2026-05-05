@@ -136,7 +136,11 @@ pub struct ReceiptPayload {
     // Truncation discriminator = return_value_blob_ref.is_some().
     // serde alias preserves backward-compat with on-disk receipts that
     // used the pre-rename `return_value` field (AC-EVALRESULT migration).
-    #[serde(skip_serializing_if = "Option::is_none", default, alias = "return_value")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        default,
+        alias = "return_value"
+    )]
     pub return_value_json: Option<String>,
     /// ContentRef when canonical-JSON bytes > 64KB (AC-EVALRESULT-04).
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -195,9 +199,10 @@ impl ReceiptPayload {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, LoomError> {
         serde_jcs::to_string(self)
             .map(|s| s.into_bytes())
-            .map_err(|e| LoomError::internal(format!("receipt canonical serialization failed: {e}")))
+            .map_err(|e| {
+                LoomError::internal(format!("receipt canonical serialization failed: {e}"))
+            })
     }
-
 }
 
 /// Stateless builder — one method per action tier + error builder.

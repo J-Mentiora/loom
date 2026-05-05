@@ -6,14 +6,14 @@
 // `Store<HostState>` ownership.
 
 use super::session_executor::{Action, ActionOutcome, SessionExecutor, SessionHandle};
-use loom_core::error::LoomError;
-use loom_core::manifest_writer::SessionId;
 use crate::host_function_table::HostState;
 use crate::host_observability::HostObservability;
 use crate::module_library::ModuleLibrary;
 use crate::trap_handler::TrapHandler;
 use crate::wasm_runtime::WasmRuntime;
 use crate::wit_type_marshaller::Mode;
+use loom_core::error::LoomError;
+use loom_core::manifest_writer::SessionId;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -98,7 +98,8 @@ fn instantiate_surface_takes_mut_store_so_each_dispatch_gets_fresh_one() {
         s: &'a mut wasmtime::Store<HostState>,
         c: &'a wasmtime::component::Component,
         l: &'a wasmtime::component::Linker<HostState>,
-    ) -> impl std::future::Future<Output = Result<wasmtime::component::Instance, LoomError>> + 'a {
+    ) -> impl std::future::Future<Output = Result<wasmtime::component::Instance, LoomError>> + 'a
+    {
         e.instantiate_surface(s, c, l)
     }
     let _ = _ck;
@@ -220,11 +221,17 @@ fn decode_typed_receipt_maps_each_wit_host_error_variant() {
         ("budget-exceeded", LoomErrorCode::BudgetExceeded),
         ("vault-rejection", LoomErrorCode::VaultRejection),
         ("shim-failure", LoomErrorCode::ShimFailure),
-        ("store-integrity-failed", LoomErrorCode::StoreIntegrityFailed),
+        (
+            "store-integrity-failed",
+            LoomErrorCode::StoreIntegrityFailed,
+        ),
         ("internal", LoomErrorCode::Internal),
     ];
     for (variant_name, expected_code) in cases {
-        let host_err = Val::Variant(variant_name.into(), Some(Box::new(Val::String("ctx".into()))));
+        let host_err = Val::Variant(
+            variant_name.into(),
+            Some(Box::new(Val::String("ctx".into()))),
+        );
         let val = Val::Result(Err(Some(Box::new(host_err))));
         let mut b = ReceiptBuilder::default();
         let err = decode_typed_receipt(&val, &mut b).expect_err("err");

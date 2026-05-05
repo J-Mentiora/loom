@@ -46,4 +46,3 @@ pub struct RpcHandlers {
     pub(crate) validator: Arc<dyn SchemaValidatorApi>,
     pub(crate) observability: Arc<dyn RpcObservabilityApi>,
 }
-

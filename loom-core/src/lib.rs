@@ -27,13 +27,13 @@ pub mod error {
 
 // ---- Module declarations (12 + exporters) ----
 pub mod budget_enforcer;
-pub mod exporters;
-pub mod importers;
-pub mod llm_cache;
 pub mod content_store;
 pub mod core_api_facade;
 pub mod determinism_harness;
 pub mod error_types;
+pub mod exporters;
+pub mod importers;
+pub mod llm_cache;
 pub mod manifest_writer;
 pub mod observability;
 pub mod profile_registry;

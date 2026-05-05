@@ -5,8 +5,8 @@
 // SR-RPC-05 latency partition wiring.
 
 use super::host_service_adapter::{
-    Action, AdapterError, HostServiceAdapter, HostServiceAdapterApi, Receipt,
-    ReceiptError, ReceiptStatus, WasmHostBridge,
+    Action, AdapterError, HostServiceAdapter, HostServiceAdapterApi, Receipt, ReceiptError,
+    ReceiptStatus, WasmHostBridge,
 };
 use std::sync::Arc;
 
@@ -69,10 +69,7 @@ fn dispatch_action_signature_is_async_returns_receipt_or_error() {
     // interval is the boundary the latency-partition observability
     // measures.
     fn _ck() {
-        async fn _go<A: HostServiceAdapterApi>(
-            a: &A,
-            ac: Action,
-        ) -> Result<Receipt, AdapterError> {
+        async fn _go<A: HostServiceAdapterApi>(a: &A, ac: Action) -> Result<Receipt, AdapterError> {
             a.dispatch_action(ac).await
         }
         let _ = _go::<HostServiceAdapter>;
@@ -90,15 +87,9 @@ fn adapter_has_no_session_or_vault_methods_per_ic_rpc_09_split() {
         let _: fn(
             &A,
             Action,
-        )
-            -> std::pin::Pin<
-                Box<
-                    dyn std::future::Future<
-                            Output = Result<Receipt, AdapterError>,
-                        > + Send
-                        + '_,
-                >,
-            > = |a, ac| Box::pin(a.dispatch_action(ac));
+        ) -> std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<Receipt, AdapterError>> + Send + '_>,
+        > = |a, ac| Box::pin(a.dispatch_action(ac));
     }
     let _ = _audit::<HostServiceAdapter>;
 }

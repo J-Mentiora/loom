@@ -2,8 +2,8 @@
 // and round-trip, TTL knob, and the active-session filter shape.
 
 use super::resource_tracker::{
-    Resource, ResourceContents, ResourceTracker, SessionInfo, DEFAULT_TTL,
-    SESSION_URI_PREFIX, SESSION_URI_SUFFIX,
+    Resource, ResourceContents, ResourceTracker, SessionInfo, DEFAULT_TTL, SESSION_URI_PREFIX,
+    SESSION_URI_SUFFIX,
 };
 use std::path::PathBuf;
 use std::time::Duration;
@@ -109,9 +109,7 @@ fn read_takes_uri_returns_resource_contents() {
         t: std::sync::Arc<ResourceTracker>,
         u: &str,
     ) -> Box<
-        dyn std::future::Future<
-                Output = Result<ResourceContents, loom_rpc::error::LoomError>,
-            > + '_,
+        dyn std::future::Future<Output = Result<ResourceContents, loom_rpc::error::LoomError>> + '_,
     > {
         let u = u.to_owned();
         Box::new(async move { t.read(&u).await })
@@ -138,11 +136,8 @@ fn session_info_has_id_manifest_path_status() {
 fn cache_snapshot_signature() {
     fn _ck(
         t: &ResourceTracker,
-    ) -> Box<
-        dyn std::future::Future<
-                Output = Option<(Vec<Resource>, std::time::Instant)>,
-            > + '_,
-    > {
+    ) -> Box<dyn std::future::Future<Output = Option<(Vec<Resource>, std::time::Instant)>> + '_>
+    {
         Box::new(async move { t.cache_snapshot().await })
     }
     let _ = _ck;

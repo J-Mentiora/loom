@@ -87,10 +87,7 @@ fn test_mock_dispatcher_list_has_expected_tool_names() {
 
     // The canonical session-create tool is always present — it is the
     // entry-point verb an agent calls to begin a browser session.
-    let names: Vec<&str> = tools
-        .iter()
-        .map(|t| t["name"].as_str().unwrap())
-        .collect();
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
     assert!(
         names.contains(&"loom.session.create"),
         "loom.session.create must appear in the mock tool catalog; got {names:?}"

@@ -30,10 +30,7 @@ fn assert_rejected(url: &str, expected_scheme: &str) {
                 "url={url}: expected error.kind=unsafe_url_scheme, got {:?}",
                 err_obj.get("kind")
             );
-            let detail = err_obj
-                .get("detail")
-                .and_then(|d| d.as_str())
-                .unwrap_or("");
+            let detail = err_obj.get("detail").and_then(|d| d.as_str()).unwrap_or("");
             assert!(
                 detail.contains(expected_scheme),
                 "url={url}: detail should contain scheme '{expected_scheme}', got: {detail}"
@@ -162,10 +159,19 @@ fn test_error_receipt_json_structure() {
     let result = check_url_scheme("file:///etc/hosts");
     if let Err(CliError::Receipt(v)) = result {
         assert_eq!(v["status"], Value::String("error".to_string()));
-        assert_eq!(v["error"]["kind"], Value::String("unsafe_url_scheme".to_string()));
+        assert_eq!(
+            v["error"]["kind"],
+            Value::String("unsafe_url_scheme".to_string())
+        );
         let detail = v["error"]["detail"].as_str().unwrap_or("");
-        assert!(detail.contains("file"), "detail should contain scheme 'file'");
-        assert!(detail.contains("[http, https, about:blank]"), "detail should contain allowlist");
+        assert!(
+            detail.contains("file"),
+            "detail should contain scheme 'file'"
+        );
+        assert!(
+            detail.contains("[http, https, about:blank]"),
+            "detail should contain allowlist"
+        );
     } else {
         panic!("expected Err(CliError::Receipt(_)), got {:?}", result);
     }

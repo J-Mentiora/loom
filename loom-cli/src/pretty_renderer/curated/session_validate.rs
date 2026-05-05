@@ -12,7 +12,10 @@ pub struct SessionValidate;
 
 impl CuratedRenderer for SessionValidate {
     fn render(&self, value: &Value, cfg: &CliConfig) -> Result<RenderedReceipt, CliError> {
-        let passed = value.get("passed").and_then(|v| v.as_bool()).unwrap_or(false);
+        let passed = value
+            .get("passed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let head = if passed {
             ansi::paint("PASS", ansi::GREEN, cfg.stdout_color_enabled)
         } else {
@@ -39,6 +42,9 @@ impl CuratedRenderer for SessionValidate {
         })
     }
     fn quiet_id(&self, value: &Value) -> Option<String> {
-        value.get("session_id").and_then(|v| v.as_str()).map(str::to_string)
+        value
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
     }
 }

@@ -72,10 +72,7 @@ pub trait IpcEndpoint: Send + Sync {
 
     /// Spawn the write loop. Reads `ShimResponse` values from the
     /// channel and serialises each as `[4 BE len][CBOR payload]`.
-    fn spawn_write_loop(
-        &self,
-        response_rx: mpsc::Receiver<ShimResponse>,
-    ) -> Result<(), IpcError>;
+    fn spawn_write_loop(&self, response_rx: mpsc::Receiver<ShimResponse>) -> Result<(), IpcError>;
 
     /// Cooperative shutdown — flushes the write side and closes
     /// the FD. Returns once both loops have exited.
@@ -85,15 +82,10 @@ pub trait IpcEndpoint: Send + Sync {
 impl IpcEndpoint for SocketpairEndpoint {
     fn spawn_read_loop(&self, _request_tx: mpsc::Sender<ShimRequest>) -> Result<(), IpcError> {
         // Phase 6: socketpair read-loop with CBOR framing
-        Err(IpcError::Io(
-            "socketpair read-loop wired in Phase 6".into(),
-        ))
+        Err(IpcError::Io("socketpair read-loop wired in Phase 6".into()))
     }
 
-    fn spawn_write_loop(
-        &self,
-        _response_rx: mpsc::Receiver<ShimResponse>,
-    ) -> Result<(), IpcError> {
+    fn spawn_write_loop(&self, _response_rx: mpsc::Receiver<ShimResponse>) -> Result<(), IpcError> {
         // Phase 6: socketpair write-loop with CBOR framing
         Err(IpcError::Io(
             "socketpair write-loop wired in Phase 6".into(),

@@ -46,7 +46,10 @@ fn get_returns_result_vec_u8_loomerror_on_missing_blob() {
         sha256: "a".repeat(64),
         size_bytes: 0,
     });
-    assert!(result.is_err(), "get() must return Err for a non-existent blob");
+    assert!(
+        result.is_err(),
+        "get() must return Err for a non-existent blob"
+    );
 }
 
 #[test]
@@ -73,8 +76,14 @@ fn put_returns_content_ref_with_sha256_and_size() {
 fn put_idempotent_returns_same_ref_for_same_bytes() {
     // Idempotency: caller relies on the SHA-256 derivation. The
     // ContentRef::sha256 must be identical for identical input bytes.
-    let r1 = ContentRef { sha256: "deadbeef".repeat(8), size_bytes: 4 };
-    let r2 = ContentRef { sha256: "deadbeef".repeat(8), size_bytes: 4 };
+    let r1 = ContentRef {
+        sha256: "deadbeef".repeat(8),
+        size_bytes: 4,
+    };
+    let r2 = ContentRef {
+        sha256: "deadbeef".repeat(8),
+        size_bytes: 4,
+    };
     assert_eq!(r1, r2);
 }
 
@@ -100,6 +109,9 @@ fn gc_report_fields_are_pure_integers() {
 #[test]
 fn content_ref_size_bytes_is_u64_not_float() {
     // Compile-time guarantee per Hard binding 3.
-    let r = ContentRef { sha256: "0".repeat(64), size_bytes: u64::MAX };
+    let r = ContentRef {
+        sha256: "0".repeat(64),
+        size_bytes: u64::MAX,
+    };
     assert_eq!(r.size_bytes, u64::MAX);
 }

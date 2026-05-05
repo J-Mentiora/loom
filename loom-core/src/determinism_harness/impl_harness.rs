@@ -52,8 +52,9 @@ impl TapeWriter {
         let tape_path = session_dir.join("tape.jsonl");
         let mut content = String::new();
         for frame in &self.frames {
-            let line = serde_jcs::to_string(frame)
-                .map_err(|e| LoomError::new(LoomErrorCode::Internal, format!("tape serialize: {e}")))?;
+            let line = serde_jcs::to_string(frame).map_err(|e| {
+                LoomError::new(LoomErrorCode::Internal, format!("tape serialize: {e}"))
+            })?;
             content.push_str(&line);
             content.push('\n');
         }

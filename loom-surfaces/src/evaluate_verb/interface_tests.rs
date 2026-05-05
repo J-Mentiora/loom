@@ -1,7 +1,6 @@
 // Interface tests for `EvaluateVerb`. Verifies IC-SURF-07 console-only
 // tier (no DOM/screenshot/network) + carries return value.
 
-
 extern crate alloc;
 
 use super::evaluate_verb::{EvaluateAction, EvaluateVerb};
@@ -56,10 +55,19 @@ fn evaluate_execute_returns_console_receipt() {
     let receipt = EvaluateVerb::execute(action).expect("evaluate must return Ok");
 
     // Console-only tier (IC-SURF-07): no DOM, no screenshot (AC-WEB-02.2)
-    assert!(receipt.dom_after_ref.is_none(), "evaluate must not capture DOM");
-    assert!(receipt.screenshot_after_ref.is_none(), "evaluate must not capture screenshot");
+    assert!(
+        receipt.dom_after_ref.is_none(),
+        "evaluate must not capture DOM"
+    );
+    assert!(
+        receipt.screenshot_after_ref.is_none(),
+        "evaluate must not capture screenshot"
+    );
     // evaluate_return_value must be populated
-    assert!(receipt.evaluate_return_value.is_some(), "evaluate_return_value must be Some");
+    assert!(
+        receipt.evaluate_return_value.is_some(),
+        "evaluate_return_value must be Some"
+    );
     let rv = receipt.evaluate_return_value.unwrap();
     assert!(!rv.is_empty(), "return value must be non-empty");
 }
@@ -85,7 +93,11 @@ fn safe_profile_blocks_denylist_evaluate() {
     let receipt = EvaluateVerb::execute(action).expect("execute must return Ok");
 
     // Must be an error receipt (AC-WEB-07.1: script NOT executed)
-    assert_eq!(receipt.status, ReceiptStatus::Error, "safe profile block must produce error receipt");
+    assert_eq!(
+        receipt.status,
+        ReceiptStatus::Error,
+        "safe profile block must produce error receipt"
+    );
     assert_eq!(
         receipt.error_code,
         Some(LoomErrorCode::SchemaViolation),
@@ -100,9 +112,17 @@ fn safe_profile_blocks_denylist_evaluate() {
     let calls = mock_host::calls();
     let shim_calls: Vec<_> = calls
         .iter()
-        .filter(|c| matches!(c, crate::host_bindings::host_bindings::mock_host::HostCall::ShimCall { .. }))
+        .filter(|c| {
+            matches!(
+                c,
+                crate::host_bindings::host_bindings::mock_host::HostCall::ShimCall { .. }
+            )
+        })
         .collect();
-    assert!(shim_calls.is_empty(), "shim must NOT be called when safe profile blocks evaluate");
+    assert!(
+        shim_calls.is_empty(),
+        "shim must NOT be called when safe profile blocks evaluate"
+    );
 }
 
 #[test]
@@ -123,11 +143,23 @@ fn default_profile_allows_denylist_expression() {
     let receipt = EvaluateVerb::execute(action).expect("execute must return Ok");
 
     // Default profile: denylist does NOT apply — shim is called
-    assert_eq!(receipt.status, ReceiptStatus::Ok, "default profile must allow the expression");
+    assert_eq!(
+        receipt.status,
+        ReceiptStatus::Ok,
+        "default profile must allow the expression"
+    );
     let calls = mock_host::calls();
     let shim_calls: Vec<_> = calls
         .iter()
-        .filter(|c| matches!(c, crate::host_bindings::host_bindings::mock_host::HostCall::ShimCall { .. }))
+        .filter(|c| {
+            matches!(
+                c,
+                crate::host_bindings::host_bindings::mock_host::HostCall::ShimCall { .. }
+            )
+        })
         .collect();
-    assert!(!shim_calls.is_empty(), "shim must be called for default profile");
+    assert!(
+        !shim_calls.is_empty(),
+        "shim must be called for default profile"
+    );
 }

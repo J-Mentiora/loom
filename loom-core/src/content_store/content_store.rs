@@ -52,12 +52,29 @@ impl LocalContentStore {
     /// Construct a new local CAS rooted at `root`. The root must exist;
     /// per-shard directories are created lazily on first `put`.
     pub fn new(root: PathBuf, obs: Arc<Observability>) -> Self {
-        Self { root, shard_depth: 2, obs, max_bytes: None, default_gc_ttl: Duration::from_secs(86400 * 30) }
+        Self {
+            root,
+            shard_depth: 2,
+            obs,
+            max_bytes: None,
+            default_gc_ttl: Duration::from_secs(86400 * 30),
+        }
     }
 
     /// Construct with storage limit and GC TTL (for `--store-max-bytes`).
-    pub fn new_with_config(root: PathBuf, obs: Arc<Observability>, max_bytes: Option<u64>, default_gc_ttl: Duration) -> Self {
-        Self { root, shard_depth: 2, obs, max_bytes, default_gc_ttl }
+    pub fn new_with_config(
+        root: PathBuf,
+        obs: Arc<Observability>,
+        max_bytes: Option<u64>,
+        default_gc_ttl: Duration,
+    ) -> Self {
+        Self {
+            root,
+            shard_depth: 2,
+            obs,
+            max_bytes,
+            default_gc_ttl,
+        }
     }
 }
 

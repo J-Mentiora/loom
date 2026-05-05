@@ -39,7 +39,7 @@ fn repo_relative(p: &str) -> PathBuf {
 }
 
 fn write_file_atomic(path: &Path, contents: &str) -> Result<(), Box<dyn Error>> {
-    if let Some(existing) = fs::read_to_string(path).ok() {
+    if let Ok(existing) = fs::read_to_string(path) {
         if existing == contents {
             return Ok(());
         }
@@ -170,7 +170,9 @@ fn write_man_pages(out_dir: &Path) -> Result<(), Box<dyn Error>> {
     // staleness gate impossible to satisfy). The shipped binary still
     // reports the full SHA-tagged version via `loom --version`; only the
     // checked-in man page uses the bare semver.
-    let cmd = Cli::command().name("loom").version(env!("CARGO_PKG_VERSION"));
+    let cmd = Cli::command()
+        .name("loom")
+        .version(env!("CARGO_PKG_VERSION"));
     render_man(&cmd, out_dir, "loom")?;
 
     let action_summaries = build_action_summaries();

@@ -9,9 +9,7 @@
 //   lifecycle, fail-open metric counters, structured fields.
 // - Hard binding 3: BudgetSnapshot is integer-only.
 
-use super::observability::{
-    redaction_layer, BudgetSnapshot, LogField, LogLevel, Observability,
-};
+use super::observability::{redaction_layer, BudgetSnapshot, LogField, LogLevel, Observability};
 use std::path::PathBuf;
 
 fn fixture() -> std::sync::Arc<Observability> {
@@ -28,12 +26,22 @@ fn span_start_returns_handle_carrying_supplied_name() {
 #[test]
 fn span_end_consumes_handle_without_panic() {
     let obs = fixture();
-    let handle = obs.span_start("session.create", vec![
-        LogField { key: "session_id", value: "01HZ...".into(), secret: false }
-    ]);
-    obs.span_end(handle, vec![
-        LogField { key: "latency_ms", value: "42".into(), secret: false }
-    ]);
+    let handle = obs.span_start(
+        "session.create",
+        vec![LogField {
+            key: "session_id",
+            value: "01HZ...".into(),
+            secret: false,
+        }],
+    );
+    obs.span_end(
+        handle,
+        vec![LogField {
+            key: "latency_ms",
+            value: "42".into(),
+            secret: false,
+        }],
+    );
 }
 
 #[test]
@@ -43,10 +51,26 @@ fn log_event_accepts_required_session_action_error_fields() {
         LogLevel::Error,
         "manifest append failed",
         vec![
-            LogField { key: "session_id", value: "01HZ...".into(), secret: false },
-            LogField { key: "action_id", value: "7".into(), secret: false },
-            LogField { key: "error_code", value: "store_full_no_evictable".into(), secret: false },
-            LogField { key: "latency_ms", value: "1200".into(), secret: false },
+            LogField {
+                key: "session_id",
+                value: "01HZ...".into(),
+                secret: false,
+            },
+            LogField {
+                key: "action_id",
+                value: "7".into(),
+                secret: false,
+            },
+            LogField {
+                key: "error_code",
+                value: "store_full_no_evictable".into(),
+                secret: false,
+            },
+            LogField {
+                key: "latency_ms",
+                value: "1200".into(),
+                secret: false,
+            },
         ],
     );
 }
@@ -59,9 +83,17 @@ fn log_redacted_marks_secret_field_for_redaction() {
     obs.log_redacted(
         "vault.substitute",
         vec![
-            LogField { key: "grant_id", value: "01HZ...".into(), secret: false },
+            LogField {
+                key: "grant_id",
+                value: "01HZ...".into(),
+                secret: false,
+            },
             // This field, even if accidentally passed, must be redacted.
-            LogField { key: "authorization", value: "should-not-leak".into(), secret: true },
+            LogField {
+                key: "authorization",
+                value: "should-not-leak".into(),
+                secret: true,
+            },
         ],
     );
 }

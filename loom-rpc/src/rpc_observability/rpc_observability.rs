@@ -104,7 +104,9 @@ impl RpcObservability {
     pub fn with_extra_redaction_keys(mut keys: Vec<String>) -> Arc<Self> {
         let mut all = default_redaction_keys();
         all.append(&mut keys);
-        Arc::new(Self { redaction_keys: all })
+        Arc::new(Self {
+            redaction_keys: all,
+        })
     }
 }
 
@@ -125,4 +127,3 @@ fn default_redaction_keys() -> Vec<String> {
         "password".into(),
     ]
 }
-

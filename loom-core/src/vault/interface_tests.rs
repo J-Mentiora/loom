@@ -5,8 +5,8 @@
 // 4-check sequence, BC-CORE-07 audit hash chain.
 
 use super::vault::{
-    CredentialType, GrantId, GrantOpts, KeychainAccess, LocalVault,
-    NetRequest, NetResp, RevokeReason, Vault,
+    CredentialType, GrantId, GrantOpts, KeychainAccess, LocalVault, NetRequest, NetResp,
+    RevokeReason, Vault,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId};
@@ -26,16 +26,20 @@ impl KeychainAccess for StubKeychain {
         if label == self.label {
             Ok(Zeroizing::new(self.secret.clone()))
         } else {
-            Err(LoomError::new(LoomErrorCode::VaultUnknownLabel, "secret unavailable"))
+            Err(LoomError::new(
+                LoomErrorCode::VaultUnknownLabel,
+                "secret unavailable",
+            ))
         }
     }
 }
 
 fn fixture() -> LocalVault {
     let obs = Observability::new(PathBuf::from("/tmp/loom-test/loom.log"), false);
-    let mw: Arc<dyn ManifestWriter> = Arc::new(
-        LocalManifestWriter::new(PathBuf::from("/tmp/loom-test/sessions"), obs.clone())
-    );
+    let mw: Arc<dyn ManifestWriter> = Arc::new(LocalManifestWriter::new(
+        PathBuf::from("/tmp/loom-test/sessions"),
+        obs.clone(),
+    ));
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKeychain {
         label: "github.com/oauth_token".into(),
         secret: b"secret-token-bytes".to_vec(),
@@ -175,7 +179,12 @@ fn grant_returns_vault_rejection_if_threat_model_not_acknowledged() {
 #[test]
 fn revoke_signature_returns_unit_or_loomerror() {
     fn _ck<V: Vault>(v: &V, g: GrantId) -> Result<(), LoomError> {
-        v.revoke(g, RevokeReason { reason: "user_request".into() })
+        v.revoke(
+            g,
+            RevokeReason {
+                reason: "user_request".into(),
+            },
+        )
     }
     let _ = _ck::<LocalVault>;
 }

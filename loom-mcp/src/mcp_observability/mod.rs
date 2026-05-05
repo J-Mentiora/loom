@@ -35,12 +35,7 @@ impl McpObservability {
         span
     }
 
-    pub fn span_request_end(
-        &self,
-        span: RequestSpan,
-        outcome: Outcome,
-        error_code: Option<&str>,
-    ) {
+    pub fn span_request_end(&self, span: RequestSpan, outcome: Outcome, error_code: Option<&str>) {
         let latency_us = duration_to_us(span.started_at.elapsed());
         tracing::info!(
             request_id = %span.request_id,

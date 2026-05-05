@@ -15,8 +15,8 @@
 //   contract verbatim — `&self, source: &Path, dest: &Path → Result<(), LoomError>`.
 //   **Not async** (install path; ~250 ms cold cache).
 
-use loom_core::error::LoomError;
 use crate::wasm_runtime::WasmRuntime;
+use loom_core::error::LoomError;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Arc;
@@ -56,8 +56,8 @@ impl Compiler {
     ) -> Result<CompileReport, LoomError> {
         use loom_core::error::LoomErrorCode;
         let start = std::time::Instant::now();
-        let bytes = std::fs::read(source)
-            .map_err(|e| LoomError::new(LoomErrorCode::Io, e.to_string()))?;
+        let bytes =
+            std::fs::read(source).map_err(|e| LoomError::new(LoomErrorCode::Io, e.to_string()))?;
         let source_bytes = bytes.len() as u64;
         let cwasm = self
             .runtime

@@ -122,7 +122,10 @@ fn restart_allowed_when_old_restarts_fall_outside_window() {
 
 #[test]
 fn budget_exhausted_maps_to_chromium_unavailable() {
-    let e = SupervisorError::BudgetExhausted { restarts: 3, window_ms: 60_000 };
+    let e = SupervisorError::BudgetExhausted {
+        restarts: 3,
+        window_ms: 60_000,
+    };
     let code: ShimErrorCode = e.into();
     assert_eq!(code, ShimErrorCode::ChromiumUnavailable);
 }

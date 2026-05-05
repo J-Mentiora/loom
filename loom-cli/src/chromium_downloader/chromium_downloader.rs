@@ -84,7 +84,9 @@ impl ChromiumDownloader {
             .status()
             .map_err(|e| CliError::Internal(format!("curl: {e}")))?;
         if !status.success() {
-            return Err(CliError::Internal(format!("curl download failed for {url}")));
+            return Err(CliError::Internal(format!(
+                "curl download failed for {url}"
+            )));
         }
 
         // Verify archive SHA-256 before extraction.
@@ -208,8 +210,8 @@ fn find_executable_in_dir(dir: &Path) -> Result<Option<PathBuf>, CliError> {
 fn extract_zip(archive: &Path, dest_dir: &Path) -> Result<(), CliError> {
     let file = std::fs::File::open(archive)
         .map_err(|e| CliError::Internal(format!("open archive: {e}")))?;
-    let mut zip = zip::ZipArchive::new(file)
-        .map_err(|e| CliError::Internal(format!("parse zip: {e}")))?;
+    let mut zip =
+        zip::ZipArchive::new(file).map_err(|e| CliError::Internal(format!("parse zip: {e}")))?;
 
     for i in 0..zip.len() {
         let mut entry = zip
@@ -229,8 +231,9 @@ fn extract_zip(archive: &Path, dest_dir: &Path) -> Result<(), CliError> {
             }
             let mut out = std::fs::File::create(&entry_path)
                 .map_err(|e| CliError::Internal(format!("create {}: {e}", entry_path.display())))?;
-            std::io::copy(&mut entry, &mut out)
-                .map_err(|e| CliError::Internal(format!("extract {}: {e}", entry_path.display())))?;
+            std::io::copy(&mut entry, &mut out).map_err(|e| {
+                CliError::Internal(format!("extract {}: {e}", entry_path.display()))
+            })?;
 
             #[cfg(unix)]
             if let Some(mode) = entry.unix_mode() {

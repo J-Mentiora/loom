@@ -35,8 +35,13 @@ fn assert_golden(name: &str, actual: &str) {
         eprintln!("UPDATED: {}", path.display());
         return;
     }
-    let expected = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {}\nrun UPDATE_GOLDEN=1 to create", path.display(), e));
+    let expected = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+        panic!(
+            "read {}: {}\nrun UPDATE_GOLDEN=1 to create",
+            path.display(),
+            e
+        )
+    });
     assert_eq!(
         actual, expected,
         "golden mismatch for {}; run UPDATE_GOLDEN=1 to refresh if intentional",

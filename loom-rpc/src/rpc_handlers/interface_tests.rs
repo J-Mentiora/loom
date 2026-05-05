@@ -6,12 +6,10 @@
 
 use super::rpc_handlers::{HandlerResult, RpcHandlers};
 use crate::core_service_adapter::core_service_adapter::{
-    CoreServiceAdapterApi, CreateSessionParams, DiffReport, ExportInfo,
-    GrantInfo, GrantParams, SessionInfo, SessionInspection, ValidationResult,
+    CoreServiceAdapterApi, CreateSessionParams, DiffReport, ExportInfo, GrantInfo, GrantParams,
+    SessionInfo, SessionInspection, ValidationResult,
 };
-use crate::host_service_adapter::host_service_adapter::{
-    Action, HostServiceAdapterApi, Receipt,
-};
+use crate::host_service_adapter::host_service_adapter::{Action, HostServiceAdapterApi, Receipt};
 use crate::rpc_observability::rpc_observability::RpcObservabilityApi;
 use crate::schema_provider::schema_provider::{SchemaProviderApi, SchemaRegistry};
 use crate::schema_validator::schema_validator::SchemaValidatorApi;
@@ -84,11 +82,7 @@ fn session_close_signature() {
 #[test]
 fn session_abort_signature_for_ac_core_08_1() {
     fn _ck() {
-        async fn _go(
-            h: &RpcHandlers,
-            s: String,
-            r: String,
-        ) -> HandlerResult<SessionInfo> {
+        async fn _go(h: &RpcHandlers, s: String, r: String) -> HandlerResult<SessionInfo> {
             h.session_abort(s, r).await
         }
         let _ = _go;
@@ -132,11 +126,7 @@ fn session_diff_signature() {
 #[test]
 fn session_export_signature_for_four_formats() {
     fn _ck() {
-        async fn _go(
-            h: &RpcHandlers,
-            s: String,
-            f: String,
-        ) -> HandlerResult<ExportInfo> {
+        async fn _go(h: &RpcHandlers, s: String, f: String) -> HandlerResult<ExportInfo> {
             h.session_export(s, f).await
         }
         let _ = _go;

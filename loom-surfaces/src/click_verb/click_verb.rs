@@ -16,7 +16,6 @@
 //   exists but has no usable hit-test geometry (display:none, zero
 //   area, etc.) → `WebHitTestFailed`.
 
-
 extern crate alloc;
 
 use alloc::string::String;

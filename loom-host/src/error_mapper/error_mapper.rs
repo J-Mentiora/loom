@@ -37,21 +37,21 @@ pub enum HostError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BudgetDetail {
-    pub kind: String,      // "walltime" | "network" | "dom_nodes" | "js_heap"
+    pub kind: String, // "walltime" | "network" | "dom_nodes" | "js_heap"
     pub observed: u64,
     pub limit: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultDetail {
-    pub reason: String,    // "origin_mismatch" | "scope_insufficient" | "expired" | "revoked"
+    pub reason: String, // "origin_mismatch" | "scope_insufficient" | "expired" | "revoked"
     pub grant_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShimDetail {
     pub shim_id: String,
-    pub reason: String,    // "spawn_failed" | "crashed" | "timeout" | "protocol"
+    pub reason: String, // "spawn_failed" | "crashed" | "timeout" | "protocol"
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,7 +91,10 @@ pub fn wasmtime_trap_to_loom_error(
     frames: Vec<TrapFrame>,
 ) -> LoomError {
     let _ = frames;
-    LoomError::new(LoomErrorCode::SurfaceTrap, format!("surface={surface} trap={trap:?}"))
+    LoomError::new(
+        LoomErrorCode::SurfaceTrap,
+        format!("surface={surface} trap={trap:?}"),
+    )
 }
 
 // === The required From impls ===

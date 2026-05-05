@@ -49,7 +49,10 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
     let result = host::navigate_execute(&action_hash, &url, a.deadline_ms)?;
 
     // Deterministic outcome hash: digest of dom + screenshot hashes concatenated.
-    let outcome_input = format!("{}{}", result.dom_snapshot_hash, result.screenshot_after_hash);
+    let outcome_input = format!(
+        "{}{}",
+        result.dom_snapshot_hash, result.screenshot_after_hash
+    );
     let outcome_hash = hex_sha256(outcome_input.as_bytes());
 
     Ok(Receipt {
@@ -290,16 +293,36 @@ fn hex_sha256(bytes: &[u8]) -> String {
 
 #[cfg(target_arch = "wasm32")]
 impl exports::loom::surface::web_surface::Guest for SurfaceWebImpl {
-    fn navigate(a: Action)   -> Result<Receipt, HostError> { navigate_verb(a) }
-    fn click(a: Action)      -> Result<Receipt, HostError> { dispatch("click", a) }
-    fn type_text(a: Action)  -> Result<Receipt, HostError> { dispatch("type_text", a) }
-    fn select(a: Action)     -> Result<Receipt, HostError> { dispatch("select", a) }
-    fn hover(a: Action)      -> Result<Receipt, HostError> { dispatch("hover", a) }
-    fn scroll(a: Action)     -> Result<Receipt, HostError> { dispatch("scroll", a) }
-    fn wait(a: Action)       -> Result<Receipt, HostError> { dispatch("wait", a) }
-    fn evaluate(a: Action)   -> Result<Receipt, HostError> { evaluate_verb(a) }
-    fn screenshot(a: Action) -> Result<Receipt, HostError> { dispatch("screenshot", a) }
-    fn snapshot(a: Action)   -> Result<Receipt, HostError> { dispatch("snapshot", a) }
+    fn navigate(a: Action) -> Result<Receipt, HostError> {
+        navigate_verb(a)
+    }
+    fn click(a: Action) -> Result<Receipt, HostError> {
+        dispatch("click", a)
+    }
+    fn type_text(a: Action) -> Result<Receipt, HostError> {
+        dispatch("type_text", a)
+    }
+    fn select(a: Action) -> Result<Receipt, HostError> {
+        dispatch("select", a)
+    }
+    fn hover(a: Action) -> Result<Receipt, HostError> {
+        dispatch("hover", a)
+    }
+    fn scroll(a: Action) -> Result<Receipt, HostError> {
+        dispatch("scroll", a)
+    }
+    fn wait(a: Action) -> Result<Receipt, HostError> {
+        dispatch("wait", a)
+    }
+    fn evaluate(a: Action) -> Result<Receipt, HostError> {
+        evaluate_verb(a)
+    }
+    fn screenshot(a: Action) -> Result<Receipt, HostError> {
+        dispatch("screenshot", a)
+    }
+    fn snapshot(a: Action) -> Result<Receipt, HostError> {
+        dispatch("snapshot", a)
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -342,9 +365,16 @@ mod tests {
             b"the quick brown fox jumps over the lazy dog".as_slice(),
         ] {
             let h = hex_sha256(bytes);
-            assert_eq!(h.len(), 64, "expected 64 hex chars, got {} for input len {}", h.len(), bytes.len());
+            assert_eq!(
+                h.len(),
+                64,
+                "expected 64 hex chars, got {} for input len {}",
+                h.len(),
+                bytes.len()
+            );
             assert!(
-                h.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+                h.chars()
+                    .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
                 "expected lowercase hex only, got {h}"
             );
         }
@@ -427,12 +457,8 @@ mod tests {
         //     65 "value"       text-string-len-5 "value"
         //     f4              false
         let buf: &[u8] = &[
-            0xa1,
-            0x66, b'r', b'e', b's', b'u', b'l', b't',
-            0xa2,
-            0x64, b't', b'y', b'p', b'e',
-            0x67, b'b', b'o', b'o', b'l', b'e', b'a', b'n',
-            0x65, b'v', b'a', b'l', b'u', b'e',
+            0xa1, 0x66, b'r', b'e', b's', b'u', b'l', b't', 0xa2, 0x64, b't', b'y', b'p', b'e',
+            0x67, b'b', b'o', b'o', b'l', b'e', b'a', b'n', 0x65, b'v', b'a', b'l', b'u', b'e',
             0xf4,
         ];
         assert!(contains_value_false(buf));
@@ -443,12 +469,8 @@ mod tests {
     #[test]
     fn contains_value_false_skips_predicate_true() {
         let buf: &[u8] = &[
-            0xa1,
-            0x66, b'r', b'e', b's', b'u', b'l', b't',
-            0xa2,
-            0x64, b't', b'y', b'p', b'e',
-            0x67, b'b', b'o', b'o', b'l', b'e', b'a', b'n',
-            0x65, b'v', b'a', b'l', b'u', b'e',
+            0xa1, 0x66, b'r', b'e', b's', b'u', b'l', b't', 0xa2, 0x64, b't', b'y', b'p', b'e',
+            0x67, b'b', b'o', b'o', b'l', b'e', b'a', b'n', 0x65, b'v', b'a', b'l', b'u', b'e',
             0xf5, // true
         ];
         assert!(!contains_value_false(buf));
@@ -465,8 +487,7 @@ mod tests {
     #[test]
     fn contains_value_false_skips_value_with_non_bool() {
         let buf: &[u8] = &[
-            0x65, b'v', b'a', b'l', b'u', b'e',
-            0x18, 0x42, // unsigned 8-bit int 0x42
+            0x65, b'v', b'a', b'l', b'u', b'e', 0x18, 0x42, // unsigned 8-bit int 0x42
         ];
         assert!(!contains_value_false(buf));
     }

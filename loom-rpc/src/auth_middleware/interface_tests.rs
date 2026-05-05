@@ -5,8 +5,7 @@
 // constant-time token comparison.
 
 use super::auth_middleware::{
-    AuthError, AuthMiddleware, AuthMiddlewareApi, HelloMessage, Token,
-    HELLO_IDLE_TIMEOUT,
+    AuthError, AuthMiddleware, AuthMiddlewareApi, HelloMessage, Token, HELLO_IDLE_TIMEOUT,
 };
 use crate::error_translator::error_translator::JsonRpcError;
 use std::sync::Arc;

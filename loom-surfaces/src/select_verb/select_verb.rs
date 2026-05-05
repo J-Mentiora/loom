@@ -9,7 +9,6 @@
 //   value cannot be set via key events alone; the controlled-component
 //   pattern requires a property assignment + change event.
 
-
 extern crate alloc;
 
 use alloc::string::String;
@@ -53,8 +52,7 @@ impl SelectVerb {
             )?;
             // Treat shim response as opaque object reference; hex-encode it
             let object_id = {
-                let mut hex =
-                    alloc::string::String::with_capacity(selector_bytes.len() * 2);
+                let mut hex = alloc::string::String::with_capacity(selector_bytes.len() * 2);
                 for b in &selector_bytes {
                     hex.push(char::from_digit((b >> 4) as u32, 16).unwrap_or('0'));
                     hex.push(char::from_digit((b & 0xf) as u32, 16).unwrap_or('0'));
@@ -64,8 +62,7 @@ impl SelectVerb {
 
             // Runtime.callFunctionOn — set value + dispatch change event
             let arguments_json = {
-                let mut s =
-                    alloc::string::String::with_capacity(action.value.len() + 4);
+                let mut s = alloc::string::String::with_capacity(action.value.len() + 4);
                 s.push_str("[\"");
                 s.push_str(&action.value);
                 s.push_str("\"]");

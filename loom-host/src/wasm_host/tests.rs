@@ -21,19 +21,31 @@ fn platform_check_returns_unsupported_on_old_macos() {
 #[test]
 fn platform_check_ok_on_macos_14_0() {
     let result = check_platform_version(Some("14.0"));
-    assert!(result.is_ok(), "expected Ok for macOS 14.0, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected Ok for macOS 14.0, got: {:?}",
+        result.err()
+    );
 }
 
 // AC-NFR-COMPAT-01.1 — macOS 14.5 (patch release) must also succeed.
 #[test]
 fn platform_check_ok_on_macos_14_5() {
     let result = check_platform_version(Some("14.5"));
-    assert!(result.is_ok(), "expected Ok for macOS 14.5, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected Ok for macOS 14.5, got: {:?}",
+        result.err()
+    );
 }
 
 // AC-NFR-COMPAT-01.1 — macOS 15.x (future) must succeed.
 #[test]
 fn platform_check_ok_on_macos_15() {
     let result = check_platform_version(Some("15.0"));
-    assert!(result.is_ok(), "expected Ok for macOS 15.0, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected Ok for macOS 15.0, got: {:?}",
+        result.err()
+    );
 }

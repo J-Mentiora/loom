@@ -98,3 +98,6 @@ path = "src/bin/loom-mcp.rs"
 [[bin]]
 name = "loom-shim-chromium"
 path = "src/bin/loom-shim-chromium.rs"
+
+[lints]
+workspace = true

@@ -13,7 +13,9 @@ impl CuratedRenderer for SessionCreate {
         let id = value
             .get("session_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| CliError::Internal("session.create receipt missing session_id".into()))?;
+            .ok_or_else(|| {
+                CliError::Internal("session.create receipt missing session_id".into())
+            })?;
         let head = format!(
             "{} {}",
             ansi::paint(

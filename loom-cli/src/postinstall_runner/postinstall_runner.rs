@@ -359,6 +359,15 @@ pub async fn loom_binaries_step(
     }
 }
 
+#[cfg(not(target_os = "macos"))]
+pub fn plist_step(_writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> {
+    // launchd is macOS-only; on every other platform `loom postinstall` skips
+    // this step rather than surfacing the writer-stub's
+    // "launchd plist is macOS-only" Internal error to the user.
+    Ok(StepOutcome::Skipped)
+}
+
+#[cfg(target_os = "macos")]
 pub fn plist_step(writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> {
     // AC-CHPIN-08: non-root users get PermissionDenied from the writer;
     // degrade gracefully to Skipped rather than hard-failing postinstall.

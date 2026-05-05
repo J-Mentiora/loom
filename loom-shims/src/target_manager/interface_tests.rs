@@ -2,16 +2,17 @@
 // Verifies IC-SHIM-05 (R3 ordering, KILL), SR-SHIM-01 (one target per
 // session), state-invalidation cascade, R3 invariant guard.
 
-use super::target_manager::{
-    assert_r3_ready, ordered_domain_enables, TargetError, TargetState,
-};
+use super::target_manager::{assert_r3_ready, ordered_domain_enables, TargetError, TargetState};
 use crate::ipc_endpoint::ipc_endpoint::ShimErrorCode;
 
 // === IC-SHIM-05: domain-enable order is Network → Page → Log AFTER inject ===
 
 #[test]
 fn domain_enable_order_is_network_first_then_page_then_log() {
-    assert_eq!(ordered_domain_enables(), &["Network.enable", "Page.enable", "Log.enable"]);
+    assert_eq!(
+        ordered_domain_enables(),
+        &["Network.enable", "Page.enable", "Log.enable"]
+    );
 }
 
 #[test]
@@ -63,8 +64,7 @@ fn r3_violation_maps_to_shim_internal_error() {
 
 #[test]
 fn determinism_injection_failed_maps_to_shim_internal_error() {
-    let code: ShimErrorCode =
-        TargetError::DeterminismInjectionFailed("x".into()).into();
+    let code: ShimErrorCode = TargetError::DeterminismInjectionFailed("x".into()).into();
     assert_eq!(code, ShimErrorCode::ShimInternalError);
 }
 

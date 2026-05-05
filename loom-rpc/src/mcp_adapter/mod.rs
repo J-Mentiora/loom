@@ -7,9 +7,9 @@ pub use mcp_adapter::*;
 #[cfg(test)]
 mod interface_tests;
 
-use std::sync::Arc;
 use crate::request_router::request_router::RequestRouterApi;
 use crate::schema_provider::schema_provider::SchemaProviderApi;
+use std::sync::Arc;
 
 impl McpAdapter {
     pub fn new(
@@ -32,10 +32,7 @@ impl McpAdapter {
             .collect()
     }
 
-    pub async fn handle_tool_call(
-        &self,
-        call: McpToolCall,
-    ) -> Result<McpToolResult, McpError> {
+    pub async fn handle_tool_call(&self, call: McpToolCall) -> Result<McpToolResult, McpError> {
         let known = self.schemas.registered_methods();
         if !known.contains(&call.name) {
             return Err(McpError::UnknownTool { name: call.name });
@@ -48,7 +45,8 @@ impl McpAdapter {
             let err: crate::error_translator::error_translator::JsonRpcError =
                 serde_json::from_value(json.clone()).map_err(|_| {
                     McpError::Rpc(crate::error_translator::error_translator::JsonRpcError {
-                        code: crate::error_translator::error_translator::LoomErrorCode::InternalError,
+                        code:
+                            crate::error_translator::error_translator::LoomErrorCode::InternalError,
                         message: "failed to decode error envelope".to_string(),
                         data: None,
                     })
@@ -70,15 +68,16 @@ impl McpAdapter {
         let mcp_tools: std::collections::HashSet<String> =
             self.list_tools().into_iter().map(|t| t.name).collect();
 
-        let missing_in_mcp: Vec<String> =
-            rpc_methods.difference(&mcp_tools).cloned().collect();
-        let missing_in_rpc: Vec<String> =
-            mcp_tools.difference(&rpc_methods).cloned().collect();
+        let missing_in_mcp: Vec<String> = rpc_methods.difference(&mcp_tools).cloned().collect();
+        let missing_in_rpc: Vec<String> = mcp_tools.difference(&rpc_methods).cloned().collect();
 
         if missing_in_mcp.is_empty() && missing_in_rpc.is_empty() {
             Ok(())
         } else {
-            Err(ParityViolation { missing_in_mcp, missing_in_rpc })
+            Err(ParityViolation {
+                missing_in_mcp,
+                missing_in_rpc,
+            })
         }
     }
 }

@@ -64,17 +64,16 @@ impl<'a, S: OutputSink> OutputFormatter<'a, S> {
             let s = Self::canonical_json(value)?;
             format!("{}\n", s).into_bytes()
         };
-        self.sink.write_all(&bytes).map_err(|e| {
-            CliError::Internal(format!("stdout write error: {}", e))
-        })
+        self.sink
+            .write_all(&bytes)
+            .map_err(|e| CliError::Internal(format!("stdout write error: {}", e)))
     }
 
     /// Canonical-JSON helper used by tests + by the pretty path's
     /// fallback when a method has no schema in `SchemaCache`.
     pub fn canonical_json(value: &serde_json::Value) -> Result<String, CliError> {
-        serde_jcs::to_string(value).map_err(|e| {
-            CliError::Internal(format!("canonical JSON serialisation failed: {}", e))
-        })
+        serde_jcs::to_string(value)
+            .map_err(|e| CliError::Internal(format!("canonical JSON serialisation failed: {}", e)))
     }
 }
 

@@ -84,20 +84,16 @@ impl CoreApiFacade {
         let content_store: Arc<dyn loom_core::content_store::ContentStore> = Arc::new(
             loom_core::content_store::LocalContentStore::new(cas_root.clone(), Arc::clone(&obs)),
         );
-        let manifest_writer: Arc<dyn ManifestWriter> = Arc::new(
-            loom_core::manifest_writer::LocalManifestWriter::new(
+        let manifest_writer: Arc<dyn ManifestWriter> =
+            Arc::new(loom_core::manifest_writer::LocalManifestWriter::new(
                 sessions_root.clone(),
                 Arc::clone(&obs),
-            ),
-        );
+            ));
 
         // Scaffold keychain — Phase 6 wires the real platform backend.
         struct NullKeychain;
         impl loom_core::vault::KeychainAccess for NullKeychain {
-            fn get_secret(
-                &self,
-                label: &str,
-            ) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
+            fn get_secret(&self, label: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
                 Err(LoomError::new(
                     loom_core::error::LoomErrorCode::VaultUnknownLabel,
                     format!("keychain not configured for label={label}"),
@@ -127,16 +123,15 @@ impl CoreApiFacade {
             config.default_seed,
             sessions_root.clone(),
         );
-        let replay_engine: Arc<dyn ReplayEngine> = Arc::new(
-            loom_core::replay_engine::LocalReplayEngine::new(
+        let replay_engine: Arc<dyn ReplayEngine> =
+            Arc::new(loom_core::replay_engine::LocalReplayEngine::new(
                 Arc::clone(&content_store),
                 Arc::clone(&manifest_writer),
                 Arc::clone(&determinism),
                 Arc::clone(&obs),
                 Arc::clone(&session_manager),
                 sessions_root.clone(),
-            ),
-        );
+            ));
         let startup_manager = Arc::new(StartupManager::new(
             sessions_root.clone(),
             cas_root,
@@ -241,8 +236,7 @@ impl CoreApiFacade {
                 format!("session {session_id} does not exist"),
             ));
         }
-        let exporter =
-            Exporter::new(self.sessions_root.clone(), Arc::clone(&self.content_store));
+        let exporter = Exporter::new(self.sessions_root.clone(), Arc::clone(&self.content_store));
         let bytes = match format {
             "json" => exporter.export_json(session_id)?,
             "tarball" => exporter.export_tarball(session_id)?,
@@ -282,6 +276,9 @@ impl CoreApiFacade {
         use crate::importers::PlaywrightImporter;
         let importer = PlaywrightImporter::new(self.sessions_root.clone());
         let result = importer.import(trace_bytes)?;
-        Ok(PlaywrightImportResult { session_id: result.session_id, action_count: result.action_count })
+        Ok(PlaywrightImportResult {
+            session_id: result.session_id,
+            action_count: result.action_count,
+        })
     }
 }

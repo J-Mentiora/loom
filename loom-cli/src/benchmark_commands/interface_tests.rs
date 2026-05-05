@@ -47,7 +47,11 @@ fn test_benchmark_command_skip_binary_size() {
     args.skip_binary_size = true;
     args.binary = None;
     let result = run_benchmark(&args, &default_config());
-    assert!(result.is_ok(), "skip_binary_size should not fail without binary: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "skip_binary_size should not fail without binary: {:?}",
+        result
+    );
 }
 
 /// AC: --binary required error when skip_binary_size=false and no --binary.
@@ -95,7 +99,10 @@ fn test_benchmark_explicit_meta_json_missing() {
 
     let dir = TempDir::new().unwrap();
     let bin_path = dir.path().join("loom");
-    std::fs::File::create(&bin_path).unwrap().set_len(5 * 1024 * 1024).unwrap();
+    std::fs::File::create(&bin_path)
+        .unwrap()
+        .set_len(5 * 1024 * 1024)
+        .unwrap();
     let missing_meta = dir.path().join("missing.json");
 
     let mut args = default_args();
@@ -111,6 +118,9 @@ fn test_benchmark_explicit_meta_json_missing() {
                 "AC-BENCH-04: remediation message should mention gen-meta, got: {msg}"
             );
         }
-        other => panic!("AC-BENCH-04: expected Usage error with remediation, got {:?}", other),
+        other => panic!(
+            "AC-BENCH-04: expected Usage error with remediation, got {:?}",
+            other
+        ),
     }
 }

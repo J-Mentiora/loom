@@ -122,6 +122,12 @@ async fn handle_connection(
     };
     let (mut write, mut read) = ws.split();
     let mut request_count = 0usize;
+    // Real Chromium only delivers `Fetch.requestPaused` events AFTER the
+    // host issues `Fetch.enable`. Mirror that here so the synthetic
+    // PageWithTracker emission below doesn't fire when the host has
+    // disabled the blocklist gate (`blocklist_enabled = false` →
+    // `subscribe()` skipped → no `Fetch.enable`).
+    let mut fetch_enabled = false;
 
     while let Some(msg) = read.next().await {
         let msg = match msg {
@@ -231,6 +237,15 @@ async fn handle_connection(
             None
         };
 
+        // Track Fetch domain enable state so the PageWithTracker branch
+        // below can mirror real Chromium's "events only after Fetch.enable"
+        // semantics.
+        if method == "Fetch.enable" {
+            fetch_enabled = true;
+        } else if method == "Fetch.disable" {
+            fetch_enabled = false;
+        }
+
         let mut result = if let Some(eval_result) = evaluate_response {
             eval_result
         } else {
@@ -310,42 +325,47 @@ async fn handle_connection(
                 FakeUrlPattern::PageWithTracker => {
                     // AC-BLOCKLIST-05 — emit two `Fetch.requestPaused`
                     // events synthetically, mirroring chromium's CDP
-                    // wire shape. The first carries the operator's
-                    // primary URL with `resourceType=Document` →
-                    // interceptor's frameId-based skip-gate lets it
-                    // through. The second is a sub-resource on a
-                    // blocklisted host (`*.google-analytics.com`) →
-                    // interceptor must answer `Fetch.failRequest{
-                    // errorReason: "BlockedByClient"}` and record one
-                    // BlockedEvent.
-                    let mut doc_evt = json!({
-                        "method": "Fetch.requestPaused",
-                        "params": {
-                            "requestId": "fake-fetch-doc-1",
-                            "request": { "url": &nav_url, "method": "GET" },
-                            "frameId": "fake-frame-1",
-                            "resourceType": "Document"
+                    // wire shape. ONLY when the host has issued
+                    // `Fetch.enable` (real Chromium gates emission the
+                    // same way; the `blocklist_enabled = false` path
+                    // never sends `Fetch.enable`, so no Fetch events).
+                    // The first carries the operator's primary URL with
+                    // `resourceType=Document` → interceptor's frameId-
+                    // based skip-gate lets it through. The second is a
+                    // sub-resource on a blocklisted host
+                    // (`*.google-analytics.com`) → interceptor must
+                    // answer `Fetch.failRequest{ errorReason:
+                    // "BlockedByClient"}` and record one BlockedEvent.
+                    if fetch_enabled {
+                        let mut doc_evt = json!({
+                            "method": "Fetch.requestPaused",
+                            "params": {
+                                "requestId": "fake-fetch-doc-1",
+                                "request": { "url": &nav_url, "method": "GET" },
+                                "frameId": "fake-frame-1",
+                                "resourceType": "Document"
+                            }
+                        });
+                        if let Some(sid) = &session_id {
+                            doc_evt["sessionId"] = json!(sid);
                         }
-                    });
-                    if let Some(sid) = &session_id {
-                        doc_evt["sessionId"] = json!(sid);
-                    }
-                    let _ = write.send(Message::Text(doc_evt.to_string())).await;
+                        let _ = write.send(Message::Text(doc_evt.to_string())).await;
 
-                    let ga_url = "https://www.google-analytics.com/analytics.js";
-                    let mut ga_evt = json!({
-                        "method": "Fetch.requestPaused",
-                        "params": {
-                            "requestId": "fake-fetch-ga-1",
-                            "request": { "url": ga_url, "method": "GET" },
-                            "frameId": "fake-frame-1",
-                            "resourceType": "Script"
+                        let ga_url = "https://www.google-analytics.com/analytics.js";
+                        let mut ga_evt = json!({
+                            "method": "Fetch.requestPaused",
+                            "params": {
+                                "requestId": "fake-fetch-ga-1",
+                                "request": { "url": ga_url, "method": "GET" },
+                                "frameId": "fake-frame-1",
+                                "resourceType": "Script"
+                            }
+                        });
+                        if let Some(sid) = &session_id {
+                            ga_evt["sessionId"] = json!(sid);
                         }
-                    });
-                    if let Some(sid) = &session_id {
-                        ga_evt["sessionId"] = json!(sid);
+                        let _ = write.send(Message::Text(ga_evt.to_string())).await;
                     }
-                    let _ = write.send(Message::Text(ga_evt.to_string())).await;
 
                     // Also emit the document's Network.responseReceived
                     // so the action_executor's status_code derivation
@@ -587,19 +607,12 @@ fn canned_response(method: &str, params: &Value) -> Value {
                 .get("selector")
                 .and_then(|s| s.as_str())
                 .unwrap_or("");
-            let node_id = dom_fixture()
-                .ids_by_selector
-                .get(sel)
-                .copied()
-                .unwrap_or(0);
+            let node_id = dom_fixture().ids_by_selector.get(sel).copied().unwrap_or(0);
             json!({ "nodeId": node_id })
         }
         "DOM.scrollIntoViewIfNeeded" => json!({}),
         "DOM.getBoxModel" => {
-            let nid = params
-                .get("nodeId")
-                .and_then(|n| n.as_u64())
-                .unwrap_or(0);
+            let nid = params.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);
             let fixture = dom_fixture();
             match fixture
                 .selectors_by_id

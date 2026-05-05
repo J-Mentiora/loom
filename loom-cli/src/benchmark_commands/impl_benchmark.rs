@@ -44,8 +44,7 @@ pub fn run(args: &BenchmarkArgs, cfg: &CliConfig) -> Result<(), CliError> {
         other => CliError::Internal(other.to_string()),
     })?;
 
-    let value = serde_json::to_value(&report)
-        .map_err(|e| CliError::Internal(e.to_string()))?;
+    let value = serde_json::to_value(&report).map_err(|e| CliError::Internal(e.to_string()))?;
     emit_to_stdout("benchmark", &value, cfg, None)?;
 
     // Return error if SLAs failed (exit 1).

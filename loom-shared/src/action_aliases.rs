@@ -22,9 +22,7 @@
 
 /// `(alias, canonical)`. Order is stable; consumers preserve order in
 /// `aliases_of` for deterministic JSON output (`rpc.schemas`).
-pub const METHOD_ALIASES: &[(&str, &str)] = &[
-    ("web.type_text", "web.type"),
-];
+pub const METHOD_ALIASES: &[(&str, &str)] = &[("web.type_text", "web.type")];
 
 /// Resolve `method` to its canonical name. Unknown or already-canonical
 /// names pass through unchanged.
