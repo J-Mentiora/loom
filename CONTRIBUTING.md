@@ -1,6 +1,6 @@
 # Contributing to loom
 
-Thanks for your interest. Loom is small, opinionated, and bias-toward
+Thanks for your interest. Loom is small and opinionated; we bias toward
 narrow, well-scoped changes with a typed error mode for any new failure
 path.
 
