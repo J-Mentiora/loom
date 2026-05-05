@@ -26,3 +26,13 @@ pr-run-mode = "plan"
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# Ship the generated action catalogue and man pages in the archive root.
+# Postinstall (`loom postinstall`) reads embedded copies and writes them to
+# `$PREFIX/share/man/man1/` so `man loom` works end-to-end. Files are
+# regenerated from `loom-rpc/src/action_registry/` by the CI gate
+# (.github/workflows/ci.yml's `gen-docs` job).
+include = [
+  "docs/actions.md",
+  "docs/loom.1",
+  "docs/loom-action.1",
+]

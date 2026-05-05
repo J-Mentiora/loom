@@ -24,3 +24,9 @@ vendor-wasm:
     cp target/wasm-guest/wasm32-wasip2/wasm-guest/loom_surface_web.wasm \
        loom-cli/vendor/loom_surface_web.wasm
     @echo "✓ regenerated loom-cli/vendor/loom_surface_web.wasm — commit if changed"
+
+# Regenerate docs/actions.md and the man-page family from the action
+# registry. CI fails on any stale committed `docs/` against the registry,
+# so run this whenever you touch loom-rpc/src/action_registry/.
+gen-docs:
+    cargo run --example gen-docs -p loom-cli

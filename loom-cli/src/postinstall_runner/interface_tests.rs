@@ -6,11 +6,16 @@
 use super::postinstall_runner::{PostinstallOptions, PostinstallReceipt, StepOutcome, STEP_LABELS};
 
 #[test]
-fn step_labels_are_compile_chromium_loom_binaries_launchd_in_order() {
-    // AC-DIST-01: loom_binaries step inserted between chromium and launchd.
+fn step_labels_are_compile_chromium_loom_binaries_launchd_manpages_in_order() {
     assert_eq!(
         STEP_LABELS,
-        &["compile_module", "chromium", "loom_binaries", "launchd"]
+        &[
+            "compile_module",
+            "chromium",
+            "loom_binaries",
+            "launchd",
+            "manpages"
+        ]
     );
 }
 
@@ -28,6 +33,7 @@ fn postinstall_options_carry_surfaces_chromium_plist() {
         loom_binaries_install_dir: "/tmp/loom-bin".into(),
         skip_chromium: false,
         skip_binaries: false,
+        man_install_dir: None,
     };
     assert_eq!(o.chromium_expected_sha256, "abc");
 }
@@ -49,14 +55,21 @@ fn step_outcome_variant_set_locked() {
 fn postinstall_receipt_carries_steps_and_outcomes() {
     let r = PostinstallReceipt {
         status: "ok".into(),
-        steps: vec!["compile_module", "chromium", "loom_binaries", "launchd"],
+        steps: vec![
+            "compile_module",
+            "chromium",
+            "loom_binaries",
+            "launchd",
+            "manpages",
+        ],
         compile_outcomes: vec![StepOutcome::Skipped],
         schemas: super::postinstall_runner::SchemaStepOutcome::Skipped,
         chromium: StepOutcome::Skipped,
         loom_binaries: Some(StepOutcome::Skipped),
         launchd: Some(StepOutcome::Skipped),
+        manpages: StepOutcome::Skipped,
     };
-    assert_eq!(r.steps.len(), 4);
+    assert_eq!(r.steps.len(), 5);
 }
 
 // === BC-CLI-01: loom-host gated behind cfg(feature = "postinstall") ===

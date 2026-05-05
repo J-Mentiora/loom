@@ -157,18 +157,25 @@ tool call and reuses it across the conversation.
 
 ## Verbs
 
-```
-web.navigate    — load a URL, follow redirects, capture DOM + screenshot
-web.click       — querySelector + .click(), surfaces selector-miss as typed error
-web.type        — focus + setValue + dispatch input/change events
-web.select      — set <select>.value, dispatch change
-web.hover       — dispatch mouseover events
-web.scroll      — scrollBy on selector
-web.wait        — Runtime.evaluate boolean predicate; typed error on false
-web.evaluate    — Runtime.evaluate, returns canonical-JSON value (or 64KB+ blob ref)
-web.screenshot  — Page.captureScreenshot (PNG)
-web.snapshot    — DOM.getDocument, returns hash + content_ref
-```
+| Action          | What it does                                                            |
+|-----------------|-------------------------------------------------------------------------|
+| `web.click`     | Click an element by CSS selector.                                       |
+| `web.evaluate`  | Run a JavaScript expression in the page and return the value.           |
+| `web.hover`     | Dispatch a mouseover event at a CSS selector.                           |
+| `web.navigate`  | Load a URL, follow redirects, capture DOM and screenshot.               |
+| `web.screenshot`| Capture a PNG screenshot of the page or a selected element.             |
+| `web.scroll`    | Scroll an element by a (delta_x, delta_y) offset.                       |
+| `web.select`    | Set the value of a `<select>` element and dispatch `change`.            |
+| `web.snapshot`  | Capture a full DOM snapshot of the active page.                         |
+| `web.type`      | Focus an input and type text into it.                                   |
+| `web.wait`      | Wait until a CSS selector resolves (or until timeout).                  |
+
+Full per-action signatures (parameters, return shape, examples, typed
+errors, profile guards) live in [docs/actions.md](docs/actions.md). At the
+CLI you can also run `loom action --help` for the list and `loom action
+<name> --help` for any single action's detailed signature. After
+`loom postinstall` the same content is available offline as `man loom`
+and `man loom-action`.
 
 URL allowlist (for navigate): `http`, `https`, `about:blank`. Profiles:
 
@@ -276,6 +283,24 @@ green across the four release targets, no Beta rows remaining.
 See [CONTRIBUTING.md](CONTRIBUTING.md). Short version: clone,
 `cargo test --workspace -- --test-threads=1`, send a PR with a typed
 error mode for any new failure path.
+
+### Keeping docs in sync
+
+The action surface (`web.click`, `web.evaluate`, …) is documented from a
+canonical Rust registry at
+[loom-rpc/src/action_registry/action_registry.rs](loom-rpc/src/action_registry/action_registry.rs).
+Edits to the registry — adding actions, renaming params, expanding
+descriptions — must be paired with regenerated docs:
+
+```bash
+just gen-docs              # or: cargo run --example gen-docs -p loom-cli
+```
+
+The CI gate fails any PR that desyncs `docs/actions.md` or the
+`docs/loom*.1` man pages from the registry. A unit test in
+[loom-rpc/src/action_registry/interface_tests.rs](loom-rpc/src/action_registry/interface_tests.rs)
+also asserts the registry's required-param set equals the JSON-RPC
+router's, so the registry and the dispatch path can't drift either.
 
 ## License
 

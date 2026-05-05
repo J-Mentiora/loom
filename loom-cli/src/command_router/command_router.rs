@@ -230,6 +230,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 loom_binaries_install_dir,
                 skip_chromium: args.skip_chromium,
                 skip_binaries: args.skip_binaries,
+                man_install_dir: None,
             };
             crate::postinstall_runner::run(opts).await.map(|_| ())
         }
@@ -256,10 +257,24 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 Err(CliError::DoctorFailed(r)) => r,
                 Err(_) => return result.map(|_| ()),
             };
-            let value = serde_json::to_value(report).unwrap_or_else(
-                |_| serde_json::json!({"error":"serialization_failed"}),
-            );
+            let value = serde_json::to_value(report)
+                .unwrap_or_else(|_| serde_json::json!({"error":"serialization_failed"}));
             crate::output_formatter::emit_to_stdout("doctor", &value, config, None)?;
+            // AC-DOCS-03 advisory: soft-warn (NOT a check failure) when man
+            // pages aren't installed at the resolved man dir. Non-fatal —
+            // doctor's exit code is unchanged. Helps users notice why
+            // `man loom` doesn't work.
+            if crate::manpage_step::has_embedded_content() {
+                if let Some(dir) = crate::manpage_step::resolve_install_dir() {
+                    if !crate::manpage_step::man_pages_installed_at(&dir) {
+                        eprintln!(
+                            "advisory: man pages are not installed at {}; \
+                             run `loom postinstall` so `man loom` works",
+                            dir.display()
+                        );
+                    }
+                }
+            }
             result.map(|_| ())
         }
 

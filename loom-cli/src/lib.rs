@@ -6,8 +6,9 @@ pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (23) ----
+// ---- Module declarations (25) ----
 pub mod action_commands;
+pub mod action_help;
 pub mod admin_commands;
 pub mod auth_manager;
 pub mod benchmark_commands;
@@ -23,6 +24,7 @@ pub mod help_generator;
 pub mod import_commands;
 pub mod launchd_plist_writer;
 pub mod loom_binaries_downloader;
+pub mod manpage_step;
 pub mod mcp_delegate;
 pub mod output_formatter;
 pub mod postinstall_runner;

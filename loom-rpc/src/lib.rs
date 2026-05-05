@@ -11,7 +11,8 @@ pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (13) ----
+// ---- Module declarations (14) ----
+pub mod action_registry;
 pub mod auth_middleware;
 pub mod connection_handler;
 pub mod core_service_adapter;

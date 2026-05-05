@@ -1,10 +1,10 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH loom 1  "loom 1.0.0" 
+.TH loom 1  "loom 0.9.0" 
 .SH NAME
 loom \- Loom command\-line interface
 .SH SYNOPSIS
-\fBloom\fR [\fB\-\-config\fR] [\fB\-\-pretty\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+\fBloom\fR [\fB\-\-config\fR] [\fB\-\-pretty\fR] [\fB\-\-json\fR] [\fB\-q\fR|\fB\-\-quiet\fR] [\fB\-\-color\fR] [\fB\-\-no\-color\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
 Loom command\-line interface
 .SH OPTIONS
@@ -13,7 +13,31 @@ Loom command\-line interface
 Override config file path. Highest precedence after CLI flags
 .TP
 \fB\-\-pretty\fR
-Pretty\-print output via the schema\-driven tabular renderer (IC\-CLI\-02). Default is canonical JSON (IC\-CLI\-01)
+Force human\-readable colored multi\-line output, even when stdout is piped. (Was indented JSON pre\-AC\-TTY\-01; see CHANGELOG.) The auto\-detect default emits this format only when stdout is a TTY
+.TP
+\fB\-\-json\fR
+Force canonical JSON output, even when stdout is a TTY. Bypasses the auto\-detected pretty\-print path (AC\-TTY\-03). Mutually exclusive with `\-\-pretty`
+.TP
+\fB\-q\fR, \fB\-\-quiet\fR
+Suppress non\-error output. For commands that produce a single resource (session create, action), prints only the canonical id. For list commands (session list, vault list), prints one id per line — may be a large amount of data on big result sets. Errors always go to stderr
+.TP
+\fB\-\-color\fR \fI<COLOR>\fR
+Color choice: `auto` (default), `always`, or `never`. Honours `NO_COLOR`, `CLICOLOR`, `CLICOLOR_FORCE`, and `TERM=dumb` env conventions in `auto` mode (AC\-TTY\-04). Mutually exclusive with `\-\-no\-color`
+.br
+
+.br
+\fIPossible values:\fR
+.RS 14
+.IP \(bu 2
+auto
+.IP \(bu 2
+always
+.IP \(bu 2
+never
+.RE
+.TP
+\fB\-\-no\-color\fR
+Disable color output. Equivalent to `\-\-color never`
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -55,4 +79,4 @@ Run performance benchmarks and validate SLAs. RPC\-free local action
 loom\-help(1)
 Print this message or the help of the given subcommand(s)
 .SH VERSION
-v1.0.0
+v0.9.0

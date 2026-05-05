@@ -61,6 +61,9 @@ pub struct PostinstallOptions {
     pub skip_chromium: bool,
     /// `--skip-binaries`: bypass the loom-binaries download step.
     pub skip_binaries: bool,
+    /// Optional override for the man-page install dir; falls back to
+    /// `$LOOM_MAN_DIR` / `$PREFIX/share/man` / `~/.local/share/man`.
+    pub man_install_dir: Option<PathBuf>,
 }
 
 /// Per-step outcome — used for the final stdout receipt.
@@ -93,6 +96,7 @@ pub struct PostinstallReceipt {
     /// the step was skipped via `--skip-binaries`.
     pub loom_binaries: Option<StepOutcome>,
     pub launchd: Option<StepOutcome>,
+    pub manpages: StepOutcome,
 }
 
 /// Runs the full postinstall pipeline. Idempotent — safe to re-run.
@@ -136,6 +140,11 @@ pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliErro
     });
     let launchd = Some(plist_step(&writer)?);
 
+    // AC-DOCS-03: install generated man pages so `man loom` works after
+    // postinstall. Soft-failure on permission / disk errors so the rest of
+    // the chain isn't blocked by a docs enhancement.
+    let manpages = crate::manpage_step::manpage_step(opts.man_install_dir.as_deref())?;
+
     Ok(PostinstallReceipt {
         status: "ok".to_string(),
         steps: STEP_LABELS.to_vec(),
@@ -144,6 +153,7 @@ pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliErro
         chromium,
         loom_binaries,
         launchd,
+        manpages,
     })
 }
 
@@ -467,6 +477,12 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
     ),
 ];
 
-/// The 4 step labels in stable order. Used by the final receipt and
+/// The 5 step labels in stable order. Used by the final receipt and
 /// by interface tests.
-pub const STEP_LABELS: &[&str] = &["compile_module", "chromium", "loom_binaries", "launchd"];
+pub const STEP_LABELS: &[&str] = &[
+    "compile_module",
+    "chromium",
+    "loom_binaries",
+    "launchd",
+    "manpages",
+];
