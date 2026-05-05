@@ -88,15 +88,15 @@ Releases are cut from the `main` branch via git tag. `cargo-dist`'s
 GitHub Actions workflow handles cross-compilation for macOS arm64/x86
 and linux x86/arm64, uploads the binaries to the GitHub release, and
 auto-publishes the Homebrew formula to the
-[mentiora/homebrew-loom](https://github.com/mentiora/homebrew-loom) tap.
+[mentiora-ai/homebrew-loom](https://github.com/mentiora-ai/homebrew-loom) tap.
 
 ### One-time setup (first release only)
 
-1. Create the tap repo `mentiora/homebrew-loom` (the `homebrew-` prefix
-   is required so `brew install mentiora/loom/loom` resolves). Initialize
+1. Create the tap repo `mentiora-ai/homebrew-loom` (the `homebrew-` prefix
+   is required so `brew install mentiora-ai/loom/loom` resolves). Initialize
    with a single-line README.
 2. Generate a **fine-grained** GitHub personal access token, scoped to
-   only `mentiora/homebrew-loom`, with `contents: write`. Do NOT use a
+   only `mentiora-ai/homebrew-loom`, with `contents: write`. Do NOT use a
    classic `repo`-scoped PAT — that grants access to all your private
    repos and would fail an audit.
 3. Add the PAT as a secret named `HOMEBREW_TAP_TOKEN` in the loom repo
