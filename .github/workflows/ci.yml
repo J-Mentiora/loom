@@ -41,6 +41,17 @@ jobs:
           sudo apt-get install -y pkg-config libssl-dev
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  no-platform-imports:
+    # Catches stray `use AppKit::*` / `use Foundation::*` / etc. in
+    # loom-host or loom-core — those crates must stay platform-free,
+    # with platform code routed through loom-keychain or loom-shims.
+    # cargo-deny enforces dep-graph bans; this is the source-text gate.
+    name: no-platform-imports
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/lint_no_platform_imports.py
+
   test:
     name: cargo test (${{ matrix.os }} / ${{ matrix.toolchain }})
     strategy:
