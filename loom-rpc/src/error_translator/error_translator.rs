@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 
 // Stub: in the full crate, `LoomError` and `LoomErrorCode` come from
 // loom-core. We reference them by path so the module list does not
-// re-export loom-core types (binding constraint #5: error propagation
-// stays per-system; loom-rpc owns its translation surface).
+// re-export loom-core types — error propagation stays per-system, and
+// loom-rpc owns its translation surface.
 //
 // module_kind: type-bridge
 

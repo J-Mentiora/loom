@@ -206,7 +206,7 @@ fn shutdown_panics_until_implemented() {
     let _ = ep.shutdown();
 }
 
-// === Hard binding 3: integer-only fields ===
+// === Integer-only fields ===
 
 #[test]
 fn session_id_and_target_id_are_u64_no_floats() {

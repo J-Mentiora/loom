@@ -1,7 +1,7 @@
 //! `loom-shared` — cross-crate primitives.
 //!
 //! - `error_format` — canonical `LoomError` + `LoomErrorCode` enum
-//!   (binding-constraints §5).
+//!   shared across every crate so error types don't fork.
 //! - `llm_types` — LLM passthrough types shared across loom-core/rpc/mcp .
 //! - `logging` — `tracing_subscriber` setup with secret-redaction layer.
 //! - `auth_token` — `HelloToken` shared by daemon + CLI + MCP.

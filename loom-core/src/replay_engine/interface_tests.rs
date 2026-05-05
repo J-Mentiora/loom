@@ -97,7 +97,7 @@ fn replay_engine_holds_content_store_dependency_no_network_client() {
     let _: &Arc<DeterminismHarness> = &r.determinism;
 }
 
-// === Hard binding 5: screenshots excluded from differences ===
+// === Screenshots excluded from differences ===
 
 #[test]
 fn replay_report_separates_field_diffs_from_screenshot_diff_count() {

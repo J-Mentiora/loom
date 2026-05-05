@@ -56,7 +56,7 @@ fn monitor_counters_are_atomic() {
 
 #[test]
 fn monitor_counters_no_floats() {
-    // Compile-time guarantee per Hard binding 3.
+    // Compile-time guarantee: integer-only numeric fields.
     let c = MonitorCounters::new();
     let _: u8 = c.consecutive_timeouts.load(Ordering::Relaxed);
     let _: u64 = c.last_ping_unix_ms.load(Ordering::Relaxed);

@@ -9,10 +9,9 @@
 // - **No interactive prompts by default.** Only `add` may
 //   prompt (OAuth device-flow); `--yes` opts out for non-interactive
 //   shells. Clippy lint bans `dialoguer::*` outside this module.
-// - **Hard binding 2 (vault stays in core).** `VaultCommands` never
-//   handles raw secret bytes — OAuth tokens for `vault add` pass
-//   through `RpcClient` to the daemon, redacted by `CliObservability`
-//   before logging.
+// - **Vault stays in core.** `VaultCommands` never handles raw secret
+//   bytes — OAuth tokens for `vault add` pass through `RpcClient` to
+//   the daemon, redacted by `CliObservability` before logging.
 
 use clap::Args;
 use serde::{Deserialize, Serialize};

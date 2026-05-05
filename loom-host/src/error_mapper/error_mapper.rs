@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 /// WIT-derived discriminated variant. The shape shown is what
 /// `wit-bindgen` generates from `wit/loom-surface.wit::variant host-error`.
 /// Owned in this module (not in `WitTypeMarshaller`) because conversion
-/// semantics — not type shape — is the binding constraint here.
+/// semantics — not type shape — is the rule here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum HostError {

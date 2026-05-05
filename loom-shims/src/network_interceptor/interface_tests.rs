@@ -1,7 +1,7 @@
 // Interface tests for `NetworkInterceptor`.
 // Verifies decompress before SHA-256 (KILL-CRITERION),
 // typed `LoomNetworkEvent` shape (no CDP payload escape),
-// Hard binding 3 (integer-only numeric fields).
+// integer-only numeric fields.
 
 use super::network_interceptor::{
     compute_response_hash, strip_content_encoding, LoomNetworkEvent, SHA256_HEX_LEN,
@@ -112,7 +112,7 @@ fn loom_network_event_partial_when_error_reason_set() {
     assert!(!ev.is_complete());
 }
 
-// === Hard binding 3: integer-only numeric fields ===
+// === Integer-only numeric fields ===
 
 #[test]
 fn loom_network_event_numeric_fields_are_integers_not_floats() {

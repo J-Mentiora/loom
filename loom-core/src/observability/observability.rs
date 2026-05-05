@@ -47,7 +47,7 @@ pub struct LogField {
 }
 
 /// Snapshot of the per-session budget counters at the moment of emission.
-/// Pure integer fields (Hard binding 3 — no floats in receipt-shaped data).
+/// Pure integer fields — no floats in receipt-shaped data.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BudgetSnapshot {
     pub walltime_ms: u64,

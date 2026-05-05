@@ -86,7 +86,7 @@ fn tape_writer_records_clock_rng_net_blob_frames() {
 
 #[test]
 fn tape_frame_numeric_fields_are_pure_integers() {
-    // Hard binding 3: integer-only.
+    // Integer-only.
     let f = TapeFrame::NetResponse {
         request_id: u64::MAX,
         status: u16::MAX,

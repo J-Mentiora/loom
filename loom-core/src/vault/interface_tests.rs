@@ -203,7 +203,7 @@ fn keychain_access_returns_zeroizing_buffer() {
 
 #[test]
 fn ttl_field_is_u64_not_float() {
-    // Hard binding 3.
+    // Integer-only.
     let opts = GrantOpts {
         credential_type: CredentialType::OAuth,
         label: "x".into(),

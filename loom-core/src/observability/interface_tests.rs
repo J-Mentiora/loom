@@ -7,7 +7,7 @@
 // Covered criteria:
 // - Observability story (universal gap closure): redaction layer, span
 //   lifecycle, fail-open metric counters, structured fields.
-// - Hard binding 3: BudgetSnapshot is integer-only.
+// - BudgetSnapshot is integer-only.
 
 use super::observability::{redaction_layer, BudgetSnapshot, LogField, LogLevel, Observability};
 use std::path::PathBuf;
