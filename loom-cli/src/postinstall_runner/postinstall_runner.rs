@@ -359,25 +359,23 @@ pub async fn loom_binaries_step(
     }
 }
 
-pub fn plist_step(writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> {
+#[cfg(not(target_os = "macos"))]
+pub fn plist_step(_writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> {
     // launchd is macOS-only; on every other platform `loom postinstall` skips
     // this step rather than surfacing the writer-stub's
     // "launchd plist is macOS-only" Internal error to the user.
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = writer;
-        return Ok(StepOutcome::Skipped);
-    }
-    #[cfg(target_os = "macos")]
-    {
-        // AC-CHPIN-08: non-root users get PermissionDenied from the writer;
-        // degrade gracefully to Skipped rather than hard-failing postinstall.
-        match writer.write() {
-            Ok(crate::launchd_plist_writer::WriteOutcome::Skipped) => Ok(StepOutcome::Skipped),
-            Ok(crate::launchd_plist_writer::WriteOutcome::Wrote) => Ok(StepOutcome::Wrote),
-            Err(CliError::PermissionDenied(_)) => Ok(StepOutcome::Skipped),
-            Err(e) => Err(e),
-        }
+    Ok(StepOutcome::Skipped)
+}
+
+#[cfg(target_os = "macos")]
+pub fn plist_step(writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> {
+    // AC-CHPIN-08: non-root users get PermissionDenied from the writer;
+    // degrade gracefully to Skipped rather than hard-failing postinstall.
+    match writer.write() {
+        Ok(crate::launchd_plist_writer::WriteOutcome::Skipped) => Ok(StepOutcome::Skipped),
+        Ok(crate::launchd_plist_writer::WriteOutcome::Wrote) => Ok(StepOutcome::Wrote),
+        Err(CliError::PermissionDenied(_)) => Ok(StepOutcome::Skipped),
+        Err(e) => Err(e),
     }
 }
 
