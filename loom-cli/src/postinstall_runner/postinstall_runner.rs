@@ -108,10 +108,24 @@ pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliErro
     let chromium = if opts.skip_chromium {
         StepOutcome::Skipped
     } else {
+        // Per-platform layout of the extracted Chromium archive:
+        //   macOS  → `chrome-mac/Chromium.app/Contents/MacOS/Chromium`
+        //   Linux  → `chrome-linux/chrome`
+        // `binary_subpath` is consulted by `ChromiumDownloader::ensure`'s
+        // idempotency check (binary present + sentinel matches → skip).
+        // A wrong path here makes every postinstall re-extract the zip,
+        // which fails on cache-restored read-only files on macOS CI runners.
+        #[cfg(target_os = "macos")]
+        let binary_subpath = PathBuf::from("chrome-mac/Chromium.app/Contents/MacOS/Chromium");
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let binary_subpath = PathBuf::from("chrome-linux/chrome");
+        #[cfg(not(unix))]
+        let binary_subpath = PathBuf::from("chrome-win/chrome.exe");
+
         let downloader =
             ChromiumDownloader::new(crate::chromium_downloader::ChromiumDownloaderConfig {
                 install_dir: opts.chromium_dir.clone(),
-                binary_subpath: PathBuf::from("Chromium.app/Contents/MacOS/Chromium"),
+                binary_subpath,
             });
         chromium_step(
             &downloader,
