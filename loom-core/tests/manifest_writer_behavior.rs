@@ -214,7 +214,7 @@ fn test_validate_corrupt_error_has_structured_context() {
     );
 }
 
-// === AC-NFR-REL-01.1: manifest.json atomic write ===
+// === manifest.json atomic write ===
 
 #[test]
 fn test_manifest_atomic_write_no_tmp_file() {

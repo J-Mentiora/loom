@@ -245,7 +245,7 @@ impl ActionExecutor for ChromiumActionExecutor {
             .register_event_handler(EventFilter::new("Page.loadEventFired"), load_handler);
 
         // STEP 1b: subscribe to Runtime.consoleAPICalled to accumulate
-        // console output during the navigate. AC-NAVTIER2SHIM-03. The
+        // console output during the navigate.. The
         // collector is dropped at the end of this fn so each navigate
         // gets a fresh log; cross-action persistence is not part of the
         // brief.
@@ -437,10 +437,10 @@ impl ActionExecutor for ChromiumActionExecutor {
             dom_after_sha256,
             screenshot_sha256,
             url: url.clone(),
-            // AC-NAVTIER2SHIM-02: real final_url from `location.href` (post-
+            // real final_url from `location.href` (post-
             // redirect; falls back to requested URL on CDP error).
             final_url: real_final_url,
-            // AC-NAVTIER2SHIM-01: real page_title from `document.title`
+            // real page_title from `document.title`
             // (empty string is a legitimate value when the page has no
             // <title> — distinguishable from the prior unconditional stub
             // because final_url is no longer == url for redirecting pages).
@@ -448,7 +448,7 @@ impl ActionExecutor for ChromiumActionExecutor {
             status_code,
             dom_bytes,
             screenshot_bytes,
-            // AC-NAVTIER2SHIM-03: console_lines populated from the
+            // console_lines populated from the
             // Runtime.consoleAPICalled events that arrived during this
             // navigate. The collector was subscribed BEFORE Page.navigate
             // so messages fired during page load (cached / data: URLs
@@ -546,7 +546,7 @@ pub(super) fn extract_title_and_url_from_evaluate(
 /// a single space — matches Chromium devtools' rendering. Non-string
 /// args are stringified via the value field as a best-effort (rich
 /// inspection is not part of the brief; receipts target agent
-/// consumption, not human debugging UX). AC-NAVTIER2SHIM-03.
+/// consumption, not human debugging UX).
 pub(super) fn extract_console_line(params: &CborValue) -> Option<ShimConsoleLine> {
     let map = match params {
         CborValue::Map(m) => m,

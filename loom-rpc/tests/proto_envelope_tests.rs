@@ -1,4 +1,4 @@
-//! — Socket creation failure exits cleanly.
+//! Socket creation failure exits cleanly.
 //!
 //! Given `$LOOM_SOCKET_PATH` points at a directory that does not exist
 //! OR the parent directory is not writable,

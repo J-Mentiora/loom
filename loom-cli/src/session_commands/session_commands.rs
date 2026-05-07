@@ -228,7 +228,7 @@ pub struct DiffArgs {
 
 /// `--format` for `loom session export`. Clap rejects unknown values with
 /// `ErrorKind::InvalidValue` (exit 2) before any RPC call — closes the
-/// "format=banana silently forwarded to daemon" leak (AC-CLIEXIT3-01).
+/// "format=banana silently forwarded to daemon" leak.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]

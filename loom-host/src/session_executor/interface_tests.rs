@@ -21,7 +21,7 @@ use tokio::sync::Notify;
 #[test]
 fn session_handle_has_handle_and_receipt_pool_both_tokio_handles() {
     // Two distinct handles: `handle` for the surface invocation,
-    // `receipt_pool` for the post-return receipt spawn. Per
+    // `receipt_pool` for the post-return receipt spawn.
     // Neither is a global pool reference.
     fn _ck(s: &SessionHandle) -> (&tokio::runtime::Handle, &tokio::runtime::Handle) {
         (&s.handle, &s.receipt_pool)

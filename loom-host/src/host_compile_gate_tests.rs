@@ -1,5 +1,5 @@
-// TDD tests for the wasm-host feature ACs (except AC-NFR-COMPAT-01.1 which
-// lives in wasm_host::tests).
+// TDD tests for the wasm-host feature acceptance criteria
+// (the platform-version gate lives in wasm_host::tests).
 
 use std::path::Path;
 use std::process::Command;
@@ -18,7 +18,7 @@ fn loom_src_root() -> std::path::PathBuf {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-COMPAT-02.1 — Linux compile gate
+// Linux compile gate
 // ---------------------------------------------------------------------------
 // The actual cross-compile is CI work; this test pins that the crate declares
 // no OS-conditional compilation that would break on Linux.  It scans for
@@ -37,13 +37,13 @@ fn test_linux_compile_gate_no_macos_cfg_outside_platform_module() {
     );
     assert!(
         violations.is_empty(),
-        "AC-NFR-COMPAT-02.1: found macOS-cfg outside wasm_host platform module:\n{}",
+        "found macOS-cfg outside wasm_host platform module:\n{}",
         violations.join("\n")
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-COMPAT-03.1 — No Firefox / WebKit code paths
+// No Firefox / WebKit code paths
 // ---------------------------------------------------------------------------
 #[test]
 fn test_no_firefox_webkit_symbols_in_source() {
@@ -55,13 +55,13 @@ fn test_no_firefox_webkit_symbols_in_source() {
     }
     assert!(
         violations.is_empty(),
-        "AC-NFR-COMPAT-03.1: found browser-engine symbols in loom-host source:\n{}",
+        "found browser-engine symbols in loom-host source:\n{}",
         violations.join("\n")
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-COMPAT-04.1 — Single binary, no language runtime deps
+// Single binary, no language runtime deps
 // ---------------------------------------------------------------------------
 // Pins that reqwest is configured with rustls-tls (no openssl / native-tls).
 // loom-host uses `reqwest = { workspace = true }` so the feature spec lives
@@ -73,23 +73,23 @@ fn test_single_binary_no_runtime_deps_reqwest_uses_rustls() {
         std::fs::read_to_string(&workspace_toml_path).expect("failed to read workspace Cargo.toml");
     assert!(
         workspace_toml.contains("rustls-tls"),
-        "AC-NFR-COMPAT-04.1: reqwest must declare rustls-tls feature in workspace Cargo.toml"
+        "reqwest must declare rustls-tls feature in workspace Cargo.toml"
     );
     assert!(
         !workspace_toml.contains("native-tls"),
-        "AC-NFR-COMPAT-04.1: found native-tls in workspace Cargo.toml — must use rustls only"
+        "found native-tls in workspace Cargo.toml — must use rustls only"
     );
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-MAINT-01.1 — Adapter isolation linter passes
+// Adapter isolation linter passes
 // ---------------------------------------------------------------------------
 #[test]
 fn test_adapter_isolation_linter_passes() {
     let script_path = loom_src_root().join("scripts/lint_no_platform_imports.py");
     assert!(
         script_path.exists(),
-        "AC-NFR-MAINT-01.1: scripts/lint_no_platform_imports.py does not exist at {:?}",
+        "scripts/lint_no_platform_imports.py does not exist at {:?}",
         script_path
     );
     let status = Command::new("python3")
@@ -98,7 +98,7 @@ fn test_adapter_isolation_linter_passes() {
         .expect("failed to run lint_no_platform_imports.py");
     assert!(
         status.success(),
-        "AC-NFR-MAINT-01.1: lint_no_platform_imports.py exited with: {:?}",
+        "lint_no_platform_imports.py exited with: {:?}",
         status
     );
 }

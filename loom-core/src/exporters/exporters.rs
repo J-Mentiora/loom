@@ -211,7 +211,7 @@ fn append_bytes_to_tar<W: std::io::Write>(
 }
 
 fn make_har_entry(emitted_at_ms: u64, ev: &NetworkEvent) -> serde_json::Value {
-    // timing_ticks is microseconds (AC-NFR-DET-05.1); HAR `time` is ms.
+    // timing_ticks is microseconds; HAR `time` is ms.
     let total_ms: u64 = ev.timing_ticks / 1000;
     let mime_type: &str = if ev.content_type.is_empty() {
         "application/octet-stream"

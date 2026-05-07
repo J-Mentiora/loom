@@ -182,4 +182,4 @@ fn extra_flags_default_empty() {
 // (Construction requires the dependent traits; we assert behavioural
 // stubs at the pure-function layer above. The trait method panics are
 // covered by the dispatcher/cdp/targets tests since each module's
-// trait stubs share the same v5.4 panic contract.)
+// trait stubs share the same panic contract.)

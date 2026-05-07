@@ -463,7 +463,7 @@ fn run_with_daemon<F: FnOnce(&Daemon)>(f: F) {
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
-fn ac_naverr_04_status_200_through_cli() {
+fn naverr_04_status_200_through_cli() {
     run_with_daemon(|daemon| {
         let sid = daemon.create_session();
         let receipt = daemon.navigate(&sid, "http://fake.test/status/200");
@@ -509,7 +509,7 @@ fn ac_naverr_04_status_200_through_cli() {
 /// encoded payloads.
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
-fn ac_sha_action_hash_matches_sha256_of_url_for_navigate() {
+fn sha_action_hash_matches_sha256_of_url_for_navigate() {
     use sha2::{Digest, Sha256};
 
     run_with_daemon(|daemon| {
@@ -535,7 +535,7 @@ fn ac_sha_action_hash_matches_sha256_of_url_for_navigate() {
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
-fn ac_naverr_01_status_404_through_cli() {
+fn naverr_01_status_404_through_cli() {
     run_with_daemon(|daemon| {
         let sid = daemon.create_session();
         let receipt = daemon.navigate(&sid, "http://fake.test/status/404");
@@ -563,7 +563,7 @@ fn ac_naverr_01_status_404_through_cli() {
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
-fn ac_naverr_02_status_500_through_cli() {
+fn naverr_02_status_500_through_cli() {
     run_with_daemon(|daemon| {
         let sid = daemon.create_session();
         let receipt = daemon.navigate(&sid, "http://fake.test/status/500");
@@ -579,7 +579,7 @@ fn ac_naverr_02_status_500_through_cli() {
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
-fn ac_naverr_03_dns_failure_through_cli() {
+fn naverr_03_dns_failure_through_cli() {
     run_with_daemon(|daemon| {
         let sid = daemon.create_session();
         let url = "http://fake.test/error/ERR_NAME_NOT_RESOLVED";
@@ -611,7 +611,7 @@ fn ac_naverr_03_dns_failure_through_cli() {
 
 #[test]
 #[ignore = "spawns loom-daemon + loom CLI subprocesses; see file header for build commands"]
-fn ac_naverr_03_connect_refused_through_cli() {
+fn naverr_03_connect_refused_through_cli() {
     run_with_daemon(|daemon| {
         let sid = daemon.create_session();
         let url = "http://fake.test/error/ERR_CONNECTION_REFUSED";

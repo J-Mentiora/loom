@@ -22,7 +22,7 @@ fn clear_color_env() {
 // --- mode resolution ---
 
 #[test]
-fn ac_tty_03_quiet_beats_json_and_pretty() {
+fn tty_03_quiet_beats_json_and_pretty() {
     assert_eq!(
         OutputMode::resolve(true, true, true, true),
         OutputMode::Quiet
@@ -30,7 +30,7 @@ fn ac_tty_03_quiet_beats_json_and_pretty() {
 }
 
 #[test]
-fn ac_tty_03_json_beats_pretty_and_auto() {
+fn tty_03_json_beats_pretty_and_auto() {
     assert_eq!(
         OutputMode::resolve(false, true, true, true),
         OutputMode::Json
@@ -38,7 +38,7 @@ fn ac_tty_03_json_beats_pretty_and_auto() {
 }
 
 #[test]
-fn ac_tty_03_pretty_overrides_pipe() {
+fn tty_03_pretty_overrides_pipe() {
     // --pretty into a pipe (stdout_is_terminal=false) → still pretty.
     assert_eq!(
         OutputMode::resolve(false, false, true, false),
@@ -47,7 +47,7 @@ fn ac_tty_03_pretty_overrides_pipe() {
 }
 
 #[test]
-fn ac_tty_03_auto_pipe_yields_json() {
+fn tty_03_auto_pipe_yields_json() {
     assert_eq!(
         OutputMode::resolve(false, false, false, false),
         OutputMode::Json
@@ -55,7 +55,7 @@ fn ac_tty_03_auto_pipe_yields_json() {
 }
 
 #[test]
-fn ac_tty_03_auto_tty_yields_pretty() {
+fn tty_03_auto_tty_yields_pretty() {
     assert_eq!(
         OutputMode::resolve(false, false, false, true),
         OutputMode::PrettyCurated
@@ -65,7 +65,7 @@ fn ac_tty_03_auto_tty_yields_pretty() {
 // --- conflict (--json --pretty) ---
 
 #[test]
-fn ac_tty_03_json_and_pretty_conflict_exits_2() {
+fn tty_03_json_and_pretty_conflict_exits_2() {
     let argv: Vec<String> = ["loom", "--json", "--pretty", "session", "list"]
         .iter()
         .map(|s| s.to_string())
@@ -75,7 +75,7 @@ fn ac_tty_03_json_and_pretty_conflict_exits_2() {
 }
 
 #[test]
-fn ac_tty_03_color_and_no_color_conflict_exits_2() {
+fn tty_03_color_and_no_color_conflict_exits_2() {
     let argv: Vec<String> = ["loom", "--color", "always", "--no-color", "session", "list"]
         .iter()
         .map(|s| s.to_string())
@@ -87,7 +87,7 @@ fn ac_tty_03_color_and_no_color_conflict_exits_2() {
 // --- color env vars (D-22) ---
 
 #[test]
-fn ac_tty_04_no_color_non_empty_disables_at_tty() {
+fn tty_04_no_color_non_empty_disables_at_tty() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     std::env::set_var("NO_COLOR", "1");
@@ -96,7 +96,7 @@ fn ac_tty_04_no_color_non_empty_disables_at_tty() {
 }
 
 #[test]
-fn ac_tty_04_no_color_empty_does_not_disable() {
+fn tty_04_no_color_empty_does_not_disable() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     std::env::set_var("NO_COLOR", "");
@@ -106,7 +106,7 @@ fn ac_tty_04_no_color_empty_does_not_disable() {
 }
 
 #[test]
-fn ac_tty_04_term_dumb_disables() {
+fn tty_04_term_dumb_disables() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     std::env::set_var("TERM", "dumb");
@@ -115,7 +115,7 @@ fn ac_tty_04_term_dumb_disables() {
 }
 
 #[test]
-fn ac_tty_04_color_always_forces_in_pipe() {
+fn tty_04_color_always_forces_in_pipe() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     assert!(resolve_color(ColorChoice::Always, false));
@@ -123,7 +123,7 @@ fn ac_tty_04_color_always_forces_in_pipe() {
 }
 
 #[test]
-fn ac_tty_04_color_never_disables_at_tty() {
+fn tty_04_color_never_disables_at_tty() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     assert!(!resolve_color(ColorChoice::Never, true));
@@ -131,7 +131,7 @@ fn ac_tty_04_color_never_disables_at_tty() {
 }
 
 #[test]
-fn ac_tty_04_clicolor_force_overrides_pipe() {
+fn tty_04_clicolor_force_overrides_pipe() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     std::env::set_var("CLICOLOR_FORCE", "1");
@@ -140,7 +140,7 @@ fn ac_tty_04_clicolor_force_overrides_pipe() {
 }
 
 #[test]
-fn ac_tty_04_clicolor_zero_disables() {
+fn tty_04_clicolor_zero_disables() {
     let _g = ENV_LOCK.lock().unwrap();
     clear_color_env();
     std::env::set_var("CLICOLOR", "0");

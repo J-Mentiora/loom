@@ -68,7 +68,7 @@ fn action_with_estimate(walltime_ms: u64) -> Action {
 // ============================================================
 
 #[test]
-fn ac_budget_01_1_session_walltime_kill_fires_callback() {
+fn budget_01_1_session_walltime_kill_fires_callback() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
     let limits = BudgetLimits {
@@ -91,7 +91,7 @@ fn ac_budget_01_1_session_walltime_kill_fires_callback() {
 }
 
 #[test]
-fn ac_budget_01_1_kill_callback_not_double_fired_on_repeated_account() {
+fn budget_01_1_kill_callback_not_double_fired_on_repeated_account() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
     let limits = BudgetLimits {
@@ -107,7 +107,7 @@ fn ac_budget_01_1_kill_callback_not_double_fired_on_repeated_account() {
 }
 
 #[test]
-fn ac_budget_01_1_error_context_has_seconds_not_ms() {
+fn budget_01_1_error_context_has_seconds_not_ms() {
     let be = enforcer();
     // 600_000ms = 600s session limit (default). Exceed by 1ms.
     register(&be, sid("C"), BudgetLimits::default(), noop_kill());
@@ -130,7 +130,7 @@ fn ac_budget_01_1_error_context_has_seconds_not_ms() {
 }
 
 #[test]
-fn ac_budget_01_1_check_rejects_if_session_already_at_limit() {
+fn budget_01_1_check_rejects_if_session_already_at_limit() {
     let be = enforcer();
     let limits = BudgetLimits {
         session_walltime_ms: 100,
@@ -150,7 +150,7 @@ fn ac_budget_01_1_check_rejects_if_session_already_at_limit() {
 // ============================================================
 
 #[test]
-fn ac_budget_01_2_check_rejects_action_exceeding_action_limit() {
+fn budget_01_2_check_rejects_action_exceeding_action_limit() {
     let be = enforcer();
     // action_walltime_ms = 60_000 (default 60s). Pass 61s estimate.
     register(&be, sid("E"), BudgetLimits::default(), noop_kill());
@@ -170,7 +170,7 @@ fn ac_budget_01_2_check_rejects_action_exceeding_action_limit() {
 }
 
 #[test]
-fn ac_budget_01_2_session_remains_active_after_action_pre_rejection() {
+fn budget_01_2_session_remains_active_after_action_pre_rejection() {
     let be = enforcer();
     register(&be, sid("F"), BudgetLimits::default(), noop_kill());
 
@@ -190,7 +190,7 @@ fn ac_budget_01_2_session_remains_active_after_action_pre_rejection() {
 // ============================================================
 
 #[test]
-fn ac_budget_01_3_network_bytes_kill_fires() {
+fn budget_01_3_network_bytes_kill_fires() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
     register(&be, sid("G"), BudgetLimits::default(), kill);
@@ -202,7 +202,7 @@ fn ac_budget_01_3_network_bytes_kill_fires() {
 }
 
 #[test]
-fn ac_budget_01_3_error_context_has_correct_keys() {
+fn budget_01_3_error_context_has_correct_keys() {
     let be = enforcer();
     register(&be, sid("H"), BudgetLimits::default(), noop_kill());
 
@@ -228,7 +228,7 @@ fn ac_budget_01_3_error_context_has_correct_keys() {
 // ============================================================
 
 #[test]
-fn ac_budget_01_4_dom_nodes_gauge_kill_fires() {
+fn budget_01_4_dom_nodes_gauge_kill_fires() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
     register(&be, sid("I"), BudgetLimits::default(), kill);
@@ -240,7 +240,7 @@ fn ac_budget_01_4_dom_nodes_gauge_kill_fires() {
 }
 
 #[test]
-fn ac_budget_01_4_dom_nodes_error_context_correct() {
+fn budget_01_4_dom_nodes_error_context_correct() {
     let be = enforcer();
     register(&be, sid("J"), BudgetLimits::default(), noop_kill());
 
@@ -253,7 +253,7 @@ fn ac_budget_01_4_dom_nodes_error_context_correct() {
 }
 
 #[test]
-fn ac_budget_01_4_dom_nodes_are_gauge_not_cumulative() {
+fn budget_01_4_dom_nodes_are_gauge_not_cumulative() {
     let be = enforcer();
     // Two pages: 30k nodes each. Neither exceeds 50k. Cumulative would.
     register(&be, sid("K"), BudgetLimits::default(), noop_kill());
@@ -270,7 +270,7 @@ fn ac_budget_01_4_dom_nodes_are_gauge_not_cumulative() {
 // ============================================================
 
 #[test]
-fn ac_budget_01_5_js_heap_gauge_kill_fires() {
+fn budget_01_5_js_heap_gauge_kill_fires() {
     let be = enforcer();
     let (kill, log) = capturing_kill();
     register(&be, sid("L"), BudgetLimits::default(), kill);
@@ -282,7 +282,7 @@ fn ac_budget_01_5_js_heap_gauge_kill_fires() {
 }
 
 #[test]
-fn ac_budget_01_5_js_heap_error_context_correct() {
+fn budget_01_5_js_heap_error_context_correct() {
     let be = enforcer();
     register(&be, sid("M"), BudgetLimits::default(), noop_kill());
 
@@ -295,7 +295,7 @@ fn ac_budget_01_5_js_heap_error_context_correct() {
 }
 
 #[test]
-fn ac_budget_01_5_js_heap_is_gauge_not_cumulative() {
+fn budget_01_5_js_heap_is_gauge_not_cumulative() {
     let be = enforcer();
     // Heap fluctuates: 400MB, then 200MB. Neither exceeds 512MB.
     register(&be, sid("N"), BudgetLimits::default(), noop_kill());
@@ -354,7 +354,7 @@ fn unregister_unknown_session_is_noop() {
 // ============================================================
 
 #[test]
-fn ac_budget_04_1_budget_overrides_stored_in_manifest_header() {
+fn budget_04_1_budget_overrides_stored_in_manifest_header() {
     let tmp = "/tmp/loom-test-budget-04-1";
     let _ = std::fs::remove_dir_all(tmp);
     let obs = Observability::new(PathBuf::from(format!("{tmp}/loom.log")), false);

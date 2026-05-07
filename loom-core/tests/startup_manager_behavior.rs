@@ -1,7 +1,7 @@
-//! AC-driven integration tests for `StartupManager` crash-recovery sweep.
+//! Integration tests for `StartupManager` crash-recovery sweep:
 //!
-//! AC-NFR-REL-02.1 — content store atomic writes (orphan sweep side)
-//! AC-NFR-REL-03.1 — crash recovery surfaces in `session list`
+//! - content store atomic writes (orphan sweep side)
+//! - crash recovery surfaces in `session list`
 
 use loom_core::content_store::LocalContentStore;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId};
@@ -49,11 +49,11 @@ fn make_session(mw: &LocalManifestWriter, _tmp: &TempDir) -> SessionId {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-REL-02.1 — CAS orphan sweep
+// CAS orphan sweep
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_nfr_rel_02_1_orphaned_tmpfile_removed_on_sweep() {
+fn nfr_rel_02_1_orphaned_tmpfile_removed_on_sweep() {
     let (sm, tmp) = fixture();
     // Create a file with non-CAS-address name in a cas shard dir
     let shard = tmp.path().join("store/cas/ab/cd");
@@ -70,7 +70,7 @@ fn ac_nfr_rel_02_1_orphaned_tmpfile_removed_on_sweep() {
 }
 
 #[test]
-fn ac_nfr_rel_02_1_valid_cas_blob_survives_sweep() {
+fn nfr_rel_02_1_valid_cas_blob_survives_sweep() {
     let (sm, tmp) = fixture();
     // Place a file with a valid 64-char hex name in the CAS tree
     let hash = "a".repeat(64);
@@ -90,7 +90,7 @@ fn ac_nfr_rel_02_1_valid_cas_blob_survives_sweep() {
 }
 
 #[test]
-fn ac_nfr_rel_02_1_sweep_returns_correct_orphan_count() {
+fn nfr_rel_02_1_sweep_returns_correct_orphan_count() {
     let (sm, tmp) = fixture();
     let shard = tmp.path().join("store/cas/ff/00");
     fs::create_dir_all(&shard).unwrap();
@@ -106,7 +106,7 @@ fn ac_nfr_rel_02_1_sweep_returns_correct_orphan_count() {
 }
 
 #[test]
-fn ac_nfr_rel_02_1_no_partial_files_remain_after_sweep() {
+fn nfr_rel_02_1_no_partial_files_remain_after_sweep() {
     let (sm, tmp) = fixture();
     let shard = tmp.path().join("store/cas/12/34");
     fs::create_dir_all(&shard).unwrap();
@@ -125,11 +125,11 @@ fn ac_nfr_rel_02_1_no_partial_files_remain_after_sweep() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-REL-03.1 — manifest sweep + crash receipt + session list
+// manifest sweep + crash receipt + session list
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_nfr_rel_03_1_orphaned_active_session_gets_runtime_crash_receipt() {
+fn nfr_rel_03_1_orphaned_active_session_gets_runtime_crash_receipt() {
     let (sm, tmp) = fixture();
     let mw = LocalManifestWriter::new(
         tmp.path().join("sessions"),
@@ -174,7 +174,7 @@ fn ac_nfr_rel_03_1_orphaned_active_session_gets_runtime_crash_receipt() {
 }
 
 #[test]
-fn ac_nfr_rel_03_1_crashed_session_last_completed_action_id_correct() {
+fn nfr_rel_03_1_crashed_session_last_completed_action_id_correct() {
     let (sm, tmp) = fixture();
     let mw = LocalManifestWriter::new(
         tmp.path().join("sessions"),
@@ -218,7 +218,7 @@ fn ac_nfr_rel_03_1_crashed_session_last_completed_action_id_correct() {
 }
 
 #[test]
-fn ac_nfr_rel_03_1_session_with_session_terminal_not_marked_crashed() {
+fn nfr_rel_03_1_session_with_session_terminal_not_marked_crashed() {
     let (sm, tmp) = fixture();
     let mw = LocalManifestWriter::new(
         tmp.path().join("sessions"),
@@ -251,7 +251,7 @@ fn ac_nfr_rel_03_1_session_with_session_terminal_not_marked_crashed() {
 }
 
 #[test]
-fn ac_nfr_rel_03_1_per_session_isolation_one_corrupt_wal_does_not_block_others() {
+fn nfr_rel_03_1_per_session_isolation_one_corrupt_wal_does_not_block_others() {
     let (sm, tmp) = fixture();
 
     let sessions_root = tmp.path().join("sessions");
@@ -282,7 +282,7 @@ fn ac_nfr_rel_03_1_per_session_isolation_one_corrupt_wal_does_not_block_others()
 }
 
 #[test]
-fn ac_nfr_rel_03_1_manifest_jsonl_checkpoint_written_after_crash_receipt() {
+fn nfr_rel_03_1_manifest_jsonl_checkpoint_written_after_crash_receipt() {
     let (sm, tmp) = fixture();
     let mw = LocalManifestWriter::new(
         tmp.path().join("sessions"),
@@ -307,7 +307,7 @@ fn ac_nfr_rel_03_1_manifest_jsonl_checkpoint_written_after_crash_receipt() {
 }
 
 #[test]
-fn ac_nfr_rel_03_1_list_sessions_info_shows_crashed_status() {
+fn nfr_rel_03_1_list_sessions_info_shows_crashed_status() {
     let (sm, tmp) = fixture();
     let sessions_root = tmp.path().join("sessions");
 
@@ -334,7 +334,7 @@ fn ac_nfr_rel_03_1_list_sessions_info_shows_crashed_status() {
 }
 
 #[test]
-fn ac_nfr_rel_03_1_list_sessions_info_shows_closed_status() {
+fn nfr_rel_03_1_list_sessions_info_shows_closed_status() {
     let (_sm, tmp) = fixture();
     let sessions_root = tmp.path().join("sessions");
 

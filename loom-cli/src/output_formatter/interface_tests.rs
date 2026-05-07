@@ -65,9 +65,9 @@ fn canonical_json_returns_plain_string() {
     let _ = _ck;
 }
 
-// === AC-CLIOUT2-01..03: format_output canonical/pretty switching ===
+// ===..03: format_output canonical/pretty switching ===
 
-/// AC-CLIOUT2-01: pretty=false produces a single line (no `\n`).
+/// pretty=false produces a single line (no `\n`).
 #[test]
 fn format_output_pretty_false_is_single_line() {
     let v = serde_json::json!({"session_id": "01abc", "status": "active", "created_at_ms": 1234});
@@ -78,7 +78,7 @@ fn format_output_pretty_false_is_single_line() {
     );
 }
 
-/// AC-CLIOUT2-02: pretty=true produces multi-line indented JSON.
+/// pretty=true produces multi-line indented JSON.
 #[test]
 fn format_output_pretty_true_is_multi_line() {
     let v = serde_json::json!({"session_id": "01abc", "status": "active"});
@@ -93,7 +93,7 @@ fn format_output_pretty_true_is_multi_line() {
     );
 }
 
-/// AC-CLIOUT2-03: pretty=false uses RFC 8785 canonical-JSON key
+/// pretty=false uses RFC 8785 canonical-JSON key
 /// ordering (alphabetical), not whatever order the input map happened
 /// to use. Locking this prevents accidental regression to a non-stable
 /// serialiser.

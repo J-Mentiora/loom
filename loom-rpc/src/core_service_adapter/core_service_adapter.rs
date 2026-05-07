@@ -138,7 +138,7 @@ pub struct GcRunReport {
 }
 
 // === Wire types (WIT-derived; mirrored here for adapter return
-// shapes). In v5.4 these are replaced by the wit-bindgen output
+// shapes). These will be replaced by the wit-bindgen output
 // in `loom-rpc/src/types/`. ===
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

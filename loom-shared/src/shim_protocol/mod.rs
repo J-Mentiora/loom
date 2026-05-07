@@ -34,7 +34,7 @@ pub fn ciborium_from_slice<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Resu
 /// this are a protocol violation → fatal.
 pub const MAX_FRAME_BYTES: u32 = 16 * 1024 * 1024;
 
-/// Length-prefix size in bytes (big-endian u32)..
+/// Length-prefix size in bytes (big-endian u32).
 pub const LENGTH_PREFIX_BYTES: usize = 4;
 
 /// Session identity assigned by `loom-host`. Opaque to the shim.
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(back, ShimErrorCode::ChromiumUnavailable);
     }
 
-    // === AC-RNGDET-* wire-protocol tests (J.5) ===
+    // === wire-protocol tests (J.5) ===
 
     /// J.5: PageNavigate with explicit seed + epoch_ms round-trips.
     #[test]

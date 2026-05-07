@@ -189,7 +189,7 @@ impl CoreFacadeBridge for CoreBridge {
             })?),
             None => None,
         };
-        // AC-SAFEPROF root cause: PRIOR to this fix, the underscore-prefixed
+        //  root cause: PRIOR to this fix, the underscore-prefixed
         // `_profile` arg was dropped on the floor here — `--profile safe`
         // validated at the JSON-RPC boundary then never reached the Session.
         // The evaluate gate (B) and download confinement (C) both branch on
@@ -845,7 +845,7 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
 /// typed wire fields; degrades to empty / None with `tracing::warn` on
 /// decode failure — observability fields shouldn't fail the navigate.
 /// Applies `apply_capture_profile_to_wire` last so `--capture-policy
-/// minimal` strips tier-2 fields per AC-NAVRECEIPT2-05.
+/// minimal` strips tier-2 fields per.
 fn build_navigate_wire_receipt(
     builder: &loom_host::receipt_marshaller::ReceiptBuilder,
     session_id: &str,
@@ -862,7 +862,7 @@ fn build_navigate_wire_receipt(
     let outcome_hash = (!builder.outcome_hash.is_empty()).then(|| builder.outcome_hash.clone());
     let emitted_at_ms = (builder.emitted_at_ms != 0).then_some(builder.emitted_at_ms);
 
-    // AC-NAVRECEIPT2-03: decode shim-captured network events from the
+    // decode shim-captured network events from the
     // WIT side-effects-json escape hatch onto the wire receipt's typed
     // `side_effects[]` array.
     let side_effects: Vec<serde_json::Value> = builder
@@ -888,7 +888,7 @@ fn build_navigate_wire_receipt(
         })
         .unwrap_or_default();
 
-    // Brief AC-NAVRECEIPT2-01 extension: console_lines verbatim.
+    // console_lines verbatim.
     let console_lines: Vec<loom_shared::navigate_outcome::ShimConsoleLine> = builder
         .navigate_console_lines_json
         .as_deref()
@@ -905,7 +905,7 @@ fn build_navigate_wire_receipt(
         })
         .unwrap_or_default();
 
-    // Brief AC-NAVRECEIPT2-01 extension: typed NetworkSummary aggregate.
+    // typed NetworkSummary aggregate.
     let network_summary: Option<loom_core::receipt_builder::receipt_builder::NetworkSummary> =
         builder
             .navigate_network_summary_json
@@ -962,7 +962,7 @@ fn build_navigate_wire_receipt(
         return_value_blob_ref,
     };
 
-    // AC-NAVRECEIPT2-05: apply per-session capture-policy at the wire
+    // apply per-session capture-policy at the wire
     // boundary. Unknown / unset values → CaptureProfile::Default (no-op).
     let profile = capture_policy_str
         .and_then(loom_core::receipt_builder::receipt_builder::capture_profile_from_str)
@@ -985,7 +985,7 @@ fn build_navigate_wire_receipt(
 /// 1. **Typed shim failure** — `error_code = "shim-failure"`,
 ///    `error_details = JSON {"kind": "...", "url": "...", ...}`.
 ///    Hoists the `kind` field to the wire `ReceiptError.kind` and puts
-///    the remaining fields into `detail`..
+///    the remaining fields into `detail`.
 ///
 /// 2. **Untyped shim failure or other host error** — kind defaults to
 ///    the host's `error_code`; `detail` wraps the raw `error_details`
@@ -1204,7 +1204,7 @@ async fn async_main() -> Result<()> {
     };
     let core = CoreApiFacade::new(core_config).context("CoreApiFacade::new failed")?;
 
-    // 2. Crash-recovery sweep (AC-NFR-REL-02/03).
+    // 2. Crash-recovery sweep.
     let _recovery = core.startup_manager.perform_recovery_sweep();
     // Recovery errors are non-fatal — daemon continues serving.
 
@@ -1218,7 +1218,7 @@ async fn async_main() -> Result<()> {
     //    empty registry — `rpc.schemas` returns an empty method list
     //    and schema validation is bypassed (no method schemas = pass).
     //
-    //    AC-RPCSCHEMAS2-01..03: try the data_root location first
+    //..03: try the data_root location first
     //    (~/Library/Application Support/loom on macOS) then fall back
     //    to the postinstall-installed location (~/.config/loom). The
     //    `loom postinstall` runner historically writes to ~/.config/loom
@@ -1884,7 +1884,7 @@ mod tests {
         }
     }
 
-    /// AC-NAVRECEIPT2-01..04: default profile carries every brief-listed key
+    ///..04: default profile carries every brief-listed key
     /// when the upstream JSON blobs are well-formed. Tests the actual
     /// production decode path.
     #[test]
@@ -1909,7 +1909,7 @@ mod tests {
         assert_eq!(r.side_effects[0]["status"], 200);
     }
 
-    /// AC-NAVRECEIPT2-05: --capture-policy minimal strips tier-2 fields
+    /// --capture-policy minimal strips tier-2 fields
     /// at the wire boundary. This is the test that actually exercises
     /// the `apply_capture_profile_to_wire(...)` invocation in the
     /// production code path.

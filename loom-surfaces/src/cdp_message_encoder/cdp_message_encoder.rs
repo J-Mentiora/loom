@@ -299,8 +299,8 @@ impl CdpMessageEncoder {
 }
 
 /// Det-init script source. Constant string injected via
-/// `Page.AddScriptToEvaluateOnNewDocument` before any DOM observation
-/// . Overrides `Date.now`, `Math.random`,
+/// `Page.AddScriptToEvaluateOnNewDocument` before any DOM observation.
+/// Overrides `Date.now`, `Math.random`,
 /// `requestAnimationFrame`, `crypto.getRandomValues`, `performance.now`.
 ///
 /// The actual script source is embedded at build time via

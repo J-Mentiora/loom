@@ -29,7 +29,7 @@ fn main() {
                 Err(e) => {
                     // Pass-through error to stderr; exit non-zero so the
                     // parent (loom-cli mcp_delegate) propagates a useful
-                    // exit code. AC-CLIEXIT-* downstream of this binary
+                    // exit code.-* downstream of this binary
                     // is the parent's responsibility.
                     eprintln!("loom-mcp serve failed: {e}");
                     1

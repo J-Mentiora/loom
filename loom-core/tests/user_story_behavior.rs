@@ -226,7 +226,7 @@ fn write_navigate_session(sessions_root: &Path, session_id: &str, n: u64) {
     fs::write(session_dir.join("manifest.wal"), lines.join("\n")).unwrap();
 }
 
-// ── AC-US-AGT-01.1 — Typed receipt drives agent control flow ─────────────────
+// ── — Typed receipt drives agent control flow ─────────────────
 
 #[test]
 fn test_typed_receipt_drives_agent_control_flow() {
@@ -293,7 +293,7 @@ fn test_typed_receipt_drives_agent_control_flow() {
     }
 }
 
-// ── AC-US-AGT-03.1 — Agent never sees raw secrets ────────────────────────────
+// ── — Agent never sees raw secrets ────────────────────────────
 
 #[test]
 fn test_agent_never_sees_raw_secret_in_manifest() {
@@ -352,7 +352,7 @@ fn test_agent_never_sees_raw_secret_in_manifest() {
     );
 }
 
-// ── AC-US-AGT-04.1 — Runaway tab killed by budget ────────────────────────────
+// ── — Runaway tab killed by budget ────────────────────────────
 
 #[test]
 fn test_runaway_tab_killed_by_js_heap_budget() {
@@ -399,7 +399,7 @@ fn test_runaway_tab_killed_by_js_heap_budget() {
     );
 }
 
-// ── AC-US-AGT-05.1 — Pattern-matchable error recovery ────────────────────────
+// ── — Pattern-matchable error recovery ────────────────────────
 
 #[test]
 fn test_all_documented_error_codes_are_matchable() {
@@ -471,7 +471,7 @@ fn test_all_documented_error_codes_are_matchable() {
     }
 }
 
-// ── AC-US-EVAL-01.1 — 100x replay zero divergence ────────────────────────────
+// ── — 100x replay zero divergence ────────────────────────────
 
 #[test]
 fn test_replay_100x_zero_divergence() {
@@ -528,7 +528,7 @@ fn test_replay_100x_zero_divergence() {
     }
 }
 
-// ── AC-US-EVAL-02.1 — Today-vs-yesterday diff command ────────────────────────
+// ── — Today-vs-yesterday diff command ────────────────────────
 
 #[test]
 fn test_diff_reports_dom_hash_change() {
@@ -583,7 +583,7 @@ fn test_diff_reports_dom_hash_change() {
     );
 }
 
-// ── AC-US-EVAL-03.1 — HAR export round-trips ─────────────────────────────────
+// ── — HAR export round-trips ─────────────────────────────────
 
 #[test]
 fn test_har_export_is_har_12_valid() {
@@ -641,7 +641,7 @@ fn test_har_export_is_har_12_valid() {
     }
 }
 
-// ── AC-US-EVAL-04.1 — Budgets prevent CI runner exhaustion ───────────────────
+// ── — Budgets prevent CI runner exhaustion ───────────────────
 
 #[test]
 fn test_js_heap_budget_kills_within_60s() {

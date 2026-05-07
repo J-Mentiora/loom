@@ -1,10 +1,10 @@
 // StartupManager implementation — crash-recovery sweeps.
 //
-// AC-NFR-REL-02.1: CAS orphan sweep — deletes NamedTempFile artifacts left by
+// CAS orphan sweep — deletes NamedTempFile artifacts left by
 //   interrupted put() calls. A file is an orphan if its reconstructed address
 //   (parent2 + parent1 + filename) is not a 64-char lowercase hex string.
 //
-// AC-NFR-REL-03.1: Manifest sweep — appends a RuntimeCrash receipt and
+// Manifest sweep — appends a RuntimeCrash receipt and
 //   checkpoints manifest.jsonl for every session whose last WAL entry has no
 //   terminal (SessionTerminal or RuntimeCrash). Per-session isolation: one
 //   failure does not block other sessions.

@@ -8,12 +8,12 @@
 //! plumbing — the data sources that this feature lifts onto the wire
 //! receipt:
 //!
-//!   * `outcome.network_events` → wire `side_effects[]` (AC-NAVRECEIPT2-03)
+//!   * `outcome.network_events` → wire `side_effects[]`
 //!   * `outcome.network_events` → `NetworkSummary` aggregation
-//!     (brief AC-NAVRECEIPT2-01 extension)
+//!     (brief  extension)
 //!   * `outcome.console_lines`  → wire `console_lines` (brief extension)
 //!   * `outcome.dom_bytes` / `outcome.screenshot_bytes` → ContentStore.put →
-//!     `dom_snapshot_hash` / `screenshot_after_hash` (AC-NAVRECEIPT2-02)
+//!     `dom_snapshot_hash` / `screenshot_after_hash`
 //!
 //! The wire-receipt JSON shape and `--capture-policy minimal` enforcement
 //! are covered by in-process tests in
@@ -129,7 +129,7 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
     .expect("send_navigate timed out")
     .expect("send_navigate returned an error");
 
-    // (1) AC-NAVRECEIPT2-03 precondition: shim DOES surface network_events.
+    // (1)  precondition: shim DOES surface network_events.
     // 899357f82's wire receipt had `side_effects: vec![]` — that was the
     // marshalling layer dropping data the shim already produced. Assert
     // the shim's data is present so a future regression that empties
@@ -161,7 +161,7 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
     // dropped.
     let _: &Vec<loom_shared::navigate_outcome::ShimConsoleLine> = &outcome.console_lines;
 
-    // (3) Brief AC-NAVRECEIPT2-01 extension: NetworkSummary aggregation
+    // (3) NetworkSummary aggregation
     // logic mirroring host_function_table::navigate_execute. Verifies the
     // summary computation against real shim output.
     let summary = NetworkSummary {
@@ -186,7 +186,7 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
         "summary.total_count must reflect at least the document load"
     );
 
-    // (4) AC-NAVRECEIPT2-02 precondition: dom + screenshot bytes exist for
+    // (4)  precondition: dom + screenshot bytes exist for
     // ContentStore.put. The actual put + 64-char SHA-256 hex assertion
     // happens in the in-process integration test (loom-rpc/tests/...);
     // here we just verify the shim produced bytes (or an explicit empty

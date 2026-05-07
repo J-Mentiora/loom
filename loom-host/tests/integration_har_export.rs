@@ -168,7 +168,7 @@ fn load_har_schema() -> serde_json::Value {
 }
 
 #[test]
-fn ac_harexport_05_two_navigate_session_har_contents() {
+fn harexport_05_two_navigate_session_har_contents() {
     use loom_core::content_store::{ContentStore, LocalContentStore};
     use loom_core::exporters::Exporter;
     use loom_core::observability::Observability;

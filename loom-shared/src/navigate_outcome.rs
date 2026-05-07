@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// Network event captured by the shim during page navigation.
 /// Canonical definition; re-exported from loom-shims for backward compat.
-/// All numeric fields are integers per Hard Binding 3 (AC-NFR-DET-03.1).
+/// All numeric fields are integers per Hard Binding 3.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LoomNetworkEvent {
     pub method: String,

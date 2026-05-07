@@ -1,4 +1,4 @@
-//! — Token handshake required.
+//! Token handshake required.
 //!
 //! Given the daemon configured with auth token T,
 //! When a JSON-RPC client connects but does not issue HELLO {token: T}

@@ -1,9 +1,9 @@
-// TDD tests for AC-NFR-COMPAT-01.1 — platform version gate.
+// TDD tests for — platform version gate.
 
 use super::check_platform_version;
 use loom_shared::error_format::LoomErrorCode;
 
-// AC-NFR-COMPAT-01.1 — macOS < 14 must return Unsupported("platform_unsupported").
+// macOS < 14 must return Unsupported("platform_unsupported").
 #[test]
 fn platform_check_returns_unsupported_on_old_macos() {
     let result = check_platform_version(Some("13.0"));
@@ -17,7 +17,7 @@ fn platform_check_returns_unsupported_on_old_macos() {
     );
 }
 
-// AC-NFR-COMPAT-01.1 — macOS 14.0 must succeed.
+// macOS 14.0 must succeed.
 #[test]
 fn platform_check_ok_on_macos_14_0() {
     let result = check_platform_version(Some("14.0"));
@@ -28,7 +28,7 @@ fn platform_check_ok_on_macos_14_0() {
     );
 }
 
-// AC-NFR-COMPAT-01.1 — macOS 14.5 (patch release) must also succeed.
+// macOS 14.5 (patch release) must also succeed.
 #[test]
 fn platform_check_ok_on_macos_14_5() {
     let result = check_platform_version(Some("14.5"));
@@ -39,7 +39,7 @@ fn platform_check_ok_on_macos_14_5() {
     );
 }
 
-// AC-NFR-COMPAT-01.1 — macOS 15.x (future) must succeed.
+// macOS 15.x (future) must succeed.
 #[test]
 fn platform_check_ok_on_macos_15() {
     let result = check_platform_version(Some("15.0"));

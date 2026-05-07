@@ -682,7 +682,7 @@ impl Host for HostState {
 /// Convert a `ciborium::value::Value` (CDP `Runtime.evaluate.result.value`)
 /// to a `serde_json::Value` suitable for canonical-JSON via `serde_jcs`.
 ///
-/// Per AC-NFR-DET-03.1 the wire bans IEEE-754 floats; numeric values
+/// Per  the wire bans IEEE-754 floats; numeric values
 /// (integers and floats both) are emitted as canonical-JSON strings.
 /// Non-representable CBOR (Bytes, Tag, non-string map keys) returns a
 /// shaped `HostError::ShimFailure` so the caller surfaces a clean error
@@ -694,7 +694,7 @@ fn cbor_value_to_json(v: ciborium::value::Value) -> Result<serde_json::Value, Ho
         Value::Bool(b) => Ok(serde_json::Value::Bool(b)),
         Value::Integer(i) => Ok(serde_json::Value::String(format!("{}", i128::from(i)))),
         Value::Float(f) => {
-            // AC-NFR-DET-03.1: numerics on the wire as strings. NaN /
+            // numerics on the wire as strings. NaN /
             // Infinity / -Infinity round-trip as their literal IEEE-754
             // names; finite floats use Rust's default formatter (which
             // is round-trip-safe for f64).

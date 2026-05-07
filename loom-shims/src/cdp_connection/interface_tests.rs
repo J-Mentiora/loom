@@ -167,7 +167,7 @@ async fn connect_to_invalid_url_returns_connect_failed() {
 // === browser-scope vs page-scope classifier ===
 
 #[test]
-fn ac_cdpatt_04_method_classifier_browser_scope_methods() {
+fn cdpatt_04_method_classifier_browser_scope_methods() {
     // Browser-scope: dispatched at the browser-level WS endpoint without
     // a sessionId. The CDP "tot" spec lists these domains as
     // browser-process-only.
@@ -193,7 +193,7 @@ fn ac_cdpatt_04_method_classifier_browser_scope_methods() {
 }
 
 #[test]
-fn ac_cdpatt_04_method_classifier_page_scope_methods() {
+fn cdpatt_04_method_classifier_page_scope_methods() {
     // Page-scope: dispatched on a Page session via top-level sessionId.
     // Real Chromium returns -32601 if these are sent without sessionId
     // on the browser-level endpoint.
@@ -256,7 +256,7 @@ fn bootstrap_page_session_enables_runtime_for_console_capture() {
 }
 
 #[test]
-fn ac_cdpatt_04_method_classifier_handles_empty_and_dotted_edge_cases() {
+fn cdpatt_04_method_classifier_handles_empty_and_dotted_edge_cases() {
     // Empty or methods without a domain prefix default to page-scope —
     // the safe choice (an unexpected sessionId is harmless on real
     // Chromium per CDP spec; a missing sessionId on a page-scope method

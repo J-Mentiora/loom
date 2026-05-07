@@ -1,4 +1,4 @@
-//! — Schema validation rejects malformed requests.
+//! Schema validation rejects malformed requests.
 //!
 //! Given the JSON-RPC server,
 //! When a client sends `{method: "web.click", params: {selector: 42}}`

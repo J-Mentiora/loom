@@ -1,4 +1,4 @@
-//! Subprocess-level CLI exit-code regression matrix (AC-CLIEXIT3-01..03).
+//! Subprocess-level CLI exit-code regression matrix.
 //!
 //! Sister file to `integration_cli_exit_codes.rs`. That file calls
 //! `map_exit_code(&result)` in-process — useful for variant coverage but
@@ -8,9 +8,9 @@
 //! process exit code, so any future regression that swallows the code
 //! between the handler and the OS shows up here.
 //!
-//! Per AC-CLIEXIT3-02: every row in `architecture/contracts/loom-cli_contract.md`
+//! Every row in `architecture/contracts/loom-cli_contract.md`
 //! §"Exit Codes" should have at least one corresponding row below.
-//! Per AC-CLIEXIT3-03: every error row also asserts (a) stderr non-empty,
+//! Every error row also asserts (a) stderr non-empty,
 //! (b) stdout empty — so JSON-receipt pipes stay clean.
 //!
 //! HOME is overridden to a per-test tempdir so daemon-required flows
@@ -100,8 +100,8 @@ const ROWS: &[Row] = &[
     },
     Row {
         name: "session_export_invalid_format",
-        // clap ValueEnum rejects "banana" before any RPC call (AC-CLIEXIT3-01,
-        // closes the leak suspected by the audit). Output path is irrelevant —
+        // clap ValueEnum rejects "banana" before any RPC call,
+        // closing the leak suspected by the audit. Output path is irrelevant —
         // we never reach handler code.
         args: &["session", "export", "ses-x", "--format", "banana"],
         expected_exit: 2,
@@ -150,7 +150,7 @@ fn run_row(row: &Row, home: &PathBuf) -> (bool, String) {
 
     let mut failures = Vec::<String>::new();
 
-    // (1) AC-CLIEXIT3-02: exit code matches contract
+    // (1) exit code matches contract
     if actual_exit != row.expected_exit {
         failures.push(format!(
             "exit code: expected {}, got {}",
@@ -158,10 +158,10 @@ fn run_row(row: &Row, home: &PathBuf) -> (bool, String) {
         ));
     }
 
-    // (2) AC-CLIEXIT3-03: error rows must surface message on stderr
+    // (2) error rows must surface message on stderr
     if row.expected_exit != 0 {
         if stderr.is_empty() {
-            failures.push("stderr is empty (AC-CLIEXIT3-03 (a))".to_string());
+            failures.push("stderr is empty (a)".to_string());
         }
         if let Some(needle) = row.stderr_must_contain {
             if !stderr.contains(needle) {
@@ -208,7 +208,7 @@ fn exit_code_matrix_subprocess() {
 
     assert!(
         all_failures.is_empty(),
-        "{} of {} subprocess exit-code rows failed (AC-CLIEXIT3-01..03):\n\n{}\n\n\
+        "{} of {} subprocess exit-code rows failed:\n\n{}\n\n\
          (passed: {})",
         all_failures.len(),
         ROWS.len(),
@@ -227,7 +227,7 @@ fn naked_invocation_never_exits_zero() {
     assert_ne!(
         out.status.code(),
         Some(0),
-        "`loom` with no args MUST exit non-zero (regression guard for AC-CLIEXIT3-02). \
+        "`loom` with no args MUST exit non-zero (regression guard for). \
          got exit={:?}, stdout={:?}, stderr={:?}",
         out.status.code(),
         String::from_utf8_lossy(&out.stdout),
@@ -235,7 +235,7 @@ fn naked_invocation_never_exits_zero() {
     );
 }
 
-/// Documentation test (AC-CLIEXIT3-01): assert that for every code we
+/// Documentation test: assert that for every code we
 /// document in the contract, at least one row above produces it. This
 /// fails-loudly if a future change adds a new exit code to the matrix
 /// table without updating ROWS — keeps the test file in lockstep with

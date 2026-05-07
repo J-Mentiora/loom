@@ -43,7 +43,7 @@ fn fixture_with_limit(max_bytes: u64, ttl: Duration) -> (LocalContentStore, Temp
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_02_1_put_same_bytes_twice_returns_same_ref() {
+fn core_02_1_put_same_bytes_twice_returns_same_ref() {
     let (cs, _tmp) = fixture();
     let r1 = cs.put(b"hello loom").unwrap();
     let r2 = cs.put(b"hello loom").unwrap();
@@ -52,7 +52,7 @@ fn ac_core_02_1_put_same_bytes_twice_returns_same_ref() {
 }
 
 #[test]
-fn ac_core_02_1_put_idempotent_single_blob_on_disk() {
+fn core_02_1_put_idempotent_single_blob_on_disk() {
     let (cs, tmp) = fixture();
     let r = cs.put(b"hello loom").unwrap();
     cs.put(b"hello loom").unwrap(); // second write
@@ -69,7 +69,7 @@ fn ac_core_02_1_put_idempotent_single_blob_on_disk() {
 }
 
 #[test]
-fn ac_core_02_1_put_content_ref_size_bytes_matches_input() {
+fn core_02_1_put_content_ref_size_bytes_matches_input() {
     let (cs, _tmp) = fixture();
     let data = b"size check bytes";
     let r = cs.put(data).unwrap();
@@ -77,7 +77,7 @@ fn ac_core_02_1_put_content_ref_size_bytes_matches_input() {
 }
 
 #[test]
-fn ac_core_02_1_different_bytes_produce_different_refs() {
+fn core_02_1_different_bytes_produce_different_refs() {
     let (cs, _tmp) = fixture();
     let r1 = cs.put(b"data one").unwrap();
     let r2 = cs.put(b"data two").unwrap();
@@ -89,7 +89,7 @@ fn ac_core_02_1_different_bytes_produce_different_refs() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_02_2_get_returns_original_bytes() {
+fn core_02_2_get_returns_original_bytes() {
     let (cs, _tmp) = fixture();
     let data = b"round trip test data";
     let r = cs.put(data).unwrap();
@@ -98,7 +98,7 @@ fn ac_core_02_2_get_returns_original_bytes() {
 }
 
 #[test]
-fn ac_core_02_2_get_corrupted_blob_returns_store_integrity_failed() {
+fn core_02_2_get_corrupted_blob_returns_store_integrity_failed() {
     let (cs, tmp) = fixture();
     let r = cs.put(b"original content").unwrap();
     // Corrupt the blob on disk.
@@ -109,7 +109,7 @@ fn ac_core_02_2_get_corrupted_blob_returns_store_integrity_failed() {
 }
 
 #[test]
-fn ac_core_02_2_integrity_error_context_has_expected_and_actual_hash() {
+fn core_02_2_integrity_error_context_has_expected_and_actual_hash() {
     let (cs, tmp) = fixture();
     let r = cs.put(b"integrity test").unwrap();
     let blob_path = loom_core::content_store::shard_path(&tmp.path().join("store"), &r.sha256, 2);
@@ -127,7 +127,7 @@ fn ac_core_02_2_integrity_error_context_has_expected_and_actual_hash() {
 }
 
 #[test]
-fn ac_core_02_2_get_missing_blob_returns_store_not_found() {
+fn core_02_2_get_missing_blob_returns_store_not_found() {
     let (cs, _tmp) = fixture();
     let phantom = ContentRef {
         sha256: "a".repeat(64),
@@ -142,7 +142,7 @@ fn ac_core_02_2_get_missing_blob_returns_store_not_found() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_store_01_1_gc_removes_unreferenced_old_blobs() {
+fn store_01_1_gc_removes_unreferenced_old_blobs() {
     let (cs, tmp) = fixture();
     // Write 5 blobs.
     let mut refs: Vec<ContentRef> = (0..5)
@@ -196,7 +196,7 @@ fn ac_store_01_1_gc_removes_unreferenced_old_blobs() {
 }
 
 #[test]
-fn ac_store_01_1_gc_retains_blobs_within_ttl() {
+fn store_01_1_gc_retains_blobs_within_ttl() {
     let (cs, _tmp) = fixture();
     let r = cs.put(b"fresh blob").unwrap();
     // Use a very long TTL so the just-written blob is within it.
@@ -283,7 +283,7 @@ fn gc_protects_blobs_referenced_inside_receipt_canonical_bytes() {
 }
 
 #[test]
-fn ac_store_01_1_gc_report_counts_are_correct() {
+fn store_01_1_gc_report_counts_are_correct() {
     let (cs, _tmp) = fixture();
     // No blobs — gc should return zeros.
     let report = cs.gc(Duration::from_secs(1)).unwrap();
@@ -297,7 +297,7 @@ fn ac_store_01_1_gc_report_counts_are_correct() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_store_01_2_put_at_limit_triggers_gc_and_succeeds() {
+fn store_01_2_put_at_limit_triggers_gc_and_succeeds() {
     // Put one blob, then set max_bytes to just above zero so the next write
     // triggers GC. After GC (TTL=0 so the first blob is evictable), write succeeds.
     let tmp = TempDir::new().unwrap();
@@ -332,7 +332,7 @@ fn ac_store_01_2_put_at_limit_triggers_gc_and_succeeds() {
 }
 
 #[test]
-fn ac_store_01_2_put_at_limit_with_no_evictable_returns_store_full() {
+fn store_01_2_put_at_limit_with_no_evictable_returns_store_full() {
     let tmp = TempDir::new().unwrap();
     let store_root = tmp.path().join("store");
     fs::create_dir_all(&store_root).unwrap();

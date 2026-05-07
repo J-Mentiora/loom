@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-lint_no_platform_imports.py — AC-NFR-MAINT-01.1
+lint_no_platform_imports.py
 
 Scans loom-host and loom-core source trees for forbidden platform-specific
 and browser-engine imports. Any match in non-test, non-comment source is a

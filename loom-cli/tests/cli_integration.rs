@@ -109,7 +109,7 @@ fn test_color_disable_signals_honoured() {
     }
 }
 
-// ── AC-NFR-DX-02.1: Error receipts are actionable ───────────────────────────
+// ──.1: Error receipts are actionable ───────────────────────────
 
 #[test]
 fn map_exit_code_ok() {

@@ -1,4 +1,4 @@
-// AC-US-AGT-02.1 — Native MCP tool consumption.
+// Native MCP tool consumption.
 //
 // The MCP dispatcher exposes all registered loom-* tools with names that
 // follow the `loom.<segment>.<segment>` naming convention.  The LLM
@@ -10,7 +10,7 @@
 use loom_mcp::tool_cache::{ToolCache, TOOL_NAME_PREFIX};
 
 // ---------------------------------------------------------------------------
-// AC-US-AGT-02.1: naming convention — all tools start with "loom."
+// naming convention — all tools start with "loom."
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -60,7 +60,7 @@ fn test_mcp_to_rpc_name_strips_prefix() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-US-AGT-02.1: mock catalog shape — all listed tools obey the convention
+// mock catalog shape — all listed tools obey the convention
 // ---------------------------------------------------------------------------
 
 #[cfg(feature = "mock")]

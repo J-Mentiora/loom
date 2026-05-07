@@ -32,7 +32,7 @@ fn serve_args_help_does_not_require_daemon() {
     assert!(r.is_err(), "--help must short-circuit; got Ok");
 }
 
-// === AC-NFR-DX-01: zero-config defaults ===
+// === zero-config defaults ===
 
 #[test]
 fn defaults_require_no_arguments() {
