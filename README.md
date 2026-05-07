@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/mentiora-ai/loom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mentiora-ai/loom/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/mentiora-ai/loom?include_prereleases&sort=semver)](https://github.com/mentiora-ai/loom/releases/latest)
+[![npm](https://img.shields.io/npm/v/@mentiora-ai/loom-sdk?label=%40mentiora-ai%2Floom-sdk&color=cb3837)](https://www.npmjs.com/package/@mentiora-ai/loom-sdk)
 [![License](https://img.shields.io/badge/license-Apache--2.0%20OR%20MIT-blue)](#license)
 [![Rust](https://img.shields.io/badge/rust-1.92%2B-orange)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#install)
@@ -200,6 +201,57 @@ cargo build --release
 Source builds skip the vendored WASM artifact and compile the surface from
 scratch, so they need the `wasm32-wasip2` target installed. The `cargo install`
 path uses the vendored bytes and works without it.
+
+## Client SDKs
+
+The CLI is the surface most users want, but if you're driving Loom from
+your own code, language SDKs talk to the same daemon over the same
+JSON-RPC socket.
+
+### TypeScript / JavaScript
+
+```bash
+npm install @mentiora-ai/loom-sdk
+```
+
+```ts
+import { Session } from "@mentiora-ai/loom-sdk";
+
+const session = await Session.create();
+try {
+  const receipt = await session.navigate("https://example.com");
+  console.log(receipt.action_hash);
+} finally {
+  await session.close();
+}
+```
+
+Requires Node ≥ 20 and a running `loom serve`. Full surface (every
+`web.*` verb, vault, replay, export) and connection options are in
+[typescript-sdk/README.md](typescript-sdk/README.md).
+
+### Python
+
+The Python SDK lives in [python-sdk/](python-sdk/) — same surface as
+the TypeScript SDK, async-first. It isn't on PyPI yet; for now use a
+git install:
+
+```bash
+pip install "git+https://github.com/mentiora-ai/loom@v0.9.0#subdirectory=python-sdk"
+```
+
+```python
+import loom
+
+with loom.Session.create() as session:
+    session.navigate("https://example.com")
+```
+
+### Rust
+
+There's no separate published crate — call `loom-rpc` directly, or shell out
+to `loom action ...` from your Rust code. The crate layout under
+[Architecture → Crate map](#crate-map) tells you which crate provides what.
 
 ## 5-minute quickstart
 
