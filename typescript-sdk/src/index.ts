@@ -1,9 +1,9 @@
 /**
- * @loom/sdk — TypeScript client library for the loom browser-automation daemon.
+ * @mentiora-ai/loom-sdk — TypeScript client library for the loom browser-automation daemon.
  *
  * Quick start:
  *
- *   import { Session } from "@loom/sdk";
+ *   import { Session } from "@mentiora-ai/loom-sdk";
  *
  *   const session = await Session.create();
  *   await session.navigate("https://example.com");

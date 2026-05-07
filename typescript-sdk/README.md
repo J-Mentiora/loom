@@ -1,4 +1,4 @@
-# @loom/sdk
+# @mentiora-ai/loom-sdk
 
 TypeScript client library for the
 [loom](https://github.com/mentiora-ai/loom) browser-automation daemon.
@@ -18,7 +18,7 @@ loom serve
 ## Install
 
 ```bash
-npm install @loom/sdk
+npm install @mentiora-ai/loom-sdk
 ```
 
 Requires Node ≥ 20.
@@ -26,7 +26,7 @@ Requires Node ≥ 20.
 ## Quick start
 
 ```ts
-import { Session } from "@loom/sdk";
+import { Session } from "@mentiora-ai/loom-sdk";
 
 const session = await Session.create();
 try {
@@ -43,7 +43,7 @@ try {
   inspect / validate / export).
 - `Session.{navigate, click, typeText, select, hover, scroll, wait,
   evaluate, screenshot, snapshot}` — every web action surface.
-- Receipt + summary types in `@loom/sdk/types` — `Receipt`,
+- Receipt + summary types in `@mentiora-ai/loom-sdk/types` — `Receipt`,
   `SessionInfo`, `SessionInspection`, `DiffReport`, `ExportInfo`,
   `ValidationResult`, `GrantInfo`, `SchemaRegistry`, `LoomErrorCode`.
 - Typed errors: `LoomError`, `LoomRPCError`, `LoomConnectionError`,

@@ -1,4 +1,4 @@
-name: Publish @loom/sdk to npm
+name: Publish @mentiora-ai/loom-sdk to npm
 
 # Triggers:
 #   - On a v* tag (same trigger that drives the cargo-dist binary release).
@@ -9,9 +9,9 @@ name: Publish @loom/sdk to npm
 #     or dry-runs from a non-tag commit).
 #
 # Required secret:
-#   NPM_TOKEN — automation-type npm access token, scoped to publish for
-#   the @loom scope. Generate at npmjs.com → Access Tokens → "Automation"
-#   → "@loom/sdk" (or scope-wide). Add to GitHub repo Secrets as NPM_TOKEN.
+#   NPM_TOKEN — granular npm access token, scoped to publish under the
+#   `mentiora-ai` org / `@mentiora-ai` package scope. Generate at
+#   npmjs.com → Access Tokens. Add to GitHub repo Secrets as NPM_TOKEN.
 
 on:
   push:

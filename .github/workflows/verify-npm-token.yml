@@ -74,10 +74,19 @@ jobs:
         run: |
           set -euo pipefail
           if npm access list packages "@$INPUT_SCOPE" >/tmp/pkgs.json 2>/tmp/pkgs.err; then
-            count=$(node -p "Object.keys(require('/tmp/pkgs.json')).length")
-            echo "✓ token can manage $count package(s) under scope @$INPUT_SCOPE"
-            cat /tmp/pkgs.json
-            echo "::notice title=Scope @$INPUT_SCOPE::publish access confirmed ($count packages)"
+            # `npm access list packages` returns either a JSON object or an
+            # empty body when the scope has zero packages (brand-new scope).
+            # Both are success signals — the auth + scope are valid. Fail
+            # only if the command itself errored.
+            if [ ! -s /tmp/pkgs.json ]; then
+              echo "✓ token can manage scope @$INPUT_SCOPE (empty — no packages yet)"
+              echo "::notice title=Scope @$INPUT_SCOPE::publish access confirmed (0 packages)"
+            else
+              count=$(node -p "Object.keys(require('/tmp/pkgs.json')).length")
+              echo "✓ token can manage $count package(s) under scope @$INPUT_SCOPE"
+              cat /tmp/pkgs.json
+              echo "::notice title=Scope @$INPUT_SCOPE::publish access confirmed ($count packages)"
+            fi
           else
             echo "::error title=Scope @$INPUT_SCOPE::token does NOT have publish access. See log."
             cat /tmp/pkgs.err

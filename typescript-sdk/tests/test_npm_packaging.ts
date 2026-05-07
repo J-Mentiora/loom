@@ -1,7 +1,7 @@
 /**
  * Smoke test for the published TypeScript SDK.
  *
- * After `npm install @loom/sdk` on Node >= 20, importing `Session`
+ * After `npm install @mentiora-ai/loom-sdk` on Node >= 20, importing `Session`
  * and calling `await Session.create()` should round-trip through the
  * daemon and return a Session whose `sessionId` matches.
  */
@@ -22,7 +22,7 @@ describe("Session.create() returns a Session with matching sessionId", () => {
     await daemon.stop();
   });
 
-  test("Session class is exported from @loom/sdk", () => {
+  test("Session class is exported from @mentiora-ai/loom-sdk", () => {
     assert.ok(Session, "Session must be exported");
     assert.strictEqual(typeof Session.create, "function", "Session.create must be a static method");
   });
