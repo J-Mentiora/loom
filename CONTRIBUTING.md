@@ -109,6 +109,14 @@ auto-publishes the Homebrew formula to the
    ```
    Commit any changes to `.github/workflows/release.yml` and
    `dist-workspace.toml`.
+5. **For the `@loom/sdk` npm publish (`.github/workflows/publish-npm.yml`)**:
+   create an npm "Automation"-type access token at
+   [npmjs.com → Access Tokens](https://www.npmjs.com/settings/<your-username>/tokens),
+   scoped to publish for `@loom/sdk` (or to the `@loom` scope). Add it
+   as a repo secret named `NPM_TOKEN`. The workflow fires on the same
+   `v*` tag that drives the binary release; if it fails for any reason
+   the binaries still ship and you can re-run the npm job from the
+   Actions UI.
 
 ### Cutting a release
 

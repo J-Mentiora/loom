@@ -19,10 +19,23 @@
   "engines": {
     "node": ">=20"
   },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mentiora-ai/loom.git",
+    "directory": "typescript-sdk"
+  },
+  "homepage": "https://github.com/mentiora-ai/loom/tree/main/typescript-sdk#readme",
+  "bugs": "https://github.com/mentiora-ai/loom/issues",
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "test": "node --import tsx/esm --test 'tests/**/*.ts'",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build",
+    "prepack": "npm run build"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
