@@ -6,12 +6,14 @@
 [![Rust](https://img.shields.io/badge/rust-1.92%2B-orange)](https://www.rust-lang.org/)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey)](#install)
 
-**Agent-first browser automation runtime.** A local daemon + CLI + MCP server
-that drives a real Chromium subprocess through a deterministic action store.
-Designed for AI agents that need to browse, fill forms, run JavaScript, and
-verify the result — with replay-equal hash chains, content-addressed
-artifacts, and a typed error wire shape that doesn't leak generic
-`internal_error` strings.
+**Agent-first browser automation runtime.** A local daemon + CLI + MCP
+server that drives a real Chromium subprocess through a deterministic
+action store. Playwright and CDP were built for humans testing their own
+sites; Loom is shaped for the case where the caller is an LLM agent that
+needs to browse, fill forms, run JavaScript, and reliably know whether each
+action worked — with replay-equal hash chains, content-addressed artifacts,
+and a typed error wire shape that doesn't leak generic `internal_error`
+strings.
 
 ```
 ┌─────────────┐         ┌──────────────┐         ┌────────────────┐
@@ -23,6 +25,34 @@ artifacts, and a typed error wire shape that doesn't leak generic
 ```
 
 **Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v0.9.0.
+
+## If you've hit the vibe-coding testing wall
+
+You shipped the feature in two evenings. You want browser tests so you
+can stop manually clicking through every release. You asked the agent to
+wire up Playwright. The suite passed — once. Now half the runs flake on
+timing, a quarter flake on a popup the agent doesn't know about, and
+every "just fix the flake" eats two hours and ends with three more
+`waitForTimeout(2000)` calls you're not proud of.
+
+These don't break for *random* reasons — they break because the tooling
+underneath was built for a human watching a screen. The agent has no
+replay, no typed feedback, no budget. When something goes wrong it goes
+wrong silently, and you debug by re-running until you get lucky.
+
+Loom is the runtime you actually want for this:
+
+| You hit                                                | Loom answer                                                                |
+|--------------------------------------------------------|----------------------------------------------------------------------------|
+| Flake from timing / animations / `Math.random`         | Clocks, RNG, and animations frozen at session-create                       |
+| "Passed yesterday, fails today" with no useful diff    | Hash-chain WAL — `loom session diff` finds the one action that diverged    |
+| `Error: Timeout 30000ms exceeded` strings              | Typed errors (`kind: "wait_predicate_false"`, …) the agent can branch on   |
+| Glue code between Claude Code and Playwright           | Bundled MCP server — actions show up as native tools, no shim              |
+| Agent stuck in a loop melting the laptop               | Per-session budgets on wall-clock, network bytes, DOM nodes, JS heap       |
+| OAuth tokens passed around as cookie jars              | Scoped grants tied to (session, origin, scopes, ttl); agent never sees the token |
+
+If you're three hours into a flaky test session right now, the
+[5-minute quickstart](#5-minute-quickstart) below is a fair deal.
 
 ## What makes loom different
 
@@ -41,6 +71,71 @@ artifacts, and a typed error wire shape that doesn't leak generic
   so a hostile page can't reach the host process directly.
 - **Content-addressed everything.** DOM snapshots, screenshots, and
   exported tarballs all live in CAS keyed by SHA-256.
+- **Per-session resource budgets.** Hard limits on wall-clock, network
+  bytes, DOM nodes, and JS heap. Breaching any of them kills the session
+  and returns a typed `budget-exceeded` error, so a runaway agent can't
+  open 400 tabs and melt the host. Configurable at session-create:
+  `loom session create --budget network=10MB,wall_clock=30s`.
+- **Scoped OAuth credential vault.** Grants are tied to (`session_id`,
+  `origin`, `scopes`, `ttl`); the agent process never sees the token, the
+  vault attaches it origin-scoped at request time, and every use lands in
+  the session's audit log. Backed by the OS keychain on macOS.
+- **Time-travel inspect.** `loom session inspect <id> --at-action N`
+  reconstructs the session state at any point in the action chain — DOM,
+  screenshots, network, console — without re-running anything.
+
+## How loom compares
+
+Honest matrix versus the other tools you'd reach for. Loom is not trying to
+win on every axis — it's trying to be obviously the right pick when
+replay-equality, MCP-native ergonomics, or process isolation actually matter,
+and the wrong pick when you need cross-browser coverage, Windows, or the
+biggest community.
+
+|                                              | **loom**            | Playwright                | Puppeteer        | Browserbase + Stagehand    | browser-use            | Anthropic Computer Use |
+|----------------------------------------------|---------------------|---------------------------|------------------|----------------------------|------------------------|------------------------|
+| Bit-equal deterministic replay               | ✓ hash-chain WAL    | trace viewer (descriptive)| —                | —                          | —                      | —                      |
+| MCP server, no `session_id` plumbing         | ✓ bundled           | external¹                 | —                | partial²                   | —                      | —                      |
+| Typed errors (`kind: …`) for LLM consumers   | ✓                   | string messages           | string messages  | partial                    | string messages        | n/a                    |
+| WASM-isolated page driver                    | ✓                   | —                         | —                | —                          | —                      | —                      |
+| Local, no per-minute cloud bill              | ✓                   | ✓                         | ✓                | ✗ cloud                    | ✓                      | API per call           |
+| Approach                                     | DOM + CDP           | DOM + CDP                 | DOM + CDP        | DOM + CDP (cloud)          | DOM + vision           | pure vision            |
+| Browsers                                     | Chromium            | Chromium / Firefox / WebKit | Chromium       | Chromium                   | Chromium / Firefox / WebKit | any (vision)      |
+| Windows                                      | ✗                   | ✓                         | ✓                | ✓                          | ✓                      | ✓                      |
+| SDKs                                         | Rust + Python + TS  | very wide                 | Node             | Node + Python              | Python                 | any (HTTP)             |
+| Maturity                                     | 0.9 (pre-1.0)       | 5+ yrs, 1.x               | 7+ yrs, 1.x      | GA                         | growing                | GA                     |
+
+¹ Microsoft ships `@playwright/mcp` as a separate package — it isn't part of
+core Playwright and runs as its own process.
+² Stagehand exposes MCP-style integration, but session lifecycle lives in
+Browserbase's cloud rather than locally.
+
+**When to pick which:**
+
+- **Playwright / Puppeteer** — you're writing a test suite, need
+  cross-browser, or want the largest community and the most
+  StackOverflow answers.
+- **Browserbase + Stagehand** — you don't want to run anything locally
+  and are fine paying per browser-minute for someone else's infra +
+  fleet management.
+- **browser-use** — you're in pure Python and want fast LLM-driven
+  scraping with vision fallback, and don't need replay or typed errors.
+- **Anthropic Computer Use** — the surface has no usable DOM at all
+  (canvas-heavy apps, native apps over screen share, anti-bot pages
+  where DOM access is the problem).
+- **loom** — pick if any of this is your day:
+  - you're vibe-coding in Claude Code or Cursor and want the agent to
+    *actually* drive a real browser as a native tool — not write a
+    Playwright script you then run by hand
+  - your AI-driven browser tests flake on half the runs and you want
+    "same prompt → same run," with a hash you can diff when one breaks
+  - you're automating pages from sources you don't fully trust
+    (LLM-supplied URLs, hostile sites, anti-bot territory) and would
+    rather a malicious page not reach your host
+
+If none of those is your day, Playwright is probably the better call and
+we'd say so. Loom earns its keep on determinism + MCP + isolation, not on
+feature breadth.
 
 ## Install
 
