@@ -481,12 +481,22 @@ impl WasmHostBridge for WasmBridge {
         // Reject terminal sessions before any host dispatch.
         // The check must precede host.dispatch() so the shim is never reached.
         {
+            use loom_core::budget_enforcer::KillReason;
             use loom_core::session_manager::SessionStatus;
             let status = *session.status.lock();
             match status {
                 SessionStatus::Closed => return Err(LoomErrorCode::SessionClosed),
                 SessionStatus::Aborted | SessionStatus::Killed | SessionStatus::Crashed => {
-                    return Err(LoomErrorCode::SessionAborted)
+                    // Distinguish budget-driven kills from user/store aborts so
+                    // the typed `budget-exceeded` code reaches the wire — the
+                    // `kill_reason` was written by the budget kill callback
+                    // before status flipped, so we just have to consult it.
+                    return Err(match session.kill_reason.lock().as_ref() {
+                        Some(KillReason::BudgetExceeded { .. }) => {
+                            LoomErrorCode::BudgetExceeded
+                        }
+                        _ => LoomErrorCode::SessionAborted,
+                    });
                 }
                 SessionStatus::Created | SessionStatus::Active => {}
             }
@@ -751,25 +761,43 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         Action::WebEvaluate { expression, .. } => runtime_evaluate(expression.clone()),
 
         Action::WebType { selector, text, .. } => {
+            // Direct `el.value = text` bypasses React/Vue/Angular value
+            // trackers — the DOM `.value` is set but framework state still
+            // thinks the field is empty, so a follow-up form submit fails
+            // with "this field is required". Use the native prototype
+            // setter so the framework's tracker fires its change observer.
+            // (Same approach Playwright/testing-library use for the same
+            // reason.)
             let sel = serde_json::to_string(selector).ok()?;
             let val = serde_json::to_string(text).ok()?;
             runtime_evaluate(format!(
-                "(function(){{const el=document.querySelector({sel});\
-                 el.value={val};\
-                 el.dispatchEvent(new Event('input',{{bubbles:true}}));\
-                 el.dispatchEvent(new Event('change',{{bubbles:true}}));}})()"
+                "(function(){{\
+                  const el=document.querySelector({sel});\
+                  el.focus();\
+                  const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;\
+                  const setter=Object.getOwnPropertyDescriptor(proto,'value').set;\
+                  setter.call(el,{val});\
+                  el.dispatchEvent(new Event('input',{{bubbles:true}}));\
+                  el.dispatchEvent(new Event('change',{{bubbles:true}}));\
+                }})()"
             ))
         }
 
         Action::WebSelect {
             selector, value, ..
         } => {
+            // Same React/Vue/Angular tracker problem as web.type — the
+            // native HTMLSelectElement setter is what frameworks observe.
             let sel = serde_json::to_string(selector).ok()?;
             let val = serde_json::to_string(value).ok()?;
             runtime_evaluate(format!(
-                "(function(){{const el=document.querySelector({sel});\
-                 el.value={val};\
-                 el.dispatchEvent(new Event('change',{{bubbles:true}}));}})()"
+                "(function(){{\
+                  const el=document.querySelector({sel});\
+                  const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set;\
+                  setter.call(el,{val});\
+                  el.dispatchEvent(new Event('input',{{bubbles:true}}));\
+                  el.dispatchEvent(new Event('change',{{bubbles:true}}));\
+                }})()"
             ))
         }
 
@@ -1151,6 +1179,32 @@ fn parse_args(argv: &[String]) -> DaemonArgs {
     args
 }
 
+/// `loom-daemon --help` short-circuit. Mirrors the flags `parse_args`
+/// recognises so users can discover them without grepping the source.
+fn print_daemon_help() {
+    println!(
+        "loom-daemon — long-lived RPC server backing the loom CLI / SDKs.\n\
+         \n\
+         Usually spawned by `loom serve`. Direct invocation is supported but\n\
+         rare; the CLI handles socket path + lifetime management for you.\n\
+         \n\
+         USAGE:\n    \
+             loom-daemon [OPTIONS]\n\
+         \n\
+         OPTIONS:\n    \
+             --socket <PATH>      Override the Unix socket path.\n    \
+             --data-root <PATH>   Override the data-root directory (sessions, CAS, logs).\n    \
+             -h, --help           Print this help and exit.\n    \
+             -V, --version        Print version and exit.\n\
+         \n\
+         ENVIRONMENT:\n    \
+             LOOM_SOCKET_PATH     Same as --socket.\n    \
+             LOOM_DATA_ROOT       Same as --data-root.\n    \
+             LOOM_LOG_PATH        Override the daemon log file path.\n    \
+             LOOM_OTEL_ENABLED    Set to `1` to enable OTEL exports.\n"
+    );
+}
+
 // ─── Public entry point ──────────────────────────────────────────────────────
 //
 // exposed as `pub fn run()` so the `loom-daemon` binary can live
@@ -1167,11 +1221,25 @@ pub fn run() -> Result<()> {
 }
 
 async fn async_main() -> Result<()> {
+    let argv: Vec<String> = std::env::args().collect();
+
+    // Short-circuit on --help / --version BEFORE the vault check + socket
+    // bind. Otherwise a user typing `loom-daemon --help` either spawns a
+    // long-lived daemon (no daemon already running) or fails opaquely with
+    // `AddressInUse` (one is). Neither is what --help should do.
+    if argv.iter().any(|a| a == "--help" || a == "-h") {
+        print_daemon_help();
+        return Ok(());
+    }
+    if argv.iter().any(|a| a == "--version" || a == "-V") {
+        println!("loom-daemon {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     //.1 startup gate (F-S6): refuse to start without a
     // present, well-formed threat-model document.
     check_vault_threat_model().context("vault threat-model precondition failed")?;
 
-    let argv: Vec<String> = std::env::args().collect();
     let args = parse_args(&argv);
 
     // Init tracing to stderr so stdout stays clean for HELLO_TOKEN.
@@ -1676,7 +1744,8 @@ mod tests {
         assert!(expr.contains(".click()"), "got: {expr}");
     }
 
-    /// type sets value AND dispatches input/change events.
+    /// type sets value via the framework-aware native setter (so React/Vue/Angular
+    /// trackers see the change) AND dispatches input/change events.
     #[test]
     fn build_chromium_args_type_emits_runtime_evaluate_setting_value_and_dispatching_input_change()
     {
@@ -1688,7 +1757,20 @@ mod tests {
         let msg = decode_cdp(&action).expect("Some");
         assert_eq!(msg.method, "Runtime.evaluate");
         let expr = expr_of(&msg);
-        assert!(expr.contains(".value="), "expected .value= in {expr}");
+        // Framework-aware: must call the prototype's value setter, not assign
+        // `.value =` directly (which bypasses React's tracker).
+        assert!(
+            expr.contains("setter.call(el,"),
+            "expected setter.call(el, ...) in {expr}"
+        );
+        assert!(
+            expr.contains("HTMLInputElement.prototype"),
+            "expected HTMLInputElement.prototype in {expr}"
+        );
+        assert!(
+            !expr.contains(";el.value="),
+            "regression: direct el.value= bypasses React tracker, in {expr}"
+        );
         assert!(
             expr.contains("new Event('input'"),
             "expected input event in {expr}"

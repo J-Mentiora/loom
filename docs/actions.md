@@ -66,7 +66,7 @@ Security: the expression is executed verbatim in the page. Treat it as untrusted
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `expression` | `string` | required | JavaScript expression. Returned value is JSON-canonicalised; >64 KB → content blob ref. |
 
-**Returns:** Receipt with `value` (JSON) for small returns, or `content_ref` (SHA-256 hash) for ≥64 KB returns. `kind: "js_throw"` on uncaught exception.
+**Returns:** Receipt with `return_value_json` — a JSON-string-encoded value (e.g. `"\"hello\""` for a string `"hello"`, `"42"` for the number 42). Decode with one extra `JSON.parse`. Returns ≥64 KB are stored in CAS and `return_value_json` carries a `{"content_ref":"<sha256>"}` wrapper instead of inline bytes. `kind: "js_throw"` on uncaught exception.
 
 **Example**
 
@@ -143,7 +143,7 @@ The PNG is stored in the content-addressed blob store; the receipt carries a `sc
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | optional | Optional CSS selector. When set, screenshot is clipped to the element's bounding rect. |
 
-**Returns:** Receipt with `screenshot_ref: <sha256>` pointing to the PNG in CAS. With `selector` and a miss → `kind: "js_throw"`.
+**Returns:** Receipt with `screenshot_after_hash: <sha256>` pointing to the PNG in CAS — fetch via `loom blob get <hash>`. With `selector` and a miss → `kind: "js_throw"`.
 
 **Example**
 
@@ -220,7 +220,7 @@ Snapshots include the deterministic profile's effects — frozen time, seeded ra
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 
-**Returns:** Receipt with `content_ref: <sha256>` and `hash: <sha256>` pointing to the serialised DOM in CAS.
+**Returns:** Receipt with `dom_snapshot_hash: <sha256>` pointing to the serialised DOM in CAS — fetch via `loom blob get <hash>`.
 
 **Example**
 
