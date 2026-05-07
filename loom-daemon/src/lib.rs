@@ -492,9 +492,7 @@ impl WasmHostBridge for WasmBridge {
                     // `kill_reason` was written by the budget kill callback
                     // before status flipped, so we just have to consult it.
                     return Err(match session.kill_reason.lock().as_ref() {
-                        Some(KillReason::BudgetExceeded { .. }) => {
-                            LoomErrorCode::BudgetExceeded
-                        }
+                        Some(KillReason::BudgetExceeded { .. }) => LoomErrorCode::BudgetExceeded,
                         _ => LoomErrorCode::SessionAborted,
                     });
                 }
