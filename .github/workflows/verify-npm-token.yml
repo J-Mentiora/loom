@@ -1,0 +1,60 @@
+name: Verify NPM_TOKEN
+
+# Manual-dispatch only. Authenticates against the npm registry using the
+# NPM_TOKEN repo secret and prints `npm whoami`. Useful as a sanity check
+# before a real publish — if the token is missing, expired, or scoped to
+# the wrong account this workflow fails loudly without touching the
+# registry's package state.
+#
+# This intentionally does not run on push or tag — it's a button you press
+# from the Actions tab when you want to confirm the token is healthy.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  whoami:
+    name: npm whoami
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org/"
+
+      - name: Authenticate + npm whoami
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is empty or missing on this repo"
+            exit 1
+          fi
+          who=$(npm whoami)
+          echo "✓ NPM_TOKEN authenticates as: $who"
+          echo "::notice title=npm whoami::$who"
+
+      - name: Confirm publish access for @loom/sdk
+        # `npm access list packages` enumerates every package the token
+        # can manage. We grep for the SDK so a wrong-scope token fails
+        # this step instead of silently passing.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          # First publish: package doesn't exist yet, so `npm access list
+          # packages` won't show it. Don't fail in that case — the
+          # whoami step above already confirmed auth.
+          if npm view @loom/sdk version >/dev/null 2>&1; then
+            echo "@loom/sdk exists on npm — checking the token can manage it"
+            npm access list packages | grep -E '^"?@loom/sdk"?[[:space:]]*:' \
+              || (echo "::error::token authenticates but does NOT have publish access to @loom/sdk"; exit 1)
+            echo "✓ token has publish access to @loom/sdk"
+          else
+            echo "@loom/sdk is not yet published; auth confirmed but publish-access check is N/A on first publish"
+          fi
