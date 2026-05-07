@@ -318,25 +318,140 @@ to the source's at every action_receipt entry.
 
 ## Architecture
 
-The workspace is 11 crates split along stable seams:
+Replay equality, typed errors, isolation, the Linux secondary build —
+none of those are features bolted onto a normal browser-driver codebase.
+They fall out of a small set of architectural commitments that reinforce
+each other. Worth understanding before depending on Loom or contributing
+to it.
+
+### Trust zones at runtime
+
+```mermaid
+flowchart LR
+    A["Agent<br/>(Claude Code · Cursor · SDK)"]
+    D["loom-daemon<br/>(trusted host)<br/>rpc · host · core"]
+    W["loom-surface-web<br/>(WASM · sandboxed)"]
+    S["loom-shim-chromium<br/>(subprocess + supervisor)"]
+    C["Chromium"]
+
+    A <-->|"JSON-RPC<br/>(Unix socket)"| D
+    D <-->|"WIT calls<br/>curated capabilities"| W
+    D <-->|"CBOR pipe<br/>shim_protocol"| S
+    S <-->|"CDP / WebSocket"| C
+
+    style D fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
+    style W stroke-dasharray:5 5
+    style S stroke-dasharray:5 5
+    style C stroke-dasharray:5 5
+```
+
+The daemon (blue) is the only fully trusted process. Everything dashed
+runs at arm's length: the WASM guest gets only the host capabilities
+the WIT contract grants it, the shim is a separate subprocess under a
+supervisor with a typed restart budget, and Chromium is, well,
+Chromium. A renderer compromise has to traverse two protocol boundaries
+(CDP → shim_protocol, then through `shim_call` via the host) to reach
+anything in the daemon, and never crosses into agent code.
+
+### Six commitments
+
+**1. The session is an append-only, hash-chained WAL of immutable receipts.**
+There's no mutable session state. Every action emits an `ActionReceipt`
+whose `prev_hash` points at the previous receipt; the chain anchors back
+to the session's `seed` and `epoch_ms`. Replay just re-executes the action
+list against the recorded content store; the replay's hash chain is
+bit-equal to the source's *by construction*. `loom session diff` is
+literally "compare two manifests."
+
+```mermaid
+flowchart LR
+    SEED["session_create<br/>seed · epoch_ms"]
+    R0["Receipt[0]<br/>prev_hash: 0x00…<br/>action: web.navigate<br/>dom_after: h_A<br/>screenshot: h_B"]
+    R1["Receipt[1]<br/>prev_hash: H(R0)<br/>action: web.click<br/>dom_after: h_C"]
+    R2["Receipt[2]<br/>prev_hash: H(R1)<br/>action: web.evaluate<br/>console: h_D"]
+
+    SEED --> R0 --> R1 --> R2
+
+    subgraph CAS["content store · SHA-256 keyed"]
+        BA["h_A · DOM"]
+        BB["h_B · PNG"]
+        BC["h_C · DOM"]
+        BD["h_D · JSON"]
+    end
+
+    R0 -.-> BA
+    R0 -.-> BB
+    R1 -.-> BC
+    R2 -.-> BD
+```
+
+**2. Every artifact is content-addressed by SHA-256.** DOM snapshots,
+screenshots, exported tarballs — keyed by content hash, stored in one
+CAS, referenced from the manifest by hash. Replay equality, artifact
+deduplication, and `loom gc`'s reference protection are all the same
+mechanism, not three subsystems that have to agree.
+
+**3. Errors are part of the wire schema, not strings.** `LoomErrorCode`
+is a stable kebab-case enum (`session-not-found`, `wait-predicate-false`,
+`budget-exceeded`, `replay-divergence`, ~25 codes total) shared across
+every crate, every process boundary, and every SDK. Adding a code is
+SemVer-minor; removing one is major. A linter walks every
+`LoomError::` constructor and asserts the variant is in the documented
+`errors.json` schema, so an emitter can't invent a new error string
+without it surfacing in the wire contract.
+
+**4. Untrusted code runs out-of-process or in WASM — never in the daemon.**
+Chromium runs in `loom-shim-chromium`, a separate process speaking
+CBOR-framed `shim_protocol` over a pipe; the daemon never imports CDP
+and a renderer crash can't take it down. The `web.*` surface guest is a
+WASM cdylib loaded as a wasmtime component, with a curated host
+interface (clock, RNG, `blob_put/get`, `net_request`, `shim_call`) — a
+hostile page that compromises the renderer can't reach the host's
+filesystem or network without going through that interface. The
+shim itself runs under a supervisor with a typed restart budget; an
+exhausted budget surfaces as `kind: "shim-failure"`, not a hang.
+
+**5. The core is platform-agnostic.** `loom-core` (sessions, manifest,
+replay, vault, content store) imports zero macOS or Linux symbols.
+Anything platform-specific lives behind a stable seam in a sibling
+crate: `loom-keychain` for the OS keychain, `loom-shims` for the
+Chromium driver process, `loom-surfaces` for verb implementations.
+This is why the Linux x86_64/arm64 build doesn't fork — it's the same
+core with one fewer adapter linked. It's also why a hypothetical
+future `native.*` (macOS apps), `shell.*`, or `fs.*` surface would
+be a new shim + WASM guest pair against `loom-host`'s WIT contract,
+not a `loom-core` rewrite.
+
+**6. The action registry is the single source of truth.** Every `web.*`
+action is declared once in [`loom-rpc/src/action_registry/action_registry.rs`](loom-rpc/src/action_registry/action_registry.rs).
+Docs (`docs/actions.md`, the man pages, CLI `--help`) and the JSON-RPC
+router both derive from it. A unit test in
+[`interface_tests.rs`](loom-rpc/src/action_registry/interface_tests.rs)
+asserts the registry's required-param set equals the router's, and a
+CI gate fails any PR where the generated docs are out of sync — so
+dispatch, documentation, and the CLI surface can't drift from each
+other even by accident.
+
+### Crate map
 
 | Crate                | What lives here                                                |
 |----------------------|----------------------------------------------------------------|
-| `loom-shared`        | Wire-protocol types (CBOR), session IDs, shim_protocol         |
+| `loom-shared`        | Wire-protocol types (CBOR), session IDs, `shim_protocol`, `LoomError` |
 | `loom-keychain`      | Platform keychain access (macOS Keychain Services)             |
-| `loom-core`          | Session state, manifest WAL, content store, vault, replay      |
-| `loom-host`          | wasmtime runtime, WIT bindings, host_function_table            |
-| `loom-rpc`           | JSON-RPC dispatch, schema validator, request router            |
+| `loom-core`          | Session state, manifest WAL, content store, vault, replay engine |
+| `loom-host`          | wasmtime runtime, WIT bindings, `host_function_table`          |
+| `loom-rpc`           | JSON-RPC dispatch, schema validator, request router, action registry |
 | `loom-cli`           | `loom` binary — CLI commands + RPC client                      |
 | `loom-daemon`        | `loom-daemon` binary — long-lived daemon that owns sessions    |
 | `loom-mcp`           | `loom-mcp` binary — MCP server (stdio transport)               |
 | `loom-surfaces`      | Cross-target surface verb implementations                      |
-| `loom-shims`         | `loom-shim-chromium` binary — out-of-process Chromium driver   |
+| `loom-shims`         | `loom-shim-chromium` binary + supervisor — out-of-process Chromium driver |
 | `loom-surface-web`   | WASM cdylib — the `web.*` surface guest                        |
 
-Each module's source file is named after the module
-(`<module>/<module>.rs`). The `<module>/mod.rs` holds glue code;
-`interface_tests.rs` holds tests.
+Layout convention: each module's source is `<module>/<module>.rs`, glue
+lives in `<module>/mod.rs`, tests live in `interface_tests.rs`. This
+isn't aesthetic — it's why `grep -r "fn dispatch_action"` lands at one
+file, not eleven.
 
 ## Status
 
@@ -403,10 +518,3 @@ router's, so the registry and the dispatch path can't drift either.
 
 Dual-licensed under MIT or Apache-2.0 at your option. See
 [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
-
-## Credits
-
-Loom was incubated inside a private Mentiora project and built with
-substantial AI-assisted authoring (Anthropic Claude) under human review
-at every gate. Stewardship by Johannes Rummel and the Mentiora team.
-See [CREDITS.md](CREDITS.md) for more.
