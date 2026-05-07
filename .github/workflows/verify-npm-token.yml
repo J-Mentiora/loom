@@ -1,23 +1,27 @@
 name: Verify NPM_TOKEN
 
 # Manual-dispatch only. Authenticates against the npm registry using the
-# NPM_TOKEN repo secret and prints `npm whoami`. Useful as a sanity check
-# before a real publish — if the token is missing, expired, or scoped to
-# the wrong account this workflow fails loudly without touching the
-# registry's package state.
+# NPM_TOKEN repo secret and verifies the user can publish under the
+# expected scope. Useful as a sanity check before a real publish.
 #
-# This intentionally does not run on push or tag — it's a button you press
-# from the Actions tab when you want to confirm the token is healthy.
+# This intentionally does not run on push or tag — it's a button you
+# press from the Actions tab when you want to confirm the token is
+# healthy.
 
 on:
   workflow_dispatch:
+    inputs:
+      scope:
+        description: "Scope to confirm the token can publish into (e.g. mentiora-ai or loom)"
+        type: string
+        default: "mentiora-ai"
 
 permissions:
   contents: read
 
 jobs:
   whoami:
-    name: npm whoami
+    name: npm whoami + scope check
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
@@ -39,22 +43,43 @@ jobs:
           echo "✓ NPM_TOKEN authenticates as: $who"
           echo "::notice title=npm whoami::$who"
 
-      - name: Confirm publish access for @loom/sdk
-        # `npm access list packages` enumerates every package the token
-        # can manage. We grep for the SDK so a wrong-scope token fails
-        # this step instead of silently passing.
+      - name: List org memberships
+        # `npm org ls <org>` lists members of an org the token can see.
+        # If the token has no access to the org, this exits non-zero.
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          INPUT_SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          # First publish: package doesn't exist yet, so `npm access list
-          # packages` won't show it. Don't fail in that case — the
-          # whoami step above already confirmed auth.
-          if npm view @loom/sdk version >/dev/null 2>&1; then
-            echo "@loom/sdk exists on npm — checking the token can manage it"
-            npm access list packages | grep -E '^"?@loom/sdk"?[[:space:]]*:' \
-              || (echo "::error::token authenticates but does NOT have publish access to @loom/sdk"; exit 1)
-            echo "✓ token has publish access to @loom/sdk"
+          if npm org ls "$INPUT_SCOPE" >/tmp/org.txt 2>/tmp/org.err; then
+            echo "✓ token can see members of npm org \`$INPUT_SCOPE\`:"
+            cat /tmp/org.txt
+            echo "::notice title=npm org \`$INPUT_SCOPE\`::accessible"
           else
-            echo "@loom/sdk is not yet published; auth confirmed but publish-access check is N/A on first publish"
+            echo "::warning title=npm org \`$INPUT_SCOPE\`::token cannot list this org"
+            echo "(this is expected if you used a Granular token scoped only to packages, not the full org)"
+            cat /tmp/org.err
+          fi
+
+      - name: Probe publish capability
+        # The most direct test of "can this token publish under <scope>?"
+        # is `npm access list packages <scope>` — it enumerates every
+        # package in the scope the token can manage. On a brand-new
+        # scope with zero published packages, the empty list still means
+        # "yes, the token can manage <scope>". Failure here is the
+        # actionable signal.
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          INPUT_SCOPE: ${{ inputs.scope }}
+        run: |
+          set -euo pipefail
+          if npm access list packages "@$INPUT_SCOPE" >/tmp/pkgs.json 2>/tmp/pkgs.err; then
+            count=$(node -p "Object.keys(require('/tmp/pkgs.json')).length")
+            echo "✓ token can manage $count package(s) under scope @$INPUT_SCOPE"
+            cat /tmp/pkgs.json
+            echo "::notice title=Scope @$INPUT_SCOPE::publish access confirmed ($count packages)"
+          else
+            echo "::error title=Scope @$INPUT_SCOPE::token does NOT have publish access. See log."
+            cat /tmp/pkgs.err
+            exit 1
           fi
