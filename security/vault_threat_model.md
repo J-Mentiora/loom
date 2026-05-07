@@ -82,7 +82,7 @@ The RPC server and CLI accept vault.grant() requests. All grant requests must ca
 ### TB4 — Manifest/log boundary
 Manifests and logs are potentially readable by third parties (CI systems, operators,
 telemetry pipelines). No secret material crosses this boundary — verified by the
-presence test in AC-NFR-SEC-01.1 (grep for token substrings).
+presence test in  (grep for token substrings).
 
 ## Abuse Cases
 
@@ -108,7 +108,7 @@ If the clock is rewound, the grant may appear valid for longer — acceptable wi
 ### AB4 — Secret grep in manifest
 **Scenario:** Attacker reads the session manifest looking for token bytes.
 **Mitigated by:** G1 + G5. No token bytes ever appear in `VaultAuditPayload` or any
-manifest entry. Verified by AC-NFR-SEC-01.1 grep test.
+manifest entry. Verified by  grep test.
 
 ### AB5 — Scope creep via grant recycling
 **Scenario:** Attacker obtains a legitimate grant for `["repo:read"]` and tries to

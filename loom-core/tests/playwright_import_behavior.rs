@@ -66,7 +66,7 @@ fn action_receipts(entries: &[ManifestEntry]) -> Vec<&ManifestEntry> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_01_1_action_count_equals_k_events() {
+fn interop_01_1_action_count_equals_k_events() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     std::fs::create_dir_all(&sessions_root).unwrap();
@@ -102,7 +102,7 @@ fn ac_interop_01_1_action_count_equals_k_events() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_01_1_each_action_source_is_playwright_import() {
+fn interop_01_1_each_action_source_is_playwright_import() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     std::fs::create_dir_all(&sessions_root).unwrap();
@@ -137,7 +137,7 @@ fn ac_interop_01_1_each_action_source_is_playwright_import() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_01_1_session_replayable_false() {
+fn interop_01_1_session_replayable_false() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     std::fs::create_dir_all(&sessions_root).unwrap();
@@ -172,7 +172,7 @@ fn ac_interop_01_1_session_replayable_false() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_01_1_empty_trace_creates_zero_action_session() {
+fn interop_01_1_empty_trace_creates_zero_action_session() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     std::fs::create_dir_all(&sessions_root).unwrap();
@@ -213,7 +213,7 @@ fn ac_interop_01_1_empty_trace_creates_zero_action_session() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_01_1_invalid_zip_returns_error() {
+fn interop_01_1_invalid_zip_returns_error() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     std::fs::create_dir_all(&sessions_root).unwrap();
@@ -231,7 +231,7 @@ fn ac_interop_01_1_invalid_zip_returns_error() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_01_1_missing_trace_file_in_zip() {
+fn interop_01_1_missing_trace_file_in_zip() {
     use std::io::Cursor;
     use zip::write::{FileOptions, ZipWriter};
 

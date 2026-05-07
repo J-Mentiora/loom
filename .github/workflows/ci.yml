@@ -113,7 +113,7 @@ jobs:
         # without it the test files are entirely cfg-gated out and run
         # 0 tests.
         # `--include-ignored`: runs the 23 fake-chromium ignored tests on
-        # stable cells (forms the e2e signal for AC-CI-01).
+        # stable cells (forms the e2e signal for).
         # The two ignored tests in `loom-host/tests/v8_seed_determinism.rs`
         # are Phase 6+ stubs that `panic!()` until real Chromium subprocess
         # wiring lands. libtest's `--skip` matches function names (not the
@@ -211,7 +211,7 @@ jobs:
         if: failure()
         run: cat /tmp/loom-daemon.log || true
 
-  # AC-DOCS-01: ensure docs/actions.md and the man pages match the registry.
+  # ensure docs/actions.md and the man pages match the registry.
   # `loom-rpc/src/action_registry/action_registry.rs` is the source of truth;
   # the example regenerates everything; the diff check fails the PR if a
   # registry edit was committed without re-running the generator.
@@ -245,7 +245,7 @@ jobs:
           fi
 
   e2e:
-    # Real-Chromium-pinned end-to-end verification (AC-CI-02). Runs on
+    # Real-Chromium-pinned end-to-end verification. Runs on
     # stable cells only; beta is best-effort and skips this job.
     name: e2e pinned-chromium (${{ matrix.os }})
     needs: build
@@ -311,7 +311,7 @@ jobs:
         run: cargo test -p loom-cli verify_url_head -- --nocapture
 
   # cargo-deny — license + advisory + supply-chain + ban audit on the workspace.
-  # Scope per AC-CI-03 ("license + duplicate-dep audit. Fail on any GPL /
+  # Scope per  ("license + duplicate-dep audit. Fail on any GPL /
   # unknown licenses.") plus the architectural bans encoded in `deny.toml`
   # (no chromiumoxide outside loom-shims; no platform keychain crates outside
   # loom-keychain; getrandom audit trail). The `bans` wrappers were rewritten
@@ -327,7 +327,7 @@ jobs:
         with:
           command: check licenses advisories sources bans
 
-  # AC-DIST-01: vendored-wasm staleness check. The committed
+  # vendored-wasm staleness check. The committed
   # `loom-cli/vendor/loom_surface_web.wasm` makes `cargo install --git`
   # work without `rustup target add wasm32-wasip2`. If the vendored bytes
   # drift from `loom-surface-web/` source, cargo-install users get stale

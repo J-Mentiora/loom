@@ -10,7 +10,7 @@
 // fields (`action_id`, `session_id`, `status`, `timing_ticks`) are
 // unconditional and not enumerated.
 //
-// Brief AC-NAVRECEIPT2-05: `--capture-policy minimal` strips
+// Brief `--capture-policy minimal` strips
 // dom_snapshot_hash, screenshot_after_hash, console_lines, etc.,
 // leaving only `url`, `status_code`, `error` (+ identity).
 
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(before, after);
     }
 
-    /// Minimal profile (brief AC-NAVRECEIPT2-05): only `url`,
+    /// Minimal profile (brief): only `url`,
     /// `status_code`, `error` survive (+ identity fields).
     #[test]
     fn minimal_strips_per_brief() {

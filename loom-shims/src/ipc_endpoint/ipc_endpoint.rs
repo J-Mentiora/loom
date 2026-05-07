@@ -95,7 +95,7 @@ impl IpcEndpoint for SocketpairEndpoint {
     }
 
     fn shutdown(&self) -> Result<(), IpcError> {
-        panic!("v5.4 implementation")
+        panic!("shutdown not yet implemented")
     }
 }
 

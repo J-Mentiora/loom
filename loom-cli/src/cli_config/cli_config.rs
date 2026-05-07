@@ -60,7 +60,6 @@ pub struct CliConfig {
     /// Default profile for `loom session create` when `--profile` is absent.
     /// Resolved from config file `default_profile`, env `LOOM_DEFAULT_PROFILE`,
     /// or CLI. Valid values: "safe" | "standard" | "full". None means RPC server picks default.
-    /// Added by config-system feature (oracle-confirmed, v5.3 oversight).
     pub default_profile: Option<String>,
 }
 

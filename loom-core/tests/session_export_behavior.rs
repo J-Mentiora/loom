@@ -100,7 +100,7 @@ fn content_store_fixture(tmp: &TempDir) -> Arc<dyn ContentStore> {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_cli_03_1_json_export_has_manifest_and_blob_index() {
+fn cli_03_1_json_export_has_manifest_and_blob_index() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -127,7 +127,7 @@ fn ac_cli_03_1_json_export_has_manifest_and_blob_index() {
 }
 
 #[test]
-fn ac_cli_03_1_json_export_is_valid_json() {
+fn cli_03_1_json_export_is_valid_json() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -153,7 +153,7 @@ fn ac_cli_03_1_json_export_is_valid_json() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_store_02_1_tarball_contains_manifest_and_blobs() {
+fn store_02_1_tarball_contains_manifest_and_blobs() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -205,7 +205,7 @@ fn ac_store_02_1_tarball_contains_manifest_and_blobs() {
 }
 
 #[test]
-fn ac_store_02_1_tarball_is_valid_gzip() {
+fn store_02_1_tarball_is_valid_gzip() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -237,7 +237,7 @@ fn ac_store_02_1_tarball_is_valid_gzip() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_cli_03_2_har_entries_length_matches_network_event_count_across_navigate_receipts() {
+fn cli_03_2_har_entries_length_matches_network_event_count_across_navigate_receipts() {
     // Two navigate receipts × 3 NetworkEvents each = 6 entries.
     // Note: this AC's text reads "network event count" verbatim (not
     // receipt count) — entries[] aggregates events across receipts.
@@ -283,7 +283,7 @@ fn ac_cli_03_2_har_entries_length_matches_network_event_count_across_navigate_re
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_interop_02_1_har_schema_valid() {
+fn interop_02_1_har_schema_valid() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -338,7 +338,7 @@ fn ac_interop_02_1_har_schema_valid() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_harexport_01_request_url_matches_navigated_url() {
+fn harexport_01_request_url_matches_navigated_url() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -377,7 +377,7 @@ fn ac_harexport_01_request_url_matches_navigated_url() {
 }
 
 #[test]
-fn ac_harexport_02_response_status_matches_navigation() {
+fn harexport_02_response_status_matches_navigation() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -414,7 +414,7 @@ fn ac_harexport_02_response_status_matches_navigation() {
 }
 
 #[test]
-fn ac_harexport_03_content_size_and_mimetype_populated() {
+fn harexport_03_content_size_and_mimetype_populated() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();
@@ -469,7 +469,7 @@ fn ac_harexport_03_content_size_and_mimetype_populated() {
 }
 
 #[test]
-fn ac_harexport_04_har_still_validates_against_har_12_spec() {
+fn harexport_04_har_still_validates_against_har_12_spec() {
     // Even after switching from placeholders to real per-event data, every
     // HAR 1.2 required field must remain present.
     let tmp = TempDir::new().unwrap();
@@ -506,7 +506,7 @@ fn ac_harexport_04_har_still_validates_against_har_12_spec() {
 }
 
 #[test]
-fn ac_harexport_05_entries_length_matches_network_event_count_not_receipt_count() {
+fn harexport_05_entries_length_matches_network_event_count_not_receipt_count() {
     // 1 navigate receipt with 4 NetworkEvents + 1 navigate receipt with 0
     // events + 1 click (no network) → 4 entries (per network-event count,
     // NOT 3 receipts).
@@ -572,7 +572,7 @@ fn load_har_schema() -> serde_json::Value {
 }
 
 #[test]
-fn ac_harexport_04_validates_against_har12_schema() {
+fn harexport_04_validates_against_har12_schema() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
     fs::create_dir_all(&sessions_root).unwrap();

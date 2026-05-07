@@ -101,8 +101,8 @@ pub enum Action {
     // handler addition (compile-time evidence).
 }
 
-/// WIT-derived receipt type. Always typed; never CDP-shaped
-/// . `serde_json::Value` here is a domain payload (e.g.
+/// WIT-derived receipt type. Always typed; never CDP-shaped.
+/// `serde_json::Value` here is a domain payload (e.g.
 /// click coordinates), NOT the CDP wire envelope.
 ///
 /// `action_hash`, `outcome_hash`, `emitted_at_ms` mirror the WIT
@@ -110,7 +110,7 @@ pub enum Action {
 /// fixture/canned receipts (and trap-path receipts that never reach
 /// the guest) can leave them absent in the JSON output.
 ///
-/// Navigate tier-2 fields : present only when the
+/// Navigate tier-2 fields: present only when the
 /// receipt was produced by a navigate action.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Receipt {
@@ -144,7 +144,7 @@ pub struct Receipt {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_count: Option<u64>,
     /// Per-line console output captured during navigate (brief
-    /// AC-NAVRECEIPT2-01 extension). Empty when capture-policy is
+    ///  extension). Empty when capture-policy is
     /// `minimal`, when no console output occurred, or while the shim
     /// console-capture stub is in place. Reuses `ShimConsoleLine`
     /// across the wire boundary — the shape `{level, message}` is
@@ -152,21 +152,20 @@ pub struct Receipt {
     /// graph.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub console_lines: Vec<ShimConsoleLine>,
-    /// Aggregate network summary (brief AC-NAVRECEIPT2-01 extension).
+    /// Aggregate network summary (brief  extension).
     /// Per-request detail lives in `side_effects[]`; this carries the
     /// roll-up so consumers don't need to scan the array.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_summary: Option<NetworkSummary>,
-    // ---- Evaluate tier fields  ----
+    // ---- Evaluate tier fields ----
     /// JS expression result, canonical-JSON encoded. `None` means either
     /// "not an evaluate action" or "result was offloaded to the content
     /// store" (in which case `return_value_blob_ref` carries the SHA-256).
-    ///.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_value_json: Option<String>,
     /// SHA-256 hex of the canonical-JSON evaluate result when its size
     /// exceeds the inline threshold (64 KB by default). `None` for
-    /// inline-sized results..
+    /// inline-sized results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_value_blob_ref: Option<String>,
 }

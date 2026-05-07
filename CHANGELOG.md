@@ -100,10 +100,8 @@ are stable. Deterministic replay and `web.click` remain Beta — promotion to
   that set `NO_COLOR=""` for parent processes will no longer
   accidentally disable color.
 - **Workspace version walked back from 1.0.0 → 0.9.0** to reflect that
-  deterministic replay and `web.click` are not yet bulletproof. The
-  `v1.0.0` tag was published prematurely and remains on origin for
-  historical reference, but `v0.9.0` supersedes it as the supported
-  release.
+  deterministic replay and `web.click` are not yet bulletproof.
+  `v0.9.0` is the first supported release.
 
 ### Fixed
 

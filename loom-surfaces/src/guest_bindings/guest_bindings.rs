@@ -101,8 +101,7 @@ impl WebSurface for WebSurfaceImpl {
 
 /// Compile-time enumeration of the 10 verb names exported from the
 /// `web-surface` WIT interface. Used by integration tests +
-/// `tools/lint-surface-bindings.py` to assert WIT-vs-impl agreement
-/// .
+/// `tools/lint-surface-bindings.py` to assert WIT-vs-impl agreement.
 pub const WEB_SURFACE_VERBS: &[&str] = &[
     "navigate",
     "click",

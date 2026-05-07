@@ -22,7 +22,7 @@ use loom_core::receipt_builder::{
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_04_1_click_receipt_default_tier() {
+fn core_04_1_click_receipt_default_tier() {
     let receipt = ReceiptBuilder::build_click_receipt(
         "act-001".to_string(),
         42_000_u64, // timing_ticks (microseconds)
@@ -86,7 +86,7 @@ fn ac_core_04_1_click_receipt_default_tier() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_04_2_navigate_receipt_default_tier() {
+fn core_04_2_navigate_receipt_default_tier() {
     let dom_ref = ContentRef {
         sha256: "a".repeat(64),
         size_bytes: 4096,
@@ -159,7 +159,7 @@ fn ac_core_04_2_navigate_receipt_default_tier() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_04_3_evaluate_receipt_default_tier() {
+fn core_04_3_evaluate_receipt_default_tier() {
     let console_line = ConsoleLine {
         level: "log".to_string(),
         message: "eval ran".to_string(),
@@ -200,7 +200,7 @@ fn ac_core_04_3_evaluate_receipt_default_tier() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_04_4_capture_full_adds_before_refs() {
+fn core_04_4_capture_full_adds_before_refs() {
     let dom_before = ContentRef {
         sha256: "e".repeat(64),
         size_bytes: 2048,
@@ -254,7 +254,7 @@ fn ac_core_04_4_capture_full_adds_before_refs() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_04_5_capture_minimal_strips_blobs() {
+fn core_04_5_capture_minimal_strips_blobs() {
     let dom_ref = ContentRef {
         sha256: "a".repeat(64),
         size_bytes: 4096,
@@ -350,7 +350,7 @@ fn ac_core_04_5_capture_minimal_strips_blobs() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_05_1_error_receipt_shape() {
+fn core_05_1_error_receipt_shape() {
     let receipt = ReceiptBuilder::build_error_receipt(
         "act-err-001".to_string(),
         7_000,
@@ -378,7 +378,7 @@ fn ac_core_05_1_error_receipt_shape() {
 }
 
 #[test]
-fn ac_core_05_1_error_receipt_message_truncation() {
+fn core_05_1_error_receipt_message_truncation() {
     let long_message = "x".repeat(300);
     let receipt = ReceiptBuilder::build_error_receipt(
         "act-err-002".to_string(),
@@ -401,7 +401,7 @@ fn ac_core_05_1_error_receipt_message_truncation() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_core_05_2_all_receipt_codes_have_wire_strings() {
+fn core_05_2_all_receipt_codes_have_wire_strings() {
     let codes = vec![
         ReceiptCode::WebActionCompleted,
         ReceiptCode::WebNavigationFailed,
@@ -440,7 +440,7 @@ fn ac_core_05_2_all_receipt_codes_have_wire_strings() {
 }
 
 #[test]
-fn ac_core_05_2_receipt_code_serde_matches_as_wire() {
+fn core_05_2_receipt_code_serde_matches_as_wire() {
     // P1 fix: verify serde output matches as_wire()
     let codes = vec![
         ReceiptCode::WebActionCompleted,
@@ -461,11 +461,11 @@ fn ac_core_05_2_receipt_code_serde_matches_as_wire() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-DET-03.1 — no floats in receipt fields
+// no floats in receipt fields
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_nfr_det_03_1_no_floats_in_receipt_fields() {
+fn nfr_det_03_1_no_floats_in_receipt_fields() {
     let receipt = ReceiptBuilder::build_click_receipt(
         "act-f".to_string(),
         1_000_000,
@@ -492,11 +492,11 @@ fn assert_no_floats(v: &serde_json::Value) {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-DET-04.1 — canonical field ordering via serde_jcs
+// canonical field ordering via serde_jcs
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_nfr_det_04_1_canonical_field_ordering() {
+fn nfr_det_04_1_canonical_field_ordering() {
     let receipt = ReceiptBuilder::build_click_receipt(
         "act-ord".to_string(),
         2_000,
@@ -528,11 +528,11 @@ fn ac_nfr_det_04_1_canonical_field_ordering() {
 }
 
 // ---------------------------------------------------------------------------
-// AC-NFR-DET-05.1 — timing_ticks is monotonic integer
+// timing_ticks is monotonic integer
 // ---------------------------------------------------------------------------
 
 #[test]
-fn ac_nfr_det_05_1_timing_ticks_is_integer() {
+fn nfr_det_05_1_timing_ticks_is_integer() {
     let receipt = ReceiptBuilder::build_click_receipt(
         "act-t".to_string(),
         999_999_u64, // microseconds
@@ -553,7 +553,7 @@ fn ac_nfr_det_05_1_timing_ticks_is_integer() {
 }
 
 #[test]
-fn ac_nfr_det_05_1_timing_ticks_monotonic_in_sequence() {
+fn nfr_det_05_1_timing_ticks_monotonic_in_sequence() {
     // Verify that the type accepts monotonically increasing values (no enforcement in the builder,
     // but the type constraint — u64, not f64 — prevents fractional values)
     let t0 = 0_u64;

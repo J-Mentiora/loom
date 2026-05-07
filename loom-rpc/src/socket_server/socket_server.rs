@@ -1,13 +1,12 @@
 // SocketServer — owns the `tokio::net::UnixListener` at the platform
-// socket path; mode 0600; stale-socket recovery; graceful shutdown
-//.
+// socket path; mode 0600; stale-socket recovery; graceful shutdown.
 //
 // # Contract semantics
 // - **Socket path.** Default
 //   `~/Library/Caches/loom/loom.sock` on macOS;
 //   `$XDG_RUNTIME_DIR/loom.sock` on Linux. Overridable via config
 //   file → env (`LOOM_SOCKET_PATH`) → CLI flag (`--socket`).
-// - **Permissions .** Mode `0600` set via
+// - **Permissions.** Mode `0600` set via
 //   `std::os::unix::fs::PermissionsExt` immediately after bind, before
 //   the first `accept()`.
 // - **Stale-socket recovery (design.md §4).** On bind `EADDRINUSE`,

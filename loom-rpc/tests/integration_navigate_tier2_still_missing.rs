@@ -1,24 +1,21 @@
-//! Integration tests for the navigate receipt tier-2 fields
-//! (AC-NAVRECEIPT2-01..05).
+//! Integration tests for the navigate receipt tier-2 fields.
 //!
-//! Brief mapping (the brief used the older AC-NAVRECEIPT-* numbering;
-//! the registry tracks AC-NAVRECEIPT2-* — both refer to the same
-//! contract for this feature):
+//! Coverage:
 //!
-//!   AC-NAVRECEIPT2-01: wire receipt JSON contains keys: url, final_url,
-//!     title, status_code, dom_snapshot_hash, screenshot_after_hash,
-//!     console_count, console_lines, network_count, network_summary.
-//!   AC-NAVRECEIPT2-02: dom_snapshot_hash + screenshot_after_hash are
-//!     SHA-256 hex (64 lowercase chars), and the corresponding blobs
-//!     exist in the content store (`cs.get(...)` returns the original
-//!     bytes).
-//!   AC-NAVRECEIPT2-03: side_effects[] contains LoomNetworkEvent entries
-//!     captured by the shim's NetworkInterceptor (one per resource).
-//!   AC-NAVRECEIPT2-04: combined: full receipt shape AND blobs on disk
-//!     in one test (this file's `ac_navreceipt2_04_combined`).
-//!   AC-NAVRECEIPT2-05: --capture-policy minimal strips
-//!     dom_snapshot_hash, screenshot_after_hash, console_lines, etc.
-//!     (covered by `apply_capture_profile_to_wire(Minimal)`).
+//! - wire receipt JSON contains keys: url, final_url,
+//!   title, status_code, dom_snapshot_hash, screenshot_after_hash,
+//!   console_count, console_lines, network_count, network_summary.
+//! - dom_snapshot_hash + screenshot_after_hash are
+//!   SHA-256 hex (64 lowercase chars), and the corresponding blobs
+//!   exist in the content store (`cs.get(...)` returns the original
+//!   bytes).
+//! - side_effects[] contains LoomNetworkEvent entries
+//!   captured by the shim's NetworkInterceptor (one per resource).
+//! - combined: full receipt shape AND blobs on disk
+//!   in one test (this file's `navreceipt2_04_combined`).
+//! - --capture-policy minimal strips
+//!   dom_snapshot_hash, screenshot_after_hash, console_lines, etc.
+//!   (covered by `apply_capture_profile_to_wire(Minimal)`).
 //!
 //! These tests exercise the wire `Receipt` end-to-end through the
 //! daemon's decode path (faithful to the production marshalling), but
@@ -47,7 +44,7 @@ fn fresh_content_store() -> (LocalContentStore, tempfile::TempDir) {
 
 const SHA256_HEX_LEN: usize = 64;
 
-/// AC-NAVRECEIPT2-02 hash check: 64 lowercase hex characters.
+///  hash check: 64 lowercase hex characters.
 fn assert_is_sha256_hex(label: &str, h: &str) {
     assert_eq!(
         h.len(),
@@ -119,7 +116,7 @@ fn make_console_lines() -> Vec<ShimConsoleLine> {
 /// Construct a fully-populated wire `Receipt` mimicking what the daemon
 /// would emit at `dispatch_action_blocking` for a successful navigate
 /// under `--capture-policy default`. Numeric / hash values must match
-/// the make_* fixtures so the AC-02 assertion can roundtrip them.
+/// the make_* fixtures so the hash assertions can roundtrip them.
 fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
     let network_events = make_network_events();
     let console_lines = make_console_lines();
@@ -161,10 +158,10 @@ fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
     }
 }
 
-// ─── AC-NAVRECEIPT2-01: receipt JSON contains all 10 brief-listed keys ─────
+// ─── receipt JSON contains all 10 brief-listed keys ─────
 
 #[test]
-fn ac_navreceipt2_01_wire_receipt_carries_all_brief_keys() {
+fn navreceipt2_01_wire_receipt_carries_all_brief_keys() {
     let r = full_navigate_receipt("a".repeat(64), "b".repeat(64));
     let json = serde_json::to_value(&r).expect("wire receipt must serialize");
 
@@ -183,7 +180,7 @@ fn ac_navreceipt2_01_wire_receipt_carries_all_brief_keys() {
     for key in required {
         assert!(
             json.get(key).is_some(),
-            "AC-NAVRECEIPT2-01: missing key '{key}' in wire receipt JSON: {json:?}"
+            "missing key '{key}' in wire receipt JSON: {json:?}"
         );
     }
 
@@ -199,10 +196,10 @@ fn ac_navreceipt2_01_wire_receipt_carries_all_brief_keys() {
     }
 }
 
-// ─── AC-NAVRECEIPT2-02: SHA-256 hex + blob round-trip via ContentStore ─────
+// ─── SHA-256 hex + blob round-trip via ContentStore ─────
 
 #[test]
-fn ac_navreceipt2_02_dom_and_screenshot_hashes_are_sha256_hex_with_blob_present() {
+fn navreceipt2_02_dom_and_screenshot_hashes_are_sha256_hex_with_blob_present() {
     let (cs, _tmp) = fresh_content_store();
 
     let dom_bytes: Vec<u8> =
@@ -212,17 +209,17 @@ fn ac_navreceipt2_02_dom_and_screenshot_hashes_are_sha256_hex_with_blob_present(
     let dom_ref = cs.put(&dom_bytes).expect("cs.put(dom)");
     let ss_ref = cs.put(&ss_bytes).expect("cs.put(screenshot)");
 
-    // AC-02 — hash format
+    // hash format
     assert_is_sha256_hex("dom_snapshot_hash", &dom_ref.sha256);
     assert_is_sha256_hex("screenshot_after_hash", &ss_ref.sha256);
 
-    // AC-02 — blob exists on disk: round-trip via cs.get
+    // blob exists on disk: round-trip via cs.get
     let got_dom = cs.get(&dom_ref).expect("cs.get(dom)");
     let got_ss = cs.get(&ss_ref).expect("cs.get(screenshot)");
     assert_eq!(got_dom, dom_bytes, "DOM round-trip via ContentStore");
     assert_eq!(got_ss, ss_bytes, "screenshot round-trip via ContentStore");
 
-    // AC-02 — wire receipt carries the same hashes.
+    // wire receipt carries the same hashes.
     let r = full_navigate_receipt(dom_ref.sha256.clone(), ss_ref.sha256.clone());
     assert_eq!(
         r.dom_snapshot_hash.as_deref(),
@@ -234,34 +231,34 @@ fn ac_navreceipt2_02_dom_and_screenshot_hashes_are_sha256_hex_with_blob_present(
     );
 }
 
-// ─── AC-NAVRECEIPT2-03: side_effects[] non-empty + LoomNetworkEvent shape ──
+// ─── side_effects[] non-empty + LoomNetworkEvent shape ──
 
 #[test]
-fn ac_navreceipt2_03_side_effects_carries_network_events() {
+fn navreceipt2_03_side_effects_carries_network_events() {
     let r = full_navigate_receipt("a".repeat(64), "b".repeat(64));
     assert!(
         !r.side_effects.is_empty(),
-        "AC-NAVRECEIPT2-03: side_effects must be non-empty for navigate"
+        "side_effects must be non-empty for navigate"
     );
-    // First event has the LoomNetworkEvent shape expected by AC-03.
+    // First event has the LoomNetworkEvent shape expected by the contract.
     let first = &r.side_effects[0];
     for key in ["method", "url", "status", "request_hash", "response_hash"] {
         assert!(
             first.get(key).is_some(),
-            "AC-NAVRECEIPT2-03: side_effects[0] missing key {key}: {first:?}"
+            "side_effects[0] missing key {key}: {first:?}"
         );
     }
     assert_eq!(first["method"], "GET");
     assert_eq!(first["status"], 200);
     // Round-trip into the typed struct works.
     let _: LoomNetworkEvent = serde_json::from_value(first.clone())
-        .expect("AC-NAVRECEIPT2-03: side_effects[0] must round-trip into LoomNetworkEvent");
+        .expect("side_effects[0] must round-trip into LoomNetworkEvent");
 }
 
-// ─── AC-NAVRECEIPT2-04: combined — full shape AND blob round-trip ──────────
+// ─── combined — full shape AND blob round-trip ──────────
 
 #[test]
-fn ac_navreceipt2_04_full_shape_with_blob_roundtrip_in_one_test() {
+fn navreceipt2_04_full_shape_with_blob_roundtrip_in_one_test() {
     let (cs, _tmp) = fresh_content_store();
 
     let dom_bytes: Vec<u8> = b"<html>combined</html>".to_vec();
@@ -310,10 +307,10 @@ fn ac_navreceipt2_04_full_shape_with_blob_roundtrip_in_one_test() {
     assert_eq!(r.console_lines[0].message, "page loaded");
 }
 
-// ─── AC-NAVRECEIPT2-05: --capture-policy minimal strips tier-2 fields ──────
+// ─── --capture-policy minimal strips tier-2 fields ──────
 
 #[test]
-fn ac_navreceipt2_05_minimal_capture_strips_tier_two_fields() {
+fn navreceipt2_05_minimal_capture_strips_tier_two_fields() {
     let mut r = full_navigate_receipt("a".repeat(64), "b".repeat(64));
     r.error = Some(ReceiptError {
         kind: "http_status".into(),
@@ -325,15 +322,15 @@ fn ac_navreceipt2_05_minimal_capture_strips_tier_two_fields() {
     // Brief-listed fields stripped:
     assert!(
         r.dom_snapshot_hash.is_none(),
-        "AC-NAVRECEIPT2-05: dom_snapshot_hash must be stripped under Minimal"
+        "dom_snapshot_hash must be stripped under Minimal"
     );
     assert!(
         r.screenshot_after_hash.is_none(),
-        "AC-NAVRECEIPT2-05: screenshot_after_hash must be stripped under Minimal"
+        "screenshot_after_hash must be stripped under Minimal"
     );
     assert!(
         r.console_lines.is_empty(),
-        "AC-NAVRECEIPT2-05: console_lines must be empty under Minimal"
+        "console_lines must be empty under Minimal"
     );
     // Plus all the other tier-2 fields:
     assert!(r.final_url.is_none());

@@ -31,8 +31,8 @@ fn test_safe_profile_allows_benign_expression() {
 // ─── Test 2: Error — SafetyPolicy blocks denylist expressions under Safe ──────
 
 /// Contract: SafetyPolicy::check_evaluate returns EvaluateDenylistMatch when
-/// the expression contains a EVALUATE_DENYLIST pattern with SafetyProfile::Safe
-/// . Covers all patterns in the denylist.
+/// the expression contains a EVALUATE_DENYLIST pattern with SafetyProfile::Safe.
+/// Covers all patterns in the denylist.
 #[test]
 fn test_safe_profile_blocks_denylist_patterns() {
     for pattern in EVALUATE_DENYLIST {
@@ -50,8 +50,7 @@ fn test_safe_profile_blocks_denylist_patterns() {
 // ─── Test 3: Happy — Default profile never blocks any expression ──────────────
 
 /// Contract: SafetyPolicy::check_evaluate returns None for any expression under
-/// SafetyProfile::Default — the default profile has no evaluate restrictions
-/// .
+/// SafetyProfile::Default — the default profile has no evaluate restrictions.
 #[test]
 fn test_default_profile_allows_denylist_expressions() {
     for pattern in EVALUATE_DENYLIST {

@@ -1,4 +1,4 @@
-//! — Unix socket file permissions.
+//! Unix socket file permissions.
 //!
 //! Given the `loom` daemon starts,
 //! When the socket file is inspected (`stat`),
