@@ -1,0 +1,107 @@
+name: E2E real-world sites
+
+# Drives loom against real public sites (saucedemo, the-internet,
+# booking.com, wikipedia) on a weekly cadence. These checks live OUTSIDE
+# the per-PR CI because external sites are inherently flaky — a bad day
+# at booking.com's CDN should not block a PR merge — but the signal is
+# valuable enough to want regular runs:
+#
+#   • catches regressions in framework-aware web.type/select against
+#     real-world React forms (saucedemo)
+#   • catches breakage from a Chromium pin bump that breaks anti-bot
+#     fingerprinting on booking.com
+#   • catches breakage from upstream HTML changes on the-internet
+#     (which is otherwise extremely stable, designed for automation)
+#
+# Runs Mondays at 09:00 UTC + manual dispatch. Failures open a tracking
+# issue rather than failing a check (no PR is gated on this run).
+
+on:
+  schedule:
+    # Monday 09:00 UTC. Weekly cadence balances signal vs. spend on the
+    # pinned-Chromium download (~150 MB once per cache miss).
+    - cron: '0 9 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  real-world:
+    name: real-world (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Chromium runtime libs (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libssl-dev jq \
+            libnss3 libgbm1 libasound2t64 \
+            libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libxcomposite1 libxdamage1 libxss1 \
+            libxkbcommon-x11-0 libx11-xcb1 \
+            fonts-liberation xdg-utils
+      - name: Restore pinned-Chromium cache
+        uses: actions/cache@v5
+        with:
+          path: ~/.config/loom/chromium
+          key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('loom-cli/src/chromium_pin.rs') }}
+      - name: Build release binaries
+        run: cargo build --release
+      - name: Run loom postinstall (downloads + verifies pinned Chromium)
+        run: ./target/release/loom postinstall
+      - name: Strip macOS quarantine (no-op if absent)
+        if: matrix.os == 'macos-latest'
+        run: xattr -dr com.apple.quarantine "$HOME/.config/loom/chromium" || true
+      - name: Start daemon
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/loom serve > /tmp/loom-daemon.log 2>&1 &
+          for i in $(seq 1 30); do
+            if ./target/release/loom doctor 2>/dev/null | jq -e '.failures | length == 0' >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::daemon did not become ready within 30s"
+          tail -50 /tmp/loom-daemon.log || true
+          exit 1
+      - name: Run real-world site tests
+        shell: bash
+        run: bash tests/e2e/run_real_world.sh
+      - name: Dump artefacts on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "::group::daemon log"
+          tail -200 /tmp/loom-daemon.log || true
+          echo "::endgroup::"
+          if [ -d tests/e2e/results ]; then
+            for f in tests/e2e/results/*; do
+              echo "::group::$f"
+              head -200 "$f" || true
+              echo "::endgroup::"
+            done
+          fi
+      - name: Upload results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-world-results-${{ matrix.os }}
+          path: |
+            tests/e2e/results/
+            /tmp/loom-daemon.log
+          if-no-files-found: ignore
+          retention-days: 30

@@ -310,6 +310,76 @@ jobs:
           LOOM_VERIFY_CHROMIUM_PINS: '1'
         run: cargo test -p loom-cli verify_url_head -- --nocapture
 
+      # ─── tests/e2e/ shell harness ─────────────────────────────────────
+      # The shell scripts under tests/e2e/ exercise every README-promised
+      # feature end-to-end against real Chromium (just downloaded above)
+      # and a local Python http.server fixture. Each script is self-contained
+      # except for the daemon, which we start once below and reuse across
+      # all three. Three suites — one per logical surface area — run as
+      # separate steps so CI logs flag the failing area precisely:
+      #   • run_e2e     — every CLI verb + replay equality + typed errors
+      #                   + 4 parallel sessions + form flow + budget kill
+      #   • run_load    — 8 concurrent sessions × 5 actions each
+      #   • run_mcp     — MCP stdio transport (initialize / tools/list /
+      #                   tools/call) end-to-end
+      # run_real_world.sh hits saucedemo.com, the-internet.herokuapp.com,
+      # and booking.com — those live in a separate scheduled workflow
+      # because per-PR flakes from external sites would block merges.
+      - name: Install e2e harness deps (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y jq
+      - name: Start daemon for e2e harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./target/release/loom serve > /tmp/loom-daemon.log 2>&1 &
+          # Poll until the daemon answers `doctor` cleanly, capped at 30s.
+          # `loom serve` returns immediately after spawning the daemon
+          # subprocess, so we can't block on the `serve` invocation itself.
+          for i in $(seq 1 30); do
+            if ./target/release/loom doctor 2>/dev/null | jq -e '.failures | length == 0' >/dev/null; then
+              echo "daemon ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::daemon did not become ready within 30s"
+          tail -50 /tmp/loom-daemon.log || true
+          exit 1
+      - name: e2e — full CLI surface coverage (run_e2e.sh)
+        shell: bash
+        run: bash tests/e2e/run_e2e.sh
+      - name: e2e — concurrent-session load (run_load.sh)
+        shell: bash
+        run: bash tests/e2e/run_load.sh
+      - name: e2e — MCP stdio transport (run_mcp.sh)
+        shell: bash
+        run: bash tests/e2e/run_mcp.sh
+      - name: Dump e2e artefacts on failure
+        if: failure()
+        shell: bash
+        run: |
+          echo "::group::daemon log"
+          tail -200 /tmp/loom-daemon.log || true
+          echo "::endgroup::"
+          if [ -d tests/e2e/results ]; then
+            for f in tests/e2e/results/*; do
+              echo "::group::$f"
+              head -200 "$f" || true
+              echo "::endgroup::"
+            done
+          fi
+      - name: Upload e2e artefacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-results-${{ matrix.os }}
+          path: |
+            tests/e2e/results/
+            /tmp/loom-daemon.log
+          if-no-files-found: ignore
+          retention-days: 7
+
   # cargo-deny — license + advisory + supply-chain + ban audit on the workspace.
   # Scope per  ("license + duplicate-dep audit. Fail on any GPL /
   # unknown licenses.") plus the architectural bans encoded in `deny.toml`

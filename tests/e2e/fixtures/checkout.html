@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><title>Mock Checkout</title></head>
+<body>
+<h1>Mock Hotel Checkout</h1>
+<form id="checkout-form" onsubmit="event.preventDefault(); document.getElementById('confirmation').textContent='Booked: ' + document.getElementById('name').value;">
+  <label>Name <input id="name" name="name" required></label><br>
+  <label>Email <input id="email" name="email" type="email" required></label><br>
+  <label>Card <input id="card" name="card" pattern="[0-9 ]{13,19}" required></label><br>
+  <label>Country
+    <select id="country" name="country">
+      <option value="US">United States</option>
+      <option value="GB">United Kingdom</option>
+      <option value="DE">Germany</option>
+    </select>
+  </label><br>
+  <button type="submit" id="book">Book Now</button>
+</form>
+<div id="confirmation"></div>
+</body>
+</html>
