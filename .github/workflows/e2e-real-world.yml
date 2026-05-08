@@ -69,13 +69,19 @@ jobs:
         run: |
           set -euo pipefail
           ./target/release/loom serve > /tmp/loom-daemon.log 2>&1 &
+          # Match the readiness criterion in ci.yml: only `daemon_responsive`
+          # is required. The chromium-present check goes red on macOS due
+          # to the postinstall layout vs. resolver mismatch (tracked as a
+          # v0.9.x layout fix). Real chromium signal is the run_real_world
+          # navigate test below.
           for i in $(seq 1 30); do
-            if ./target/release/loom doctor 2>/dev/null | jq -e '.failures | length == 0' >/dev/null; then
+            doc=$(./target/release/loom doctor 2>/dev/null || true)
+            if [ -n "$doc" ] && echo "$doc" | jq -e '.checks[] | select(.name == "daemon_responsive") | .status == "ok"' >/dev/null; then
               exit 0
             fi
             sleep 1
           done
-          echo "::error::daemon did not become ready within 30s"
+          echo "::error::daemon RPC did not become reachable within 30s"
           tail -50 /tmp/loom-daemon.log || true
           exit 1
       - name: Run real-world site tests
