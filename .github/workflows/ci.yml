@@ -328,6 +328,17 @@ jobs:
       - name: Install e2e harness deps (linux only)
         if: matrix.os == 'ubuntu-latest'
         run: sudo apt-get install -y jq
+      - name: Pass Chromium-in-CI flags to the daemon (linux only)
+        # GitHub Actions Linux runners run as an unprivileged user without
+        # the kernel user-namespace privileges Chromium's sandbox needs,
+        # so a sandboxed launch exits with code 1 immediately. The
+        # `LOOM_CHROMIUM_EXTRA_FLAGS` env var (read by
+        # `loom-shims::supervisor`) appends flags to the Chromium spawn,
+        # and is the standard escape hatch for sandbox-less runtimes
+        # (CI, Docker without --privileged, etc.). Real installs don't
+        # need this. macOS doesn't either — the kernel sandbox just works.
+        if: matrix.os == 'ubuntu-latest'
+        run: echo "LOOM_CHROMIUM_EXTRA_FLAGS=--no-sandbox --disable-dev-shm-usage" >> "$GITHUB_ENV"
       - name: Start daemon for e2e harness
         shell: bash
         run: |

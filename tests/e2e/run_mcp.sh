@@ -39,8 +39,15 @@ RES_FILE="$RESULTS/mcp-res.ndjson"
   echo '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"loom.web.snapshot","arguments":{}}}'
 } >"$REQ_FILE"
 
-# Run with a 30s timeout — server reads stdin until EOF then exits
-timeout 30 "$MCP" serve <"$REQ_FILE" >"$RES_FILE" 2>"$RESULTS/mcp-server.log" || true
+# Run with a 30s timeout — server reads stdin until EOF then exits.
+# `timeout` is GNU coreutils, missing on macOS by default; fall back to
+# `gtimeout` (brew coreutils) or run without a timeout (the server exits
+# on EOF anyway, so the timeout is purely a stuck-process safety net).
+if command -v timeout >/dev/null 2>&1;  then T=(timeout 30)
+elif command -v gtimeout >/dev/null 2>&1; then T=(gtimeout 30)
+else                                          T=()
+fi
+"${T[@]}" "$MCP" serve <"$REQ_FILE" >"$RES_FILE" 2>"$RESULTS/mcp-server.log" || true
 
 echo "--- requests sent ---"
 nl "$REQ_FILE"

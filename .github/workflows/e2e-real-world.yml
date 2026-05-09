@@ -64,6 +64,9 @@ jobs:
       - name: Strip macOS quarantine (no-op if absent)
         if: matrix.os == 'macos-latest'
         run: xattr -dr com.apple.quarantine "$HOME/.config/loom/chromium" || true
+      - name: Pass Chromium-in-CI flags to the daemon (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: echo "LOOM_CHROMIUM_EXTRA_FLAGS=--no-sandbox --disable-dev-shm-usage" >> "$GITHUB_ENV"
       - name: Start daemon
         shell: bash
         run: |
