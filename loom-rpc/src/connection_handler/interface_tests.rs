@@ -72,3 +72,106 @@ fn handler_error_distinguishes_idle_framing_auth_disconnect_io() {
         reason: "epipe".into(),
     };
 }
+
+// ─── unwrap_sdk_envelope ─────────────────────────────────────────────
+//
+// Tests for the `@mentiora-ai/loom-sdk@0.9.x` envelope-unwrap helper.
+// The SDK sends action verbs as `action.web.<verb>` with payload bytes
+// in a JSON byte-array; the schema validator wants a flat-shape object
+// with `session` as the session key. The helper bridges both shapes.
+
+use super::unwrap_sdk_envelope;
+use serde_json::json;
+
+/// SDK envelope with valid UTF-8 JSON payload — the happy path.
+#[test]
+fn unwrap_sdk_envelope_happy_path_emits_session_key() {
+    let payload_json = r#"{"url":"https://example.com"}"#;
+    let payload_bytes: Vec<u8> = payload_json.bytes().collect();
+    let params = json!({
+        "session_id": "01h7m4z3p2k1q8m5n7v6r9t2j",
+        "action": {
+            "kind": "navigate",
+            "payload": payload_bytes,
+            "deadline_ms": 30000
+        }
+    });
+    let unwrapped = unwrap_sdk_envelope(params);
+    let obj = unwrapped.as_object().expect("unwrap returns an object");
+    // session key is the schema-canonical name (not session_id).
+    assert_eq!(
+        obj.get("session").and_then(|v| v.as_str()),
+        Some("01h7m4z3p2k1q8m5n7v6r9t2j")
+    );
+    assert_eq!(
+        obj.get("url").and_then(|v| v.as_str()),
+        Some("https://example.com")
+    );
+    // Envelope keys are stripped — the schemas have additionalProperties:false.
+    assert!(!obj.contains_key("action"));
+    assert!(!obj.contains_key("session_id"));
+}
+
+/// Flat-shape input (CLI / MCP / older-SDK callers) is returned unchanged.
+#[test]
+fn unwrap_sdk_envelope_flat_shape_passthrough() {
+    let params = json!({
+        "session": "01h7m4z3p2k1q8m5n7v6r9t2j",
+        "url": "https://example.com"
+    });
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}
+
+/// `session_id` present but no `action` envelope — returned unchanged
+/// (rare, but possible from a partially-unwrapped earlier stage).
+#[test]
+fn unwrap_sdk_envelope_no_action_passthrough() {
+    let params = json!({
+        "session_id": "01h7m4z3p2k1q8m5n7v6r9t2j",
+        "url": "https://example.com"
+    });
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}
+
+/// Non-object params (array, string) flow through unchanged.
+#[test]
+fn unwrap_sdk_envelope_non_object_passthrough() {
+    let params = json!(["a", "b"]);
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}
+
+/// `action.payload` is present but isn't valid UTF-8 — pass through;
+/// the validator surfaces a usable error from there.
+#[test]
+fn unwrap_sdk_envelope_invalid_utf8_payload_passthrough() {
+    // 0xFF is not the start of a valid UTF-8 sequence.
+    let params = json!({
+        "session_id": "sess",
+        "action": { "payload": [0xFF, 0xFE], "kind": "navigate" }
+    });
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}
+
+/// `action.payload` decodes to UTF-8 but isn't valid JSON — pass through.
+#[test]
+fn unwrap_sdk_envelope_non_json_payload_passthrough() {
+    let payload_bytes: Vec<u8> = b"not json".to_vec();
+    let params = json!({
+        "session_id": "sess",
+        "action": { "payload": payload_bytes, "kind": "navigate" }
+    });
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}
+
+/// Empty params (no session_id, no action) — pass through.
+#[test]
+fn unwrap_sdk_envelope_empty_object_passthrough() {
+    let params = json!({});
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}

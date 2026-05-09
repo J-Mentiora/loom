@@ -66,9 +66,16 @@ impl JsonRpcCaller for FramedCaller {
 
 impl RpcClientConfig {
     pub fn defaults() -> Self {
-        let socket_path = dirs::cache_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-            .join("loom/loom.sock");
+        // Defer to loom_rpc's resolver — the daemon is the binding side
+        // and authoritative on path conventions (macOS:
+        // ~/Library/Caches/loom/loom.sock, Linux: $XDG_RUNTIME_DIR/loom.sock
+        // or /tmp/loom.sock). The previous implementation hard-coded the
+        // cache_dir form on every platform, which silently broke MCP on
+        // Linux installs where the daemon binds to $XDG_RUNTIME_DIR or
+        // /tmp and `loom-mcp serve` resolved to ~/.cache/loom/loom.sock —
+        // so every tools/call returned `{"code":"io","message":"daemon
+        // not connected"}`.
+        let socket_path = loom_rpc::socket_server::default_socket_path();
         let hello_token_path = dirs::data_dir()
             .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
             .join("loom/auth/hello.token");

@@ -87,7 +87,7 @@ async fn send_error(framed: &mut FramedUnixStream, err: &JsonRpcError) -> Result
 /// input doesn't look like an envelope (no `action.payload`) it's
 /// returned unchanged so historical flat-shape callers (CLI, MCP,
 /// older SDKs) still work.
-fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Value {
+pub(crate) fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Value {
     let obj = match params.as_object() {
         Some(o) => o,
         None => return params,
@@ -96,12 +96,14 @@ fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Value {
         Some(s) => s.clone(),
         None => return params,
     };
-    let payload_bytes = obj
-        .get("action")
-        .and_then(|a| a.as_object())
-        .and_then(|a| a.get("payload"))
-        .and_then(|p| p.as_array());
-    let payload_bytes = match payload_bytes {
+    // Probe for envelope shape — `action.payload`. Absent is normal
+    // (every flat-shape caller passes through here); present-but-malformed
+    // is a real bug worth surfacing.
+    let action = match obj.get("action").and_then(|a| a.as_object()) {
+        Some(a) => a,
+        None => return params,
+    };
+    let payload_bytes = match action.get("payload").and_then(|p| p.as_array()) {
         Some(arr) => arr,
         None => return params,
     };
@@ -111,15 +113,34 @@ fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Value {
         .collect();
     let inner_str = match std::str::from_utf8(&bytes) {
         Ok(s) => s,
-        Err(_) => return params,
+        Err(_) => {
+            tracing::warn!(
+                "SDK envelope: action.payload bytes are not valid UTF-8 — \
+                 passing params through unchanged; validator will reject"
+            );
+            return params;
+        }
     };
     let inner: serde_json::Value = match serde_json::from_str(inner_str) {
         Ok(v) => v,
-        Err(_) => return params,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "SDK envelope: action.payload is not valid JSON — \
+                 passing params through unchanged; validator will reject"
+            );
+            return params;
+        }
     };
     let mut merged = match inner.as_object().cloned() {
         Some(m) => m,
-        None => return params,
+        None => {
+            tracing::warn!(
+                "SDK envelope: action.payload decoded to a non-object — \
+                 passing params through unchanged; validator will reject"
+            );
+            return params;
+        }
     };
     // The wire/registered schemas use `session` (singular) as the key
     // name, while the SDK and the router-level `session_id_from_params`
