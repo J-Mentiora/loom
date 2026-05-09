@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head><title>Loom E2E Fixture</title></head>
+<body>
+<h1 id="hello">Hello from Loom fixture</h1>
+<input id="text-input" type="text" placeholder="Type here">
+<button id="ok-button" onclick="document.getElementById('result').textContent='clicked'">OK</button>
+<select id="dropdown">
+  <option value="a">Alpha</option>
+  <option value="b">Beta</option>
+  <option value="c">Charlie</option>
+</select>
+<div id="result"></div>
+<div id="hidden-then-shown" style="display:none">now visible</div>
+<script>
+setTimeout(() => {
+  document.getElementById('hidden-then-shown').style.display = 'block';
+}, 200);
+window.__loomFixture = {
+  ts: Date.now(),
+  rand: Math.random()
+};
+</script>
+</body>
+</html>

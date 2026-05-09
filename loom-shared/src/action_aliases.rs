@@ -22,7 +22,24 @@
 
 /// `(alias, canonical)`. Order is stable; consumers preserve order in
 /// `aliases_of` for deterministic JSON output (`rpc.schemas`).
-pub const METHOD_ALIASES: &[(&str, &str)] = &[("web.type_text", "web.type")];
+///
+/// `action.web.*` aliases shipped with the @mentiora-ai/loom-sdk@0.9.0
+/// generation, which prefixes every action verb with the surface type.
+/// The router-canonical form is the unprefixed `web.*` shape.
+pub const METHOD_ALIASES: &[(&str, &str)] = &[
+    ("web.type_text", "web.type"),
+    ("action.web.navigate", "web.navigate"),
+    ("action.web.click", "web.click"),
+    ("action.web.type", "web.type"),
+    ("action.web.type_text", "web.type"),
+    ("action.web.select", "web.select"),
+    ("action.web.hover", "web.hover"),
+    ("action.web.scroll", "web.scroll"),
+    ("action.web.wait", "web.wait"),
+    ("action.web.evaluate", "web.evaluate"),
+    ("action.web.screenshot", "web.screenshot"),
+    ("action.web.snapshot", "web.snapshot"),
+];
 
 /// Resolve `method` to its canonical name. Unknown or already-canonical
 /// names pass through unchanged.
@@ -75,12 +92,46 @@ mod tests {
 
     #[test]
     fn aliases_of_returns_empty_for_unknown_canonical() {
+        // session.* is not aliased.
         assert!(aliases_of("session.create").is_empty());
-        assert!(aliases_of("web.click").is_empty());
+        // bogus name has no aliases.
+        assert!(aliases_of("bogus.method").is_empty());
     }
 
+    /// `web.click` has the SDK-envelope alias `action.web.click` but
+    /// no other alias. Order is stable per METHOD_ALIASES.
     #[test]
-    fn aliases_of_returns_alias_for_web_type() {
-        assert_eq!(aliases_of("web.type"), vec!["web.type_text"]);
+    fn aliases_of_returns_envelope_alias_for_web_click() {
+        assert_eq!(aliases_of("web.click"), vec!["action.web.click"]);
+    }
+
+    /// `web.type` has the historical kebab-friendly alias plus both
+    /// SDK-envelope variants — the `.type` and the legacy `.type_text`
+    /// the SDK ships for backward compat.
+    #[test]
+    fn aliases_of_returns_aliases_for_web_type() {
+        assert_eq!(
+            aliases_of("web.type"),
+            vec!["web.type_text", "action.web.type", "action.web.type_text"]
+        );
+    }
+
+    /// Every `action.web.*` alias resolves to the same `web.*` canonical
+    /// name as its unprefixed cousin — guards against typos like
+    /// `action.web.navigate` accidentally pointing at `web.click`.
+    #[test]
+    fn every_action_web_alias_resolves_to_matching_web_canonical() {
+        for (alias, canonical) in METHOD_ALIASES {
+            if let Some(stripped) = alias.strip_prefix("action.") {
+                // `action.web.type_text` → `web.type` (collapses through the
+                // existing `web.type_text` alias). Skip that intentional
+                // many-to-one case and check the straight pass-through ones.
+                if *alias == "action.web.type_text" {
+                    assert_eq!(*canonical, "web.type");
+                    continue;
+                }
+                assert_eq!(stripped, *canonical, "alias {alias} → {canonical} mismatch");
+            }
+        }
     }
 }

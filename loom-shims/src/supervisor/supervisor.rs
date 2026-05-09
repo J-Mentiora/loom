@@ -214,6 +214,18 @@ impl Supervisor for ChromiumSupervisor {
         for f in &self.config.extra_flags {
             cmd.arg(f);
         }
+        // Env-var escape hatch for environments where Chromium needs
+        // extra flags the daemon doesn't know to set: unprivileged
+        // Docker containers (`--no-sandbox`), GHA runners with no
+        // /dev/shm worth speaking of (`--disable-dev-shm-usage`),
+        // headless servers without a working dbus, and so on.
+        // Whitespace-separated. Real-user installs don't need this;
+        // it's strictly an opt-in for CI / sandbox-less runtimes.
+        if let Ok(extras) = std::env::var("LOOM_CHROMIUM_EXTRA_FLAGS") {
+            for f in extras.split_whitespace() {
+                cmd.arg(f);
+            }
+        }
         let (set_env, remove_env) = locale_scrub_env();
         for (k, v) in set_env {
             cmd.env(k, v);

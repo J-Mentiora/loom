@@ -421,6 +421,10 @@ pub fn known_router_methods() -> &'static [&'static str] {
 /// Parse a `<surface>.<verb>` method + JSON params into a typed `Action`
 /// enum. Returns `JsonRpcError::SchemaViolation` with the field name on
 /// parse failure.
+///
+/// Params arriving here are always in the flat schema shape — the
+/// `connection_handler` runs `unwrap_sdk_envelope` before validation,
+/// so the SDK envelope shape never reaches dispatch.
 fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonRpcError> {
     match method {
         "web.navigate" => {
