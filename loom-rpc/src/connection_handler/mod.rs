@@ -73,6 +73,64 @@ async fn send_error(framed: &mut FramedUnixStream, err: &JsonRpcError) -> Result
     framed.send(Bytes::from(bytes)).await.map_err(|_| ())
 }
 
+/// Unwrap the @mentiora-ai/loom-sdk@0.9.x envelope shape:
+///
+///   { "session_id": "...",
+///     "action": { "kind": "navigate", "payload": [<bytes>], "deadline_ms": N } }
+///
+/// into the flat shape the validator schemas expect:
+///
+///   { "session_id": "...", "url": "..." }
+///
+/// `payload` is a JSON-encoded byte array (UTF-8). Decode + merge its
+/// fields into the top-level object alongside `session_id`. If the
+/// input doesn't look like an envelope (no `action.payload`) it's
+/// returned unchanged so historical flat-shape callers (CLI, MCP,
+/// older SDKs) still work.
+fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Value {
+    let obj = match params.as_object() {
+        Some(o) => o,
+        None => return params,
+    };
+    let session_id = match obj.get("session_id") {
+        Some(s) => s.clone(),
+        None => return params,
+    };
+    let payload_bytes = obj
+        .get("action")
+        .and_then(|a| a.as_object())
+        .and_then(|a| a.get("payload"))
+        .and_then(|p| p.as_array());
+    let payload_bytes = match payload_bytes {
+        Some(arr) => arr,
+        None => return params,
+    };
+    let bytes: Vec<u8> = payload_bytes
+        .iter()
+        .filter_map(|v| v.as_u64().map(|n| n as u8))
+        .collect();
+    let inner_str = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return params,
+    };
+    let inner: serde_json::Value = match serde_json::from_str(inner_str) {
+        Ok(v) => v,
+        Err(_) => return params,
+    };
+    let mut merged = match inner.as_object().cloned() {
+        Some(m) => m,
+        None => return params,
+    };
+    // The wire/registered schemas use `session` (singular) as the key
+    // name, while the SDK and the router-level `session_id_from_params`
+    // helper both speak `session_id`. We emit `session` here so the
+    // validator's `additionalProperties:false` + `required:["session"]`
+    // rules pass; `session_id_from_params` already accepts either form
+    // at dispatch time.
+    merged.insert("session".to_string(), session_id);
+    serde_json::Value::Object(merged)
+}
+
 async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
     let request: serde_json::Value = match serde_json::from_slice(frame) {
         Ok(v) => v,
@@ -101,19 +159,25 @@ async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
         }
     };
 
-    let params = request
+    let raw_params = request
         .get("params")
         .cloned()
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
-    match deps.validator.validate_request(method, &params) {
+    // Resolve method aliases (e.g. SDK's `action.web.navigate` → canonical
+    // `web.navigate`) and unwrap the SDK envelope shape so the validator
+    // sees the flat-params shape its schemas were authored against.
+    let canonical_method = loom_shared::action_aliases::canonicalise(method);
+    let params = unwrap_sdk_envelope(raw_params);
+
+    match deps.validator.validate_request(canonical_method, &params) {
         ValidationOutcome::Pass => {}
         ValidationOutcome::Violation(err) | ValidationOutcome::MethodNotFound(err) => {
             return jsonrpc_error_envelope(id, &err);
         }
     }
 
-    let raw = deps.router.dispatch(method, params).await;
+    let raw = deps.router.dispatch(canonical_method, params).await;
     // Wrap the router's raw payload in a JSON-RPC 2.0 envelope.
     // The router tags errors with `__loom_rpc_error: true` so we can
     // distinguish them from success payloads without heuristics.

@@ -22,7 +22,24 @@
 
 /// `(alias, canonical)`. Order is stable; consumers preserve order in
 /// `aliases_of` for deterministic JSON output (`rpc.schemas`).
-pub const METHOD_ALIASES: &[(&str, &str)] = &[("web.type_text", "web.type")];
+///
+/// `action.web.*` aliases shipped with the @mentiora-ai/loom-sdk@0.9.0
+/// generation, which prefixes every action verb with the surface type.
+/// The router-canonical form is the unprefixed `web.*` shape.
+pub const METHOD_ALIASES: &[(&str, &str)] = &[
+    ("web.type_text", "web.type"),
+    ("action.web.navigate", "web.navigate"),
+    ("action.web.click", "web.click"),
+    ("action.web.type", "web.type"),
+    ("action.web.type_text", "web.type"),
+    ("action.web.select", "web.select"),
+    ("action.web.hover", "web.hover"),
+    ("action.web.scroll", "web.scroll"),
+    ("action.web.wait", "web.wait"),
+    ("action.web.evaluate", "web.evaluate"),
+    ("action.web.screenshot", "web.screenshot"),
+    ("action.web.snapshot", "web.snapshot"),
+];
 
 /// Resolve `method` to its canonical name. Unknown or already-canonical
 /// names pass through unchanged.

@@ -418,10 +418,64 @@ pub fn known_router_methods() -> &'static [&'static str] {
     ]
 }
 
+/// Unwrap the @mentiora-ai/loom-sdk@0.9.x envelope shape:
+///
+///   { "session_id": "...",
+///     "action": { "kind": "navigate", "payload": [<bytes>], "deadline_ms": N } }
+///
+/// into the flat shape parse_action expects:
+///
+///   { "session_id": "...", "url": "..." }
+///
+/// `payload` is a JSON-encoded byte array (UTF-8). Decode + merge its
+/// fields into the top-level params object alongside `session_id`. If
+/// the input doesn't look like an envelope (no `action.payload`) it's
+/// returned unchanged so the historical flat-shape callers (CLI,
+/// MCP, older SDKs) still work.
+fn unwrap_envelope_params(params: serde_json::Value) -> serde_json::Value {
+    let obj = match params.as_object() {
+        Some(o) => o,
+        None => return params,
+    };
+    let session_id = match obj.get("session_id") {
+        Some(s) => s.clone(),
+        None => return params,
+    };
+    let payload_bytes = obj
+        .get("action")
+        .and_then(|a| a.as_object())
+        .and_then(|a| a.get("payload"))
+        .and_then(|p| p.as_array());
+    let payload_bytes = match payload_bytes {
+        Some(arr) => arr,
+        None => return params,
+    };
+    // Bytes encoded as JSON numbers (0..255). Reassemble UTF-8 string.
+    let bytes: Vec<u8> = payload_bytes
+        .iter()
+        .filter_map(|v| v.as_u64().map(|n| n as u8))
+        .collect();
+    let inner_str = match std::str::from_utf8(&bytes) {
+        Ok(s) => s,
+        Err(_) => return params,
+    };
+    let inner: serde_json::Value = match serde_json::from_str(inner_str) {
+        Ok(v) => v,
+        Err(_) => return params,
+    };
+    let mut merged = match inner.as_object().cloned() {
+        Some(m) => m,
+        None => return params,
+    };
+    merged.insert("session_id".to_string(), session_id);
+    serde_json::Value::Object(merged)
+}
+
 /// Parse a `<surface>.<verb>` method + JSON params into a typed `Action`
 /// enum. Returns `JsonRpcError::SchemaViolation` with the field name on
 /// parse failure.
 fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonRpcError> {
+    let params = unwrap_envelope_params(params);
     match method {
         "web.navigate" => {
             let session_id = session_id_from_params(&params)?;
