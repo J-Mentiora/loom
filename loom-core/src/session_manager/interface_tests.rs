@@ -274,12 +274,12 @@ fn abort_all_signature_takes_reason_returns_unit_or_error() {
     let _ = sm;
 }
 
-// === per-session tokio task ===
+// === per-session structured-concurrency scope ===
 
 #[test]
-fn session_carries_tokio_task_handle() {
+fn session_carries_session_scope() {
     fn _ck(s: &Session) {
-        let _: &tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>> = &s.task_handle;
+        let _: &Arc<loom_core::session_scope::SessionScope> = &s.scope;
     }
     let _ = _ck;
 }

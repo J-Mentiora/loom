@@ -271,4 +271,11 @@ impl WasmHost {
     pub fn library(&self) -> Arc<ModuleLibrary> {
         self.library.clone()
     }
+
+    /// Accessor: the live `ShimManager` snapshot. Used by `daemon.health`
+    /// to read per-shim circuit-breaker state without crossing the
+    /// `wasm_host_handle` boundary every call.
+    pub fn shim_manager(&self) -> Arc<ShimManager> {
+        self.shim.clone()
+    }
 }

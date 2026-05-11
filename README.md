@@ -522,6 +522,7 @@ when 1.0 ships; **Beta** rows may change without notice.
 | `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). |
 | CLI surface (`loom session`, `loom action`, `loom export`, `loom import`) | **Stable** | Flags pinned. `--version` format pinned: `loom <ver> (<sha> <date>)`. |
 | `import.playwright` RPC | **Stable** | End-to-end wired through facade, adapter, handlers, router. |
+| `request.cancel`, `session.kill`, `daemon.health` RPCs | **Beta** | Daemon-stall fix; structured concurrency via `SessionScope` + per-request 30s watchdog (`LOOM_REQUEST_TIMEOUT_MS`). Wire shape may evolve based on consumer feedback. |
 
 **1.0 promotion criteria:** real-Chromium subprocess wiring + the `web.click` hit-test refinements land, matrix CI
 green across the four release targets, no Beta rows remaining.

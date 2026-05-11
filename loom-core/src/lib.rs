@@ -37,6 +37,7 @@ pub mod profile_registry;
 pub mod receipt_builder;
 pub mod replay_engine;
 pub mod session_manager;
+pub mod session_scope;
 pub mod startup_manager;
 pub mod vault;
 

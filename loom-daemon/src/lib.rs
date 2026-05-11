@@ -30,6 +30,9 @@ use loom_rpc::core_service_adapter::core_service_adapter::{
     AdapterError, CoreFacadeBridge, CoreServiceAdapter, ExportInfo, GrantInfo, GrantParams,
     PlaywrightImportInfo, VaultAddInfo, VaultAddParams,
 };
+use loom_rpc::rpc_handlers::rpc_handlers::{
+    DaemonHealth, DaemonHealthProvider, SessionShutdownAsync, ShimBreakerSnapshot,
+};
 use loom_rpc::host_service_adapter::host_service_adapter::{
     Action, AdapterError as HostAdapterError, HostServiceAdapter, Receipt, WasmHostBridge,
 };
@@ -74,6 +77,87 @@ fn check_vault_threat_model() -> Result<()> {
     Ok(())
 }
 
+// ─── Bridge: WasmHost → SessionShutdownAsync ────────────────────────────────
+//
+// Adapts the daemon's `Arc<loom_host::WasmHost>` to the `SessionShutdownAsync`
+// trait that `RpcHandlers::session_kill` calls. Wraps `host.shutdown_session`
+// in a `tokio::time::timeout` set to the per-call ceiling so a wedged shim
+// can't hold `session.kill` indefinitely — after the ceiling, the inner
+// `shutdown_process` has already escalated to SIGKILL via its own
+// SIGTERM(2s)→SIGKILL(1s) sequence at process.rs:438-457, so the timeout
+// here is a belt-and-braces backstop.
+
+struct WasmHostShutdownAdapter {
+    host: Arc<loom_host::WasmHost>,
+}
+
+#[async_trait::async_trait]
+impl SessionShutdownAsync for WasmHostShutdownAdapter {
+    async fn shutdown_with_ceiling(&self, session_id: &str, ceiling_ms: u64) {
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_millis(ceiling_ms),
+            self.host.shutdown_session(session_id),
+        )
+        .await;
+    }
+}
+
+// ─── DaemonHealthProvider: shallow snapshot from live daemon state ──────────
+//
+// Reads `ShimManager.breaker_state_snapshot()` (per-shim breaker state) and
+// `core.session_manager.list_sessions_info().len()` (active session count).
+// `otel_exporter` reflects the `LOOM_OTEL_ENABLED` env var per the existing
+// daemon convention. `deep` is always `None` today — the shim-side
+// `shim.health` IPC verb is a follow-up, deliberately scoped out of this PR
+// per `plan.md § What is NOT in this PR`.
+
+struct DaemonHealthBridge {
+    core: Arc<CoreApiFacade>,
+    wasm_host: Option<Arc<loom_host::WasmHost>>,
+}
+
+impl DaemonHealthProvider for DaemonHealthBridge {
+    fn snapshot(&self, _deep: bool) -> DaemonHealth {
+        let active_sessions = self
+            .core
+            .list_sessions_info()
+            .map(|v| v.iter().filter(|(_, status, _)| status == "active").count())
+            .unwrap_or(0);
+
+        let shim_breaker_states = match &self.wasm_host {
+            Some(host) => host
+                .shim_manager()
+                .breaker_state_snapshot()
+                .into_iter()
+                .map(|(id, state, fails, opened)| ShimBreakerSnapshot {
+                    shim_id: id.0,
+                    state: format!("{state:?}").to_lowercase(),
+                    consecutive_failures: fails as u32,
+                    opened_at_ms: opened,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let otel_exporter = match std::env::var("LOOM_OTEL_ENABLED")
+            .ok()
+            .as_deref()
+        {
+            Some("1") | Some("true") | Some("yes") => "enabled".to_string(),
+            _ => "disabled".to_string(),
+        };
+
+        DaemonHealth {
+            active_sessions,
+            shim_breaker_states,
+            otel_exporter,
+            // Deep mode requires the shim-side `shim.health` IPC verb,
+            // which is a follow-up. Always `None` today.
+            deep: None,
+        }
+    }
+}
+
 // ─── Bridge: CoreApiFacade → CoreFacadeBridge ───────────────────────────────
 
 /// Wraps `Arc<CoreApiFacade>` and implements the `CoreFacadeBridge`
@@ -81,12 +165,19 @@ fn check_vault_threat_model() -> Result<()> {
 /// `loom-core` and `loom-rpc` type vocabularies.
 struct CoreBridge {
     core: Arc<CoreApiFacade>,
-    /// Optional WasmHost handle. When present, `close_session_raw` also
-    /// fires a fire-and-forget `shutdown_session` on the host so any
-    /// session-bound shim subprocesses (e.g. Chromium) get cooperatively
-    /// torn down . None when modules haven't been compiled
+    /// Optional WasmHost handle. When present, `close_session_raw` spawns
+    /// `host.shutdown_session(...)` into the bridge's `cleanup_tasks`
+    /// JoinSet so any session-bound shim subprocesses (e.g. Chromium) get
+    /// cooperatively torn down. None when modules haven't been compiled
     /// yet (matches StubHostBridge fallback).
     wasm_host: Option<Arc<loom_host::WasmHost>>,
+    /// Tracks background `host.shutdown_session` spawns from
+    /// `close_session_raw`. Previously a bare `tokio::spawn` here leaked
+    /// `JoinHandle`s — when shim teardown stalled on SIGTERM grace,
+    /// each session.close left a never-joined task behind; after a few
+    /// sequential sessions the daemon's runtime saturated. Spawns now go
+    /// into this `JoinSet`, reaped opportunistically on every close.
+    cleanup_tasks: Arc<std::sync::Mutex<tokio::task::JoinSet<()>>>,
 }
 
 impl CoreFacadeBridge for CoreBridge {
@@ -225,15 +316,33 @@ impl CoreFacadeBridge for CoreBridge {
             .close(SessionId(session_id.to_string()))
             .map_err(|e| map_loom_error(&e));
 
-        // Fire-and-forget shim teardown so any session-bound Chromium
-        // subprocess gets cooperatively reaped . Best-effort —
-        // the user-visible close response doesn't wait for the shim to
-        // exit, but the supervisor cleans up regardless.
+        // Background shim teardown so any session-bound Chromium subprocess
+        // gets cooperatively reaped. Tracked in `cleanup_tasks` so the
+        // JoinHandle isn't leaked — previously a bare `tokio::spawn` here
+        // accumulated never-joined tasks and saturated the daemon runtime
+        // after 4-6 sessions. Opportunistic `try_join_next` reap keeps the
+        // JoinSet bounded across many close calls.
         if let Some(host) = self.wasm_host.clone() {
             let sid = session_id.to_string();
-            tokio::spawn(async move {
+            // `unwrap` is safe: the only way the mutex is poisoned is if a
+            // previous holder panicked while spawning into the JoinSet,
+            // which would have already crashed the process — there is no
+            // recovery path that's better than propagating the panic.
+            let mut set = self.cleanup_tasks.lock().unwrap();
+            set.spawn(async move {
                 host.shutdown_session(&sid).await;
             });
+            // Reap completed cleanups + count for visibility.
+            let mut reaped = 0usize;
+            while set.try_join_next().is_some() {
+                reaped += 1;
+            }
+            tracing::debug!(
+                metric = "loom_daemon_close_cleanup_spawn",
+                session_id = %session_id,
+                pending = set.len(),
+                reaped,
+            );
         }
 
         result
@@ -1319,6 +1428,7 @@ async fn async_main() -> Result<()> {
     let core_adapter = CoreServiceAdapter::new(Arc::new(CoreBridge {
         core: Arc::clone(&core),
         wasm_host: wasm_host_handle.clone(),
+        cleanup_tasks: Arc::new(std::sync::Mutex::new(tokio::task::JoinSet::new())),
     }));
     let host_adapter = HostServiceAdapter::new(host_bridge);
     let validator: Arc<dyn loom_rpc::schema_validator::schema_validator::SchemaValidatorApi> =
@@ -1332,6 +1442,20 @@ async fn async_main() -> Result<()> {
         Arc::clone(&validator),
         Arc::clone(&obs),
     );
+    // Wire the async shim-teardown driver so `session.kill` can await
+    // shim child reap with a 5 s ceiling per D12. When wasm_host is None
+    // (chromium not yet postinstalled), session.kill degrades to
+    // abort-only — caller still gets a typed envelope back.
+    if let Some(host) = wasm_host_handle.clone() {
+        let _ = handlers.set_session_shutdown(Arc::new(WasmHostShutdownAdapter { host }));
+    }
+    // Wire the daemon.health snapshot provider. Always wireable —
+    // wasm_host being None just means `shim_breaker_states` returns
+    // empty. Active-session count comes from the core facade regardless.
+    let _ = handlers.set_health_provider(Arc::new(DaemonHealthBridge {
+        core: Arc::clone(&core),
+        wasm_host: wasm_host_handle.clone(),
+    }));
     let router: Arc<dyn loom_rpc::request_router::request_router::RequestRouterApi> =
         RequestRouter::register_methods(
             Arc::clone(&handlers),

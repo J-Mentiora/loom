@@ -23,6 +23,7 @@ use loom_core::determinism_harness::{DeterminismHarness, TapeWriter};
 use loom_core::error::LoomError;
 use loom_core::manifest_writer::{ManifestWriter, SessionId, WriterHandle};
 use loom_core::observability::Observability;
+use loom_core::session_scope::SessionScope;
 use loom_core::vault::Vault;
 use loom_shared::types::{EpochMs, Seed};
 use serde::{Deserialize, Serialize};
@@ -167,7 +168,13 @@ pub struct Session {
     pub writer: Arc<WriterHandle>,
     pub counters: Arc<SessionCounters>,
     pub tape_writer: Arc<tokio::sync::Mutex<TapeWriter>>,
-    pub task_handle: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Structured-concurrency parent for every session-lifetime task.
+    /// Owns the wall-clock budget timer, shim-IPC tasks, receipt-marshaller
+    /// spawns. On close/abort, the session manager calls `scope.cancel()`
+    /// (sync cooperative signal) and the daemon bridge awaits
+    /// `scope.drain(grace)` before returning, so the daemon never leaks
+    /// fire-and-forget tasks across sessions.
+    pub scope: Arc<SessionScope>,
     /// Per-session monotonic action sequence, 0-based. Incremented atomically
     /// at action dispatch via `allocate_action_id()`.
     /// In-memory only — NOT persisted across daemon restarts (the daemon
@@ -181,12 +188,6 @@ pub struct Session {
     /// budget-driven kills (→ `ActionOutcome::Trapped { BudgetExceeded }`)
     /// from user-initiated aborts (→ `ActionOutcome::Aborted`).
     pub kill_reason: Arc<parking_lot::Mutex<Option<KillReason>>>,
-    /// Handle to the per-session wall-clock timer task spawned at
-    /// `create()`. Cancelled on `close()` / `abort()` so a closed session
-    /// never trips the kill callback after lifecycle exit.
-    /// `None` for replay sessions and for sessions created without a
-    /// positive `session_walltime_ms` budget.
-    pub budget_timer: parking_lot::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// Capture-policy wire-form ("minimal" / "default" / "full"), as
     /// passed in `SessionCreateOpts` and persisted to the manifest
     /// header. The daemon reads this at dispatch time

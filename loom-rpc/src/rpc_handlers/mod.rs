@@ -31,6 +31,8 @@ impl RpcHandlers {
             schemas,
             validator,
             observability,
+            session_shutdown: std::sync::OnceLock::new(),
+            health_provider: std::sync::OnceLock::new(),
         })
     }
 
@@ -114,6 +116,77 @@ impl RpcHandlers {
                 message: format!("session.abort failed for session {s}"),
                 data: None,
             })
+    }
+
+    /// `daemon.health` — operational snapshot. Shallow path is non-
+    /// blocking: returns active session count, per-shim breaker state,
+    /// OTel exporter status. Deep path (`{deep: true}`) is wired via
+    /// `DaemonHealthProvider` and may probe shim subprocesses; today
+    /// all real impls return `deep: None` (the shim-side `shim.health`
+    /// IPC verb is a follow-up). When no provider is wired (test stubs),
+    /// returns an empty snapshot with `otel_exporter: "unwired"`.
+    pub async fn daemon_health(
+        &self,
+        deep: bool,
+    ) -> HandlerResult<crate::rpc_handlers::rpc_handlers::DaemonHealth> {
+        use crate::rpc_handlers::rpc_handlers::DaemonHealth;
+        Ok(self
+            .health_provider
+            .get()
+            .map(|p| p.snapshot(deep))
+            .unwrap_or_else(|| DaemonHealth {
+                active_sessions: 0,
+                shim_breaker_states: Vec::new(),
+                otel_exporter: "unwired".to_string(),
+                deep: None,
+            }))
+    }
+
+    /// `session.kill` — admin escape hatch for stuck sessions.
+    /// Performs the existing abort flow (set abort flag → status Aborted
+    /// → SessionTerminal manifest entry) AND blocks until the shim
+    /// child is reaped, with a 5 s ceiling, then escalates to SIGKILL
+    /// (handled inside `WasmHost::shutdown_session` → `shutdown_process`
+    /// per D12). The harness use case: "I'm done with this session, the
+    /// shim wedged, I want to know cleanup is done before reusing the
+    /// session_id." Pure abort would leave that as a fire-and-forget
+    /// hope; kill makes it a hard guarantee.
+    pub async fn session_kill(&self, s: String) -> HandlerResult<SessionInfo> {
+        let started = std::time::Instant::now();
+        tracing::info!(
+            metric = "loom_daemon_session_kill_start",
+            session_id = %s,
+            "session.kill received"
+        );
+
+        // Step 1: synchronous abort. Sets abort flag, transitions status,
+        // appends SessionTerminal, calls scope.cancel() (which signals
+        // budget timer + receipt spawns + ShimProcess inner tasks).
+        let info = self
+            .core
+            .abort_session(&s, "killed")
+            .map_err(|code| JsonRpcError {
+                code,
+                message: format!("session.kill failed during abort phase for session {s}"),
+                data: None,
+            })?;
+
+        // Step 2: synchronous shim teardown via the optional async
+        // driver wired by the daemon. If unset (test stubs), kill
+        // degrades to abort-only — the caller still gets a typed
+        // SessionInfo back, just without the synchronous-teardown
+        // guarantee.
+        if let Some(shutdown) = self.session_shutdown.get() {
+            shutdown.shutdown_with_ceiling(&s, 5_000).await;
+        }
+
+        tracing::info!(
+            metric = "loom_daemon_session_kill_done",
+            session_id = %s,
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            shutdown_wired = self.session_shutdown.get().is_some(),
+        );
+        Ok(info)
     }
 
     pub async fn session_replay(

@@ -27,6 +27,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::task::JoinSet;
 
 /// Logical shim id. Production keys are `format!("{name}:{session_id}")`
 /// (e.g. `"chromium:01HXYZ..."`). Tests may use bare names.
@@ -95,6 +96,15 @@ pub struct ShimManager {
     /// "no real session" sentinel meaning.
     pub(crate) host_session_ids: dashmap::DashMap<String, u64>,
     pub(crate) host_session_counter: AtomicU64,
+    /// Background cleanup tasks evicted from `processes` by
+    /// `record_failure` (circuit-breaker eviction). The previous code
+    /// used a fire-and-forget `tokio::spawn` here, which leaked
+    /// `JoinHandle`s — when `shutdown_process` hung on SIGTERM grace
+    /// each eviction left a never-joined task behind, and after a few
+    /// sessions the daemon's runtime saturated. Now the spawn is owned
+    /// by this `JoinSet` and reaped opportunistically on every
+    /// `record_failure` and on every `shutdown_session`.
+    pub(crate) cleanup_tasks: parking_lot::Mutex<JoinSet<()>>,
 }
 
 impl ShimManager {
@@ -106,6 +116,7 @@ impl ShimManager {
             obs,
             host_session_ids: dashmap::DashMap::new(),
             host_session_counter: AtomicU64::new(0),
+            cleanup_tasks: parking_lot::Mutex::new(JoinSet::new()),
         })
     }
 
@@ -509,6 +520,10 @@ impl ShimManager {
             self.states.remove(&key);
             self.configs.remove(&key);
         }
+        // Reap any completed breaker-eviction cleanup tasks. Lock release
+        // happens at scope exit; JoinSet::try_join_next is non-blocking.
+        let mut set = self.cleanup_tasks.lock();
+        while set.try_join_next().is_some() {}
     }
 
     /// Increment the breaker counter on a failure. Opens the breaker
@@ -534,7 +549,11 @@ impl ShimManager {
         // Evict the live process if any — the next call will half-open.
         drop(state);
         if let Some((_, p)) = self.processes.remove(id) {
-            tokio::spawn(shutdown_process(p));
+            let mut set = self.cleanup_tasks.lock();
+            set.spawn(shutdown_process(p));
+            // Opportunistically reap completed cleanups so the JoinSet
+            // doesn't grow unbounded across many breaker evictions.
+            while set.try_join_next().is_some() {}
         }
     }
 
@@ -547,6 +566,19 @@ impl ShimManager {
     }
 
     /// Snapshot the breaker state for diagnostics.
+    /// Snapshot of every tracked shim's breaker state. Used by
+    /// `daemon.health` to surface per-shim circuit-breaker visibility.
+    /// Cheap iteration over the DashMap; no locks held across awaits.
+    pub fn breaker_state_snapshot(&self) -> Vec<(ShimId, BreakerState, u8, Option<u64>)> {
+        self.states
+            .iter()
+            .map(|kv| {
+                let s = kv.value();
+                (s.id.clone(), s.breaker, s.consecutive_failures, s.opened_at_ms)
+            })
+            .collect()
+    }
+
     pub fn breaker_state(&self, id: &ShimId) -> Option<BreakerState> {
         self.states.get(id).map(|s| s.breaker)
     }

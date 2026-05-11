@@ -28,12 +28,61 @@ use crate::host_service_adapter::host_service_adapter::HostServiceAdapterApi;
 use crate::rpc_observability::rpc_observability::RpcObservabilityApi;
 use crate::schema_provider::schema_provider::SchemaProviderApi;
 use crate::schema_validator::schema_validator::SchemaValidatorApi;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// Result type returned by every handler. `Err` carries an already-built
 /// JSON-RPC error envelope so the connection-handler layer can encode
 /// it directly without re-translating.
 pub type HandlerResult<T> = Result<T, JsonRpcError>;
+
+/// Async extension for synchronous shim teardown — the daemon's `session.kill`
+/// path needs to await `wasm_host.shutdown_session(...)` with a hard
+/// ceiling, but `CoreServiceAdapterApi` and `HostServiceAdapterApi` are
+/// both sync. This trait is implemented only by the daemon (via
+/// `Arc<loom_host::WasmHost>`-wrapping); test stubs leave it unset on
+/// `RpcHandlers` and `session.kill` falls back to the abort-only path.
+#[async_trait::async_trait]
+pub trait SessionShutdownAsync: Send + Sync {
+    /// Drive the host-side shim teardown for `session_id`, completing
+    /// within `ceiling_ms` (typically 5000 ms per D12). After the
+    /// ceiling, the implementation MUST escalate to SIGKILL and reap.
+    async fn shutdown_with_ceiling(&self, session_id: &str, ceiling_ms: u64);
+}
+
+/// Per-shim breaker state snapshot, surfaced via `daemon.health`.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShimBreakerSnapshot {
+    pub shim_id: String,
+    /// `"closed" | "open" | "half-open"` (matches the existing
+    /// `BreakerState` enum's debug repr).
+    pub state: String,
+    pub consecutive_failures: u32,
+    pub opened_at_ms: Option<u64>,
+}
+
+/// Wire payload for `daemon.health`. Shallow path is non-blocking and
+/// safe to poll frequently; `deep` is populated only when the caller
+/// passes `{deep: true}` and the implementation actually supports it.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct DaemonHealth {
+    pub active_sessions: usize,
+    pub shim_breaker_states: Vec<ShimBreakerSnapshot>,
+    /// `"enabled"` when LOOM_OTEL_ENABLED + endpoint set; `"disabled"`
+    /// otherwise. Cheap snapshot; doesn't probe the OTLP endpoint.
+    pub otel_exporter: String,
+    /// Populated only when `{deep: true}` was requested AND the
+    /// implementation has a shim-side `shim.health` IPC handler. Today
+    /// this is `None` — deep mode is a follow-up.
+    pub deep: Option<Vec<serde_json::Value>>,
+}
+
+/// Daemon-health snapshot provider. Implemented by the daemon (which
+/// has `wasm_host.shim_manager` + `core.session_manager` access);
+/// test stubs leave it unset and `daemon.health` returns an empty
+/// snapshot with a degraded status.
+pub trait DaemonHealthProvider: Send + Sync {
+    fn snapshot(&self, deep: bool) -> DaemonHealth;
+}
 
 /// Bundle of `Arc` handles needed by handlers. Built once at startup
 /// and shared via `Arc<RpcHandlers>` across all per-connection tasks.
@@ -44,4 +93,35 @@ pub struct RpcHandlers {
     pub(crate) schemas: Arc<dyn SchemaProviderApi>,
     pub(crate) validator: Arc<dyn SchemaValidatorApi>,
     pub(crate) observability: Arc<dyn RpcObservabilityApi>,
+    /// Optional async shim-teardown driver for `session.kill`. Settable
+    /// post-construction via `set_session_shutdown` so adding this
+    /// capability didn't require changing every `RpcHandlers::new`
+    /// caller (~6 test-fixture sites). `None` means `session.kill`
+    /// runs as abort-only.
+    pub(crate) session_shutdown: OnceLock<Arc<dyn SessionShutdownAsync>>,
+    /// Optional health snapshot provider for `daemon.health`. Same
+    /// settable-post-construction pattern as `session_shutdown`.
+    /// `None` means `daemon.health` returns a degraded empty snapshot.
+    pub(crate) health_provider: OnceLock<Arc<dyn DaemonHealthProvider>>,
+}
+
+impl RpcHandlers {
+    /// Wire the async shim-teardown driver. Call once at daemon startup
+    /// after `RpcHandlers::new`. Returns `false` if already set — that's
+    /// a wiring bug, not a recoverable error.
+    pub fn set_session_shutdown(
+        &self,
+        shutdown: Arc<dyn SessionShutdownAsync>,
+    ) -> bool {
+        self.session_shutdown.set(shutdown).is_ok()
+    }
+
+    /// Wire the health snapshot provider. Called once at daemon startup.
+    /// Returns `false` if already set.
+    pub fn set_health_provider(
+        &self,
+        provider: Arc<dyn DaemonHealthProvider>,
+    ) -> bool {
+        self.health_provider.set(provider).is_ok()
+    }
 }

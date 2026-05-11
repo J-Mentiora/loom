@@ -14,8 +14,6 @@
 // - **Trap-receipt fast path.** `emit_trap_receipt` is the entry point
 //   for `TrapHandler`; assembles a typed `LoomErrorCode::SurfaceTrap`
 //   receipt and queues it identically.
-// - **Backpressure.** Background queue depth 256; full → synchronous
-//   `ManifestWriter::append` on the calling task (rare, soft binding).
 
 use crate::wit_type_marshaller::Marshaller;
 use loom_core::error::LoomError;
@@ -127,7 +125,6 @@ pub struct ActionOutcome {
 pub struct ReceiptMarshaller {
     pub(crate) manifest_writer: Arc<dyn ManifestWriter>,
     pub(crate) budget: Arc<dyn loom_core::budget_enforcer::BudgetEnforcer>,
-    pub(crate) queue_depth: usize,
 }
 
 impl ReceiptMarshaller {
@@ -138,7 +135,6 @@ impl ReceiptMarshaller {
         Arc::new(Self {
             manifest_writer,
             budget,
-            queue_depth: 256,
         })
     }
 

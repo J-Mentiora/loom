@@ -141,6 +141,8 @@ impl From<LoomError> for HostError {
             | LoomErrorCode::RpcInvalidRequest
             | LoomErrorCode::RpcAuthFailed
             | LoomErrorCode::RpcSchemaViolation
+            | LoomErrorCode::RequestTimeout
+            | LoomErrorCode::RequestCancelled
             | LoomErrorCode::SchemaViolation
             | LoomErrorCode::SafeProfileDownloadBlocked
             | LoomErrorCode::ProfileRestricted
