@@ -52,7 +52,7 @@ jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
 clap = { version = "4", features = ["derive", "env"] }
 
 # Chromium devtools (loom-shims only)
-chromiumoxide = "0.6"
+chromiumoxide = "0.9"
 
 # Vault crypto (loom-core only)
 ring = "0.17"
