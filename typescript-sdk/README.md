@@ -39,15 +39,45 @@ try {
 
 ## What the SDK exposes
 
-- `Session` — session lifecycle (create / close / abort / replay /
+- `Session` — session lifecycle (create / close / abort / kill / replay /
   inspect / validate / export).
 - `Session.{navigate, click, typeText, select, hover, scroll, wait,
   evaluate, screenshot, snapshot}` — every web action surface.
+- Admin RPCs: `killSession(sessionId, ...)` (force-terminate without a
+  handle), `daemonHealth({ deep?, signal? })` (operational snapshot).
 - Receipt + summary types in `@mentiora-ai/loom-sdk/types` — `Receipt`,
   `SessionInfo`, `SessionInspection`, `DiffReport`, `ExportInfo`,
-  `ValidationResult`, `GrantInfo`, `SchemaRegistry`, `LoomErrorCode`.
+  `ValidationResult`, `GrantInfo`, `SchemaRegistry`, `LoomErrorCode`,
+  plus `DaemonHealthResult`, `ShimDeepHealth`, `ShimBreakerSnapshot`,
+  `ProbeStatus`.
 - Typed errors: `LoomError`, `LoomRPCError`, `LoomConnectionError`,
-  `LoomTokenError`.
+  `LoomTokenError`, `LoomAbortError`.
+
+## Cancellation
+
+`LoomTransport.call(method, params, { signal })` accepts an
+`AbortSignal`. On abort, the transport fires a `request.cancel` envelope
+at the daemon and rejects the returned promise with `LoomAbortError`
+(`name === "AbortError"`). Compose with `AbortSignal.timeout(ms)` or
+your own controller:
+
+```ts
+import { LoomTransport, daemonHealth, LoomAbortError } from "@mentiora-ai/loom-sdk";
+
+try {
+  const health = await daemonHealth({
+    deep: true,
+    signal: AbortSignal.timeout(2_000),
+  });
+  console.log(health);
+} catch (err) {
+  if (err instanceof LoomAbortError) {
+    console.log("aborted");
+  } else {
+    throw err;
+  }
+}
+```
 
 ## Connection details
 

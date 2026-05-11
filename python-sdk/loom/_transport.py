@@ -65,6 +65,13 @@ class LoomTransport:
     def __init__(self, socket_path: str | None = None, token: str | None = None) -> None:
         self._path = socket_path or _default_socket_path()
         self._token = _resolve_token(token)
+        # Monotonic id allocator. The sync transport is single-in-flight
+        # by design (one call() at a time on one instance); the allocator
+        # exists so that JSON-RPC `id` values are unique-per-connection,
+        # which the daemon's `request.cancel` correlation requires for any
+        # future concurrent path. For cancellable / concurrent use, see
+        # AsyncLoomTransport.
+        self._next_id: int = 1
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             self._sock.connect(self._path)
@@ -85,8 +92,16 @@ class LoomTransport:
         Send a JSON-RPC 2.0 request and return the ``result`` value.
 
         Raises ``LoomRPCError`` if the response contains an ``"error"`` key.
+
+        This transport is single-in-flight: ``call()`` blocks until the
+        response arrives. For cancellable or concurrent use, use
+        :class:`AsyncLoomTransport`.
         """
-        request = json.dumps({"jsonrpc": "2.0", "method": method, "params": params, "id": 1})
+        request_id = self._next_id
+        self._next_id += 1
+        request = json.dumps(
+            {"jsonrpc": "2.0", "method": method, "params": params, "id": request_id}
+        )
         self._send_frame(request.encode("utf-8"))
         response_bytes = self._recv_frame()
         response = json.loads(response_bytes)

@@ -20,7 +20,9 @@ use crate::host_observability::HostObservability;
 use crate::shim_manager::process::{send_and_await, shutdown_process, ShimProcess, SpawnConfig};
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_shared::navigate_outcome::NavigateOutcome;
-use loom_shared::shim_protocol::{ciborium_from_slice, CdpMessage, ShimRequest, ShimResponse};
+use loom_shared::shim_protocol::{
+    ciborium_from_slice, ciborium_to_vec, CdpMessage, ShimHealthInfo, ShimRequest, ShimResponse,
+};
 use loom_shared::types::{EpochMs, Seed};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -79,6 +81,25 @@ pub struct ShimState {
     pub breaker: BreakerState,
     pub consecutive_failures: u8,
     pub opened_at_ms: Option<u64>,
+    /// Lifecycle counters. Lives on `ShimState` (not `ShimProcess`) because
+    /// `ShimProcess` is replaced on every respawn; these counters persist
+    /// across the replacement so the operator can see "this shim has been
+    /// restarted N times" via `daemon.health({deep:true})`.
+    pub restart_count: u32,
+    pub last_restart_at_ms: Option<u64>,
+}
+
+/// Owned snapshot of `ShimState` for callers that need to read it outside
+/// the DashMap guard (e.g. async aggregators that can't hold a Ref across
+/// `.await`). Mirror of the live struct.
+#[derive(Debug, Clone)]
+pub struct ShimStateSnapshot {
+    pub id: ShimId,
+    pub breaker: BreakerState,
+    pub consecutive_failures: u8,
+    pub opened_at_ms: Option<u64>,
+    pub restart_count: u32,
+    pub last_restart_at_ms: Option<u64>,
 }
 
 /// The manager.
@@ -241,9 +262,30 @@ impl ShimManager {
             args: config.args.clone(),
             env: config.env.clone(),
         };
+        // Pre-spawn snapshot: did a state entry already exist? If yes the
+        // upcoming spawn is a respawn, not a first spawn. Gating on this
+        // avoids overcounting in the open-breaker path (record_failure
+        // creates the state entry but the next call would otherwise be
+        // rejected by the breaker before reaching here).
+        let is_respawn = self.states.contains_key(id);
         match crate::shim_manager::process::spawn_shim(&spawn_config).await {
             Ok(p) => {
                 self.processes.insert(id.clone(), p.clone());
+                if is_respawn {
+                    // Bump restart bookkeeping; create the entry first if
+                    // somehow missing (record_failure should have created it
+                    // but guard for the corner case).
+                    let mut s = self.states.entry(id.clone()).or_insert_with(|| ShimState {
+                        id: id.clone(),
+                        breaker: BreakerState::Closed,
+                        consecutive_failures: 0,
+                        opened_at_ms: None,
+                        restart_count: 0,
+                        last_restart_at_ms: None,
+                    });
+                    s.restart_count = s.restart_count.saturating_add(1);
+                    s.last_restart_at_ms = Some(now_ms());
+                }
                 Ok(p)
             }
             Err(e) => {
@@ -540,6 +582,8 @@ impl ShimManager {
             breaker: BreakerState::Closed,
             consecutive_failures: 0,
             opened_at_ms: None,
+            restart_count: 0,
+            last_restart_at_ms: None,
         });
         state.consecutive_failures = state.consecutive_failures.saturating_add(1);
         if state.consecutive_failures >= threshold {
@@ -586,6 +630,81 @@ impl ShimManager {
 
     pub fn breaker_state(&self, id: &ShimId) -> Option<BreakerState> {
         self.states.get(id).map(|s| s.breaker)
+    }
+
+    /// Clone the full `ShimState` for `id`, if tracked. Used by
+    /// `daemon.health({deep:true})` to surface restart bookkeeping per shim.
+    pub fn shim_state(&self, id: &ShimId) -> Option<ShimStateSnapshot> {
+        self.states.get(id).map(|s| ShimStateSnapshot {
+            id: s.id.clone(),
+            breaker: s.breaker,
+            consecutive_failures: s.consecutive_failures,
+            opened_at_ms: s.opened_at_ms,
+            restart_count: s.restart_count,
+            last_restart_at_ms: s.last_restart_at_ms,
+        })
+    }
+
+    /// Snapshot every tracked shim id. Used by `daemon.health({deep:true})`
+    /// to iterate the probe fan-out. Iterates `processes` (live subprocesses)
+    /// rather than `states` (which can have stale entries for evicted
+    /// shims) so probes only target running children.
+    pub fn list_shim_ids(&self) -> Vec<ShimId> {
+        self.processes.iter().map(|kv| kv.key().clone()).collect()
+    }
+
+    /// Probe a live shim for its self-reported `ShimHealthInfo`. Used by
+    /// `daemon.health({deep:true})`. Does NOT lazy-spawn — if the shim is
+    /// not running, returns `LoomErrorCode::ShimFailure`.
+    ///
+    /// Timeout: `LOOM_PROBE_TIMEOUT_MS` env override (default 1000). The
+    /// timeout is enforced INSIDE `send_and_await`, so cancelling the
+    /// returned future cannot leak entries from `process.pending`.
+    pub async fn probe_health(&self, id: &ShimId) -> Result<ShimHealthInfo, LoomError> {
+        let process = self.processes.get(id).map(|p| p.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} is not running — cannot probe", id.0),
+            )
+        })?;
+        let recv_ms = std::env::var("LOOM_PROBE_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(1_000);
+        // request_id is overwritten by send_and_await via set_request_id.
+        let req = ShimRequest::Health { request_id: 0 };
+        match send_and_await(
+            &process,
+            req,
+            Duration::from_millis(500),
+            Duration::from_millis(recv_ms),
+        )
+        .await?
+        {
+            ShimResponse::Ok { payload, .. } => {
+                // Re-encode the ciborium Value and decode as ShimHealthInfo.
+                let bytes = ciborium_to_vec(&payload).map_err(|e| {
+                    LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("re-encode ShimHealthInfo payload: {e}"),
+                    )
+                })?;
+                ciborium_from_slice::<ShimHealthInfo>(&bytes).map_err(|e| {
+                    LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("decode ShimHealthInfo: {e}"),
+                    )
+                })
+            }
+            ShimResponse::Error { code, detail, .. } => Err(LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim health probe returned error {code:?}: {detail}"),
+            )),
+            other => Err(LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim health probe: unexpected response: {other:?}"),
+            )),
+        }
     }
 
     /// Force-close the breaker (test seam + operator recovery).

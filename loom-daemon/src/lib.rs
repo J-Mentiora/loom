@@ -36,7 +36,8 @@ use loom_rpc::host_service_adapter::host_service_adapter::{
 use loom_rpc::request_router::request_router::RequestRouter;
 use loom_rpc::rpc_handlers::rpc_handlers::RpcHandlers;
 use loom_rpc::rpc_handlers::rpc_handlers::{
-    DaemonHealth, DaemonHealthProvider, SessionShutdownAsync, ShimBreakerSnapshot,
+    DaemonHealth, DaemonHealthAsync, DaemonHealthProvider, ProbeStatus, SessionShutdownAsync,
+    ShimBreakerSnapshot, ShimDeepHealth,
 };
 use loom_rpc::rpc_observability::rpc_observability::RpcObservability;
 use loom_rpc::schema_provider::schema_provider::SchemaProvider;
@@ -102,14 +103,19 @@ impl SessionShutdownAsync for WasmHostShutdownAdapter {
     }
 }
 
-// ─── DaemonHealthProvider: shallow snapshot from live daemon state ──────────
+// ─── DaemonHealthProvider + DaemonHealthAsync ───────────────────────────────
 //
-// Reads `ShimManager.breaker_state_snapshot()` (per-shim breaker state) and
-// `core.session_manager.list_sessions_info().len()` (active session count).
-// `otel_exporter` reflects the `LOOM_OTEL_ENABLED` env var per the existing
-// daemon convention. `deep` is always `None` today — the shim-side
-// `shim.health` IPC verb is a follow-up, deliberately scoped out of this PR
-// per `plan.md § What is NOT in this PR`.
+// Shallow `DaemonHealthProvider::snapshot` reads `ShimManager.breaker_state_snapshot()`
+// (per-shim breaker state) and `core.session_manager.list_sessions_info().len()`
+// (active session count). `otel_exporter` reflects the `LOOM_OTEL_ENABLED` env var
+// per the existing daemon convention.
+//
+// Deep `DaemonHealthAsync::snapshot_deep` fans out `ShimRequest::Health` probes
+// across every running shim via `ShimManager::probe_health` and aggregates the
+// results into typed `ShimDeepHealth` records. Per-shim 1 s budget (env-overridable
+// via `LOOM_PROBE_TIMEOUT_MS`), 3 s overall (`LOOM_DEEP_HEALTH_BUDGET_MS`).
+// The handler in `loom-rpc::rpc_handlers::mod::daemon_health` selects which path
+// to call based on the request's `deep` flag.
 
 struct DaemonHealthBridge {
     core: Arc<CoreApiFacade>,
@@ -148,11 +154,103 @@ impl DaemonHealthProvider for DaemonHealthBridge {
             active_sessions,
             shim_breaker_states,
             otel_exporter,
-            // Deep mode requires the shim-side `shim.health` IPC verb,
-            // which is a follow-up. Always `None` today.
+            // Sync `snapshot` cannot reach the async probe. The deep path
+            // is populated by `DaemonHealthAsync::snapshot_deep` (see
+            // impl below) called from the `daemon_health` handler when
+            // `{deep: true}` was requested.
             deep: None,
         }
     }
+}
+
+#[async_trait::async_trait]
+impl DaemonHealthAsync for DaemonHealthBridge {
+    async fn snapshot_deep(&self) -> Vec<ShimDeepHealth> {
+        let Some(host) = &self.wasm_host else {
+            return Vec::new();
+        };
+        let manager = host.shim_manager();
+        let ids = manager.list_shim_ids();
+        // Concurrent fan-out via JoinSet (already in widespread use in
+        // loom-host; avoids adding `futures` as a direct dep on loom-daemon).
+        // Per-shim timeout is enforced INSIDE `probe_health`/`send_and_await`,
+        // never at this level — caller-level cancel would leak
+        // `process.pending` (Step 7 finding 5c).
+        let mut set: tokio::task::JoinSet<ShimDeepHealth> = tokio::task::JoinSet::new();
+        for id in ids {
+            let manager = manager.clone();
+            set.spawn(async move {
+                let state = manager.shim_state(&id);
+                let (restart_count, last_restart_at_ms) = state
+                    .as_ref()
+                    .map(|s| (s.restart_count, s.last_restart_at_ms))
+                    .unwrap_or((0, None));
+                match manager.probe_health(&id).await {
+                    Ok(info) => {
+                        // Sec-4 sanity check: warn if shim-reported uptime
+                        // exceeds the daemon's view of "time since last
+                        // restart" by more than 5 s of clock-skew slack.
+                        // Don't synthesize an error — operators should
+                        // see the raw data.
+                        if let Some(restart_ms) = last_restart_at_ms {
+                            let now_ms = now_epoch_ms();
+                            let max_plausible =
+                                now_ms.saturating_sub(restart_ms).saturating_add(5_000);
+                            if info.uptime_ms > max_plausible {
+                                tracing::warn!(
+                                    shim_id = %id.0,
+                                    uptime_ms = info.uptime_ms,
+                                    daemon_last_restart_at_ms = restart_ms,
+                                    "shim reported uptime exceeds daemon's view of \
+                                     time-since-last-restart — possible clock skew or buggy shim"
+                                );
+                            }
+                        }
+                        ShimDeepHealth {
+                            shim_id: id.0.clone(),
+                            daemon_restart_count: restart_count,
+                            daemon_last_restart_at_ms: last_restart_at_ms,
+                            shim_uptime_ms: info.uptime_ms,
+                            shim_requests_served: info.requests_served,
+                            shim_last_request_at_ms: info.last_request_at_ms,
+                            probe_status: ProbeStatus::Ok,
+                        }
+                    }
+                    Err(e) => {
+                        let probe_status =
+                            if matches!(e.code, loom_core::error::LoomErrorCode::ShimTimeout) {
+                                ProbeStatus::Timeout
+                            } else {
+                                ProbeStatus::Error
+                            };
+                        ShimDeepHealth {
+                            shim_id: id.0.clone(),
+                            daemon_restart_count: restart_count,
+                            daemon_last_restart_at_ms: last_restart_at_ms,
+                            shim_uptime_ms: 0,
+                            shim_requests_served: 0,
+                            shim_last_request_at_ms: None,
+                            probe_status,
+                        }
+                    }
+                }
+            });
+        }
+        let mut out = Vec::new();
+        while let Some(joined) = set.join_next().await {
+            if let Ok(item) = joined {
+                out.push(item);
+            }
+        }
+        out
+    }
+}
+
+fn now_epoch_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 // ─── Bridge: CoreApiFacade → CoreFacadeBridge ───────────────────────────────
@@ -1449,10 +1547,13 @@ async fn async_main() -> Result<()> {
     // Wire the daemon.health snapshot provider. Always wireable —
     // wasm_host being None just means `shim_breaker_states` returns
     // empty. Active-session count comes from the core facade regardless.
-    let _ = handlers.set_health_provider(Arc::new(DaemonHealthBridge {
+    // One bridge instance, two trait wirings (sync shallow + async deep).
+    let bridge = Arc::new(DaemonHealthBridge {
         core: Arc::clone(&core),
         wasm_host: wasm_host_handle.clone(),
-    }));
+    });
+    let _ = handlers.set_health_provider(bridge.clone() as Arc<dyn DaemonHealthProvider>);
+    let _ = handlers.set_daemon_health_async(bridge as Arc<dyn DaemonHealthAsync>);
     let router: Arc<dyn loom_rpc::request_router::request_router::RequestRouterApi> =
         RequestRouter::register_methods(
             Arc::clone(&handlers),

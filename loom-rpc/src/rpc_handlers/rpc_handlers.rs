@@ -60,6 +60,37 @@ pub struct ShimBreakerSnapshot {
     pub opened_at_ms: Option<u64>,
 }
 
+/// Outcome of probing one shim for deep health. The shim-side probe
+/// returns a `ShimHealthInfo` over CBOR; the daemon aggregates that with
+/// its own restart bookkeeping into this typed payload.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProbeStatus {
+    Ok,
+    Timeout,
+    Error,
+}
+
+/// Per-shim payload returned in `DaemonHealth.deep`. Combines the
+/// daemon's view (restart bookkeeping) with the shim's self-report
+/// (uptime, requests served).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ShimDeepHealth {
+    pub shim_id: String,
+    /// Number of times the daemon has respawned this shim (excluding the
+    /// initial spawn).
+    pub daemon_restart_count: u32,
+    /// Epoch ms of the most recent daemon-driven respawn, if any.
+    pub daemon_last_restart_at_ms: Option<u64>,
+    /// Subprocess-reported milliseconds since its own startup.
+    pub shim_uptime_ms: u64,
+    /// Subprocess-reported count of non-meta requests served.
+    pub shim_requests_served: u64,
+    /// Subprocess-reported epoch ms of most recent non-meta request.
+    pub shim_last_request_at_ms: Option<u64>,
+    pub probe_status: ProbeStatus,
+}
+
 /// Wire payload for `daemon.health`. Shallow path is non-blocking and
 /// safe to poll frequently; `deep` is populated only when the caller
 /// passes `{deep: true}` and the implementation actually supports it.
@@ -70,18 +101,36 @@ pub struct DaemonHealth {
     /// `"enabled"` when LOOM_OTEL_ENABLED + endpoint set; `"disabled"`
     /// otherwise. Cheap snapshot; doesn't probe the OTLP endpoint.
     pub otel_exporter: String,
-    /// Populated only when `{deep: true}` was requested AND the
-    /// implementation has a shim-side `shim.health` IPC handler. Today
-    /// this is `None` — deep mode is a follow-up.
-    pub deep: Option<Vec<serde_json::Value>>,
+    /// Populated only when `{deep: true}` was requested AND a
+    /// `DaemonHealthAsync` provider is wired. Each entry is the
+    /// per-shim probe outcome.
+    pub deep: Option<Vec<ShimDeepHealth>>,
 }
 
-/// Daemon-health snapshot provider. Implemented by the daemon (which
-/// has `wasm_host.shim_manager` + `core.session_manager` access);
+/// Daemon-health snapshot provider (shallow). Implemented by the daemon
+/// (which has `wasm_host.shim_manager` + `core.session_manager` access);
 /// test stubs leave it unset and `daemon.health` returns an empty
 /// snapshot with a degraded status.
 pub trait DaemonHealthProvider: Send + Sync {
     fn snapshot(&self, deep: bool) -> DaemonHealth;
+}
+
+/// Async-extension for `daemon.health({deep:true})`. The shim health
+/// probe is inherently async (per-shim CBOR round-trip with a 1 s budget,
+/// fanned-out concurrently); the sync `DaemonHealthProvider::snapshot`
+/// path cannot reach it. Set independently via `set_daemon_health_async`.
+///
+/// Trade-off: two parallel one-method traits (`SessionShutdownAsync`
+/// alongside this one). If a third async escape-hatch lands, refactor
+/// into a unified `DaemonAdminAsync` trait — threshold is 3 (see
+/// decisions.md #16).
+#[async_trait::async_trait]
+pub trait DaemonHealthAsync: Send + Sync {
+    /// Fan out a `Health` probe to every running shim with a per-shim
+    /// timeout (default 1 s, overridable via `LOOM_PROBE_TIMEOUT_MS`).
+    /// Returns one `ShimDeepHealth` per shim; non-responsive shims
+    /// get `probe_status: Timeout`.
+    async fn snapshot_deep(&self) -> Vec<ShimDeepHealth>;
 }
 
 /// Bundle of `Arc` handles needed by handlers. Built once at startup
@@ -103,6 +152,10 @@ pub struct RpcHandlers {
     /// settable-post-construction pattern as `session_shutdown`.
     /// `None` means `daemon.health` returns a degraded empty snapshot.
     pub(crate) health_provider: OnceLock<Arc<dyn DaemonHealthProvider>>,
+    /// Optional async provider for the `{deep: true}` probe path. Wired
+    /// by the daemon at startup; unset = `daemon.health({deep:true})`
+    /// returns shallow with `deep: None`.
+    pub(crate) daemon_health_async: OnceLock<Arc<dyn DaemonHealthAsync>>,
 }
 
 impl RpcHandlers {
@@ -117,5 +170,10 @@ impl RpcHandlers {
     /// Returns `false` if already set.
     pub fn set_health_provider(&self, provider: Arc<dyn DaemonHealthProvider>) -> bool {
         self.health_provider.set(provider).is_ok()
+    }
+
+    /// Wire the async deep-probe provider. Returns `false` if already set.
+    pub fn set_daemon_health_async(&self, provider: Arc<dyn DaemonHealthAsync>) -> bool {
+        self.daemon_health_async.set(provider).is_ok()
     }
 }

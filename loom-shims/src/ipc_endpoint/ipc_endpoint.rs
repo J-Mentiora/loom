@@ -32,8 +32,8 @@ use tokio::sync::mpsc;
 // `crate::ipc_endpoint::ipc_endpoint::*` imports keep working.
 pub use loom_shared::shim_protocol::{
     ciborium_from_slice, ciborium_to_vec, decode_frame, encode_frame, CdpMessage, IpcError,
-    SessionId, ShimErrorCode, ShimRequest, ShimResponse, TargetId, LENGTH_PREFIX_BYTES,
-    MAX_FRAME_BYTES,
+    SessionId, ShimErrorCode, ShimHealthInfo, ShimRequest, ShimResponse, TargetId,
+    LENGTH_PREFIX_BYTES, MAX_FRAME_BYTES,
 };
 
 /// Concrete `IPC_Endpoint`. Owns the inherited socketpair FD; the

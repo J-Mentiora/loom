@@ -68,21 +68,27 @@ function sendFrame(socket: net.Socket, payload: string): void {
   socket.write(Buffer.concat([header, data]));
 }
 
-function makeErrorEnvelope(code: string, message: string): string {
-  return JSON.stringify({ error: { code, message } });
+function makeErrorEnvelope(code: string, message: string, id?: number): string {
+  const env: Record<string, unknown> = { error: { code, message } };
+  if (id !== undefined) env["id"] = id;
+  return JSON.stringify(env);
 }
 
-function makeResult(result: unknown): string {
-  return JSON.stringify({ result });
+function makeResult(result: unknown, id?: number): string {
+  const env: Record<string, unknown> = { result };
+  if (id !== undefined) env["id"] = id;
+  return JSON.stringify(env);
 }
 
-type Handler = (params: Record<string, unknown>) => unknown;
+type Handler = (params: Record<string, unknown>) => unknown | Promise<unknown>;
 
 /** Per-connection state: persistent buffer + queue of pending frame-read callbacks. */
 function makeConnectionReader(conn: net.Socket): { readFrame: () => Promise<Buffer> } {
   let buf = Buffer.alloc(0);
   // Callbacks waiting for the next complete frame
-  const waiters: Array<(frame: Buffer) => void> = [];
+  type Waiter = { resolve: (f: Buffer) => void; reject: (e: Error) => void };
+  const waiters: Waiter[] = [];
+  let closed = false;
 
   const tryFlush = () => {
     while (waiters.length > 0 && buf.length >= 4) {
@@ -91,7 +97,15 @@ function makeConnectionReader(conn: net.Socket): { readFrame: () => Promise<Buff
       const frame = Buffer.from(buf.subarray(4, 4 + length)); // copy out
       buf = buf.subarray(4 + length);
       const waiter = waiters.shift()!;
-      waiter(frame);
+      waiter.resolve(frame);
+    }
+  };
+
+  const rejectAll = (err: Error) => {
+    closed = true;
+    while (waiters.length > 0) {
+      const w = waiters.shift()!;
+      w.reject(err);
     }
   };
 
@@ -99,10 +113,16 @@ function makeConnectionReader(conn: net.Socket): { readFrame: () => Promise<Buff
     buf = Buffer.concat([buf, chunk]);
     tryFlush();
   });
+  conn.on("close", () => rejectAll(new Error("connection closed")));
+  conn.on("error", (err) => rejectAll(err));
 
   const readFrame = (): Promise<Buffer> =>
-    new Promise((resolve) => {
-      waiters.push(resolve);
+    new Promise((resolve, reject) => {
+      if (closed) {
+        reject(new Error("connection closed"));
+        return;
+      }
+      waiters.push({ resolve, reject });
       tryFlush(); // may resolve immediately if data already in buf
     });
 
@@ -119,6 +139,7 @@ export class MockDaemon {
   private _tmpDir: string;
   private _handlers: Map<string, Handler> = new Map();
   private _sessionCounter = 0;
+  private _openConnections: Set<net.Socket> = new Set();
 
   constructor(token: string = DAEMON_TOKEN) {
     this.token = token;
@@ -132,6 +153,8 @@ export class MockDaemon {
   start(): Promise<void> {
     return new Promise((resolve) => {
       this._server = net.createServer((conn) => {
+        this._openConnections.add(conn);
+        conn.once("close", () => this._openConnections.delete(conn));
         void this._handleConnection(conn);
       });
       this._server.listen(this.socketPath, () => resolve());
@@ -144,6 +167,14 @@ export class MockDaemon {
         resolve();
         return;
       }
+      // Force-destroy any lingering open connections so server.close()
+      // can complete promptly. Without this, an async handler still
+      // awaiting (e.g. a setTimeout in a test "slow handler") would
+      // keep the connection — and thus the test runner — alive.
+      for (const c of this._openConnections) {
+        c.destroy();
+      }
+      this._openConnections.clear();
       this._server.close(() => {
         fs.rmSync(this._tmpDir, { recursive: true, force: true });
         resolve();
@@ -231,17 +262,26 @@ export class MockDaemon {
 
         const method = (req["method"] as string) ?? "";
         const params = (req["params"] as Record<string, unknown>) ?? {};
+        const reqId = typeof req["id"] === "number" ? (req["id"] as number) : undefined;
         const handler = this._handlers.get(method);
         if (!handler) {
-          sendFrame(conn, makeErrorEnvelope("method_not_found", `unknown method: ${method}`));
+          sendFrame(
+            conn,
+            makeErrorEnvelope("method_not_found", `unknown method: ${method}`, reqId),
+          );
           continue;
         }
-        try {
-          const result = handler(params);
-          sendFrame(conn, makeResult(result));
-        } catch (err) {
-          sendFrame(conn, makeErrorEnvelope("internal_error", String(err)));
-        }
+        // Fire and forget — handlers may be async; dispatch each on its
+        // own microtask so concurrent in-flight requests are supported
+        // (tests for the new id-keyed demux rely on this).
+        void (async () => {
+          try {
+            const result = await handler(params);
+            sendFrame(conn, makeResult(result, reqId));
+          } catch (err) {
+            sendFrame(conn, makeErrorEnvelope("internal_error", String(err), reqId));
+          }
+        })();
       }
     } catch {
       // connection-level error — close silently
