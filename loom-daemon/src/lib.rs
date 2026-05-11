@@ -212,14 +212,12 @@ impl DaemonHealthAsync for DaemonHealthBridge {
                         }
                     }
                     Err(e) => {
-                        let probe_status = if matches!(
-                            e.code,
-                            loom_core::error::LoomErrorCode::ShimTimeout
-                        ) {
-                            ProbeStatus::Timeout
-                        } else {
-                            ProbeStatus::Error
-                        };
+                        let probe_status =
+                            if matches!(e.code, loom_core::error::LoomErrorCode::ShimTimeout) {
+                                ProbeStatus::Timeout
+                            } else {
+                                ProbeStatus::Error
+                            };
                         ShimDeepHealth {
                             shim_id: id.0.clone(),
                             daemon_restart_count: restart_count,

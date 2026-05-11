@@ -661,16 +661,12 @@ impl ShimManager {
     /// timeout is enforced INSIDE `send_and_await`, so cancelling the
     /// returned future cannot leak entries from `process.pending`.
     pub async fn probe_health(&self, id: &ShimId) -> Result<ShimHealthInfo, LoomError> {
-        let process = self
-            .processes
-            .get(id)
-            .map(|p| p.clone())
-            .ok_or_else(|| {
-                LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {} is not running — cannot probe", id.0),
-                )
-            })?;
+        let process = self.processes.get(id).map(|p| p.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} is not running — cannot probe", id.0),
+            )
+        })?;
         let recv_ms = std::env::var("LOOM_PROBE_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
