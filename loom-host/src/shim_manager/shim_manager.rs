@@ -574,7 +574,12 @@ impl ShimManager {
             .iter()
             .map(|kv| {
                 let s = kv.value();
-                (s.id.clone(), s.breaker, s.consecutive_failures, s.opened_at_ms)
+                (
+                    s.id.clone(),
+                    s.breaker,
+                    s.consecutive_failures,
+                    s.opened_at_ms,
+                )
             })
             .collect()
     }

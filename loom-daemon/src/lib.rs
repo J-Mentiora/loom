@@ -30,14 +30,14 @@ use loom_rpc::core_service_adapter::core_service_adapter::{
     AdapterError, CoreFacadeBridge, CoreServiceAdapter, ExportInfo, GrantInfo, GrantParams,
     PlaywrightImportInfo, VaultAddInfo, VaultAddParams,
 };
-use loom_rpc::rpc_handlers::rpc_handlers::{
-    DaemonHealth, DaemonHealthProvider, SessionShutdownAsync, ShimBreakerSnapshot,
-};
 use loom_rpc::host_service_adapter::host_service_adapter::{
     Action, AdapterError as HostAdapterError, HostServiceAdapter, Receipt, WasmHostBridge,
 };
 use loom_rpc::request_router::request_router::RequestRouter;
 use loom_rpc::rpc_handlers::rpc_handlers::RpcHandlers;
+use loom_rpc::rpc_handlers::rpc_handlers::{
+    DaemonHealth, DaemonHealthProvider, SessionShutdownAsync, ShimBreakerSnapshot,
+};
 use loom_rpc::rpc_observability::rpc_observability::RpcObservability;
 use loom_rpc::schema_provider::schema_provider::SchemaProvider;
 use loom_rpc::schema_validator::schema_validator::SchemaValidator;
@@ -139,10 +139,7 @@ impl DaemonHealthProvider for DaemonHealthBridge {
             None => Vec::new(),
         };
 
-        let otel_exporter = match std::env::var("LOOM_OTEL_ENABLED")
-            .ok()
-            .as_deref()
-        {
+        let otel_exporter = match std::env::var("LOOM_OTEL_ENABLED").ok().as_deref() {
             Some("1") | Some("true") | Some("yes") => "enabled".to_string(),
             _ => "disabled".to_string(),
         };

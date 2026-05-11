@@ -52,16 +52,7 @@ fn make_env() -> Env {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
-    let sm = LocalSessionManager::new(
-        cs,
-        mw,
-        v,
-        be,
-        dh,
-        obs,
-        0,
-        root.join("sessions"),
-    );
+    let sm = LocalSessionManager::new(cs, mw, v, be, dh, obs, 0, root.join("sessions"));
     Env { sm, _tmp: tmp }
 }
 

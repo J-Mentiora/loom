@@ -109,19 +109,13 @@ impl RpcHandlers {
     /// Wire the async shim-teardown driver. Call once at daemon startup
     /// after `RpcHandlers::new`. Returns `false` if already set — that's
     /// a wiring bug, not a recoverable error.
-    pub fn set_session_shutdown(
-        &self,
-        shutdown: Arc<dyn SessionShutdownAsync>,
-    ) -> bool {
+    pub fn set_session_shutdown(&self, shutdown: Arc<dyn SessionShutdownAsync>) -> bool {
         self.session_shutdown.set(shutdown).is_ok()
     }
 
     /// Wire the health snapshot provider. Called once at daemon startup.
     /// Returns `false` if already set.
-    pub fn set_health_provider(
-        &self,
-        provider: Arc<dyn DaemonHealthProvider>,
-    ) -> bool {
+    pub fn set_health_provider(&self, provider: Arc<dyn DaemonHealthProvider>) -> bool {
         self.health_provider.set(provider).is_ok()
     }
 }
