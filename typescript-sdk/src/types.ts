@@ -93,3 +93,35 @@ export interface SchemaRegistry {
   methods: MethodSchema[];
   sourceWitSha256: string;
 }
+
+// ─── daemon.health payload (HAND-WRITTEN — see plan.md decision OOS-1) ───
+
+export type ProbeStatus = "ok" | "timeout" | "error";
+
+export interface ShimBreakerSnapshot {
+  shimId: string;
+  /** `"closed" | "open" | "half-open"` */
+  state: string;
+  consecutiveFailures: number;
+  openedAtMs: number | null;
+}
+
+export interface ShimDeepHealth {
+  shimId: string;
+  daemonRestartCount: number;
+  daemonLastRestartAtMs: number | null;
+  shimUptimeMs: number;
+  shimRequestsServed: number;
+  shimLastRequestAtMs: number | null;
+  probeStatus: ProbeStatus;
+}
+
+export interface DaemonHealthResult {
+  activeSessions: number;
+  shimBreakerStates: ShimBreakerSnapshot[];
+  /** `"enabled" | "disabled" | "unwired"` */
+  otelExporter: string;
+  /** Populated only when `daemonHealth({deep: true})` is called AND the
+   *  daemon has wired its async deep-probe provider. */
+  deep: ShimDeepHealth[] | null;
+}

@@ -120,3 +120,91 @@ def test_codegen_detects_schema_change(daemon: MockDaemon, tmp_path: Path):
     assert out_before.read_text() != out_after.read_text(), (
         "codegen produced identical output despite schema change — hand-drift risk"
     )
+
+
+# ─── Hand-written admin types drift guard ────────────────────────────────
+# The new admin RPC wrappers (kill_session, daemon_health) bypass codegen
+# (BUILTIN_CORE-style validation-bypass per the original prompt); their
+# result types are HAND-WRITTEN in `python-sdk/loom/types.py`. This guard
+# catches camelCase / snake_case drift between the Rust Server struct
+# (snake_case JSON output) and the Python dataclass field names.
+#
+# It does NOT compile Rust source — it parses the source text via regex.
+# Rust struct file: ../../loom-rpc/src/rpc_handlers/rpc_handlers.rs
+# Python types file: ../loom/types.py
+
+
+def _extract_rust_struct_fields(rs_path: Path, struct_name: str) -> set[str]:
+    """Cheap regex extraction of `pub field_name: ` fields from a Rust
+    struct block. Skips field-less generic-only structs."""
+    import re
+
+    src = rs_path.read_text()
+    # Find `pub struct StructName {` ... `}` block.
+    m = re.search(
+        rf"pub struct {re.escape(struct_name)}\s*\{{(.*?)\n\}}",
+        src,
+        re.DOTALL,
+    )
+    if not m:
+        return set()
+    body = m.group(1)
+    return set(re.findall(r"^\s*pub\s+([a-z_]\w*)\s*:", body, re.MULTILINE))
+
+
+def _extract_python_dataclass_fields(py_path: Path, class_name: str) -> set[str]:
+    """Cheap extraction of dataclass field names from a Python source.
+
+    Slices from `class Name:` to the next `class ` (or EOF), then collects
+    indented `field_name: TypeHint` lines while skipping docstring blocks
+    and blank lines.
+    """
+    import re
+
+    src = py_path.read_text()
+    m = re.search(rf"class {re.escape(class_name)}\b[^:]*:\s*\n", src)
+    if not m:
+        return set()
+    rest = src[m.end():]
+    # Cut off at next top-level definition.
+    cut = re.search(r"^(class |def |\w)", rest, re.MULTILINE)
+    body = rest[: cut.start()] if cut else rest
+    # Strip docstring block (line starting with `    """` and continuing
+    # until closing `"""`).
+    body = re.sub(r'(?ms)^\s+""".*?"""\s*$', "", body)
+    return set(re.findall(r"^\s+([a-z_]\w*)\s*:", body, re.MULTILINE))
+
+
+def test_handwritten_admin_types_field_drift():
+    """Hand-written ShimDeepHealth in types.py must match Rust struct fields."""
+    rs_path = (
+        Path(__file__).parent.parent.parent
+        / "loom-rpc"
+        / "src"
+        / "rpc_handlers"
+        / "rpc_handlers.rs"
+    )
+    py_path = Path(__file__).parent.parent / "loom" / "_admin_types.py"
+    if not rs_path.exists():
+        pytest.skip("Rust source not co-located (running from installed wheel?)")
+    if not py_path.exists():
+        pytest.skip("Python _admin_types.py not found")
+
+    # ShimDeepHealth: hand-written; check field names align.
+    rust_fields = _extract_rust_struct_fields(rs_path, "ShimDeepHealth")
+    py_fields = _extract_python_dataclass_fields(py_path, "ShimDeepHealth")
+    assert py_fields, "ShimDeepHealth dataclass missing from _admin_types.py"
+    assert rust_fields == py_fields, (
+        f"ShimDeepHealth field drift between Rust and Python:\n"
+        f"  Rust only: {rust_fields - py_fields}\n"
+        f"  Py only:   {py_fields - rust_fields}\n"
+    )
+    # Also check ShimBreakerSnapshot (already existed on Rust side; we
+    # added a hand-written mirror for symmetry).
+    rust_breaker = _extract_rust_struct_fields(rs_path, "ShimBreakerSnapshot")
+    py_breaker = _extract_python_dataclass_fields(py_path, "ShimBreakerSnapshot")
+    assert rust_breaker == py_breaker, (
+        f"ShimBreakerSnapshot field drift:\n"
+        f"  Rust only: {rust_breaker - py_breaker}\n"
+        f"  Py only:   {py_breaker - rust_breaker}\n"
+    )

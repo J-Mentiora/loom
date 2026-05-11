@@ -46,3 +46,21 @@ export class LoomTokenError extends LoomError {
     this.name = "LoomTokenError";
   }
 }
+
+/**
+ * Thrown when a `call()` is cancelled via its AbortSignal. Sets
+ * `name = "AbortError"` so existing DOM-idiomatic patterns
+ * (`catch (e) { if (e.name === "AbortError") ... }`) work alongside
+ * the uniform `LoomError` surface. The optional `cause` captures the
+ * underlying `LoomRPCError({code: "request-cancelled"})` if the daemon's
+ * typed cancel-confirmation arrived before the local reject.
+ */
+export class LoomAbortError extends LoomError {
+  readonly cause?: unknown;
+
+  constructor(message: string = "request aborted", cause?: unknown) {
+    super(message);
+    this.name = "AbortError";
+    this.cause = cause;
+  }
+}

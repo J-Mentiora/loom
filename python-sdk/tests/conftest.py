@@ -54,12 +54,18 @@ def _send_frame(conn: socket.socket, payload: bytes) -> None:
     conn.sendall(header + payload)
 
 
-def _make_error_envelope(code: str, message: str) -> bytes:
-    return json.dumps({"error": {"code": code, "message": message}}).encode()
+def _make_error_envelope(code: str, message: str, request_id: int | None = None) -> bytes:
+    env: dict[str, Any] = {"error": {"code": code, "message": message}}
+    if request_id is not None:
+        env["id"] = request_id
+    return json.dumps(env).encode()
 
 
-def _make_result(result: Any) -> bytes:
-    return json.dumps({"result": result}).encode()
+def _make_result(result: Any, request_id: int | None = None) -> bytes:
+    env: dict[str, Any] = {"result": result}
+    if request_id is not None:
+        env["id"] = request_id
+    return json.dumps(env).encode()
 
 
 SCHEMA_REGISTRY = {
@@ -229,18 +235,21 @@ class MockDaemon:
                     continue
                 method = req.get("method", "")
                 params = req.get("params") or {}
+                req_id = req.get("id")
                 handler = self._handlers.get(method)
                 if handler is None:
                     _send_frame(
                         conn,
-                        _make_error_envelope("method_not_found", f"unknown method: {method}"),
+                        _make_error_envelope(
+                            "method_not_found", f"unknown method: {method}", req_id
+                        ),
                     )
                     continue
                 try:
                     result = handler(params)
-                    _send_frame(conn, _make_result(result))
+                    _send_frame(conn, _make_result(result, req_id))
                 except Exception as exc:
-                    _send_frame(conn, _make_error_envelope("internal_error", str(exc)))
+                    _send_frame(conn, _make_error_envelope("internal_error", str(exc), req_id))
         except Exception:
             pass
         finally:

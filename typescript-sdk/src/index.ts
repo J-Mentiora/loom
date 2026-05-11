@@ -14,9 +14,23 @@
  *   await session.navigate("https://example.com");
  */
 
-export { Session, sessionList, vaultGrant, vaultRevoke, vaultListGrants } from "./session.js";
+export {
+  Session,
+  sessionList,
+  vaultGrant,
+  vaultRevoke,
+  vaultListGrants,
+  killSession,
+  daemonHealth,
+} from "./session.js";
 export { LoomTransport } from "./transport.js";
-export { LoomError, LoomRPCError, LoomConnectionError, LoomTokenError } from "./errors.js";
+export {
+  LoomError,
+  LoomRPCError,
+  LoomConnectionError,
+  LoomTokenError,
+  LoomAbortError,
+} from "./errors.js";
 export type {
   SessionInfo,
   SessionInspection,
@@ -28,4 +42,8 @@ export type {
   MethodSchema,
   SchemaRegistry,
   LoomErrorCode,
+  ProbeStatus,
+  ShimBreakerSnapshot,
+  ShimDeepHealth,
+  DaemonHealthResult,
 } from "./types.js";

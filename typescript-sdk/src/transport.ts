@@ -21,7 +21,12 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as fs from "node:fs";
-import { LoomConnectionError, LoomRPCError, LoomTokenError } from "./errors.js";
+import {
+  LoomAbortError,
+  LoomConnectionError,
+  LoomRPCError,
+  LoomTokenError,
+} from "./errors.js";
 
 function defaultSocketPath(): string {
   if (process.platform === "darwin") {
@@ -45,11 +50,36 @@ function resolveToken(token: string | undefined): string {
   );
 }
 
+interface PendingCall {
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  settled: boolean;
+}
+
+export interface CallOptions {
+  /** Cancel the in-flight call. On abort, the transport fires a
+   * `request.cancel` JSON-RPC notification at the daemon and rejects the
+   * returned promise with `LoomAbortError`. The cancel is fire-and-forget;
+   * the daemon's idempotent cancel handler returns `{cancelled: bool}`
+   * which the transport silently discards. */
+  signal?: AbortSignal;
+}
+
 export class LoomTransport {
   private readonly _path: string;
   private readonly _token: string;
   private _socket: net.Socket | null = null;
   private _recvBuffer: Buffer = Buffer.alloc(0);
+
+  // ─── MULTIPLEXER STATE ─────────────────────────────────────────────────
+  // Monotonic id allocator + id-keyed pending map + single persistent data
+  // listener. Required for `request.cancel` correlation: the cancel
+  // response can arrive on the same connection while the original call is
+  // still awaiting, and per-call listeners would mis-route the frame.
+  // Mirror in python-sdk/loom/_async_transport.py.
+  // ───────────────────────────────────────────────────────────────────────
+  private _nextId = 1;
+  private _pending = new Map<number, PendingCall>();
 
   constructor(socketPath?: string, token?: string) {
     this._path = socketPath ?? defaultSocketPath();
@@ -61,29 +91,87 @@ export class LoomTransport {
       const sock = net.createConnection({ path: this._path });
       sock.once("connect", () => {
         this._socket = sock;
+        // Install persistent listeners ONCE — they live for the
+        // lifetime of the connection. Per-call listener attach/detach
+        // would scramble frames when `request.cancel` is sent while
+        // another call is in flight.
+        sock.on("data", this._onData);
+        sock.on("error", this._onError);
+        sock.on("close", this._onClose);
         // Send HELLO frame — no ACK expected from server.
         const hello = Buffer.from(`HELLO ${this._token}`, "utf8");
         this._sendFrame(hello);
         resolve();
       });
       sock.once("error", (err) => {
-        reject(new LoomConnectionError(`Cannot connect to loom socket at ${this._path}: ${err.message}`));
+        reject(
+          new LoomConnectionError(
+            `Cannot connect to loom socket at ${this._path}: ${err.message}`,
+          ),
+        );
       });
     });
   }
 
-  async call(method: string, params: Record<string, unknown>): Promise<unknown> {
+  async call(
+    method: string,
+    params: Record<string, unknown>,
+    opts?: CallOptions,
+  ): Promise<unknown> {
     if (!this._socket) {
       throw new LoomConnectionError("Transport not connected. Call connect() first.");
     }
-    const request = JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 });
-    this._sendFrame(Buffer.from(request, "utf8"));
-    const responseBytes = await this._recvFrame();
-    const response = JSON.parse(responseBytes.toString("utf8")) as Record<string, unknown>;
-    if ("error" in response) {
-      throw LoomRPCError.fromEnvelope(response);
+    // Pre-aborted signal: synchronous reject; no frame sent.
+    if (opts?.signal?.aborted) {
+      throw new LoomAbortError("request aborted before send");
     }
-    return response["result"];
+
+    const id = this._nextId++;
+    let abortListener: (() => void) | undefined;
+
+    const settledFlag: PendingCall = {
+      resolve: () => {},
+      reject: () => {},
+      settled: false,
+    };
+
+    const promise = new Promise<unknown>((resolve, reject) => {
+      settledFlag.resolve = (v) => {
+        if (settledFlag.settled) return;
+        settledFlag.settled = true;
+        if (abortListener && opts?.signal) {
+          opts.signal.removeEventListener("abort", abortListener);
+        }
+        resolve(v);
+      };
+      settledFlag.reject = (e) => {
+        if (settledFlag.settled) return;
+        settledFlag.settled = true;
+        if (abortListener && opts?.signal) {
+          opts.signal.removeEventListener("abort", abortListener);
+        }
+        reject(e);
+      };
+    });
+
+    this._pending.set(id, settledFlag);
+
+    if (opts?.signal) {
+      abortListener = () => {
+        // If the call already settled, no-op. The settled flag inside
+        // resolve/reject above also guards this.
+        if (settledFlag.settled) return;
+        // Fire-and-forget cancel envelope; daemon is idempotent.
+        this._sendCancel(id);
+        settledFlag.reject(new LoomAbortError("request aborted"));
+        this._pending.delete(id);
+      };
+      opts.signal.addEventListener("abort", abortListener, { once: true });
+    }
+
+    const request = JSON.stringify({ jsonrpc: "2.0", method, params, id });
+    this._sendFrame(Buffer.from(request, "utf8"));
+    return promise;
   }
 
   async close(): Promise<void> {
@@ -91,6 +179,11 @@ export class LoomTransport {
       this._socket.destroy();
       this._socket = null;
     }
+    // Reject any pending calls so awaiters don't hang.
+    for (const [, entry] of this._pending) {
+      entry.reject(new LoomConnectionError("Transport closed"));
+    }
+    this._pending.clear();
   }
 
   // ------------------------------------------------------------------ //
@@ -102,47 +195,90 @@ export class LoomTransport {
     this._socket!.write(Buffer.concat([header, data]));
   }
 
-  private _recvFrame(): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const tryConsume = () => {
-        if (this._recvBuffer.length >= 4) {
-          const length = this._recvBuffer.readUInt32BE(0);
-          if (this._recvBuffer.length >= 4 + length) {
-            const frame = this._recvBuffer.subarray(4, 4 + length);
-            this._recvBuffer = this._recvBuffer.subarray(4 + length);
-            cleanup();
-            resolve(frame);
-          }
-        }
-      };
-
-      const onData = (chunk: Buffer) => {
-        this._recvBuffer = Buffer.concat([this._recvBuffer, chunk]);
-        tryConsume();
-      };
-
-      const onError = (err: Error) => {
-        cleanup();
-        reject(new LoomConnectionError(`Connection error mid-frame: ${err.message}`));
-      };
-
-      const onClose = () => {
-        cleanup();
-        reject(new LoomConnectionError("Connection closed by daemon mid-frame"));
-      };
-
-      const cleanup = () => {
-        this._socket?.removeListener("data", onData);
-        this._socket?.removeListener("error", onError);
-        this._socket?.removeListener("close", onClose);
-      };
-
-      this._socket!.on("data", onData);
-      this._socket!.on("error", onError);
-      this._socket!.on("close", onClose);
-
-      // Try consuming already-buffered data
-      tryConsume();
+  private _sendCancel(targetId: number): void {
+    if (!this._socket) return;
+    // Allocate a fresh id for the cancel envelope itself; the daemon's
+    // response (`{cancelled: bool}`) will hit the reader and be silently
+    // discarded since we don't register a pending entry for it.
+    const id = this._nextId++;
+    const env = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "request.cancel",
+      params: { request_id: targetId },
+      id,
     });
+    try {
+      this._sendFrame(Buffer.from(env, "utf8"));
+    } catch {
+      // Cancel is best-effort. If the socket is wedged the original
+      // promise has already been rejected anyway.
+    }
+  }
+
+  // Persistent listeners (arrow-bound so `this` is captured cleanly).
+  private _onData = (chunk: Buffer): void => {
+    this._recvBuffer = Buffer.concat([this._recvBuffer, chunk]);
+    // Drain as many complete frames as the buffer contains.
+    while (this._recvBuffer.length >= 4) {
+      const length = this._recvBuffer.readUInt32BE(0);
+      if (this._recvBuffer.length < 4 + length) break;
+      const frame = this._recvBuffer.subarray(4, 4 + length);
+      this._recvBuffer = this._recvBuffer.subarray(4 + length);
+      this._dispatchFrame(frame);
+    }
+  };
+
+  private _onError = (err: Error): void => {
+    const e = new LoomConnectionError(`Connection error mid-frame: ${err.message}`);
+    for (const [, entry] of this._pending) {
+      entry.reject(e);
+    }
+    this._pending.clear();
+  };
+
+  private _onClose = (): void => {
+    const e = new LoomConnectionError("Connection closed by daemon");
+    for (const [, entry] of this._pending) {
+      entry.reject(e);
+    }
+    this._pending.clear();
+  };
+
+  private _dispatchFrame(frame: Buffer): void {
+    let envelope: Record<string, unknown>;
+    try {
+      envelope = JSON.parse(frame.toString("utf8")) as Record<string, unknown>;
+    } catch {
+      // Malformed frame — drop. Logging via console would pollute output;
+      // a future debug-log hook could surface it.
+      return;
+    }
+    const id = envelope["id"];
+    if (typeof id !== "number") {
+      // No id. A no-id ERROR frame is a daemon-level protocol error
+      // (auth failure, malformed request) — reject ALL pending with it
+      // so the first pending call surfaces the typed envelope. Anything
+      // else (notification, malformed) we silently drop.
+      if ("error" in envelope) {
+        const e = LoomRPCError.fromEnvelope(envelope);
+        for (const [, entry] of this._pending) {
+          entry.reject(e);
+        }
+        this._pending.clear();
+      }
+      return;
+    }
+    const entry = this._pending.get(id);
+    if (!entry) {
+      // Unknown id — likely a `request.cancel` response that we didn't
+      // register a pending for. Silently discard.
+      return;
+    }
+    this._pending.delete(id);
+    if ("error" in envelope) {
+      entry.reject(LoomRPCError.fromEnvelope(envelope));
+    } else {
+      entry.resolve(envelope["result"]);
+    }
   }
 }

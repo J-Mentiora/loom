@@ -8,6 +8,40 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`daemon.health({deep: true})` shim probe.** Adds `ShimRequest::Health`
+  CBOR variant + shim-side handler returning
+  `ShimHealthInfo { uptime_ms, requests_served, last_request_at_ms }`. The
+  daemon fans out probes concurrently with per-shim and overall budgets
+  (defaults 1 s / 3 s; env-overridable via `LOOM_PROBE_TIMEOUT_MS` and
+  `LOOM_DEEP_HEALTH_BUDGET_MS`). Payload is now typed
+  `Vec<ShimDeepHealth>` (replacing the prior placeholder
+  `Vec<serde_json::Value>`) with a typed
+  `ProbeStatus { Ok, Timeout, Error }` enum. The new shim variant
+  requires same-tree daemon+shim shipping; version-mismatched shims
+  surface as `probe_status: "timeout"`. `daemon.health` continues to
+  require the existing socket-auth token handshake — same auth surface
+  as before; no anonymous reachability. Known gap: no per-connection
+  rate limit on `daemon.health` itself (tracked as follow-up).
+- **`ShimState.restart_count` / `last_restart_at_ms`.** Daemon-side
+  bookkeeping for shim respawn events, bumped in `get_or_spawn` only
+  when a prior state entry exists (avoids overcounting under
+  open-breaker rejection). Exposed via the deep-health payload.
+- **SDK wrappers (TS + Python) for the admin RPCs.** Hand-written
+  `Session.kill()` (sync + async parity in Python), `killSession()`
+  (TypeScript) / `kill_session()` (Python sync) admin free functions
+  with documented "ADMIN ESCAPE HATCH — 5 s ceiling then SIGKILL"
+  warnings, and `daemonHealth()` (TS) / `daemon_health()` (Python sync)
+  free functions. JSON-RPC request `id` allocator switched from
+  hardcoded `1` to monotonic per-connection; transports moved to
+  id-keyed response demultiplexing (persistent reader task in async
+  Python; persistent `data` listener in TS) to support `request.cancel`
+  correlation while another call is in flight. Sync Python keeps
+  single-in-flight and gains an `AsyncSession`-redirecting doc note for
+  cancellation. TS adds `AbortSignal` support on `call()` via
+  `LoomAbortError` (`name === "AbortError"`); Python async transport
+  transparently emits `request.cancel` on `asyncio.CancelledError` and
+  re-raises so `asyncio.wait_for` / `TaskGroup` / `asyncio.timeout`
+  compose cleanly.
 - **`SessionScope` primitive** ([`loom-core/src/session_scope/`](loom-core/src/session_scope/)).
   Per-session structured-concurrency parent: `tokio_util::sync::CancellationToken`
   paired with a `tokio::task::JoinSet`. All session-lifetime spawns become children;

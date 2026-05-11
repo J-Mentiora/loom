@@ -55,6 +55,8 @@ __all__ = [
     "GrantInfo",
     "SchemaRegistry",
     "LoomErrorCode",
+    "kill_session",
+    "daemon_health",
 ]
 
 
@@ -204,6 +206,16 @@ class Session:
             "session.abort", {"session_id": self.session_id, "reason": reason}
         )
         return SessionInfo._from_dict(result)
+
+    def kill(self) -> None:
+        """Force-terminate this session.
+
+        Use ``close()`` for normal shutdown. Use ``abort()`` to cancel
+        in-flight actions while keeping the session. ``kill()`` is an
+        ADMIN ESCAPE HATCH — the daemon tears down the shim with a 5 s
+        ceiling then SIGKILL.
+        """
+        _do_kill_session_sync(self._transport, self.session_id)
 
     def inspect(self, *, at_action: int | None = None) -> SessionInspection:
         params: dict[str, Any] = {"session_id": self.session_id}
@@ -366,8 +378,68 @@ class AsyncSession:
             return SessionInfo._from_dict(result)
         return SessionInfo(self.session_id, "closed", 0)
 
+    async def kill(self) -> None:
+        """Force-terminate this session (async).
+
+        Same semantics as ``Session.kill()``: ADMIN ESCAPE HATCH; daemon
+        tears down the shim with a 5 s ceiling then SIGKILL. Supports
+        :class:`asyncio.CancelledError` integration via the underlying
+        transport.
+        """
+        await self._transport.call("session.kill", {"session_id": self.session_id})
+
     async def __aenter__(self) -> AsyncSession:
         return self
 
     async def __aexit__(self, *_: Any) -> None:
         await self.close()
+
+
+# ─── admin RPCs (kill_session, daemon_health) ─────────────────────────────
+
+
+def _do_kill_session_sync(transport: LoomTransport, session_id: str) -> None:
+    """Internal single call site shared by ``Session.kill()`` and
+    the top-level ``kill_session()`` free function."""
+    transport.call("session.kill", {"session_id": session_id})
+
+
+def kill_session(
+    session_id: str,
+    *,
+    socket_path: str | None = None,
+    token: str | None = None,
+) -> None:
+    """ADMIN ESCAPE HATCH — force-terminate a stuck session by id without
+    holding a :class:`Session` handle.
+
+    Performs the abort flow plus a blocking 5 s shim-teardown ceiling,
+    then SIGKILL. Prefer ``Session.close()`` for normal shutdown; reach
+    for ``kill_session()`` only when normal shutdown is wedged.
+
+    The daemon authenticates the calling transport at the connection
+    level (HELLO token handshake) — there is no separate per-call gate
+    on this admin function.
+    """
+    with LoomTransport(socket_path, token) as t:
+        _do_kill_session_sync(t, session_id)
+
+
+def daemon_health(
+    *,
+    deep: bool = False,
+    socket_path: str | None = None,
+    token: str | None = None,
+) -> dict[str, Any]:
+    """Query daemon health.
+
+    Shallow path is non-blocking. ``deep=True`` fans out a per-shim probe
+    (1 s budget per shim, 3 s overall) and returns uptime/requests-served
+    counters per running shim.
+
+    Returns the parsed JSON payload as a dict; field names use snake_case
+    (matching the wire format) — see ``loom-rpc/src/rpc_handlers/rpc_handlers.rs``
+    for the field schema.
+    """
+    with LoomTransport(socket_path, token) as t:
+        return t.call("daemon.health", {"deep": deep})
