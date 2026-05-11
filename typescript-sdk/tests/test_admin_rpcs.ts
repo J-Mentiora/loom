@@ -136,19 +136,31 @@ describe("Admin RPCs: session.kill, daemon.health, AbortSignal", () => {
   });
 
   test("AbortSignal mid-flight: aborts and emits request.cancel", async () => {
-    const cancelCalls: Record<string, unknown>[] = [];
+    // Event-driven (not wall-clock) to avoid CI flake: the slow handler
+    // awaits on a Promise we resolve only after observing the cancel
+    // envelope server-side. The abort is also fired only after the
+    // server-side handler has started (signalled via slowStarted).
+    let resolveSlowStarted!: () => void;
+    const slowStarted = new Promise<void>((r) => {
+      resolveSlowStarted = r;
+    });
+    let resolveSlowDone!: () => void;
+    const slowDone = new Promise<void>((r) => {
+      resolveSlowDone = r;
+    });
+    let resolveCancelObserved!: (p: Record<string, unknown>) => void;
+    const cancelObserved = new Promise<Record<string, unknown>>((r) => {
+      resolveCancelObserved = r;
+    });
+
     daemon.registerHandler("request.cancel", (params) => {
-      cancelCalls.push(params);
+      resolveCancelObserved(params);
       return { cancelled: true };
     });
-    // Slow handler: resolves after 200ms; abort fires at 30ms so the
-    // test sees the cancel-driven reject, not the eventual response.
-    // .unref() the timer so a leaked one doesn't keep the test runner alive.
-    daemon.registerHandler("test.slow", () => {
-      return new Promise((resolve) => {
-        const t = setTimeout(() => resolve({ done: true }), 200);
-        t.unref();
-      });
+    daemon.registerHandler("test.slow", async () => {
+      resolveSlowStarted();
+      await slowDone;
+      return { done: true };
     });
 
     const t = new LoomTransport(daemon.socketPath, daemon.token);
@@ -156,8 +168,11 @@ describe("Admin RPCs: session.kill, daemon.health, AbortSignal", () => {
     try {
       const controller = new AbortController();
       const callPromise = t.call("test.slow", {}, { signal: controller.signal });
-      // Abort shortly after dispatch.
-      setTimeout(() => controller.abort(), 30);
+      // Wait until the server-side handler has started before aborting,
+      // so the cancel is truly mid-flight (handler awaiting, not already
+      // returning).
+      await slowStarted;
+      controller.abort();
       await assert.rejects(
         () => callPromise,
         (err: unknown) => {
@@ -165,10 +180,11 @@ describe("Admin RPCs: session.kill, daemon.health, AbortSignal", () => {
           return true;
         },
       );
-      // Give the transport a tick to flush the cancel.
-      await new Promise((r) => setTimeout(r, 50));
-      assert.ok(cancelCalls.length >= 1, "request.cancel envelope was not sent");
-      assert.ok("request_id" in cancelCalls[0]);
+      // Wait for the cancel envelope to be observed server-side.
+      const cancelParams = await cancelObserved;
+      assert.ok("request_id" in cancelParams, "cancel envelope missing request_id");
+      // Release the slow handler so the daemon doesn't keep the test alive.
+      resolveSlowDone();
     } finally {
       await t.close();
     }

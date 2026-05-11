@@ -425,6 +425,49 @@ jobs:
 
   # vendored-wasm staleness check. The committed
   # `loom-cli/vendor/loom_surface_web.wasm` makes `cargo install --git`
+  # Python SDK — pytest. Covers the hand-written admin wrappers
+  # (Session.kill, kill_session, daemon_health) and the new
+  # AsyncLoomTransport id-keyed demux + asyncio.CancelledError integration.
+  # Hits a MockDaemon fixture; no real daemon spawn.
+  python-sdk-tests:
+    name: pytest (python-sdk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install python-sdk + dev deps
+        working-directory: python-sdk
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run pytest
+        working-directory: python-sdk
+        run: pytest -q
+
+  # TypeScript SDK — node:test via tsx. Covers the hand-written admin
+  # wrappers (Session.kill, killSession, daemonHealth) and the new
+  # LoomTransport id-keyed demux + AbortSignal cancellation. Hits a
+  # MockDaemon fixture; no real daemon spawn.
+  typescript-sdk-tests:
+    name: node:test (typescript-sdk)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install deps
+        working-directory: typescript-sdk
+        run: npm ci || npm install
+      - name: Typecheck
+        working-directory: typescript-sdk
+        run: npm run typecheck
+      - name: Run tests
+        working-directory: typescript-sdk
+        run: npm test
+
   # work without `rustup target add wasm32-wasip2`. If the vendored bytes
   # drift from `loom-surface-web/` source, cargo-install users get stale
   # behavior. This job rebuilds from source and diffs.

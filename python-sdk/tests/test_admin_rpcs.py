@@ -117,3 +117,38 @@ def test_async_session_kill(daemon):
             await s._transport.close()
 
     asyncio.run(_run())
+
+
+def test_kill_session_nonexistent_returns_rpc_error(daemon):
+    """Negative path: kill_session on an unknown id should surface a
+    typed LoomRPCError (not a connection error or silent success)."""
+    import pytest
+
+    # Override handler to error on unknown session ids.
+    def _kill_strict(params: dict) -> dict:
+        sid = params.get("session_id", "")
+        if sid not in daemon.sessions:
+            raise ValueError(f"session not found: {sid}")  # MockDaemon maps to internal_error envelope
+        daemon.sessions[sid]["status"] = "killed"
+        return daemon.sessions[sid].copy()
+
+    daemon.register_handler("session.kill", _kill_strict)
+    with pytest.raises(loom.LoomRPCError):
+        loom.kill_session(
+            "01NONEXISTENT" + "0" * 12,
+            socket_path=str(daemon.socket_path),
+            token=daemon.token,
+        )
+
+
+def test_daemon_health_error_envelope_surfaces_as_rpc_error(daemon):
+    """Negative path: daemon.health returning an error envelope should
+    raise LoomRPCError, not silently return a malformed result."""
+    import pytest
+
+    def _broken_health(_params: dict) -> dict:
+        raise RuntimeError("simulated daemon-side failure")
+
+    daemon.register_handler("daemon.health", _broken_health)
+    with pytest.raises(loom.LoomRPCError):
+        loom.daemon_health(socket_path=str(daemon.socket_path), token=daemon.token)

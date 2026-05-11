@@ -103,14 +103,19 @@ impl SessionShutdownAsync for WasmHostShutdownAdapter {
     }
 }
 
-// ─── DaemonHealthProvider: shallow snapshot from live daemon state ──────────
+// ─── DaemonHealthProvider + DaemonHealthAsync ───────────────────────────────
 //
-// Reads `ShimManager.breaker_state_snapshot()` (per-shim breaker state) and
-// `core.session_manager.list_sessions_info().len()` (active session count).
-// `otel_exporter` reflects the `LOOM_OTEL_ENABLED` env var per the existing
-// daemon convention. `deep` is always `None` today — the shim-side
-// `shim.health` IPC verb is a follow-up, deliberately scoped out of this PR
-// per `plan.md § What is NOT in this PR`.
+// Shallow `DaemonHealthProvider::snapshot` reads `ShimManager.breaker_state_snapshot()`
+// (per-shim breaker state) and `core.session_manager.list_sessions_info().len()`
+// (active session count). `otel_exporter` reflects the `LOOM_OTEL_ENABLED` env var
+// per the existing daemon convention.
+//
+// Deep `DaemonHealthAsync::snapshot_deep` fans out `ShimRequest::Health` probes
+// across every running shim via `ShimManager::probe_health` and aggregates the
+// results into typed `ShimDeepHealth` records. Per-shim 1 s budget (env-overridable
+// via `LOOM_PROBE_TIMEOUT_MS`), 3 s overall (`LOOM_DEEP_HEALTH_BUDGET_MS`).
+// The handler in `loom-rpc::rpc_handlers::mod::daemon_health` selects which path
+// to call based on the request's `deep` flag.
 
 struct DaemonHealthBridge {
     core: Arc<CoreApiFacade>,
