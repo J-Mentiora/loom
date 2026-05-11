@@ -6,6 +6,12 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-05-11
+
+Patch release rolling up the post-0.9.0 daemon-stall fix (#55) and the
+daemon-health deep-probe + SDK admin wrappers follow-up (#56), plus the
+docs/CI groundwork from #51, #52, #54.
+
 ### Added
 
 - **`daemon.health({deep: true})` shim probe.** Adds `ShimRequest::Health`
@@ -209,5 +215,6 @@ are stable. Deterministic replay and `web.click` remain Beta — promotion to
   determinism script applied. Fixed by lazy-spawning the
   determinism-injected target on the first evaluate.
 
-[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.1
 [0.9.0]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.0
