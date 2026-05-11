@@ -33,6 +33,7 @@ impl RpcHandlers {
             observability,
             session_shutdown: std::sync::OnceLock::new(),
             health_provider: std::sync::OnceLock::new(),
+            daemon_health_async: std::sync::OnceLock::new(),
         })
     }
 
@@ -120,17 +121,26 @@ impl RpcHandlers {
 
     /// `daemon.health` — operational snapshot. Shallow path is non-
     /// blocking: returns active session count, per-shim breaker state,
-    /// OTel exporter status. Deep path (`{deep: true}`) is wired via
-    /// `DaemonHealthProvider` and may probe shim subprocesses; today
-    /// all real impls return `deep: None` (the shim-side `shim.health`
-    /// IPC verb is a follow-up). When no provider is wired (test stubs),
-    /// returns an empty snapshot with `otel_exporter: "unwired"`.
+    /// OTel exporter status. Deep path (`{deep: true}`) probes each
+    /// running shim for self-reported uptime + requests-served counters
+    /// (1 s per-shim budget, fanned out concurrently); the daemon
+    /// supplements with its own restart bookkeeping.
+    ///
+    /// Overall budget on the deep path is `LOOM_DEEP_HEALTH_BUDGET_MS`
+    /// (default 3000) — a safety net beyond the per-shim 1 s. On
+    /// timeout, returns whatever results were ready and marks the rest
+    /// implicitly via the shallow `deep: None` fallback in the next
+    /// poll (callers can re-issue).
+    ///
+    /// When no provider is wired (test stubs), returns an empty snapshot
+    /// with `otel_exporter: "unwired"`.
     pub async fn daemon_health(
         &self,
         deep: bool,
     ) -> HandlerResult<crate::rpc_handlers::rpc_handlers::DaemonHealth> {
         use crate::rpc_handlers::rpc_handlers::DaemonHealth;
-        Ok(self
+        // Shallow path: synchronous provider snapshot.
+        let mut health = self
             .health_provider
             .get()
             .map(|p| p.snapshot(deep))
@@ -139,7 +149,28 @@ impl RpcHandlers {
                 shim_breaker_states: Vec::new(),
                 otel_exporter: "unwired".to_string(),
                 deep: None,
-            }))
+            });
+
+        // Deep path: only if the caller asked AND an async provider is
+        // wired. The sync `snapshot(deep)` call above does NOT populate
+        // `deep` — that's by design; the deep path is async and lives
+        // here in the handler.
+        if deep {
+            if let Some(async_provider) = self.daemon_health_async.get() {
+                let budget_ms = std::env::var("LOOM_DEEP_HEALTH_BUDGET_MS")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .unwrap_or(3_000);
+                let deep_results = tokio::time::timeout(
+                    std::time::Duration::from_millis(budget_ms),
+                    async_provider.snapshot_deep(),
+                )
+                .await
+                .unwrap_or_default();
+                health.deep = Some(deep_results);
+            }
+        }
+        Ok(health)
     }
 
     /// `session.kill` — admin escape hatch for stuck sessions.

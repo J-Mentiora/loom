@@ -416,7 +416,8 @@ fn set_request_id(req: &mut ShimRequest, id: u64) {
         | ShimRequest::CdpSend { request_id, .. }
         | ShimRequest::PageNavigate { request_id, .. }
         | ShimRequest::PageClose { request_id, .. }
-        | ShimRequest::Shutdown { request_id } => *request_id = id,
+        | ShimRequest::Shutdown { request_id }
+        | ShimRequest::Health { request_id } => *request_id = id,
     }
 }
 

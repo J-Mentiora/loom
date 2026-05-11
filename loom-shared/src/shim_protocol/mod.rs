@@ -14,6 +14,16 @@
 //! # Closed enums
 //! `ShimErrorCode` is a 5-variant closed enum . Adding a variant
 //! requires a `loom-host::ErrorMapper` update.
+//!
+//! `ShimRequest` and `ShimResponse` are also closed — there is no
+//! `#[serde(other)]` fallback. An unknown `kind` is a fatal CBOR decode
+//! error in the shim's read loop. **Adding a variant requires
+//! same-tree daemon+shim shipping; mixed deployments are NOT supported.**
+//! The codebase ships everything in one tarball
+//! ([dist-workspace.toml](../../dist-workspace.toml)) so this invariant
+//! holds in practice. The `Health` variant was added under this
+//! invariant; an older shim will exit its read loop on receiving it,
+//! observable at the host as a 1s probe timeout via `daemon.health`.
 
 use crate::types::{EpochMs, Seed};
 use serde::{Deserialize, Serialize};
@@ -158,6 +168,29 @@ pub enum ShimRequest {
     },
     /// Cooperative shutdown. Drains in-flight, then exits.
     Shutdown { request_id: u64 },
+    /// Liveness + introspection probe. The shim responds with a
+    /// `ShimResponse::Ok` whose `payload` is a CBOR-encoded
+    /// [`ShimHealthInfo`]. Used by `daemon.health({deep:true})` to surface
+    /// subprocess uptime and request-throughput counters without spawning
+    /// any new shim. Process-local (no session/target).
+    Health { request_id: u64 },
+}
+
+/// Payload returned in the `ShimResponse::Ok.payload` of a successful
+/// `ShimRequest::Health` round-trip. Subprocess-local introspection only —
+/// the shim cannot track its own restarts (a restart is a fresh process
+/// with no memory of the prior life); daemon-side bookkeeping in
+/// `ShimManager::shim_state` complements this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShimHealthInfo {
+    /// Wall-clock milliseconds since this subprocess started.
+    pub uptime_ms: u64,
+    /// Count of `ShimRequest`s served. Excludes `Shutdown` and `Health`
+    /// (meta-requests) so the number reflects user work.
+    pub requests_served: u64,
+    /// Epoch milliseconds of the most recent non-meta request. `None`
+    /// if no user request has been served yet.
+    pub last_request_at_ms: Option<u64>,
 }
 
 /// Outbound frames from the shim to `loom-host::ShimManager`.

@@ -20,13 +20,14 @@
 
 use crate::action_executor::action_executor::{ActionExecutor, ActionResult};
 use crate::ipc_endpoint::ipc_endpoint::{
-    ResponseSender, SessionId, ShimErrorCode, ShimRequest, ShimResponse, TargetId,
+    ResponseSender, SessionId, ShimErrorCode, ShimHealthInfo, ShimRequest, ShimResponse, TargetId,
 };
 use crate::target_manager::target_manager::TargetManager;
 use async_trait::async_trait;
 use ciborium::value::Value as CborValue;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 
 /// In-flight request bookkeeping. Keyed by `(session_id, message_id)`
@@ -45,6 +46,13 @@ pub struct ShimDispatcher {
     pub(crate) action_executor: Arc<dyn ActionExecutor>,
     pub(crate) response_tx: ResponseSender,
     pub(crate) invalidated: Arc<AtomicBool>,
+    /// Subprocess startup instant — basis for `ShimHealthInfo.uptime_ms`.
+    pub(crate) started_at: Instant,
+    /// Counter of non-meta requests served. Incremented after the
+    /// Shutdown/Health intercept in `run`. Used in `ShimHealthInfo`.
+    pub(crate) requests_served: Arc<AtomicU64>,
+    /// Epoch ms of the most recent non-meta request (0 = none yet).
+    pub(crate) last_request_at_ms: Arc<AtomicU64>,
 }
 
 impl ShimDispatcher {
@@ -58,6 +66,9 @@ impl ShimDispatcher {
             action_executor,
             response_tx,
             invalidated: Arc::new(AtomicBool::new(false)),
+            started_at: Instant::now(),
+            requests_served: Arc::new(AtomicU64::new(0)),
+            last_request_at_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -111,6 +122,29 @@ impl Dispatcher for ShimDispatcher {
                         }
                         return Ok(());
                     }
+                    if let ShimRequest::Health { request_id } = req {
+                        // Process-local probe — respond inline (no spawn,
+                        // no executor traffic). Excludes itself from the
+                        // requests_served counter so deep-health doesn't
+                        // inflate the user-work metric.
+                        let info = ShimHealthInfo {
+                            uptime_ms: self.started_at.elapsed().as_millis() as u64,
+                            requests_served: self.requests_served.load(Ordering::Relaxed),
+                            last_request_at_ms: {
+                                let v = self.last_request_at_ms.load(Ordering::Relaxed);
+                                if v == 0 { None } else { Some(v) }
+                            },
+                        };
+                        let payload = info_to_cbor(&info);
+                        let _ = self.response_tx
+                            .send(make_ok_response(request_id, None, payload))
+                            .await;
+                        continue;
+                    }
+                    // Non-meta request — bump observability counters before
+                    // dispatch (see ShimHealthInfo semantics).
+                    self.requests_served.fetch_add(1, Ordering::Relaxed);
+                    self.last_request_at_ms.store(epoch_ms_now(), Ordering::Relaxed);
                     let response_tx = self.response_tx.clone();
                     let target_manager = self.target_manager.clone();
                     let action_executor = self.action_executor.clone();
@@ -273,6 +307,7 @@ async fn handle_request(
             }
         },
         ShimRequest::Shutdown { .. } => unreachable!("Shutdown handled in run loop"),
+        ShimRequest::Health { .. } => unreachable!("Health handled in run loop"),
     }
 }
 
@@ -299,7 +334,25 @@ fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
             ..
         } => (*request_id, Some(*session_id)),
         ShimRequest::Shutdown { request_id } => (*request_id, None),
+        ShimRequest::Health { request_id } => (*request_id, None),
     }
+}
+
+fn epoch_ms_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Serialize `ShimHealthInfo` into a CBOR `Value` for use as a
+/// `ShimResponse::Ok.payload`.
+fn info_to_cbor(info: &ShimHealthInfo) -> CborValue {
+    let mut bytes = Vec::new();
+    if ciborium::ser::into_writer(info, &mut bytes).is_err() {
+        return CborValue::Null;
+    }
+    ciborium::de::from_reader(&bytes[..]).unwrap_or(CborValue::Null)
 }
 
 fn overwrite_correlation(
@@ -377,6 +430,9 @@ pub enum RouteTarget {
     ActionExecutor,
     /// `Shutdown` → cooperative drain.
     Shutdown,
+    /// `Health` → process-local liveness/uptime probe; never reaches an
+    /// executor.
+    Health,
 }
 
 pub fn route_target(req: &ShimRequest) -> RouteTarget {
@@ -386,5 +442,6 @@ pub fn route_target(req: &ShimRequest) -> RouteTarget {
         | ShimRequest::PageClose { .. } => RouteTarget::TargetManager,
         ShimRequest::CdpSend { .. } => RouteTarget::ActionExecutor,
         ShimRequest::Shutdown { .. } => RouteTarget::Shutdown,
+        ShimRequest::Health { .. } => RouteTarget::Health,
     }
 }
