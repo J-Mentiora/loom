@@ -35,6 +35,7 @@ const BUILTIN_CORE_METHODS: &[&str] = &[
     "session.diff",
     "session.export",
     "session.validate",
+    "session.kill",
     "vault.grant",
     "vault.revoke",
     "vault.list_grants",
@@ -42,6 +43,8 @@ const BUILTIN_CORE_METHODS: &[&str] = &[
     "content.get",
     "gc.run",
     "import.playwright",
+    "daemon.health",
+    "request.cancel",
 ];
 
 fn is_builtin_core_method(method: &str) -> bool {

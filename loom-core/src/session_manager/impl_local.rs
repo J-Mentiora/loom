@@ -8,6 +8,7 @@ use crate::manifest_writer::{ManifestEntry, SessionId};
 use crate::session_manager::session_manager::{
     AbortReason, LocalSessionManager, Session, SessionCreateOpts, SessionError, SessionStatus,
 };
+use crate::session_scope::SessionScope;
 use loom_shared::types::{EpochMs, Seed};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -89,6 +90,7 @@ impl LocalSessionManager {
 
         let tape_writer = self.determinism.new_tape_writer();
         let counters = Arc::new(SessionCounters::default());
+        let scope = SessionScope::new();
         let session = Arc::new(Session {
             id: id.clone(),
             status: parking_lot::Mutex::new(SessionStatus::Active),
@@ -97,10 +99,9 @@ impl LocalSessionManager {
             writer: Arc::new(handle),
             counters: Arc::clone(&counters),
             tape_writer: Arc::new(tokio::sync::Mutex::new(tape_writer)),
-            task_handle: tokio::sync::Mutex::new(None),
+            scope: Arc::clone(&scope),
             next_action_id: AtomicU64::new(0),
             kill_reason: Arc::new(parking_lot::Mutex::new(None)),
-            budget_timer: parking_lot::Mutex::new(None),
             capture_policy,
             no_blocklist,
             seed,
@@ -127,19 +128,33 @@ impl LocalSessionManager {
 
                 // Spawn the per-session wall-clock timer if a positive
                 // budget is set. Zero/None → no timer (caller opts out).
+                // The timer runs as a SessionScope child so close/abort can
+                // signal it via the scope's cancellation token — no more
+                // separate JoinHandle bookkeeping or fire-and-forget abort.
                 if limits.session_walltime_ms > 0 {
                     let enforcer = Arc::clone(&self.budget_enforcer);
                     let timer_id = id.clone();
                     let budget_ms = limits.session_walltime_ms;
-                    let handle = tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_millis(budget_ms)).await;
-                        // account(Walltime, full_budget) trips the threshold
-                        // gate inside LocalBudgetEnforcer::account, which
-                        // fires the kill callback exactly once (idempotent
-                        // via SessionBudgetEntry::killed AtomicBool).
-                        let _ = enforcer.account(timer_id, ResourceKind::Walltime, budget_ms);
+                    let cancel = scope.child_token();
+                    scope.spawn(async move {
+                        tokio::select! {
+                            // Session closed/aborted before budget expired —
+                            // exit without firing the kill callback.
+                            _ = cancel.cancelled() => {}
+                            // Budget expired — account(Walltime, full_budget)
+                            // trips the threshold gate inside
+                            // LocalBudgetEnforcer::account, which fires the
+                            // kill callback exactly once (idempotent via
+                            // SessionBudgetEntry::killed AtomicBool).
+                            _ = tokio::time::sleep(Duration::from_millis(budget_ms)) => {
+                                let _ = enforcer.account(
+                                    timer_id,
+                                    ResourceKind::Walltime,
+                                    budget_ms,
+                                );
+                            }
+                        }
                     });
-                    *session.budget_timer.lock() = Some(handle);
                 }
             }
         }
@@ -171,11 +186,12 @@ impl LocalSessionManager {
             *status = SessionStatus::Closed;
         }
 
-        // Cancel the wall-clock timer + drop budget registration so a
-        // closed session never trips the kill callback after exit.
-        if let Some(handle) = session.budget_timer.lock().take() {
-            handle.abort();
-        }
+        // Signal every scope-owned task (budget timer, shim-IPC tasks,
+        // receipt spawns) to exit cooperatively. The actual drain (joining
+        // them with a grace period) runs at the daemon bridge layer in
+        // `close_session_raw` — keeping `close()` synchronous preserves the
+        // existing call signature across the codebase + tests + benchmarks.
+        session.scope.cancel();
         self.budget_enforcer.unregister_session(id.clone());
 
         self.manifest_writer.append(
@@ -213,11 +229,10 @@ impl LocalSessionManager {
             *status = SessionStatus::Aborted;
         }
 
-        // Cancel the wall-clock timer + drop budget registration so the
-        // aborted session can't double-fire the kill callback at expiry.
-        if let Some(handle) = session.budget_timer.lock().take() {
-            handle.abort();
-        }
+        // Signal every scope-owned task (budget timer, shim-IPC tasks,
+        // receipt spawns) to exit cooperatively. Actual drain happens at
+        // the daemon bridge layer.
+        session.scope.cancel();
         self.budget_enforcer.unregister_session(id.clone());
 
         self.manifest_writer.append(

@@ -11,8 +11,53 @@ use crate::frame_handler::frame_handler::{FrameHandler, FramedUnixStream};
 use crate::schema_validator::schema_validator::ValidationOutcome;
 use bytes::Bytes;
 use futures::{SinkExt, StreamExt};
-use std::sync::Arc;
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 use tokio::net::UnixStream;
+use tokio_util::sync::CancellationToken;
+
+/// Per-connection cancel registry: maps the JSON-RPC envelope `id`
+/// (stringified) to a `CancellationToken` for the corresponding
+/// in-flight dispatch. The `request.cancel` RPC looks up the target id
+/// and fires its token; the in-flight `handle_request` races the token
+/// against `router.dispatch` and returns `request-cancelled` if the
+/// token wins.
+///
+/// Lifetime: per-connection. Dropped when the connection task exits, so
+/// there's no cross-connection registry maintenance.
+type ConnectionCancelRegistry = Arc<Mutex<HashMap<String, CancellationToken>>>;
+
+/// Stringify a JSON-RPC `id` (which can be string, number, or null) so
+/// it's usable as a HashMap key. Treats `null` as `""` — a server
+/// never assigns null to a request, but defensive in case a client
+/// sends it (cancel-by-null is a no-op on lookup).
+fn id_key(id: &serde_json::Value) -> String {
+    match id {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Number(n) => n.to_string(),
+        _ => String::new(),
+    }
+}
+
+/// Per-request server-side deadline. Wraps `router.dispatch` so a hung
+/// shim or stuck dispatcher can't hold the connection task indefinitely
+/// (the prior code only had the 300 s socket idle timeout, which let
+/// individual requests stall for up to 5 minutes before the connection
+/// was reaped). Configurable via `LOOM_REQUEST_TIMEOUT_MS`; default 30 s.
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
+
+fn request_timeout() -> Duration {
+    static CACHED: OnceLock<Duration> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let ms = std::env::var("LOOM_REQUEST_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);
+        Duration::from_millis(ms)
+    })
+}
 
 impl ConnectionHandler {
     pub fn new(deps: Arc<ConnectionHandlerDeps>) -> Self {
@@ -53,6 +98,10 @@ impl ConnectionHandler {
             return;
         }
 
+        // Per-connection cancel registry. Dropped when this task exits,
+        // so all in-flight tokens are released cleanly.
+        let cancels: ConnectionCancelRegistry = Arc::new(Mutex::new(HashMap::new()));
+
         // Authenticated: request dispatch loop
         loop {
             let frame = match tokio::time::timeout(AUTHENTICATED_IDLE_TIMEOUT, framed.next()).await
@@ -60,7 +109,7 @@ impl ConnectionHandler {
                 Ok(Some(Ok(f))) => f,
                 _ => break,
             };
-            let response = handle_request(&frame, &deps).await;
+            let response = handle_request(&frame, &deps, &cancels).await;
             if framed.send(Bytes::from(response)).await.is_err() {
                 break;
             }
@@ -152,7 +201,11 @@ pub(crate) fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Valu
     serde_json::Value::Object(merged)
 }
 
-async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
+async fn handle_request(
+    frame: &[u8],
+    deps: &ConnectionHandlerDeps,
+    cancels: &ConnectionCancelRegistry,
+) -> Vec<u8> {
     let request: serde_json::Value = match serde_json::from_slice(frame) {
         Ok(v) => v,
         Err(_) => {
@@ -185,6 +238,33 @@ async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
         .cloned()
         .unwrap_or(serde_json::Value::Object(Default::default()));
 
+    // Special-case: `request.cancel` is connection-scoped, not session-
+    // scoped, so it bypasses the router and acts directly on the
+    // per-connection registry. Params: `{"request_id": <jsonrpc-id>}`
+    // where `request_id` is the JSON-RPC envelope `id` of the in-flight
+    // call to cancel. Idempotent — cancelling an unknown id returns ok.
+    if method == "request.cancel" {
+        let target = raw_params
+            .get("request_id")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        let key = id_key(&target);
+        let cancelled = cancels
+            .lock()
+            .get(&key)
+            .map(|tok| {
+                tok.cancel();
+                true
+            })
+            .unwrap_or(false);
+        let envelope = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "result": { "cancelled": cancelled },
+        });
+        return serde_json::to_vec(&envelope).unwrap_or_default();
+    }
+
     // Resolve method aliases (e.g. SDK's `action.web.navigate` → canonical
     // `web.navigate`) and unwrap the SDK envelope shape so the validator
     // sees the flat-params shape its schemas were authored against.
@@ -198,7 +278,59 @@ async fn handle_request(frame: &[u8], deps: &ConnectionHandlerDeps) -> Vec<u8> {
         }
     }
 
-    let raw = deps.router.dispatch(canonical_method, params).await;
+    // Install a per-request cancellation token under this id so a
+    // sibling `request.cancel` on the same connection can cooperatively
+    // abort the dispatch. Removed on response (success, timeout, or
+    // cancel) so the registry stays bounded by in-flight count.
+    let token = CancellationToken::new();
+    let key = id_key(&id);
+    if !key.is_empty() {
+        cancels.lock().insert(key.clone(), token.clone());
+    }
+
+    let raw = tokio::select! {
+        // Cooperative cancel — `request.cancel` won the race.
+        _ = token.cancelled() => {
+            if !key.is_empty() {
+                cancels.lock().remove(&key);
+            }
+            tracing::info!(
+                metric = "loom_daemon_request_cancelled",
+                method = canonical_method,
+                request_id = %key,
+                reason = "client",
+            );
+            return jsonrpc_err(
+                id,
+                LoomErrorCode::RequestCancelled,
+                "request cancelled by client",
+            );
+        }
+        // Server-side deadline.
+        _ = tokio::time::sleep(request_timeout()) => {
+            if !key.is_empty() {
+                cancels.lock().remove(&key);
+            }
+            tracing::warn!(
+                metric = "loom_daemon_request_timeout",
+                method = canonical_method,
+                request_id = %key,
+                timeout_ms = request_timeout().as_millis() as u64,
+            );
+            return jsonrpc_err(
+                id,
+                LoomErrorCode::RequestTimeout,
+                "request exceeded server-side per-call deadline",
+            );
+        }
+        // Normal completion.
+        bytes = deps.router.dispatch(canonical_method, params) => {
+            if !key.is_empty() {
+                cancels.lock().remove(&key);
+            }
+            bytes
+        }
+    };
     // Wrap the router's raw payload in a JSON-RPC 2.0 envelope.
     // The router tags errors with `__loom_rpc_error: true` so we can
     // distinguish them from success payloads without heuristics.

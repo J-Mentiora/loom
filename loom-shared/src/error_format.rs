@@ -52,6 +52,18 @@ pub enum LoomErrorCode {
     RpcInvalidRequest,
     RpcAuthFailed,
     RpcSchemaViolation,
+    /// Per-request server-side deadline expired before the dispatcher
+    /// produced a response. Configurable via `LOOM_REQUEST_TIMEOUT_MS`
+    /// (default 30000). Distinct from `BudgetExceeded` (which is per-
+    /// session wall-clock) and `ShimTimeout` (which is the host-shim
+    /// CBOR round-trip deadline).
+    RequestTimeout,
+    /// In-flight request was cancelled by a sibling `request.cancel`
+    /// call on the same connection. The dispatcher may continue running
+    /// briefly in the background (bounded by shim-level timeouts), but
+    /// the client has already received this typed envelope so it can
+    /// move on.
+    RequestCancelled,
     Io,
 
     // ---- Safety profile ----
@@ -133,6 +145,8 @@ impl LoomErrorCode {
             LoomErrorCode::RpcInvalidRequest => "rpc-invalid-request",
             LoomErrorCode::RpcAuthFailed => "rpc-auth-failed",
             LoomErrorCode::RpcSchemaViolation => "rpc-schema-violation",
+            LoomErrorCode::RequestTimeout => "request-timeout",
+            LoomErrorCode::RequestCancelled => "request-cancelled",
             LoomErrorCode::LlmCacheMiss => "llm-cache-miss",
             LoomErrorCode::Io => "io",
             LoomErrorCode::SchemaViolation => "schema_violation",

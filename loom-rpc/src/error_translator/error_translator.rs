@@ -69,6 +69,14 @@ pub enum LoomErrorCode {
     /// canonical loom-shared enum's kebab-case `"browser-not-found"`
     /// modulo separator). Additive variant; SemVer-compatible.
     BrowserNotFound,
+    /// Per-request server-side deadline expired before dispatch returned
+    /// a response. Configurable via `LOOM_REQUEST_TIMEOUT_MS` (default
+    /// 30000). Distinct from `BudgetExceeded` (per-session wall-clock)
+    /// and shim-level timeouts (host-shim CBOR round-trip).
+    RequestTimeout,
+    /// In-flight request cancelled by a sibling `request.cancel` on
+    /// the same connection.
+    RequestCancelled,
 }
 
 /// Structured field detail for a `schema_violation` envelope.

@@ -35,6 +35,14 @@ impl RequestRouter {
         if !methods.contains(&"import.playwright".to_string()) {
             methods.push("import.playwright".to_string());
         }
+        // session.kill, daemon.health, request.cancel — admin/control
+        // RPCs added in the daemon-session-stall fix. Router-level
+        // (no schema in registry) so enumerate explicitly.
+        for m in ["session.kill", "daemon.health", "request.cancel"] {
+            if !methods.contains(&m.to_string()) {
+                methods.push(m.to_string());
+            }
+        }
         methods.sort();
 
         let ctx = Arc::new(RouterContext {
@@ -119,6 +127,27 @@ impl RequestRouterApi for RequestRouter {
                     .unwrap_or("user-initiated")
                     .to_string();
                 match self.ctx.handlers.session_abort(sid, reason).await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
+            "session.kill" => {
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                match self.ctx.handlers.session_kill(sid).await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
+            "daemon.health" => {
+                let deep = params
+                    .get("deep")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                match self.ctx.handlers.daemon_health(deep).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }

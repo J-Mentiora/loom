@@ -6,7 +6,59 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Added
+
+- **`SessionScope` primitive** ([`loom-core/src/session_scope/`](loom-core/src/session_scope/)).
+  Per-session structured-concurrency parent: `tokio_util::sync::CancellationToken`
+  paired with a `tokio::task::JoinSet`. All session-lifetime spawns become children;
+  `drain(grace)` cancels cooperatively then force-aborts survivors. Replaces five
+  fire-and-forget `tokio::spawn` sites that previously leaked `JoinHandle`s and
+  saturated the daemon runtime after 4–6 sequential client sessions.
+- **Per-request server-side deadline.** `LOOM_REQUEST_TIMEOUT_MS` (default
+  `30000`) wraps `router.dispatch` so a hung shim or stuck dispatcher can't hold
+  a connection task. Returns the typed `request-timeout` envelope on expiry.
+- **`request.cancel` RPC.** Connection-scoped: cancels an in-flight request on
+  the same connection by JSON-RPC `id`. Returns `{cancelled: bool}`. The
+  cancelled request returns the typed `request-cancelled` envelope.
+- **`session.kill` RPC.** Admin escape hatch for stuck sessions. Performs the
+  abort flow plus blocks on shim teardown with a 5 s ceiling, then SIGKILL
+  (`shutdown_process` already escalates SIGTERM(2s) → SIGKILL(1s) inside the
+  ceiling).
+- **`daemon.health` RPC.** Operational snapshot: `active_sessions`,
+  `shim_breaker_states`, `otel_exporter` status. Shallow path is
+  non-blocking; `{deep: true}` slot reserved for a follow-up shim probe.
+- **`LoomErrorCode::RequestTimeout`** (wire string `request-timeout`) and
+  **`LoomErrorCode::RequestCancelled`** (wire string `request-cancelled`).
+  Both SemVer-minor additions per the existing wire-stability commitment.
+- **Multi-session stress test** at
+  [`loom-core/tests/multi_session_stall_repro.rs`](loom-core/tests/multi_session_stall_repro.rs)
+  — 100 sequential session create+close cycles complete in under 1 s; the
+  user-facing success criterion from the original investigation prompt.
+
+### Changed
+
+- **`ShimManager::record_failure`** circuit-breaker eviction no longer fires
+  `tokio::spawn(shutdown_process(p))` fire-and-forget. Spawns into a
+  `cleanup_tasks: JoinSet<()>` field with opportunistic `try_join_next`
+  reaping on every `record_failure` and `shutdown_session`.
+- **`CoreBridge::close_session_raw`** (daemon-side) similarly tracks
+  `host.shutdown_session` background tasks in a `cleanup_tasks` JoinSet
+  instead of leaking them via bare `tokio::spawn`.
+- **`Session.budget_timer`** is now a SessionScope child with
+  `tokio::select! { _ = cancel.cancelled() => {} _ = sleep(budget_ms) => ... }`
+  so a closed session's timer exits cooperatively before its sleep
+  completes, never tripping the kill callback after lifecycle exit.
+
+### Removed
+
+- **`Session.task_handle`** field — was dead code (declared but never
+  populated). Replaced by the always-populated `Session.scope: Arc<SessionScope>`.
+- **`Session.budget_timer`** field — superseded by the SessionScope-owned
+  cancellation-aware timer.
+- **`ReceiptMarshaller.queue_depth`** field + the docstring claiming
+  `"Background queue depth 256; full → synchronous append on the calling task"`.
+  The field was dead and the docstring lied — there was no bounded channel,
+  no `try_send`, no backpressure. Removed both.
 
 ## [0.9.0] — 2026-05-05
 
