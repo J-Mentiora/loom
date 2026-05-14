@@ -1,8 +1,17 @@
 # Automated dependency updates.
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+#
+# Grouping policy: one PR per ecosystem per week, covering major/minor/patch.
+# Rationale: each ungrouped Dependabot PR triggers the full CI matrix
+# (including macOS at $0.16/min). Eight simultaneous Dependabot PRs on
+# 2026-05-11 ran ~$200 of macOS minutes in a single morning. Collapsing into
+# a single grouped PR per ecosystem cuts that to one CI run/week.
+#
+# If a major bump in the group breaks the build, split the offending dep into
+# its own PR via the Dependabot UI ("rebase this PR" → manually edit).
 version: 2
 updates:
-  # Cargo workspace — security advisories + minor/patch upgrades.
+  # Cargo workspace — security advisories + minor/patch/major upgrades.
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
@@ -13,13 +22,9 @@ updates:
       - "dependencies"
       - "rust"
     groups:
-      # Group routine patch/minor bumps so the PR queue doesn't fan out.
-      patch-updates:
-        update-types:
-          - "patch"
-      minor-updates:
-        update-types:
-          - "minor"
+      cargo-all:
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]
 
   # GitHub Actions — keeps action-version pins fresh + auto-patches CVEs.
   - package-ecosystem: "github-actions"
@@ -31,3 +36,7 @@ updates:
     labels:
       - "dependencies"
       - "ci"
+    groups:
+      github-actions-all:
+        patterns: ["*"]
+        update-types: ["major", "minor", "patch"]

@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel superseded runs on the same ref (e.g. force-pushes to a PR branch).
+# Main pushes get a unique group per SHA so historical main runs don't cancel
+# each other. PR runs share a group per ref and cancel the prior in-flight run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 # Least-privilege default. Individual jobs can elevate if needed.
 permissions:
   contents: read
@@ -63,6 +70,12 @@ jobs:
         # `--include-ignored` fake-chromium tests; they validate that the
         # workspace compiles + unit tests pass against an incoming rustc.
         toolchain: [stable, beta]
+        # macos-latest is billed at $0.16/min even on public repos. Beta is
+        # informational — Linux/beta is sufficient signal for incoming-rustc
+        # breakage without paying for the macOS leg.
+        exclude:
+          - os: macos-latest
+            toolchain: beta
     runs-on: ${{ matrix.os }}
     # Beta breakage is best-effort: it surfaces in the matrix UI but does
     # not block a PR. Stable cells remain hard-required.
@@ -135,6 +148,11 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
         toolchain: [stable, beta]
+        # See note on `test.exclude` — macOS/beta is informational-only signal
+        # not worth $0.16/min.
+        exclude:
+          - os: macos-latest
+            toolchain: beta
     runs-on: ${{ matrix.os }}
     continue-on-error: ${{ matrix.toolchain == 'beta' }}
     steps:
@@ -167,7 +185,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        # PRs validate on Linux only; macOS is added on push-to-main so we
+        # catch macOS-specific regressions at merge time without paying the
+        # macOS bill on every PR (and every rebase).
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -252,7 +273,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        # See `smoke.matrix.os` — macOS only on push-to-main. The e2e job is
+        # the heaviest macOS consumer (downloads Chromium + runs the full
+        # shell harness), so PR-time skipping is the biggest single savings.
+        os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
