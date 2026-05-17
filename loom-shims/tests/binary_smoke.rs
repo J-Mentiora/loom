@@ -81,8 +81,13 @@ fn shim_binary_round_trips_shutdown() {
     let (parent_fd, child_fd) = make_socketpair();
     let user_data_dir = tempfile::tempdir().expect("tempdir");
 
+    // Pin the IPC socket high (10), clear of the low range (3-8) that the
+    // shim's Tokio multi-thread runtime claims for its epoll + wakeup
+    // descriptors. Must match `SHIM_IPC_FD` in loom-host's `process.rs`.
+    const SHIM_IPC_FD: RawFd = 10;
+
     let mut cmd = Command::new(&shim_path);
-    cmd.env("LOOM_SHIM_FD", "3")
+    cmd.env("LOOM_SHIM_FD", SHIM_IPC_FD.to_string())
         .env("LOOM_SHIM_CHROMIUM_PATH", &fake_path)
         .env("LOOM_SHIM_USER_DATA_DIR", user_data_dir.path())
         .env("LOOM_FAKE_CHROMIUM_USER_DATA_DIR", user_data_dir.path())
@@ -90,19 +95,19 @@ fn shim_binary_round_trips_shutdown() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    // Move the child end of the socketpair to fd 3 in the child.
+    // Move the child end of the socketpair to SHIM_IPC_FD in the child.
     // The pre_exec body MUST be async-signal-safe — only libc::dup2 +
     // libc::close are allowed. No allocations, no format!, no eprintln!
     // (per practitioner gotcha #2).
     let child_fd_owned = child_fd;
     unsafe {
         cmd.pre_exec(move || {
-            // dup2 clears CLOEXEC on fd 3 automatically (POSIX), so the
-            // shim sees the inherited fd at the documented number.
-            if libc::dup2(child_fd_owned, 3) < 0 {
+            // dup2 clears CLOEXEC on the target automatically (POSIX), so
+            // the shim sees the inherited fd at the documented number.
+            if libc::dup2(child_fd_owned, SHIM_IPC_FD) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            if child_fd_owned != 3 {
+            if child_fd_owned != SHIM_IPC_FD {
                 libc::close(child_fd_owned);
             }
             Ok(())

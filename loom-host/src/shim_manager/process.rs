@@ -62,9 +62,20 @@ pub struct SpawnConfig {
     pub env: Vec<(String, String)>,
 }
 
-/// Spawn a shim subprocess: AF_UNIX socketpair, `pre_exec` dup2 to fd 3,
-/// and `LOOM_SHIM_FD=3` env. Returns a `ShimProcess` with all background
-/// loops running.
+/// File descriptor the IPC socketpair end is pinned to in the shim.
+///
+/// MUST be well clear of the low range (3-8): the shim builds a Tokio
+/// multi-thread runtime at startup, and the runtime's I/O driver claims
+/// the lowest free descriptors for its `epoll` instance + wakeup eventfd.
+/// fd 3 (the first fd above stdio) collides with that — adopting fd 3 as
+/// the IPC socket then races the I/O driver, surfacing as
+/// `UnixStream::from_std: EINVAL` followed by a `Bad file descriptor`
+/// panic in the driver. Pinning high (10) leaves the runtime's range free.
+const SHIM_IPC_FD: RawFd = 10;
+
+/// Spawn a shim subprocess: AF_UNIX socketpair, `pre_exec` dup2 to
+/// `SHIM_IPC_FD`, and `LOOM_SHIM_FD` env. Returns a `ShimProcess` with all
+/// background loops running.
 ///
 /// The pre_exec body MUST be async-signal-safe — only `libc::dup2` and
 /// `libc::close` are allowed. No allocations, no `format!`, no
@@ -83,11 +94,11 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     let parent_fd: RawFd = fds[0];
     let child_fd: RawFd = fds[1];
 
-    // STEP 2: build the spawn command. dup2(child_fd, 3) in pre_exec to
-    // pin the FD at the documented number; LOOM_SHIM_FD=3.
+    // STEP 2: build the spawn command. dup2(child_fd, SHIM_IPC_FD) in
+    // pre_exec to pin the FD; LOOM_SHIM_FD carries the number to the shim.
     let mut cmd = tokio::process::Command::new(&config.binary_path);
     cmd.args(&config.args);
-    cmd.env("LOOM_SHIM_FD", "3");
+    cmd.env("LOOM_SHIM_FD", SHIM_IPC_FD.to_string());
     for (k, v) in &config.env {
         cmd.env(k, v);
     }
@@ -99,10 +110,10 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     // SAFETY: pre_exec body only calls async-signal-safe libc functions.
     unsafe {
         cmd.pre_exec(move || {
-            if libc::dup2(child_fd, 3) < 0 {
+            if libc::dup2(child_fd, SHIM_IPC_FD) < 0 {
                 return Err(std::io::Error::last_os_error());
             }
-            if child_fd != 3 {
+            if child_fd != SHIM_IPC_FD {
                 libc::close(child_fd);
             }
             Ok(())
