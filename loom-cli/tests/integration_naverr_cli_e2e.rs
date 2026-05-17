@@ -22,7 +22,9 @@
 //! ```text
 //! <HOME>/.config/loom/schemas/v1/{*.json}                 (BUILTIN_SCHEMAS)
 //! <HOME>/.config/loom/surfaces/loom_surface_web.cwasm     (precompiled artifact)
-//! <HOME>/.config/loom/chromium/Chromium.app/Contents/MacOS/Chromium  (-> fake-chromium)
+//! <HOME>/.config/loom/chromium/<per-OS subpath>                       (-> fake-chromium)
+//!   macOS: chrome-mac/Chromium.app/Contents/MacOS/Chromium
+//!   Linux: chrome-linux/chrome
 //! <HOME>/Library/Application Support/loom/auth/{hello.token, daemon.pid}  (daemon writes)
 //! <HOME>/loom-test.sock                                    (daemon socket)
 //! ```
@@ -211,13 +213,25 @@ impl Sandbox {
         let cfg_loom = home.path().join(".config/loom");
         std::fs::create_dir_all(cfg_loom.join("surfaces")).expect("mkdir surfaces");
         std::fs::create_dir_all(cfg_loom.join("schemas/v1")).expect("mkdir schemas/v1");
-        let chromium_bundle = cfg_loom.join("chromium/Chromium.app/Contents/MacOS");
-        std::fs::create_dir_all(&chromium_bundle).expect("mkdir chromium bundle");
+        // Fake-chromium fixture path must match the per-OS layout the daemon's
+        // resolver looks at — `loom_shared::chromium_resolver::resolve_chromium`
+        // step 2 joins `chromium_dir` with `chromium_binary_subpath()`
+        // (`chrome-linux/chrome` on Linux, `chrome-mac/Chromium.app/...` on
+        // macOS). Hardcoding `Chromium.app/...` here would make the resolver
+        // miss the fixture on Linux and fall through to PATH — picking up the
+        // GitHub runner's real `/usr/bin/google-chrome` and breaking the
+        // navigate-error scripted responses these tests depend on.
+        let chromium_link = cfg_loom
+            .join("chromium")
+            .join(loom_shared::chromium_resolver::chromium_binary_subpath());
+        let chromium_bundle = chromium_link
+            .parent()
+            .expect("chromium subpath has parent");
+        std::fs::create_dir_all(chromium_bundle).expect("mkdir chromium bundle");
         std::fs::create_dir_all(auth_dir_for(home.path())).expect("mkdir auth");
 
         // Symlink fake-chromium into the path the daemon's
         // `build_host_bridge` resolves to (~/.config/loom/chromium/...).
-        let chromium_link = chromium_bundle.join("Chromium");
         std::os::unix::fs::symlink(&fixture().fake_chromium_bin, &chromium_link)
             .expect("symlink fake-chromium");
 
