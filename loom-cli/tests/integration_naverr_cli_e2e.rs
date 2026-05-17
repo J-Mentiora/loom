@@ -224,9 +224,7 @@ impl Sandbox {
         let chromium_link = cfg_loom
             .join("chromium")
             .join(loom_shared::chromium_resolver::chromium_binary_subpath());
-        let chromium_bundle = chromium_link
-            .parent()
-            .expect("chromium subpath has parent");
+        let chromium_bundle = chromium_link.parent().expect("chromium subpath has parent");
         std::fs::create_dir_all(chromium_bundle).expect("mkdir chromium bundle");
         std::fs::create_dir_all(auth_dir_for(home.path())).expect("mkdir auth");
 
