@@ -236,16 +236,20 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
 
         Command::Doctor(_args) => {
             let rpc = make_rpc_client(config);
+            // Per-OS layout — must match `loom postinstall` and the launch
+            // resolver. `chromium_binary_subpath()` is the shared source of
+            // truth so `loom doctor` looks where the archive actually
+            // extracted (`chrome-linux/chrome` on Linux, not the macOS
+            // `.app` bundle).
+            let chromium_subpath = loom_shared::chromium_resolver::chromium_binary_subpath();
             let chromium = ChromiumDownloader::new(ChromiumDownloaderConfig {
                 install_dir: config.chromium_dir.clone(),
-                binary_subpath: std::path::PathBuf::from("Chromium.app/Contents/MacOS/Chromium"),
+                binary_subpath: chromium_subpath.clone(),
             });
             let paths = DoctorPaths {
                 socket_path: config.socket_path.clone(),
                 surfaces_dir: config.surfaces_dir.clone(),
-                chromium_binary: config
-                    .chromium_dir
-                    .join("Chromium.app/Contents/MacOS/Chromium"),
+                chromium_binary: config.chromium_dir.join(&chromium_subpath),
                 chromium_expected_sha256: chromium_pin::CHROMIUM_SHA256.to_string(),
                 keychain_label: "com.loom.auth".to_string(),
             };

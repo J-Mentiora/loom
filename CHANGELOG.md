@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`loom doctor` + `loom session` Chromium detection on Linux/Windows.**
+  `loom doctor`'s `chromium_present_and_verified` check and the
+  `chromium_resolver` launch path both hardcoded the macOS `.app` bundle
+  layout (`Chromium.app/Contents/MacOS/Chromium`) regardless of host OS,
+  while `loom postinstall` correctly extracted the pinned Chromium to the
+  per-OS path (`chrome-linux/chrome` on Linux). Net effect on Linux:
+  `loom doctor` reported `chromium binary not found` and the launcher
+  could not find loom's own pinned download — it only worked when a
+  system Chromium happened to be on `$PATH`. The per-OS layout is now a
+  single shared source of truth,
+  `loom_shared::chromium_resolver::chromium_binary_subpath()`, consulted by
+  postinstall, doctor, and the resolver alike.
+
 ## [0.9.1] — 2026-05-11
 
 Patch release rolling up the post-0.9.0 daemon-stall fix (#55) and the
