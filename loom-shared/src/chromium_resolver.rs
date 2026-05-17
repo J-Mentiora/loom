@@ -7,11 +7,11 @@
 //!
 //! Resolution order (first hit wins):
 //!   1. `LOOM_CHROMIUM_PATH` env (explicit user override) → `EnvOverride`
-//!   2. `<chromium_dir>/Chromium.app/Contents/MacOS/Chromium` (the path
+//!   2. `<chromium_dir>/<chromium_binary_subpath()>` (the per-OS path
 //!      `loom postinstall` writes to) → `Pinned`
-//!   3. Parent-dir scan: any executable inside
-//!      `<chromium_dir>/Chromium.app/Contents/MacOS/` (covers symlink-renamed
-//!      bundles like `Google Chrome`) → `Pinned`
+//!   3. Parent-dir scan: any executable inside that path's parent
+//!      directory (covers symlink-renamed macOS bundles like
+//!      `Google Chrome`) → `Pinned`
 //!   4. PATH lookup for `chromium`, `chromium-browser`, `chrome`,
 //!      `google-chrome` → `Path`
 //!   5. macOS standard installs → `Applications`:
@@ -88,6 +88,37 @@ const APPLICATIONS_PATHS: &[&str] = &[
 #[cfg(not(target_os = "macos"))]
 const APPLICATIONS_PATHS: &[&str] = &[];
 
+/// The pinned Chromium binary's path *relative to the install dir*
+/// (`~/.config/loom/chromium/`), for the host OS.
+///
+/// Single source of truth for the directory layout the pinned Playwright
+/// Chromium archive extracts to. `loom postinstall` (downloader idempotency
+/// check), `loom doctor` (check 4 — `chromium_present_and_verified`), and
+/// [`resolve_chromium`]'s pinned branch all consult this so the three
+/// cannot disagree:
+///
+///   - macOS → `chrome-mac/Chromium.app/Contents/MacOS/Chromium`
+///   - Linux / other Unix → `chrome-linux/chrome`
+///   - non-Unix (Windows) → `chrome-win/chrome.exe`
+///
+/// The Playwright CDN archives carry a platform-prefixed top-level
+/// directory (`chrome-mac/`, `chrome-linux/`, `chrome-win/`), so that
+/// prefix is part of the path on every platform.
+pub fn chromium_binary_subpath() -> PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        PathBuf::from("chrome-mac/Chromium.app/Contents/MacOS/Chromium")
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        PathBuf::from("chrome-linux/chrome")
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from("chrome-win/chrome.exe")
+    }
+}
+
 /// Resolve a Chromium binary for the host process. The `chromium_dir` is
 /// the same `~/.config/loom/chromium/` path used by `loom postinstall`
 /// and the daemon's pre-existing pinned-path check.
@@ -108,8 +139,8 @@ pub fn resolve_chromium(chromium_dir: &Path) -> Result<(PathBuf, ChromiumSource)
         );
     }
 
-    // 2. Pinned: `<chromium_dir>/Chromium.app/Contents/MacOS/Chromium`.
-    let pinned = chromium_dir.join("Chromium.app/Contents/MacOS/Chromium");
+    // 2. Pinned: `<chromium_dir>/<chromium_binary_subpath()>`.
+    let pinned = chromium_dir.join(chromium_binary_subpath());
     searched.push(pinned.display().to_string());
     if is_valid_executable(&pinned) {
         return Ok((pinned, ChromiumSource::Pinned));
@@ -220,7 +251,24 @@ mod tests {
     }
 
     fn pinned_path(chromium_dir: &Path) -> PathBuf {
-        chromium_dir.join("Chromium.app/Contents/MacOS/Chromium")
+        chromium_dir.join(chromium_binary_subpath())
+    }
+
+    #[test]
+    fn t0_chromium_binary_subpath_matches_host_os() {
+        let sub = chromium_binary_subpath();
+        if cfg!(target_os = "macos") {
+            assert_eq!(
+                sub,
+                PathBuf::from("chrome-mac/Chromium.app/Contents/MacOS/Chromium"),
+            );
+        } else if cfg!(unix) {
+            // Linux + other Unix: the Playwright archive extracts a bare
+            // `chrome-linux/chrome` ELF binary — NOT a macOS `.app` bundle.
+            assert_eq!(sub, PathBuf::from("chrome-linux/chrome"));
+        } else {
+            assert_eq!(sub, PathBuf::from("chrome-win/chrome.exe"));
+        }
     }
 
     #[test]
