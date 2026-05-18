@@ -1,42 +1,57 @@
 # Automated dependency updates.
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
 #
-# Grouping policy: one PR per ecosystem per week, covering major/minor/patch.
-# Rationale: each ungrouped Dependabot PR triggers the full CI matrix
-# (including macOS at $0.16/min). Eight simultaneous Dependabot PRs on
-# 2026-05-11 ran ~$200 of macOS minutes in a single morning. Collapsing into
-# a single grouped PR per ecosystem cuts that to one CI run/week.
+# Grouping policy: per ecosystem, one grouped PR/week for non-major bumps,
+# plus individual PRs for each major bump.
 #
-# If a major bump in the group breaks the build, split the offending dep into
-# its own PR via the Dependabot UI ("rebase this PR" → manually edit).
+# Rationale (history):
+#   1. Pre-2026-05-12: every dep change opened its own PR. 8 simultaneous
+#      Dependabot PRs on 2026-05-11 ran ~$200 of macOS minutes in a morning
+#      — each triggered the full CI matrix on $0.16/min `macos-latest`.
+#   2. 2026-05-12 → 2026-05-18: one grouped PR/week covering major/minor/patch.
+#      Cost went down, but #73 bundled `thiserror 1→2`, `zip 2→8`, `rand 0.8→0.9`
+#      with routine patches. The breaking-API majors failed to compile, taking
+#      the whole group's CI red and gating the cheap minor/patch merges too.
+#   3. 2026-05-18 (this config): non-major group + per-major PRs. Routine bumps
+#      stay merge-friendly; each breaking major surfaces in its own PR for
+#      individual API-migration work, paced to whenever you have time.
+#
+# `open-pull-requests-limit` caps the per-major PR count alongside the
+# grouped non-major PR (the group doesn't count against the limit).
 version: 2
 updates:
-  # Cargo workspace — security advisories + minor/patch/major upgrades.
+  # Cargo workspace — security advisories + minor/patch grouped; majors
+  # split out so breaking-API bumps don't block routine merges.
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
       - "rust"
     groups:
-      cargo-all:
+      cargo-non-major:
         patterns: ["*"]
-        update-types: ["major", "minor", "patch"]
+        update-types: ["minor", "patch"]
+      # No major group → each major bump opens its own PR.
 
-  # GitHub Actions — keeps action-version pins fresh + auto-patches CVEs.
+  # GitHub Actions — same split policy. v4→v6 / v4→v7 transitions (the
+  # actions/checkout + upload-artifact Node-24 boundary) deserve their own
+  # PR each so the artifact-naming / persist-credentials migrations can be
+  # tested in isolation.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
-    open-pull-requests-limit: 3
+    open-pull-requests-limit: 10
     labels:
       - "dependencies"
       - "ci"
     groups:
-      github-actions-all:
+      github-actions-non-major:
         patterns: ["*"]
-        update-types: ["major", "minor", "patch"]
+        update-types: ["minor", "patch"]
+      # No major group → each major bump opens its own PR.
