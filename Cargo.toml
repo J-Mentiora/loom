@@ -46,7 +46,7 @@ addr2line = "0.26"
 ciborium = "0.2"
 
 # RPC
-jsonrpsee = { version = "0.24", features = ["server", "client", "macros"] }
+jsonrpsee = { version = "0.26", features = ["server", "client", "macros"] }
 
 # CLI
 clap = { version = "4", features = ["derive", "env"] }
