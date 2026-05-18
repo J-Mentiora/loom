@@ -34,8 +34,8 @@ ring = { workspace = true }
 zeroize = { workspace = true }
 
 # Determinism harness: seeded ChaCha20 RNG
-rand_chacha = "0.9"
-rand_core = "0.9"
+rand_chacha = "0.10"
+rand_core = "0.10"
 
 # Export formats
 tar = { workspace = true }
