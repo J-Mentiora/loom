@@ -6,13 +6,19 @@ pub use auth_middleware::*;
 mod interface_tests;
 
 use crate::error_translator::error_translator::{JsonRpcError, LoomErrorCode};
-use rand::RngCore;
+// rand 0.9 split `RngCore` into infallible (`RngCore`) and fallible
+// (`TryRngCore`) traits. `OsRng` now impls `TryRngCore` only, so we use
+// `try_fill_bytes` and propagate the (effectively unreachable on supported
+// platforms) failure via `expect`.
+use rand::TryRngCore;
 use subtle::ConstantTimeEq;
 
 impl Token {
     pub fn generate() -> Self {
         let mut bytes = [0u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut bytes);
+        rand::rngs::OsRng
+            .try_fill_bytes(&mut bytes)
+            .expect("OsRng must not fail on supported platforms");
         Token(hex::encode(bytes))
     }
 
