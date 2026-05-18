@@ -138,8 +138,8 @@ fn embedded_matches_convention_path_in_release() {
         )
     });
 
-    let embedded_sha = format!("{:x}", Sha256::digest(EMBEDDED_SURFACE_WEB));
-    let convention_sha = format!("{:x}", Sha256::digest(&convention_bytes));
+    let embedded_sha = hex::encode(Sha256::digest(EMBEDDED_SURFACE_WEB));
+    let convention_sha = hex::encode(Sha256::digest(&convention_bytes));
 
     assert_eq!(
         embedded_sha,

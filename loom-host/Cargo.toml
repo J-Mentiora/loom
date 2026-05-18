@@ -42,6 +42,12 @@ libc = { workspace = true }
 
 [build-dependencies]
 sha2 = { workspace = true }
+# `hex` is used to format the SHA-256 of the embedded wasm component
+# in build.rs. sha2 0.11 changed the `finalize()` return type from
+# `GenericArray<u8, _>` (which impl'd `LowerHex`) to `digest::Array<u8, _>`
+# (no `LowerHex` impl), so `format!("{:x}", _)` no longer compiles —
+# `hex::encode()` handles both.
+hex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

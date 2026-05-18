@@ -324,7 +324,10 @@ fn sha256_file(path: &std::path::Path) -> Result<String, CliError> {
     let bytes = std::fs::read(path).map_err(|e| CliError::Internal(e.to_string()))?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);
-    Ok(format!("{:x}", hasher.finalize()))
+    // sha2 0.11: `finalize()` returns `digest::Array<u8, _>` (no `LowerHex`
+    // impl); 0.10 returned `GenericArray<u8, _>` which did. `hex::encode`
+    // works for both.
+    Ok(hex::encode(hasher.finalize()))
 }
 
 pub async fn chromium_step(

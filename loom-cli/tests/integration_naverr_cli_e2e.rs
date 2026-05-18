@@ -529,7 +529,7 @@ fn sha_action_hash_matches_sha256_of_url_for_navigate() {
         let url = "http://fake.test/status/200";
         let receipt = daemon.navigate(&sid, url);
 
-        let expected = format!("{:x}", Sha256::digest(url.as_bytes()));
+        let expected = hex::encode(Sha256::digest(url.as_bytes()));
         let action_hash = receipt["action_hash"]
             .as_str()
             .expect("action_hash must be a string");
