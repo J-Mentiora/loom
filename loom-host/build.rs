@@ -68,5 +68,8 @@ fn sha256_hex(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    // sha2 0.11 returns `digest::Array<u8, _>` (no `LowerHex` impl);
+    // 0.10 returned `GenericArray<u8, _>` which did. Going through
+    // `hex::encode` works for both representations.
+    hex::encode(hasher.finalize())
 }
