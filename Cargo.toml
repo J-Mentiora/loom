@@ -41,7 +41,7 @@ wasmtime = { version = "44", features = ["component-model", "async"] }
 wasmtime-wasi = "44"
 wit-bindgen = "0.40"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-gimli = "0.31"
+gimli = "0.33"
 addr2line = "0.26"
 ciborium = "0.2"
 
