@@ -58,7 +58,7 @@ wasmparser = "0.249"
 # clap_mangen: used only by examples/gen-docs.rs to render `loom.1`
 # and per-subcommand man pages from the clap derive; not in the
 # production binary.
-clap_mangen = "0.2"
+clap_mangen = "0.3"
 
 [features]
 # `postinstall` enabled by default so `cargo build --release --bin loom`
