@@ -42,7 +42,7 @@ wasmtime-wasi = "44"
 wit-bindgen = "0.40"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 gimli = "0.31"
-addr2line = "0.24"
+addr2line = "0.26"
 ciborium = "0.2"
 
 # RPC
