@@ -6,10 +6,20 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.2] — 2026-05-18
+
+Linux-enablement patch release. With 0.9.1 a fresh Linux install would
+`postinstall` correctly but then fail two ways: `loom doctor` reported
+`chromium binary not found` (#70), and every `web.*` action surfaced as
+`surface_trap` because the shim's IPC socket raced Tokio's I/O driver on
+fd 3 (#71). 0.9.2 fixes both — `loom serve` + `loom action web.navigate`
+now drives headless Chromium end-to-end on Linux without a system Chrome
+on `$PATH`.
+
 ### Fixed
 
-- **`loom doctor` + `loom session` Chromium detection on Linux/Windows.**
-  `loom doctor`'s `chromium_present_and_verified` check and the
+- **`loom doctor` + `loom session` Chromium detection on Linux/Windows
+  (#70).** `loom doctor`'s `chromium_present_and_verified` check and the
   `chromium_resolver` launch path both hardcoded the macOS `.app` bundle
   layout (`Chromium.app/Contents/MacOS/Chromium`) regardless of host OS,
   while `loom postinstall` correctly extracted the pinned Chromium to the
@@ -20,6 +30,17 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   single shared source of truth,
   `loom_shared::chromium_resolver::chromium_binary_subpath()`, consulted by
   postinstall, doctor, and the resolver alike.
+
+- **Shim IPC fd collision with Tokio I/O driver on Linux (#71).**
+  `spawn_shim` `dup2`'d the IPC socketpair end onto fd 3, but
+  `loom-shim-chromium`'s Tokio multi-thread runtime claims the lowest
+  free descriptors at startup for its `epoll` instance + wakeup eventfd.
+  Adopting fd 3 as the IPC socket then races the I/O driver:
+  `UnixStream::from_std` returns `EINVAL`, the driver panics with
+  `Bad file descriptor`, the shim exits, and every `web.*` action
+  surfaces as `surface_trap`. The IPC socket is now pinned to fd 10 via
+  a named `SHIM_IPC_FD` constant — well clear of the runtime's low-fd
+  range. `loom-shims/tests/binary_smoke.rs` updated in lockstep.
 
 ## [0.9.1] — 2026-05-11
 
@@ -230,6 +251,7 @@ are stable. Deterministic replay and `web.click` remain Beta — promotion to
   determinism script applied. Fixed by lazy-spawning the
   determinism-injected target on the first evaluate.
 
-[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.2
 [0.9.1]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.1
 [0.9.0]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.0
