@@ -10,7 +10,11 @@ use crate::determinism_harness::determinism_harness::{
     DeterminismHarness, ReplayHostFnTable, SideEffectTape, TapeFrame, TapeWriter,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
-use rand_core::RngCore;
+// rand 0.10 renamed `RngCore` → `Rng` (the low-level trait) and moved
+// the high-level draw surface (`random`, `sample`, `random_range`, ...)
+// to the new `RngExt` extension trait. We use `random::<u64>()` as the
+// replacement for the deprecated `next_u64()` from 0.9.
+use rand::RngExt;
 use ring::digest::{digest, SHA256};
 use std::path::Path;
 
@@ -39,7 +43,7 @@ impl DeterminismHarness {
 
     /// Seeded ChaCha20 draw — deterministic given session seed.
     pub fn rng_next(&self) -> u64 {
-        self.rng.lock().next_u64()
+        self.rng.lock().random::<u64>()
     }
 }
 

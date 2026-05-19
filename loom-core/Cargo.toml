@@ -33,9 +33,12 @@ ulid = { workspace = true }
 ring = { workspace = true }
 zeroize = { workspace = true }
 
-# Determinism harness: seeded ChaCha20 RNG
-rand_chacha = "0.9"
-rand_core = "0.9"
+# Determinism harness: seeded ChaCha20 RNG. `rand` is the high-level
+# extension trait surface (`Rng::random::<u64>()`); `rand_core::RngCore`
+# was deprecated in 0.10 in favour of it.
+rand = { workspace = true }
+rand_chacha = "0.10"
+rand_core = "0.10"
 
 # Export formats
 tar = { workspace = true }

@@ -76,7 +76,7 @@ toml = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 
 # loom-rpc: auth + schema validation
-rand = "0.9"
+rand = "0.10"
 jsonschema = "0.46"
 subtle = "2"
 hex = "0.4"

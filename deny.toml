@@ -85,6 +85,7 @@ wrappers = ["loom-shims"]
 [[bans.deny]]
 name = "getrandom"
 wrappers = [
+    "rand",            # rand 0.10 reaches getrandom directly (was via rand_core in 0.9)
     "rand_core",       # rand → ulid, jsonrpsee, etc.
     "ahash",           # jsonschema RNG seeding
     "redox_users",     # dirs Redox-OS path resolution
