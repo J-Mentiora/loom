@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-connection rate limit on `daemon.health` (#58).** Closes the
+  amplification-via-deep-probe gap disclosed in 0.9.1's CHANGELOG and
+  flagged as Sec-5 in #56's security council review. Token-bucket caps
+  per-connection sustained call rate (10 RPS) with a burst tolerance
+  (30 calls). An empty bucket returns the new typed
+  `LoomErrorCode::TooManyRequests` (wire string `"too-many-requests"`)
+  so clients can back off and retry. Tunable via
+  `LOOM_DAEMON_HEALTH_RATE_RPS` and `LOOM_DAEMON_HEALTH_RATE_BURST`.
+  Gate fires only on `daemon.health`; all other RPCs are unaffected.
+
 ## [0.9.2] — 2026-05-18
 
 Linux-enablement patch release. With 0.9.1 a fresh Linux install would

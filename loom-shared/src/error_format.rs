@@ -64,6 +64,14 @@ pub enum LoomErrorCode {
     /// the client has already received this typed envelope so it can
     /// move on.
     RequestCancelled,
+    /// Per-connection rate limit exceeded for the requested method.
+    /// Currently fires only on `daemon.health` (where the
+    /// `{deep:true}` form fans out to N shims per call — see #58).
+    /// Token-bucket configured via `LOOM_DAEMON_HEALTH_RATE_RPS`
+    /// (sustained, default 10) and `LOOM_DAEMON_HEALTH_RATE_BURST`
+    /// (capacity, default 30). The client should back off and retry;
+    /// the bucket refills at the configured RPS.
+    TooManyRequests,
     Io,
 
     // ---- Safety profile ----
@@ -147,6 +155,7 @@ impl LoomErrorCode {
             LoomErrorCode::RpcSchemaViolation => "rpc-schema-violation",
             LoomErrorCode::RequestTimeout => "request-timeout",
             LoomErrorCode::RequestCancelled => "request-cancelled",
+            LoomErrorCode::TooManyRequests => "too-many-requests",
             LoomErrorCode::LlmCacheMiss => "llm-cache-miss",
             LoomErrorCode::Io => "io",
             LoomErrorCode::SchemaViolation => "schema_violation",

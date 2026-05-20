@@ -77,6 +77,12 @@ pub enum LoomErrorCode {
     /// In-flight request cancelled by a sibling `request.cancel` on
     /// the same connection.
     RequestCancelled,
+    /// Per-connection rate limit exceeded for the requested method.
+    /// Currently fires only on `daemon.health` (issue #58). Mirrors
+    /// `loom_shared::LoomErrorCode::TooManyRequests`. Wire string
+    /// `"too_many_requests"` (snake_case via `rename_all` here;
+    /// canonical kebab-case is `"too-many-requests"` modulo separator).
+    TooManyRequests,
 }
 
 /// Structured field detail for a `schema_violation` envelope.
