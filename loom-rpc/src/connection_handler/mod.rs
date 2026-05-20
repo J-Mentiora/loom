@@ -2,6 +2,8 @@
 pub mod connection_handler;
 pub use connection_handler::*;
 
+pub mod health_rate_limit;
+
 #[cfg(test)]
 mod interface_tests;
 
@@ -28,6 +30,12 @@ use tokio_util::sync::CancellationToken;
 /// Lifetime: per-connection. Dropped when the connection task exits, so
 /// there's no cross-connection registry maintenance.
 type ConnectionCancelRegistry = Arc<Mutex<HashMap<String, CancellationToken>>>;
+
+/// Per-connection rate-limit bucket for `daemon.health`.
+/// Lifetime: per-connection. Dropped when the connection task exits,
+/// so a banned client (one that exhausts the bucket) gets its budget
+/// reset only by reconnecting, which is bounded by auth.
+type ConnectionHealthLimiter = Arc<Mutex<health_rate_limit::TokenBucket>>;
 
 /// Stringify a JSON-RPC `id` (which can be string, number, or null) so
 /// it's usable as a HashMap key. Treats `null` as `""` — a server
@@ -102,6 +110,14 @@ impl ConnectionHandler {
         // so all in-flight tokens are released cleanly.
         let cancels: ConnectionCancelRegistry = Arc::new(Mutex::new(HashMap::new()));
 
+        // Per-connection rate limiter for `daemon.health` (#58). Bucket
+        // is dropped with this task so a misbehaving client can be
+        // disconnected and lose its accumulated budget. The mutex is
+        // `parking_lot` (no async yield required for read-modify-write
+        // since `try_consume` is wall-clock arithmetic, no I/O).
+        let health_limiter: ConnectionHealthLimiter =
+            Arc::new(Mutex::new(health_rate_limit::TokenBucket::for_health()));
+
         // Authenticated: request dispatch loop
         loop {
             let frame = match tokio::time::timeout(AUTHENTICATED_IDLE_TIMEOUT, framed.next()).await
@@ -109,7 +125,7 @@ impl ConnectionHandler {
                 Ok(Some(Ok(f))) => f,
                 _ => break,
             };
-            let response = handle_request(&frame, &deps, &cancels).await;
+            let response = handle_request(&frame, &deps, &cancels, &health_limiter).await;
             if framed.send(Bytes::from(response)).await.is_err() {
                 break;
             }
@@ -205,6 +221,7 @@ async fn handle_request(
     frame: &[u8],
     deps: &ConnectionHandlerDeps,
     cancels: &ConnectionCancelRegistry,
+    health_limiter: &ConnectionHealthLimiter,
 ) -> Vec<u8> {
     let request: serde_json::Value = match serde_json::from_slice(frame) {
         Ok(v) => v,
@@ -270,6 +287,28 @@ async fn handle_request(
     // sees the flat-params shape its schemas were authored against.
     let canonical_method = loom_shared::action_aliases::canonicalise(method);
     let params = unwrap_sdk_envelope(raw_params);
+
+    // Per-connection rate limit for `daemon.health` (#58). The
+    // `{deep:true}` form fans out one CBOR probe per running shim per
+    // call, so spam-probing amplifies load N× per request — see issue
+    // #58 / Sec-5 of #56's security council review. Token bucket caps
+    // sustained call rate (LOOM_DAEMON_HEALTH_RATE_RPS, default 10)
+    // with burst tolerance (LOOM_DAEMON_HEALTH_RATE_BURST, default 30).
+    // Gate is on the canonical method so SDK aliases route correctly.
+    // Other RPCs bypass — auth, schema, and per-request timeout still
+    // apply to all methods as before.
+    if canonical_method == "daemon.health" && !health_limiter.lock().try_consume() {
+        tracing::warn!(
+            metric = "loom_daemon_health_rate_limited",
+            request_id = %id_key(&id),
+        );
+        return jsonrpc_err(
+            id,
+            LoomErrorCode::TooManyRequests,
+            "daemon.health rate limit exceeded for this connection; \
+             back off and retry",
+        );
+    }
 
     match deps.validator.validate_request(canonical_method, &params) {
         ValidationOutcome::Pass => {}
