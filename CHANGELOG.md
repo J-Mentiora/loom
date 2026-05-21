@@ -6,17 +6,67 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.3] — 2026-05-21
+
+Hygiene + hardening release. Closes one disclosed-known-gap from 0.9.2
+(the `daemon.health` amplification path) and rolls up two weeks of
+dependency hygiene — most notably the latent tokio sync-primitive fixes
+from 1.52.3 that affect mpsc / `RwLock` code paths under concurrent
+session load. No user-visible behaviour change to session lifecycle,
+navigate, or replay; existing `loom doctor` / `loom action` flows
+produce byte-identical output.
+
 ### Added
 
-- **Per-connection rate limit on `daemon.health` (#58).** Closes the
-  amplification-via-deep-probe gap disclosed in 0.9.1's CHANGELOG and
-  flagged as Sec-5 in #56's security council review. Token-bucket caps
-  per-connection sustained call rate (10 RPS) with a burst tolerance
-  (30 calls). An empty bucket returns the new typed
+- **Per-connection rate limit on `daemon.health` (#58, #86).** Closes
+  the amplification-via-deep-probe gap disclosed in 0.9.1's CHANGELOG
+  and flagged as Sec-5 in #56's security council review. Token-bucket
+  caps per-connection sustained call rate (10 RPS) with a burst
+  tolerance (30 calls). An empty bucket returns the new typed
   `LoomErrorCode::TooManyRequests` (wire string `"too-many-requests"`)
   so clients can back off and retry. Tunable via
   `LOOM_DAEMON_HEALTH_RATE_RPS` and `LOOM_DAEMON_HEALTH_RATE_BURST`.
   Gate fires only on `daemon.health`; all other RPCs are unaffected.
+
+### Changed
+
+- **Dependency hygiene (#84, #85).** 18 cargo bumps + 5 GitHub Actions
+  bumps cleared the May 2026 backlog in one pass instead of waiting out
+  the Dependabot schedule. Notable changes ride along:
+  - `tokio 1.52.2 → 1.52.3` patches four latent bugs in sync primitives
+    (mpsc `len()` underflow, `OwnedPermit::release()` receiver-notify,
+    `RwLock` `max_readers != 0` precondition, mpsc `try_recv()` on
+    closed-with-permits) — loom's daemon RPC dispatch, per-shim IPC,
+    and session manager are all mpsc-heavy under concurrent load.
+  - `jsonschema 0.46.4 → 0.46.5` patches the validator that runs on
+    every inbound RPC.
+  - `dashmap 6.1 → 6.2` improvements in the concurrent map used for
+    session state.
+  - Major-version migrations: `thiserror 1→2`, `rand 0.8→0.9→0.10`
+    (incl. the `OsRng → SysRng` rename and the `RngCore → Rng` /
+    `RngExt` split), `zip 2→8`, `toml 0.9→1.1`, `wit-bindgen 0.40→0.57`
+    (refreshed vendored wasm), `sha2 0.10→0.11` (migrated 4 call sites
+    to `hex::encode`), `jsonrpsee 0.24→0.26`, `chromiumoxide 0.6→0.9`,
+    `serde_jcs 0.1→0.2`, `addr2line 0.24→0.26`, `gimli 0.31→0.33`,
+    `clap_mangen 0.2→0.3`. All behaviour-preserving — the rand
+    cluster's ChaCha20 stream is bit-for-bit identical given the same
+    seed, the JCS canonical output is unchanged, all receipt hashes
+    are stable.
+- **CI cost-cuts (`8185783` and earlier).** Workflow-level concurrency
+  cancels superseded PR runs, `beta` toolchain dropped from the macOS
+  matrix, `smoke` and `e2e` macOS legs gated to push-to-main only,
+  Dependabot grouped into one non-major PR + per-major PRs.
+
+### Tests
+
+- **Deep-health invariant guards (#57, #87).** Three new Rust
+  integration tests lock in invariants that #56 deferred:
+  `probe_pending_no_leak.rs` (4 tests — `ShimProcess::pending` does not
+  accumulate across timeout / closed-channel / crashed-flag paths),
+  `restart_count_lifecycle.rs` (5 tests — breaker-rejected calls do not
+  bump `restart_count`, so `daemon.health({deep:true})` bookkeeping
+  doesn't overcount), and `deep_health_probe.rs` (1 test, fake-chromium
+  gated — full `ShimRequest::Health` → `ShimHealthInfo` round-trip).
 
 ## [0.9.2] — 2026-05-18
 
@@ -263,7 +313,8 @@ are stable. Deterministic replay and `web.click` remain Beta — promotion to
   determinism script applied. Fixed by lazy-spawning the
   determinism-injected target on the first evaluate.
 
-[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.3
 [0.9.2]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.2
 [0.9.1]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.1
 [0.9.0]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.0

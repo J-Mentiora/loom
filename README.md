@@ -25,7 +25,7 @@ strings.
                         └──────────────┘
 ```
 
-**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v0.9.2.
+**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v0.9.3.
 
 ## If you've hit the vibe-coding testing wall
 
@@ -155,7 +155,7 @@ loom doctor
 ### `cargo install` — any platform with Rust 1.92+
 
 ```bash
-cargo install --git https://github.com/mentiora-ai/loom --tag v0.9.2 loom-cli
+cargo install --git https://github.com/mentiora-ai/loom --tag v0.9.3 loom-cli
 loom postinstall
 loom doctor
 ```
@@ -163,7 +163,7 @@ loom doctor
 `--tag` is required: `loom postinstall` fetches `loom-daemon`, `loom-mcp`, and
 `loom-shim-chromium` from the GitHub Release matching the installed crate
 version, so the tag must point at an existing release. (Substitute the latest
-release version for `v0.9.2`.)
+release version for `v0.9.3`.)
 
 ### Manual download — pre-built tarball
 
@@ -237,7 +237,7 @@ the TypeScript SDK, async-first. It isn't on PyPI yet; for now use a
 git install:
 
 ```bash
-pip install "git+https://github.com/mentiora-ai/loom@v0.9.2#subdirectory=python-sdk"
+pip install "git+https://github.com/mentiora-ai/loom@v0.9.3#subdirectory=python-sdk"
 ```
 
 ```python
@@ -507,7 +507,7 @@ file, not eleven.
 
 ## Status
 
-loom is **0.9.2** — pre-1.0. The matrix below is the stability
+loom is **0.9.3** — pre-1.0. The matrix below is the stability
 contract: breaking changes to **Stable** rows bump the major version
 when 1.0 ships; **Beta** rows may change without notice.
 
