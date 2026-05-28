@@ -16,21 +16,7 @@ no-default-features = false
 version = 2
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
-ignore = [
-    # RUSTSEC-2025-0052: async-std discontinued (unmaintained).
-    # Transitive via chromiumoxide → loom-shims only (out-of-process Chromium
-    # driver). Not in the WASM execution path. Accepted risk until
-    # chromiumoxide ships an async-std-free release.
-    # Re-evaluate by 2026-09-30.
-    { id = "RUSTSEC-2025-0052" },
-    # RUSTSEC-2026-0114: wasmtime 44.0.0 GHSA-p8xm-42r7-89xg.
-    # Fix is wasmtime >= 44.0.1 (not yet published to crates.io as of
-    # 2026-05-04). Bumping the major (>= 45) is a breaking change for
-    # the wasmtime-wasi-io / wiggle stack we depend on. Accepted risk
-    # until 44.0.1 lands or we plan a major bump in the WASM host.
-    # Re-evaluate by 2026-08-31.
-    { id = "RUSTSEC-2026-0114" },
-]
+ignore = []
 
 [licenses]
 version = 2
@@ -94,7 +80,6 @@ wrappers = [
     "jsonschema",      # schema validation engine RNG
     "referencing",     # jsonschema URI resolution helpers
     "jobserver",       # build-time make-jobserver client
-    "zip",             # archive randomness for loom-cli
 ]
 
 # 3. Forbid platform-specific keychain crates outside loom-keychain.
