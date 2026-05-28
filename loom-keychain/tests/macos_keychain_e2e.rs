@@ -37,7 +37,8 @@ fn set_get_round_trip() {
     let label = fresh_label();
     let secret = Zeroizing::new(b"round-trip-bytes-123".to_vec());
 
-    kc.set_secret(&label, secret.clone()).expect("set should succeed");
+    kc.set_secret(&label, secret.clone())
+        .expect("set should succeed");
     let fetched = kc.get_secret(&label).expect("get should succeed");
     assert_eq!(&fetched[..], &secret[..], "round-trip bytes match");
     kc.delete_secret(&label).expect("cleanup delete");
@@ -52,7 +53,8 @@ fn set_set_replaces() {
     let second = Zeroizing::new(b"second-value".to_vec());
 
     kc.set_secret(&label, first).expect("first set");
-    kc.set_secret(&label, second.clone()).expect("second set (replace)");
+    kc.set_secret(&label, second.clone())
+        .expect("second set (replace)");
 
     let fetched = kc.get_secret(&label).expect("get after replace");
     assert_eq!(&fetched[..], &second[..]);
@@ -78,7 +80,8 @@ fn get_not_found_returns_typed_error() {
 fn delete_not_found_is_idempotent() {
     let kc = fresh_backend();
     let missing = fresh_label();
-    kc.delete_secret(&missing).expect("delete of missing must be idempotent");
+    kc.delete_secret(&missing)
+        .expect("delete of missing must be idempotent");
 }
 
 #[test]
@@ -105,7 +108,9 @@ fn list_labels_returns_unavailable_v094_limitation() {
     // Unavailable per module-level doc; flip this test when the
     // fast-follow-up wires the lower-level enumeration API.
     let kc = fresh_backend();
-    let err = kc.list_labels().expect_err("v0.9.4 macOS list_labels returns Unavailable");
+    let err = kc
+        .list_labels()
+        .expect_err("v0.9.4 macOS list_labels returns Unavailable");
     assert!(
         matches!(err.kind(), KeychainErrorKind::Unavailable),
         "expected Unavailable, got {:?}",

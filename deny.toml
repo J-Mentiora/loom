@@ -47,6 +47,44 @@ multiple-versions = "warn"
 wildcards = "warn"
 highlight = "all"
 
+# Known-duplicate transitive deps introduced by the v0.9.4 keychain backends.
+# Each pair is split across two co-existing major-version lineages that we
+# can't easily unify without forcing a major bump elsewhere in the tree.
+# Listed here so cargo-deny doesn't promote the `multiple-versions` warning
+# tier into a CI failure under EmbarkStudios/cargo-deny-action@v2's default
+# exit-code semantics. Re-evaluate whenever the secret-service / wasmtime /
+# wit-bindgen chains land a unifying release.
+skip = [
+    # secret-service 5.x pulls `digest 0.10 → block-buffer 0.10`; the rest of
+    # the workspace (sha2 0.11 via loom-shims / loom-cli / loom-keychain) is
+    # on `digest 0.11 → block-buffer 0.12`. Both sides are mature, both ship.
+    { name = "block-buffer", version = "=0.10.4" },
+    # cpp_demangle: wasmtime 44 pins 0.4.5 (in its addr2line vendor); top-
+    # level addr2line 0.26 pulls 0.5.1. Independent symbol-demangle paths.
+    { name = "cpp_demangle", version = "=0.4.5" },
+    # cpufeatures: aes 0.8 (secret-service) on 0.2.17; sha1 0.10 (soketto /
+    # tungstenite) on 0.2.17 too — but jsonrpsee 0.26's sub-tree pulls 0.3.0.
+    { name = "cpufeatures", version = "=0.2.17" },
+    # windows_*_*: rustix 1.x pulls 0.52.6; older `windows-sys 0.42` chain
+    # (via `dbus / zbus 5.15` on Linux) still references 0.42.2. Pure target-
+    # cfg leaves — Linux runs neither in practice; macOS/Windows pick one or
+    # the other depending on which cfg gate evaluates true at build.
+    { name = "windows_i686_msvc", version = "=0.42.2" },
+    { name = "windows_x86_64_gnu", version = "=0.42.2" },
+    { name = "windows_x86_64_gnullvm", version = "=0.42.2" },
+    { name = "windows_x86_64_msvc", version = "=0.42.2" },
+    # winnow: toml 1.x (workspace) on 1.0.3; cargo-platform / cargo-metadata
+    # transitives still on 0.7.x. Parser-combinator only; build-time only.
+    { name = "winnow", version = "=0.7.15" },
+    # wit-bindgen: wasmtime's wit-component vendors 0.51 internally; the
+    # workspace top-level `wit-bindgen = "0.57"` is what the WASM-guest
+    # surfaces use. Two separate consumers, no fight to reconcile.
+    { name = "wit-bindgen", version = "=0.51.0" },
+    # wit-parser: same story as wit-bindgen — 0.246 vendored by
+    # wasmtime-environ 44; 0.247 is the workspace top-level.
+    { name = "wit-parser", version = "=0.246.2" },
+]
+
 # ---- Per-crate / per-target bans ----
 # These rules encode the workspace's architectural invariants. cargo-deny
 # v2 matches `wrappers` against DIRECT parents in the resolved dep graph —

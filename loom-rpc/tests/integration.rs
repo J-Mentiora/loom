@@ -311,10 +311,12 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         loom_rpc::core_service_adapter::core_service_adapter::VaultListLabelsInfo,
         loom_rpc::core_service_adapter::core_service_adapter::AdapterError,
     > {
-        Ok(loom_rpc::core_service_adapter::core_service_adapter::VaultListLabelsInfo {
-            labels: vec![],
-            count: 0,
-        })
+        Ok(
+            loom_rpc::core_service_adapter::core_service_adapter::VaultListLabelsInfo {
+                labels: vec![],
+                count: 0,
+            },
+        )
     }
     fn vault_diagnose(
         &self,

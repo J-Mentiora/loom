@@ -98,11 +98,7 @@ impl KeychainAccess for MacOsKeychain {
     }
 
     fn set_secret(&self, label: &str, secret: Zeroizing<Vec<u8>>) -> Result<(), KeychainError> {
-        match security_framework::passwords::set_generic_password(
-            self.service_id,
-            label,
-            &secret,
-        ) {
+        match security_framework::passwords::set_generic_password(self.service_id, label, &secret) {
             Ok(()) => Ok(()),
             Err(e) => Err(map_sf_error(e)),
         }

@@ -328,9 +328,8 @@ impl RequestRouterApi for RequestRouter {
                 }
             }
             "vault.list_labels" => {
-                let p: VaultListLabelsParams = serde_json::from_value(params).unwrap_or(
-                    VaultListLabelsParams { session_id: None },
-                );
+                let p: VaultListLabelsParams = serde_json::from_value(params)
+                    .unwrap_or(VaultListLabelsParams { session_id: None });
                 match self.ctx.handlers.vault_list_labels(p).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),

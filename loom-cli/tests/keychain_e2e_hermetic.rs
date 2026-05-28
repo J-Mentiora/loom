@@ -67,17 +67,6 @@ fn bins() -> &'static Bins {
     })
 }
 
-fn data_root(home: &Path) -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        home.join("Library/Application Support/loom")
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        home.join(".local/share/loom")
-    }
-}
-
 fn socket_path(home: &Path) -> PathBuf {
     #[cfg(target_os = "macos")]
     {
@@ -252,9 +241,7 @@ fn memmem(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() || haystack.len() < needle.len() {
         return false;
     }
-    haystack
-        .windows(needle.len())
-        .any(|w| w == needle)
+    haystack.windows(needle.len()).any(|w| w == needle)
 }
 
 // ── The hermetic test ─────────────────────────────────────────────────
@@ -271,11 +258,7 @@ fn vault_add_list_delete_round_trip_with_in_memory_backend() {
     //    secret. The daemon hex-encodes through the wire and stores in
     //    the in-memory keychain.
     let add = daemon.cli(
-        &[
-            "vault", "add",
-            "--label", "test-grant",
-            "--from-stdin",
-        ],
+        &["vault", "add", "--label", "test-grant", "--from-stdin"],
         Some(canary.as_bytes()),
     );
     assert_eq!(
@@ -293,12 +276,15 @@ fn vault_add_list_delete_round_trip_with_in_memory_backend() {
         list.stdout
     );
 
-    // 3. G1 invariant: the canary substring must NEVER appear in any
-    //    persisted file under the daemon's data root. The audit payload
-    //    carries `size_bucket = small`, not the raw bytes, so a literal
-    //    byte-grep is sound.
-    let root = data_root(home.path());
-    let hit = scan_for_canary(&root, &canary);
+    // 3. G1 invariant: the canary substring must NEVER appear in ANY
+    //    persisted file the daemon has touched. The audit payload carries
+    //    `size_bucket = small`, not the raw bytes, so a literal byte-grep
+    //    is sound. Per council-ship #3 we scan the whole sandbox `home`
+    //    (NOT just `data_root`) — that picks up `daemon.stderr`, where
+    //    a debug-level secret-hex leak in tracing output would otherwise
+    //    slip past the G1 check.
+    let root = home.path();
+    let hit = scan_for_canary(root, &canary);
     assert!(
         hit.is_none(),
         "G1 violation: canary {canary:?} found in {:?}",
@@ -312,7 +298,10 @@ fn vault_add_list_delete_round_trip_with_in_memory_backend() {
     daemon.shutdown();
     let daemon = Daemon::spawn(home.path());
     let list2 = daemon.cli(&["vault", "list-labels", "--json"], None);
-    assert_eq!(list2.status, 0, "post-restart list-labels failed: {list2:?}");
+    assert_eq!(
+        list2.status, 0,
+        "post-restart list-labels failed: {list2:?}"
+    );
     assert!(
         list2.stdout.contains("\"count\":0") || list2.stdout.contains("\"count\": 0"),
         "post-restart list-labels expected count=0, got: {}",

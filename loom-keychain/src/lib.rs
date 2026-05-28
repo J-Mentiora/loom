@@ -240,21 +240,25 @@ fn default_platform_backend() -> BackendChoice {
 /// Resolve a backend from config. Hard-fails (returns Err) when the
 /// requested backend cannot be constructed; the daemon translates this
 /// into a non-zero exit per D7 ("no silent stub fallback").
-pub fn select_keychain(
-    cfg: &KeychainConfig,
-) -> Result<Arc<dyn KeychainAccess>, KeychainError> {
+pub fn select_keychain(cfg: &KeychainConfig) -> Result<Arc<dyn KeychainAccess>, KeychainError> {
     match cfg.backend {
         BackendChoice::Stub => Ok(Arc::new(StubKeychain)),
         BackendChoice::InMemory => Ok(Arc::new(InMemoryKeychain::with_service_id(cfg.service_id))),
         #[cfg(target_os = "macos")]
-        BackendChoice::MacOs => Ok(Arc::new(macos::MacOsKeychain::new(cfg.service_id, cfg.allow_prompt)?)),
+        BackendChoice::MacOs => Ok(Arc::new(macos::MacOsKeychain::new(
+            cfg.service_id,
+            cfg.allow_prompt,
+        )?)),
         #[cfg(not(target_os = "macos"))]
         BackendChoice::MacOs => Err(KeychainError::new(
             KeychainErrorKind::Unavailable,
             "macOS Security Framework backend is not available on this target",
         )),
         #[cfg(target_os = "linux")]
-        BackendChoice::Linux => Ok(Arc::new(linux::LinuxKeychain::new(cfg.service_id, cfg.allow_prompt)?)),
+        BackendChoice::Linux => Ok(Arc::new(linux::LinuxKeychain::new(
+            cfg.service_id,
+            cfg.allow_prompt,
+        )?)),
         #[cfg(not(target_os = "linux"))]
         BackendChoice::Linux => Err(KeychainError::new(
             KeychainErrorKind::Unavailable,

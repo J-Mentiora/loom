@@ -9,10 +9,7 @@ pub struct VaultDiagnose;
 
 impl CuratedRenderer for VaultDiagnose {
     fn render(&self, value: &Value, cfg: &CliConfig) -> Result<RenderedReceipt, CliError> {
-        let backend = value
-            .get("backend")
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
+        let backend = value.get("backend").and_then(|v| v.as_str()).unwrap_or("?");
         let service_id = value
             .get("service_id")
             .and_then(|v| v.as_str())

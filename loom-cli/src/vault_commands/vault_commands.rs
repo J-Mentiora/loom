@@ -361,9 +361,7 @@ pub async fn diagnose(
     cfg: &CliConfig,
     _args: VaultDiagnoseArgs,
 ) -> Result<(), CliError> {
-    let resp = rpc
-        .call("vault.diagnose", serde_json::Value::Null)
-        .await?;
+    let resp = rpc.call("vault.diagnose", serde_json::Value::Null).await?;
     emit_to_stdout("vault.diagnose", &resp, cfg, None)?;
     Ok(())
 }

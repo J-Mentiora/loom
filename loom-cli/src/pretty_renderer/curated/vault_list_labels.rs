@@ -16,7 +16,8 @@ impl CuratedRenderer for VaultListLabels {
             .unwrap_or_else(|| labels.map(|l| l.len() as u64).unwrap_or(0));
 
         let body = if count == 0 {
-            "No stored credentials. Use `loom vault add --label <name> --from-stdin` to add one.".to_string()
+            "No stored credentials. Use `loom vault add --label <name> --from-stdin` to add one."
+                .to_string()
         } else {
             let mut lines = Vec::with_capacity(count as usize + 1);
             lines.push(format!(

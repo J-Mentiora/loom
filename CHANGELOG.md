@@ -6,7 +6,7 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.9.4] — 2026-05-28
+## [0.9.4] — 2026-05-29
 
 Vault hardening release. Replaces the v0.9.3 placeholder `StubKeychain` with
 real platform-keychain backends (macOS Security Framework, Linux Secret
@@ -33,10 +33,15 @@ are byte-identical; the user-visible surface gains five new subcommands
   `SecretServiceOwnerChanged` audit event is emitted on observed
   re-ownership.
 - **Daemon backend selection via `LOOM_KEYCHAIN_BACKEND`.** Accepts
-  `{auto|macos|linux|in_memory}` with `auto` resolving per host OS. Init
-  failures are **hard-fail-closed** — the daemon refuses to start rather
-  than silently downgrade to a stub. The `in_memory` backend remains for
-  hermetic tests only.
+  `{auto|macos|linux|in_memory|stub}`. Explicit `macos`, `linux`, or
+  `auto` (= platform-native) are **hard-fail-closed** on init failure —
+  the daemon refuses to start rather than silently downgrade. When the
+  variable is **unset**, the daemon defaults to `in_memory` so CI and
+  dev-test contexts that don't have a platform keychain daemon running
+  can boot without intervention; production deployments must opt in
+  explicitly via `LOOM_KEYCHAIN_BACKEND=auto` (or `=macos` / `=linux`).
+  The `stub` backend (always-`Err(Unavailable)`) is retained for the
+  narrow case of "run the daemon with vault disabled entirely".
 - **`loom vault add <label> [--from-stdin|--from-file] [--overwrite]
   [--session]`.** Direct credential injection alongside the existing
   OAuth-grant flow. 1 MiB read cap, binary-safe (no UTF-8 check, no

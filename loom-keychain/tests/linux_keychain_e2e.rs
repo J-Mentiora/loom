@@ -59,7 +59,8 @@ fn set_get_round_trip() {
     let label = fresh_label();
     let secret = Zeroizing::new(b"round-trip-bytes-123".to_vec());
 
-    kc.set_secret(&label, secret.clone()).expect("set should succeed");
+    kc.set_secret(&label, secret.clone())
+        .expect("set should succeed");
     let fetched = kc.get_secret(&label).expect("get should succeed");
     assert_eq!(&fetched[..], &secret[..], "round-trip bytes match");
     kc.delete_secret(&label).expect("cleanup delete");
@@ -136,8 +137,10 @@ fn list_labels_returns_only_account_attribute() {
     let Some(kc) = try_backend() else { return };
     let a = fresh_label();
     let b = fresh_label();
-    kc.set_secret(&a, Zeroizing::new(b"aa".to_vec())).expect("set a");
-    kc.set_secret(&b, Zeroizing::new(b"bb".to_vec())).expect("set b");
+    kc.set_secret(&a, Zeroizing::new(b"aa".to_vec()))
+        .expect("set a");
+    kc.set_secret(&b, Zeroizing::new(b"bb".to_vec()))
+        .expect("set b");
 
     let labels = kc.list_labels().expect("list_labels");
     assert!(

@@ -206,7 +206,10 @@ fn append_audit_rejects_malformed_secret_label() {
     assert_eq!(err.code, LoomErrorCode::VaultInvalidLabel);
 
     // Empty label — must be rejected.
-    let empty = serde_json::to_vec(&json!({"event": "stored", "label": "", "size_bucket": "small", "replaced": false})).unwrap();
+    let empty = serde_json::to_vec(
+        &json!({"event": "stored", "label": "", "size_bucket": "small", "replaced": false}),
+    )
+    .unwrap();
     let res = w.append_audit(session.clone(), AuditKind::SecretStored, empty);
     let err = res.expect_err("empty label must be rejected");
     assert_eq!(err.code, LoomErrorCode::VaultInvalidLabel);
@@ -239,8 +242,7 @@ fn append_audit_label_gate_scoped_to_secret_kinds() {
         .expect("open_manifest");
 
     // A label that would fail the Secret* gate — but Grant* is scoped out.
-    let bytes = serde_json::to_vec(&json!({"label": "bad label", "kind": "grant_issued"}))
-        .unwrap();
+    let bytes = serde_json::to_vec(&json!({"label": "bad label", "kind": "grant_issued"})).unwrap();
     w.append_audit(session, AuditKind::GrantIssued, bytes)
         .expect("non-secret audit kind bypasses label gate");
 }

@@ -32,13 +32,22 @@ impl KeychainAccess for StubKeychain {
         }
     }
     fn set_secret(&self, _label: &str, _secret: Zeroizing<Vec<u8>>) -> Result<(), KeychainError> {
-        Err(KeychainError::new(KeychainErrorKind::Unavailable, "test stub"))
+        Err(KeychainError::new(
+            KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
     fn delete_secret(&self, _label: &str) -> Result<(), KeychainError> {
-        Err(KeychainError::new(KeychainErrorKind::Unavailable, "test stub"))
+        Err(KeychainError::new(
+            KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
     fn list_labels(&self) -> Result<Vec<String>, KeychainError> {
-        Err(KeychainError::new(KeychainErrorKind::Unavailable, "test stub"))
+        Err(KeychainError::new(
+            KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
 }
 

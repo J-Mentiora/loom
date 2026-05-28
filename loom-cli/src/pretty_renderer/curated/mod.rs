@@ -111,10 +111,7 @@ fn registry() -> &'static HashMap<&'static str, RendererBox> {
             "vault.set_secret",
             Box::new(vault_set_secret::VaultSetSecret),
         );
-        m.insert(
-            "vault.delete_secret",
-            Box::new(vault_delete::VaultDelete),
-        );
+        m.insert("vault.delete_secret", Box::new(vault_delete::VaultDelete));
         m.insert(
             "vault.list_labels",
             Box::new(vault_list_labels::VaultListLabels),

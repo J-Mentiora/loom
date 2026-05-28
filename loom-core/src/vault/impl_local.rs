@@ -13,7 +13,8 @@ use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::manifest_writer::{AuditKind, SessionId};
 use crate::vault::vault::{
     AddCredentialOpts, AddCredentialReceipt, CredentialType, DeleteSecretOutcome, Grant, GrantId,
-    GrantOpts, GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault, OAUTH_PROVIDER_ALLOWLIST,
+    GrantOpts, GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault,
+    OAUTH_PROVIDER_ALLOWLIST,
 };
 use loom_keychain::{KeychainAccess, KeychainError, KeychainErrorKind};
 use serde::{Deserialize, Serialize};
@@ -644,9 +645,7 @@ impl Vault for LocalVault {
             grants
                 .iter()
                 .filter(|(_, g)| {
-                    g.label == label
-                        && !g.revoked
-                        && now < g.issued_at_ms.saturating_add(g.ttl_ms)
+                    g.label == label && !g.revoked && now < g.issued_at_ms.saturating_add(g.ttl_ms)
                 })
                 .map(|(id, _)| id.clone())
                 .collect()
@@ -780,20 +779,14 @@ impl LocalVault {
     // happen anyway (G5b). Operators correlate audit-write failures via
     // the `warn`-level log; the absence of an audit entry is itself
     // observable.
-    fn append_secret_op_pending(
-        &self,
-        session: Option<&SessionId>,
-        label: &str,
-        op: SecretOp,
-    ) {
+    fn append_secret_op_pending(&self, session: Option<&SessionId>, label: &str, op: SecretOp) {
         let Some(session) = session else { return };
         let payload = SecretAuditPayload::OpPending { label, op };
         let bytes = secret_audit_bytes(&payload);
-        if let Err(e) = self.manifest_writer.append_audit(
-            session.clone(),
-            AuditKind::SecretOpPending,
-            bytes,
-        ) {
+        if let Err(e) =
+            self.manifest_writer
+                .append_audit(session.clone(), AuditKind::SecretOpPending, bytes)
+        {
             tracing::warn!(error = %e, "append SecretOpPending failed");
         }
     }
@@ -810,7 +803,10 @@ impl LocalVault {
         let Some(session) = session else { return };
         let bytes = secret_audit_bytes(payload);
         let kind_for_log = kind.clone();
-        if let Err(e) = self.manifest_writer.append_audit(session.clone(), kind, bytes) {
+        if let Err(e) = self
+            .manifest_writer
+            .append_audit(session.clone(), kind, bytes)
+        {
             tracing::warn!(error = %e, kind = ?kind_for_log, "append secret audit failed");
         }
     }
@@ -828,12 +824,17 @@ impl LocalVault {
         err: &KeychainError,
         slot: SecretFailureSlot,
     ) {
-        // A-W6.3: structured tracing::error! echo with the internal_hash
-        // for ALL Internal-kind errors so support can correlate.
+        // A-W6.3 + D30: structured tracing::error! echo with ONLY the
+        // internal_hash for Internal-kind errors. The original message
+        // is intentionally elided from the daemon log — per D30 the
+        // hash is the correlation handle; the message itself never
+        // travels to a persistent surface (audit chain, daemon log).
+        // Support recovers the message by pasting the hash into the
+        // original keychain backend's diagnostic channel (per the
+        // `docs/loom-vault-audit.md` runbook).
         if matches!(err.kind(), KeychainErrorKind::Internal) {
             tracing::error!(
                 internal_hash = err.internal_hash().unwrap_or("<missing>"),
-                original_message = %err.message(),
                 "vault.{} internal error",
                 match slot {
                     SecretFailureSlot::Store => "set_secret",
@@ -865,7 +866,10 @@ impl LocalVault {
         };
         let bytes = secret_audit_bytes(&payload);
         let kind_for_log = kind.clone();
-        if let Err(e) = self.manifest_writer.append_audit(session.clone(), kind, bytes) {
+        if let Err(e) = self
+            .manifest_writer
+            .append_audit(session.clone(), kind, bytes)
+        {
             tracing::warn!(error = %e, kind = ?kind_for_log, "append secret failure audit failed");
         }
     }
@@ -1725,10 +1729,19 @@ mod tests {
             .iter()
             .map(|e| e["audit_kind"].as_str().unwrap_or("").to_string())
             .collect();
-        let stored_count = kinds.iter().filter(|k| k.as_str() == "secret_stored").count();
-        let replaced_count = kinds.iter().filter(|k| k.as_str() == "secret_replaced").count();
+        let stored_count = kinds
+            .iter()
+            .filter(|k| k.as_str() == "secret_stored")
+            .count();
+        let replaced_count = kinds
+            .iter()
+            .filter(|k| k.as_str() == "secret_replaced")
+            .count();
         assert_eq!(stored_count, 2, "two stores → two secret_stored audits");
-        assert_eq!(replaced_count, 1, "second store → one secret_replaced audit");
+        assert_eq!(
+            replaced_count, 1,
+            "second store → one secret_replaced audit"
+        );
     }
 
     #[test]

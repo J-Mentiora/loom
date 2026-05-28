@@ -8,8 +8,9 @@ mod interface_tests;
 use crate::core_service_adapter::core_service_adapter::{
     ContentData, CoreServiceAdapterApi, CreateSessionParams, DiffReport, ExportInfo, GcRunReport,
     GrantInfo, GrantParams, PlaywrightImportInfo, SessionInfo, SessionInspection, ValidationResult,
-    VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo, VaultDeleteSecretParams, VaultDiagnoseInfo,
-    VaultListLabelsInfo, VaultListLabelsParams, VaultSetSecretInfo, VaultSetSecretParams,
+    VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo, VaultDeleteSecretParams,
+    VaultDiagnoseInfo, VaultListLabelsInfo, VaultListLabelsParams, VaultSetSecretInfo,
+    VaultSetSecretParams,
 };
 use crate::error_translator::error_translator::LoomErrorCode;
 use crate::host_service_adapter::host_service_adapter::{Action, HostServiceAdapterApi, Receipt};
@@ -403,13 +404,11 @@ impl RpcHandlers {
         &self,
         p: VaultListLabelsParams,
     ) -> HandlerResult<VaultListLabelsInfo> {
-        self.core
-            .vault_list_labels(p)
-            .map_err(|code| JsonRpcError {
-                code,
-                message: "vault.list_labels failed".to_string(),
-                data: None,
-            })
+        self.core.vault_list_labels(p).map_err(|code| JsonRpcError {
+            code,
+            message: "vault.list_labels failed".to_string(),
+            data: None,
+        })
     }
 
     pub async fn vault_diagnose(&self) -> HandlerResult<VaultDiagnoseInfo> {

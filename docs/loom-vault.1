@@ -1,223 +1,38 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
-.TH loom-vault 1  "loom-vault 0.9.4"
+.TH loom-vault 1  "loom-vault " 
 .SH NAME
-loom\-vault \- Credential vault: grant/revoke lifecycle + direct credential CRUD.
+loom\-vault \- Vault commands (RPC). Only `add` may prompt
 .SH SYNOPSIS
-\fBloom\-vault\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommand\fR>
+\fBloom\-vault\fR [\fB\-h\fR|\fB\-\-help\fR] <\fIsubcommands\fR>
 .SH DESCRIPTION
-The vault subsystem mediates OAuth token access for agent sessions and (as of
-v0.9.4) provides a direct credential-management surface for storing,
-inspecting, and deleting credentials in the operating-system keychain.
-Two distinct flows live under \fBloom vault add\fR:
-
-.IP \(bu 2
-\fBOAuth device flow\fR: \fBloom vault add <provider>\fR \- the legacy v0.9.3
-flow; \fIprovider\fR must be on the OAuth allowlist (\fBgithub\fR today).
-
-.IP \(bu 2
-\fBDirect credential injection\fR (v0.9.4): \fBloom vault add \-\-label <name>
-\-\-from\-stdin\fR (or \fB\-\-from\-file <path>\fR). Reads raw bytes until EOF
-(binary\-safe per A\-W6.2), validates \fI<name>\fR per D37, and stores via the
-\fBvault.set_secret\fR RPC. Mutually exclusive with the positional \fIprovider\fR.
-
+Vault commands (RPC). Only `add` may prompt
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
 .SH SUBCOMMANDS
-
 .TP
-\fBloom vault grant\fR
-Issue an opaque grant token bound to (session, origin, scopes, ttl).
-The grant is the only handle WASM guests see.
-
+loom\-vault\-grant(1)
+`loom vault grant` arguments
 .TP
-\fBloom vault revoke\fR
-Revoke an active grant by id; subsequent \fBsubstitute()\fR calls fail with
-\fBVaultGrantRevoked\fR.
-
+loom\-vault\-revoke(1)
+`loom vault revoke` arguments
 .TP
-\fBloom vault list\fR
-List alive grants. Distinct from \fBlist\-labels\fR which lists credentials.
-
+loom\-vault\-list(1)
+`loom vault list` arguments
 .TP
-\fBloom vault add\fR [\fB<provider>\fR] [\fB\-\-label <name>\fR]
-       [\fB\-\-from\-stdin\fR | \fB\-\-from\-file <path>\fR]
-       [\fB\-\-overwrite\fR] [\fB\-\-session <id>\fR] [\fB\-\-yes\fR]
-Store a credential. See DESCRIPTION for the two flows.
-\fB\-\-overwrite\fR is required to replace an existing label (default refuses
-with \fBAlreadyExists\fR exit code 5 per D33).
-\fB\-\-session <id>\fR writes G5a/G5b audit entries to the named session's
-manifest; sessionless (default) records via \fBtracing::info!\fR only.
-\fB\-\-yes\fR skips interactive confirmation.
-
+loom\-vault\-add(1)
+`loom vault add <provider>` arguments. Two flows:
 .TP
-\fBloom vault delete <label>\fR [\fB\-\-force\fR] [\fB\-\-session <id>\fR]
-Delete a credential by label. Per D29: by default fails with
-\fBVaultRejection { code: credential_in_use }\fR if any active grant references
-\fI<label>\fR; with \fB\-\-force\fR, cascade\-revokes each referencing grant
-(one \fBGrantRevoked{reason: "credential_deleted"}\fR audit per grant) before
-removing the credential.
-
+loom\-vault\-delete(1)
+`vault delete <label> [\-\-force]` — remove a credential. Cascade revokes active grants when `\-\-force` is set; otherwise blocks with `credential_in_use` if any grant references the label
 .TP
-\fBloom vault list\-labels\fR [\fB\-\-session <id>\fR]
-Enumerate stored credential labels under the daemon's service id (hardcoded
-\fB"loom"\fR per D36 in v0.9.4). Output is a structured array safe for the JSON
-pipe path. \fBNo per\-label byte data\fR \- only the labels themselves.
-
+loom\-vault\-list\-labels(1)
+`vault list\-labels` — enumerate stored credential labels. Distinct from `vault list` which lists *grants*
 .TP
-\fBloom vault diagnose\fR
-Snapshot of the keychain backend's health + last\-error state. Stable JSON
-schema per A\-W6.4 (see loom\-vault\-audit.md \(sc 3). Shape:
-.RS
-.PP
-\fB{backend, init_status, service_id, label_count, last_keychain_error?}\fR
-.RE
-.PP
-\fBjq\fR\-friendly across patch releases. Power users automate alerts against
-\fB.last_keychain_error.kind\fR and feed \fB.internal_hash\fR into a daemon
-log search to recover the original error message (see TROUBLESHOOTING).
-
-.SH ENVIRONMENT
-
+loom\-vault\-diagnose(1)
+`vault diagnose` — backend status + last\-error snapshot. Output is a stable JSON schema (A\-W6.4) for `jq` automation
 .TP
-\fBLOOM_KEYCHAIN_BACKEND\fR
-Backend override. One of \fBstub\fR, \fBin_memory\fR, \fBmacos\fR, \fBlinux\fR.
-Defaults to the platform default: \fBmacos\fR on macOS, \fBlinux\fR on Linux,
-\fBstub\fR otherwise. Set \fBstub\fR explicitly to diagnose backend init
-failures (the daemon refuses to fall back silently per D7). \fBin_memory\fR is
-intended for daemon\-level integration tests only \- the secret store is
-process\-local and does NOT persist across restarts.
-
-.TP
-\fBLOOM_KEYCHAIN_ALLOW_PROMPT\fR
-\fB1\fR or \fB0\fR. Whether the daemon may trigger OS unlock / biometric
-prompts during keychain ops. Default: derived from the parent's TTY status
-(\fB1\fR when stdin is a TTY, \fB0\fR otherwise). Backends that would have
-prompted with this set to \fB0\fR return \fBNonInteractivePrompt\fR \- the
-operator must unlock the keychain out of band before the daemon retries.
-
-.TP
-\fBKEYCHAIN_CI_REQUIRE_DAEMON\fR
-CI\-only escape hatch read by the Linux backend integration tests. When set to
-\fB1\fR (typically by the CI \fBgnome\-keyring\fR setup step \- see A\-W7.2),
-\fBlinux_keychain_e2e.rs\fR tests fail loud on construction error instead of
-self\-skipping. Operators should NOT set this; it's strictly a CI signal.
-
-.SH EXIT CODES (per D33)
-
-.TP
-\fB0\fR
-Success.
-
-.TP
-\fB1\fR
-Generic failure (daemon\-side internal error, transport failure).
-
-.TP
-\fB2\fR
-Not found (\fBvault delete\fR of an unknown label \- though this is idempotent
-and currently returns 0). Label validation failures at the CLI boundary also
-surface here as \fBCliError::Usage\fR.
-
-.TP
-\fB3\fR
-Permission denied (keychain ACL refused, OS unlock prompt cancelled).
-
-.TP
-\fB4\fR
-Invalid arguments (overlong / non\-canonical label per D37; non\-hex
-\fBsecret_hex\fR; secret exceeds 1 MiB per A\-W6.2).
-
-.TP
-\fB5\fR
-Already exists (\fBvault add\fR without \fB\-\-overwrite\fR for an existing
-label).
-
-.B Note:
-v0.9.4 \fBpartial\fR mapping \- the wider \fBerror_mapper\fR table drifts from
-D33 in some places (label\-validation failures emit exit 2, not 4). A full
-strict re\-alignment is tracked for v0.9.5.
-
-.SH TROUBLESHOOTING (per A\-W8.2 / FND-0057)
-
-.TP
-\fBI see "backend init failed" at daemon startup.\fR
-The platform backend couldn't construct. On macOS this typically means the
-login keychain is corrupt or the user is logged into the system but their
-keychain is locked. On Linux it means \fBorg.freedesktop.secrets\fR has no
-owner \- there's no running Secret Service provider on the session bus.
-.IP
-\fBDiagnostic only\fR: set \fBLOOM_KEYCHAIN_BACKEND=stub\fR to start the
-daemon. \fBStubKeychain\fR returns \fBUnavailable\fR for every op so vault.*
-RPCs all fail \- which is fine when you're just trying to confirm the daemon
-boots and the failure is keychain\-localised.
-.IP
-\fBNot a recovery\fR: production must run with a real backend per D7.
-
-.TP
-\fBI'm on Linux and gnome\-keyring won't start.\fR
-The login keyring is unlocked on first GUI login; running \fBloom\-daemon\fR
-from a non\-graphical session (SSH, container, CI) usually requires:
-.RS
-.PP
-.EX
-eval "$(dbus\-launch \-\-sh\-syntax)"
-echo "" | gnome\-keyring\-daemon \-\-unlock \-\-components=secrets \-\-daemonize
-.EE
-.RE
-.IP
-See CONTRIBUTING.md \(sc "Running Linux keychain integration tests" for the
-full runbook.
-
-.TP
-\fBI got an "Unauthorized" / biometric prompt I didn't expect on macOS.\fR
-Some macOS keychain items trigger Touch ID on each \fBSecItemCopyMatching\fR
-when \fBkSecAccessControlBiometryAny\fR is set. v0.9.4 doesn't attach
-\fBkSecAccessControl\fR programmatically \- if you see a prompt, an external
-process (e.g. Keychain Access.app) added that ACL. Open Keychain Access.app,
-find the loom item under \fBservice=loom\fR, and remove the biometric ACL.
-
-.TP
-\fBI see "AlreadyExists" but I want to replace the credential.\fR
-Pass \fB\-\-overwrite\fR. In non\-interactive contexts (CI, scripts) also pass
-\fB\-\-yes\fR to confirm replacement without prompting:
-.RS
-.PP
-.EX
-loom vault add \-\-label github\-token \-\-from\-stdin \-\-overwrite \-\-yes < new\-token.txt
-.EE
-.RE
-
-.TP
-\fBI need to recover the original message behind an internal_hash.\fR
-\fBloom vault diagnose\fR's \fB.last_keychain_error.internal_hash\fR is a
-SHA\-256 over the third\-party error message. The message itself is
-\fBNEVER\fR persisted to any session manifest (G1). To recover it, search the
-daemon's structured log:
-.RS
-.PP
-.EX
-grep <hash> ~/.local/share/loom/daemon.log
-.EE
-.RE
-.IP
-A\-W6.3 commits the daemon to emitting \fBtracing::error!(internal_hash =
-<hash>, original_message = <msg>, ...)\fR at every \fBInternal\fR\-kind
-failure, so the log line is the correlation target.
-
-.SH FILES
-
-.TP
-\fB~/.local/share/loom/sessions/<sid>/manifest.{wal,jsonl}\fR
-(macOS: \fB~/Library/Application Support/loom/sessions/<sid>/...\fR.) The
-session's audit chain. Mode \fB0600\fR, owned by the daemon UID.
-
-.TP
-\fB~/.local/share/loom/auth/{hello.token,daemon.pid}\fR
-Daemon auth artefacts. Mode \fB0600\fR \- the daemon refuses to start with
-loose perms (A\-W8.1 / W8.5).
-
-.SH SEE ALSO
-.BR loom (1),
-.BR loom-session (1),
-.BR security/vault_threat_model.md ,
-.BR docs/PRIVACY-loom-vault.md ,
-.BR docs/loom-vault-audit.md
+loom\-vault\-help(1)
+Print this message or the help of the given subcommand(s)

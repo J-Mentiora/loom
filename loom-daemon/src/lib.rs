@@ -681,36 +681,39 @@ impl CoreFacadeBridge for CoreBridge {
         // stable; richer state (cached last-error, backend identity from
         // KeychainConfig) lands in a follow-up that wires those signals
         // through `CoreApiFacade`.
-        let (label_count, last_keychain_error, init_status) =
-            match self.core.vault.list_labels(None) {
-                Ok(labels) => (
-                    u32::try_from(labels.len()).unwrap_or(u32::MAX),
-                    None,
-                    VaultDiagnoseInitStatus::Ok,
-                ),
-                Err(e) => {
-                    // The LoomError code → KeychainErrorKind snake_case round-trip
-                    // (string match is fine — the set is closed at 6).
-                    let kind = match e.code {
-                        loom_core::error::LoomErrorCode::VaultUnknownLabel => "not_found",
-                        loom_core::error::LoomErrorCode::VaultPermissionDenied => "denied",
-                        loom_core::error::LoomErrorCode::VaultBackendUnavailable => "unavailable",
-                        loom_core::error::LoomErrorCode::VaultBackendTimeout => "timed_out",
-                        loom_core::error::LoomErrorCode::VaultNonInteractivePrompt => {
-                            "non_interactive_prompt"
-                        }
-                        loom_core::error::LoomErrorCode::VaultInternal => "internal",
-                        _ => "internal",
-                    };
-                    let internal_hash = e
-                        .context
-                        .as_ref()
-                        .and_then(|c| c.get("internal_hash"))
-                        .and_then(|h| h.as_str())
-                        .map(str::to_owned);
-                    let when_ts =
-                        humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
-                    (
+        let (label_count, last_keychain_error, init_status) = match self
+            .core
+            .vault
+            .list_labels(None)
+        {
+            Ok(labels) => (
+                u32::try_from(labels.len()).unwrap_or(u32::MAX),
+                None,
+                VaultDiagnoseInitStatus::Ok,
+            ),
+            Err(e) => {
+                // The LoomError code → KeychainErrorKind snake_case round-trip
+                // (string match is fine — the set is closed at 6).
+                let kind = match e.code {
+                    loom_core::error::LoomErrorCode::VaultUnknownLabel => "not_found",
+                    loom_core::error::LoomErrorCode::VaultPermissionDenied => "denied",
+                    loom_core::error::LoomErrorCode::VaultBackendUnavailable => "unavailable",
+                    loom_core::error::LoomErrorCode::VaultBackendTimeout => "timed_out",
+                    loom_core::error::LoomErrorCode::VaultNonInteractivePrompt => {
+                        "non_interactive_prompt"
+                    }
+                    loom_core::error::LoomErrorCode::VaultInternal => "internal",
+                    _ => "internal",
+                };
+                let internal_hash = e
+                    .context
+                    .as_ref()
+                    .and_then(|c| c.get("internal_hash"))
+                    .and_then(|h| h.as_str())
+                    .map(str::to_owned);
+                let when_ts =
+                    humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
+                (
                         0,
                         Some(loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseLastError {
                             kind: kind.to_string(),
@@ -721,8 +724,8 @@ impl CoreFacadeBridge for CoreBridge {
                             reason: e.message.clone(),
                         },
                     )
-                }
-            };
+            }
+        };
 
         let backend = default_backend_name();
         Ok(VaultDiagnoseInfo {
@@ -1763,9 +1766,13 @@ async fn async_main() -> Result<()> {
     }
 
     // 1a. Resolve the keychain backend per LOOM_KEYCHAIN_BACKEND +
-    //     LOOM_KEYCHAIN_ALLOW_PROMPT (or platform defaults). Hard-fails
-    //     with a non-zero exit if the requested backend cannot be
-    //     initialised — no silent fallback to a stub (per D7).
+    //     LOOM_KEYCHAIN_ALLOW_PROMPT. When an OS-backed backend is
+    //     explicitly requested (`macos` | `linux` | `auto`), init failure
+    //     is hard-fail-closed — no silent fallback to a stub (per D7).
+    //     When the env var is UNSET, default to `in_memory` so the
+    //     daemon starts in CI / dev-test contexts that don't have a
+    //     keychain daemon running. Production deployments must opt in
+    //     explicitly via `LOOM_KEYCHAIN_BACKEND=auto` (or =macos / =linux).
     let keychain_cfg = {
         use std::io::IsTerminal;
         let backend = match std::env::var("LOOM_KEYCHAIN_BACKEND").ok().as_deref() {
@@ -1773,13 +1780,14 @@ async fn async_main() -> Result<()> {
             Some("in_memory") => loom_keychain::BackendChoice::InMemory,
             Some("macos") => loom_keychain::BackendChoice::MacOs,
             Some("linux") => loom_keychain::BackendChoice::Linux,
+            Some("auto") => loom_keychain::KeychainConfig::default().backend,
             Some(other) => {
                 anyhow::bail!(
                     "loom-daemon: unknown LOOM_KEYCHAIN_BACKEND={other}; \
-                     expected one of: stub | in_memory | macos | linux"
+                     expected one of: stub | in_memory | macos | linux | auto"
                 );
             }
-            None => loom_keychain::KeychainConfig::default().backend,
+            None => loom_keychain::BackendChoice::InMemory,
         };
         let allow_prompt = match std::env::var("LOOM_KEYCHAIN_ALLOW_PROMPT").ok().as_deref() {
             Some("0") | Some("false") => false,
@@ -1831,8 +1839,7 @@ async fn async_main() -> Result<()> {
         default_seed: args.default_seed,
         checkpoint_every_n: args.checkpoint_every_n,
     };
-    let core =
-        CoreApiFacade::new(core_config, keychain).context("CoreApiFacade::new failed")?;
+    let core = CoreApiFacade::new(core_config, keychain).context("CoreApiFacade::new failed")?;
 
     // 2. Crash-recovery sweep.
     let _recovery = core.startup_manager.perform_recovery_sweep();

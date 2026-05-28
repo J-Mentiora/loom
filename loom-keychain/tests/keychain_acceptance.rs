@@ -15,7 +15,9 @@
 //! GREEN target: every `assert!`/`assert_eq!` here passes via the
 //! `loom-keychain` crate's own exports plus `loom-core::vault` integration.
 
-use loom_keychain::{InMemoryKeychain, KeychainAccess, KeychainError, KeychainErrorKind, StubKeychain};
+use loom_keychain::{
+    InMemoryKeychain, KeychainAccess, KeychainError, KeychainErrorKind, StubKeychain,
+};
 use zeroize::Zeroizing;
 
 /// D18 / FND-0017 — canary string. Distinct, machine-recognisable, includes a
@@ -49,21 +51,32 @@ fn in_memory_round_trip() {
     let kc = InMemoryKeychain::new();
     let secret = Zeroizing::new(canary());
 
-    kc.set_secret("test-label", secret.clone()).expect("set should succeed");
+    kc.set_secret("test-label", secret.clone())
+        .expect("set should succeed");
 
     let fetched = kc.get_secret("test-label").expect("get should succeed");
     assert_eq!(&fetched[..], &secret[..], "round-trip bytes must match");
 
     let labels = kc.list_labels().expect("list should succeed");
-    assert_eq!(labels, vec!["test-label".to_string()], "list shows the stored label");
+    assert_eq!(
+        labels,
+        vec!["test-label".to_string()],
+        "list shows the stored label"
+    );
 
-    kc.delete_secret("test-label").expect("delete should succeed");
+    kc.delete_secret("test-label")
+        .expect("delete should succeed");
     let labels = kc.list_labels().expect("list should succeed after delete");
     assert!(labels.is_empty(), "list empty after delete");
 
-    let missing = kc.get_secret("test-label").expect_err("get after delete must fail");
-    assert!(matches!(missing.kind(), KeychainErrorKind::NotFound),
-        "get after delete returns NotFound, got {:?}", missing.kind());
+    let missing = kc
+        .get_secret("test-label")
+        .expect_err("get after delete must fail");
+    assert!(
+        matches!(missing.kind(), KeychainErrorKind::NotFound),
+        "get after delete returns NotFound, got {:?}",
+        missing.kind()
+    );
 }
 
 /// D26 / FND-0031 — at the trait level `set_secret` upserts silently (the
@@ -76,10 +89,15 @@ fn set_secret_silently_upserts_at_trait_level() {
     let second = Zeroizing::new(b"second-value".to_vec());
 
     kc.set_secret("label", first).expect("first set succeeds");
-    kc.set_secret("label", second.clone()).expect("second set succeeds (upsert)");
+    kc.set_secret("label", second.clone())
+        .expect("second set succeeds (upsert)");
 
     let fetched = kc.get_secret("label").expect("get after upsert");
-    assert_eq!(&fetched[..], &second[..], "upsert replaces with second value");
+    assert_eq!(
+        &fetched[..],
+        &second[..],
+        "upsert replaces with second value"
+    );
 
     // Still exactly one label after upsert.
     let labels = kc.list_labels().expect("list");
@@ -95,20 +113,37 @@ fn stub_keychain_unavailable_on_all_methods() {
     let kc: Box<dyn KeychainAccess> = Box::new(StubKeychain);
 
     let secret = Zeroizing::new(b"any".to_vec());
-    let set_err = kc.set_secret("any", secret).expect_err("stub set must fail");
-    assert!(matches!(set_err.kind(),
-        KeychainErrorKind::Unavailable | KeychainErrorKind::NotFound),
-        "stub set returns Unavailable or NotFound, got {:?}", set_err.kind());
+    let set_err = kc
+        .set_secret("any", secret)
+        .expect_err("stub set must fail");
+    assert!(
+        matches!(
+            set_err.kind(),
+            KeychainErrorKind::Unavailable | KeychainErrorKind::NotFound
+        ),
+        "stub set returns Unavailable or NotFound, got {:?}",
+        set_err.kind()
+    );
 
     let del_err = kc.delete_secret("any").expect_err("stub delete must fail");
-    assert!(matches!(del_err.kind(),
-        KeychainErrorKind::Unavailable | KeychainErrorKind::NotFound),
-        "stub delete returns Unavailable or NotFound, got {:?}", del_err.kind());
+    assert!(
+        matches!(
+            del_err.kind(),
+            KeychainErrorKind::Unavailable | KeychainErrorKind::NotFound
+        ),
+        "stub delete returns Unavailable or NotFound, got {:?}",
+        del_err.kind()
+    );
 
     let list_err = kc.list_labels().expect_err("stub list must fail");
-    assert!(matches!(list_err.kind(),
-        KeychainErrorKind::Unavailable | KeychainErrorKind::NotFound),
-        "stub list returns Unavailable or NotFound, got {:?}", list_err.kind());
+    assert!(
+        matches!(
+            list_err.kind(),
+            KeychainErrorKind::Unavailable | KeychainErrorKind::NotFound
+        ),
+        "stub list returns Unavailable or NotFound, got {:?}",
+        list_err.kind()
+    );
 }
 
 /// D30 / FND-0035 — `KeychainErrorReason::Internal` MUST carry an opaque
@@ -124,10 +159,16 @@ fn internal_error_carries_hash_not_message() {
     let err = KeychainError::internal_from_message(original_message);
 
     let reason_text = format!("{:?}", err);
-    assert!(!reason_text.contains("xyz123"),
-        "internal hash form must not contain raw fragments from the original message: {}", reason_text);
-    assert!(reason_text.contains("Internal"),
-        "Debug output identifies the Internal variant: {}", reason_text);
+    assert!(
+        !reason_text.contains("xyz123"),
+        "internal hash form must not contain raw fragments from the original message: {}",
+        reason_text
+    );
+    assert!(
+        reason_text.contains("Internal"),
+        "Debug output identifies the Internal variant: {}",
+        reason_text
+    );
     // The hash is 64 hex chars (SHA-256 hex digest). At minimum we assert a
     // long hex-shaped substring is present.
     let has_hex_hash = reason_text
@@ -135,7 +176,11 @@ fn internal_error_carries_hash_not_message() {
         .collect::<String>()
         .split(|c: char| !c.is_ascii_hexdigit())
         .any(|s| s.len() >= 16);
-    assert!(has_hex_hash, "internal_hash hex digest should appear in the Debug output: {}", reason_text);
+    assert!(
+        has_hex_hash,
+        "internal_hash hex digest should appear in the Debug output: {}",
+        reason_text
+    );
 }
 
 /// D11 / FND-0005 — identity model is `(service_id, account)`. The
@@ -147,8 +192,10 @@ fn identity_scoped_by_service_id() {
     let kc_a = InMemoryKeychain::with_service_id("loom");
     let kc_b = InMemoryKeychain::with_service_id("different");
 
-    kc_a.set_secret("shared-label", Zeroizing::new(b"value-a".to_vec())).unwrap();
-    kc_b.set_secret("shared-label", Zeroizing::new(b"value-b".to_vec())).unwrap();
+    kc_a.set_secret("shared-label", Zeroizing::new(b"value-a".to_vec()))
+        .unwrap();
+    kc_b.set_secret("shared-label", Zeroizing::new(b"value-b".to_vec()))
+        .unwrap();
 
     // Each service_id namespace sees only its own value.
     assert_eq!(&kc_a.get_secret("shared-label").unwrap()[..], b"value-a");

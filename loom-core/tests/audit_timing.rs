@@ -30,8 +30,12 @@ fn vault_set_secret_audit_latency_p95_under_100ms() {
     let tmp = std::env::temp_dir().join(format!("loom-audit-timing-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).expect("create tmp");
     let obs = Observability::new(tmp.join("loom.log"), false);
-    let writer: Arc<dyn ManifestWriter> = Arc::new(LocalManifestWriter::new(tmp.clone(), obs.clone()));
-    let session = SessionId(format!("01HZTIMINGZZZZZZZZZZZZ{:04x}", std::process::id() % 0xffff));
+    let writer: Arc<dyn ManifestWriter> =
+        Arc::new(LocalManifestWriter::new(tmp.clone(), obs.clone()));
+    let session = SessionId(format!(
+        "01HZTIMINGZZZZZZZZZZZZ{:04x}",
+        std::process::id() % 0xffff
+    ));
     // Bootstrap the manifest so `append_audit` has a header to chain off.
     let _ = writer
         .open_manifest(session.clone(), None)

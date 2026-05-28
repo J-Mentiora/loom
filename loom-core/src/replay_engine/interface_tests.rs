@@ -21,14 +21,27 @@ impl KeychainAccess for StubKc {
     fn get_secret(&self, _label: &str) -> Result<Zeroizing<Vec<u8>>, loom_keychain::KeychainError> {
         Ok(Zeroizing::new(vec![0u8; 16]))
     }
-    fn set_secret(&self, _label: &str, _secret: Zeroizing<Vec<u8>>) -> Result<(), loom_keychain::KeychainError> {
-        Err(loom_keychain::KeychainError::new(loom_keychain::KeychainErrorKind::Unavailable, "test stub"))
+    fn set_secret(
+        &self,
+        _label: &str,
+        _secret: Zeroizing<Vec<u8>>,
+    ) -> Result<(), loom_keychain::KeychainError> {
+        Err(loom_keychain::KeychainError::new(
+            loom_keychain::KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
     fn delete_secret(&self, _label: &str) -> Result<(), loom_keychain::KeychainError> {
-        Err(loom_keychain::KeychainError::new(loom_keychain::KeychainErrorKind::Unavailable, "test stub"))
+        Err(loom_keychain::KeychainError::new(
+            loom_keychain::KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
     fn list_labels(&self) -> Result<Vec<String>, loom_keychain::KeychainError> {
-        Err(loom_keychain::KeychainError::new(loom_keychain::KeychainErrorKind::Unavailable, "test stub"))
+        Err(loom_keychain::KeychainError::new(
+            loom_keychain::KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
 }
 
