@@ -28,6 +28,12 @@ use zeroize::Zeroizing;
 
 pub use in_memory::InMemoryKeychain;
 
+#[cfg(target_os = "macos")]
+pub use macos::MacOsKeychain;
+
+#[cfg(target_os = "linux")]
+pub use linux::LinuxKeychain;
+
 /// Error returned by all `KeychainAccess` methods. Carries a typed `kind`
 /// (a unit-variant enum suitable for `matches!`) plus a `message` for
 /// human display. The `Internal` kind additionally carries an opaque
