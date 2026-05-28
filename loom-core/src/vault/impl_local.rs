@@ -770,6 +770,16 @@ impl LocalVault {
     /// `session` is `None` (sessionless CLI flow). Failures to write the
     /// audit are logged-and-swallowed — same convention as the existing
     /// `grant`/`consume`/`revoke` flows above.
+    // All three audit helpers below (`append_secret_op_pending`,
+    // `append_secret_audit`, `append_secret_failure`) intentionally swallow
+    // `manifest_writer::append_audit` errors after a `tracing::warn!` echo.
+    // Per the threat model (G5a post-op + G5b pre-op intent), audit is
+    // best-effort observability — NOT a security gate. A full disk or a
+    // transiently-broken WAL must not abort the user's vault operation,
+    // because the operation either already happened (G5a) or is about to
+    // happen anyway (G5b). Operators correlate audit-write failures via
+    // the `warn`-level log; the absence of an audit entry is itself
+    // observable.
     fn append_secret_op_pending(
         &self,
         session: Option<&SessionId>,
