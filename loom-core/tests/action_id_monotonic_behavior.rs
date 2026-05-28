@@ -20,7 +20,9 @@ fn make_core(dir: &TempDir) -> Arc<CoreApiFacade> {
         default_seed: 42,
         checkpoint_every_n: 100,
     };
-    CoreApiFacade::new(config).expect("CoreApiFacade::new must succeed")
+    let keychain: Arc<dyn loom_core::vault::KeychainAccess> =
+        Arc::new(loom_keychain::StubKeychain);
+    CoreApiFacade::new(config, keychain).expect("CoreApiFacade::new must succeed")
 }
 
 fn default_opts() -> SessionCreateOpts {

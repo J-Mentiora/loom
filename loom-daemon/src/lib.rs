@@ -1464,7 +1464,68 @@ async fn async_main() -> Result<()> {
             .with_context(|| format!("create socket dir {}", parent.display()))?;
     }
 
-    // 1. Build CoreApiFacade.
+    // 1a. Resolve the keychain backend per LOOM_KEYCHAIN_BACKEND +
+    //     LOOM_KEYCHAIN_ALLOW_PROMPT (or platform defaults). Hard-fails
+    //     with a non-zero exit if the requested backend cannot be
+    //     initialised — no silent fallback to a stub (per D7).
+    let keychain_cfg = {
+        use std::io::IsTerminal;
+        let backend = match std::env::var("LOOM_KEYCHAIN_BACKEND").ok().as_deref() {
+            Some("stub") => loom_keychain::BackendChoice::Stub,
+            Some("in_memory") => loom_keychain::BackendChoice::InMemory,
+            Some("macos") => loom_keychain::BackendChoice::MacOs,
+            Some("linux") => loom_keychain::BackendChoice::Linux,
+            Some(other) => {
+                anyhow::bail!(
+                    "loom-daemon: unknown LOOM_KEYCHAIN_BACKEND={other}; \
+                     expected one of: stub | in_memory | macos | linux"
+                );
+            }
+            None => loom_keychain::KeychainConfig::default().backend,
+        };
+        let allow_prompt = match std::env::var("LOOM_KEYCHAIN_ALLOW_PROMPT").ok().as_deref() {
+            Some("0") | Some("false") => false,
+            Some("1") | Some("true") => true,
+            Some(other) => {
+                anyhow::bail!(
+                    "loom-daemon: invalid LOOM_KEYCHAIN_ALLOW_PROMPT={other}; expected 0|1"
+                );
+            }
+            None => std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        };
+        loom_keychain::KeychainConfig {
+            backend,
+            allow_prompt,
+            service_id: "loom",
+        }
+    };
+    let keychain = match loom_keychain::select_keychain(&keychain_cfg) {
+        Ok(kc) => {
+            tracing::info!(
+                backend = ?keychain_cfg.backend,
+                service_id = keychain_cfg.service_id,
+                allow_prompt = keychain_cfg.allow_prompt,
+                "loom-daemon: keychain backend initialised"
+            );
+            kc
+        }
+        Err(e) => {
+            tracing::error!(
+                backend = ?keychain_cfg.backend,
+                error = %e,
+                "loom-daemon: keychain backend failed to initialise; refusing to start"
+            );
+            anyhow::bail!(
+                "loom-daemon: {:?} keychain backend failed to initialise: {}. \
+                 Set LOOM_KEYCHAIN_BACKEND=stub to run without keychain persistence \
+                 (NOT recommended for production).",
+                keychain_cfg.backend,
+                e
+            );
+        }
+    };
+
+    // 1b. Build CoreApiFacade with the resolved keychain.
     let core_config = CoreConfig {
         data_root: args.data_root.clone(),
         log_path: args.log_path.clone(),
@@ -1472,7 +1533,8 @@ async fn async_main() -> Result<()> {
         default_seed: args.default_seed,
         checkpoint_every_n: args.checkpoint_every_n,
     };
-    let core = CoreApiFacade::new(core_config).context("CoreApiFacade::new failed")?;
+    let core =
+        CoreApiFacade::new(core_config, keychain).context("CoreApiFacade::new failed")?;
 
     // 2. Crash-recovery sweep.
     let _recovery = core.startup_manager.perform_recovery_sweep();

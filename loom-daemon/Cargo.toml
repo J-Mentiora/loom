@@ -13,6 +13,7 @@ categories.workspace = true
 
 [dependencies]
 loom-shared = { workspace = true }
+loom-keychain = { workspace = true }
 loom-core = { workspace = true }
 loom-host = { workspace = true }
 loom-rpc = { workspace = true }

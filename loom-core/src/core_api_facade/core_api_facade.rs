@@ -75,7 +75,16 @@ pub struct CoreApiFacade {
 impl CoreApiFacade {
     /// Construct the facade by wiring the nine internal modules.
     /// Called once at daemon startup.
-    pub fn new(config: CoreConfig) -> Result<Arc<Self>, LoomError> {
+    ///
+    /// `keychain` is injected by the caller — typically the daemon runs
+    /// `loom_keychain::select_keychain(&cfg)?` before this call and
+    /// passes the resulting `Arc<dyn KeychainAccess>`. Test code passes
+    /// `Arc::new(InMemoryKeychain::new())` (for vault-layer tests) or
+    /// `Arc::new(StubKeychain)` (for backend-init-failure tests).
+    pub fn new(
+        config: CoreConfig,
+        keychain: Arc<dyn loom_core::vault::KeychainAccess>,
+    ) -> Result<Arc<Self>, LoomError> {
         let sessions_root = config.data_root.join("sessions");
         let cas_root = config.data_root.join("cas");
 
@@ -89,15 +98,6 @@ impl CoreApiFacade {
                 sessions_root.clone(),
                 Arc::clone(&obs),
             ));
-
-        // Scaffold keychain — kept as `StubKeychain` (always-error) until
-        // W4 lands the `select_keychain()` daemon-startup wiring. Note: the
-        // production daemon will refuse to start with the stub backend
-        // unless `LOOM_KEYCHAIN_BACKEND=stub` is set explicitly (per D7);
-        // this code path remains for in-process callers that construct
-        // `CoreApiFacade` directly (mostly tests).
-        let keychain: Arc<dyn loom_core::vault::KeychainAccess> =
-            Arc::new(loom_keychain::StubKeychain);
         let vault: Arc<dyn Vault> = Arc::new(loom_core::vault::LocalVault::new(
             keychain,
             Arc::clone(&manifest_writer),

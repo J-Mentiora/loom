@@ -2354,6 +2354,7 @@ dependencies = [
  "dirs",
  "loom-core",
  "loom-host",
+ "loom-keychain",
  "loom-rpc",
  "loom-shared",
  "loom-surfaces",

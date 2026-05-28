@@ -22,7 +22,9 @@ fn make_core(dir: &TempDir) -> std::sync::Arc<CoreApiFacade> {
         default_seed: 42,
         checkpoint_every_n: 100,
     };
-    CoreApiFacade::new(config).expect("CoreApiFacade::new must succeed with temp dir")
+    let keychain: std::sync::Arc<dyn loom_core::vault::KeychainAccess> =
+        std::sync::Arc::new(loom_keychain::StubKeychain);
+    CoreApiFacade::new(config, keychain).expect("CoreApiFacade::new must succeed with temp dir")
 }
 
 fn default_session_opts() -> SessionCreateOpts {

@@ -20,8 +20,11 @@ fn cfg() -> CoreConfig {
 
 #[test]
 fn new_signature_takes_core_config_returns_arc_facade() {
-    fn _ck(c: CoreConfig) -> Result<Arc<CoreApiFacade>, LoomError> {
-        CoreApiFacade::new(c)
+    fn _ck(
+        c: CoreConfig,
+        kc: Arc<dyn loom_core::vault::KeychainAccess>,
+    ) -> Result<Arc<CoreApiFacade>, LoomError> {
+        CoreApiFacade::new(c, kc)
     }
     let _ = _ck;
     let _ = cfg();
