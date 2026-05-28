@@ -27,6 +27,7 @@ use loom_core::observability::Observability;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use zeroize::Zeroizing;
 
 // Re-export the canonical KeychainAccess trait from the platform-leaf
 // crate. v0.9.4 unified the previous duplicate definitions (one here, one
@@ -193,6 +194,37 @@ pub trait Vault: Send + Sync {
     /// `!revoked` AND `now <= issued_at_ms + ttl_ms`. Empty result is a
     /// valid outcome.
     fn list_grants(&self, session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError>;
+
+    // ─── Credential-management methods (v0.9.4) ───────────────────────
+    // Direct mediation between the CLI's `vault.add` / `vault.delete` /
+    // `vault.list_labels` RPCs and the backing keychain. These methods
+    // bypass the Grant lifecycle (Grant is per-session use-authorisation;
+    // these manage the underlying Credential that grants reference).
+    //
+    // v0.9.4 ships these as direct keychain pass-throughs with structured
+    // tracing logs. A follow-up (per plan W5 amendments A-W5.1 through
+    // A-W5.3) will add the BlockingKeychain adapter with timeouts +
+    // the full SecretAuditPayload audit-chain entries + the G5a 100ms
+    // perf test.
+
+    /// Persist a credential under the given label. CLI safety
+    /// (fail-by-default on existing label) lives at the CLI layer per
+    /// A-W6.1; the trait method itself silently upserts.
+    fn set_secret(&self, label: &str, secret: Zeroizing<Vec<u8>>) -> Result<(), LoomError>;
+
+    /// Fetch a credential by label (CLI's `vault.get` — distinct from
+    /// the production-substitution path in `substitute()`). Returns the
+    /// raw bytes wrapped in `Zeroizing`. v0.9.4 has no `vault show` CLI
+    /// (Non-Goal per D13); this trait method exists for completeness
+    /// and for the eventual `BlockingKeychain` perf-test path.
+    fn get_secret_direct(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError>;
+
+    /// Delete a credential. Idempotent at the keychain level. Cascade
+    /// behavior on active Grants (D29) lives at the CLI layer in v0.9.4.
+    fn delete_secret(&self, label: &str) -> Result<(), LoomError>;
+
+    /// Enumerate stored credential labels for this service_id.
+    fn list_labels(&self) -> Result<Vec<String>, LoomError>;
 }
 
 // impl Vault for LocalVault is in impl_local.rs.

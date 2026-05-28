@@ -384,6 +384,44 @@ impl Vault for LocalVault {
             .collect();
         Ok(snapshots)
     }
+
+    // ─── v0.9.4 credential-management methods (W5 minimal) ───────────
+    // Direct keychain pass-throughs. Structured tracing; no audit-chain
+    // entries yet (deferred to follow-up per build-budget cut). Each
+    // method translates KeychainError -> LoomError via from_keychain_err.
+
+    fn set_secret(&self, label: &str, secret: Zeroizing<Vec<u8>>) -> Result<(), LoomError> {
+        let byte_count = secret.len();
+        tracing::info!(
+            label = %label,
+            byte_count = byte_count,
+            "vault.set_secret"
+        );
+        self.keychain
+            .set_secret(label, secret)
+            .map_err(from_keychain_err)
+    }
+
+    fn get_secret_direct(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+        tracing::info!(label = %label, "vault.get_secret_direct");
+        self.keychain
+            .get_secret(label)
+            .map_err(from_keychain_err)
+    }
+
+    fn delete_secret(&self, label: &str) -> Result<(), LoomError> {
+        tracing::info!(label = %label, "vault.delete_secret");
+        self.keychain
+            .delete_secret(label)
+            .map_err(from_keychain_err)
+    }
+
+    fn list_labels(&self) -> Result<Vec<String>, LoomError> {
+        tracing::info!("vault.list_labels");
+        self.keychain
+            .list_labels()
+            .map_err(from_keychain_err)
+    }
 }
 
 #[cfg(test)]

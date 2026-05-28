@@ -124,6 +124,35 @@ impl Vault for BenchmarkVault {
     fn list_grants(&self, _session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError> {
         Ok(Vec::new())
     }
+
+    fn set_secret(
+        &self,
+        _label: &str,
+        _secret: zeroize::Zeroizing<Vec<u8>>,
+    ) -> Result<(), LoomError> {
+        Err(LoomError::new(
+            loom_shared::error_format::LoomErrorCode::VaultRejection,
+            "benchmark vault: keychain not configured",
+        ))
+    }
+
+    fn get_secret_direct(
+        &self,
+        _label: &str,
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
+        Err(LoomError::new(
+            loom_shared::error_format::LoomErrorCode::VaultUnknownLabel,
+            "benchmark vault: keychain not configured",
+        ))
+    }
+
+    fn delete_secret(&self, _label: &str) -> Result<(), LoomError> {
+        Ok(())
+    }
+
+    fn list_labels(&self) -> Result<Vec<String>, LoomError> {
+        Ok(Vec::new())
+    }
 }
 
 /// In-memory ManifestWriter with configurable delays (for latency injection in tests).
