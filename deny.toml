@@ -118,6 +118,7 @@ wrappers = [
     "jsonschema",      # schema validation engine RNG
     "referencing",     # jsonschema URI resolution helpers
     "jobserver",       # build-time make-jobserver client
+    "secret-service",  # Linux keychain backend (v0.9.4) — uses getrandom for session-AES IV
 ]
 
 # 3. Forbid platform-specific keychain crates outside loom-keychain.
