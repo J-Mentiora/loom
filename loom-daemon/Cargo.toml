@@ -33,6 +33,9 @@ tracing-subscriber = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+hex = { workspace = true }
+humantime = { workspace = true }
+zeroize = { workspace = true }
 
 [lib]
 name = "loom_daemon"

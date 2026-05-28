@@ -185,6 +185,44 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         self.calls.lock().unwrap().add.push(p);
         Ok(info)
     }
+    fn vault_set_secret(
+        &self,
+        _: loom_rpc::core_service_adapter::core_service_adapter::VaultSetSecretParams,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultSetSecretInfo,
+        LoomErrorCode,
+    > {
+        Err(LoomErrorCode::InternalError)
+    }
+    fn vault_delete_secret(
+        &self,
+        _: loom_rpc::core_service_adapter::core_service_adapter::VaultDeleteSecretParams,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultDeleteSecretInfo,
+        LoomErrorCode,
+    > {
+        Err(LoomErrorCode::InternalError)
+    }
+    fn vault_list_labels(
+        &self,
+        _: loom_rpc::core_service_adapter::core_service_adapter::VaultListLabelsParams,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultListLabelsInfo,
+        LoomErrorCode,
+    > {
+        Ok(loom_rpc::core_service_adapter::core_service_adapter::VaultListLabelsInfo {
+            labels: vec![],
+            count: 0,
+        })
+    }
+    fn vault_diagnose(
+        &self,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseInfo,
+        LoomErrorCode,
+    > {
+        Err(LoomErrorCode::InternalError)
+    }
     fn gc_run(
         &self,
         _: Option<u64>,

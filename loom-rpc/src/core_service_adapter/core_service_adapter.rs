@@ -118,6 +118,34 @@ pub trait CoreFacadeBridge: Send + Sync {
     /// non-allowlisted reject with the canonical vault-rejection envelope.
     fn vault_add(&self, params: VaultAddParams) -> Result<VaultAddInfo, AdapterError>;
 
+    // ── v0.9.4 W6 direct-credential RPCs ────────────────────────────
+
+    /// Persist a credential under `label`. `params.overwrite=false`
+    /// (the default) rejects with the appropriate AdapterError if the
+    /// label already exists; `overwrite=true` upserts.
+    fn vault_set_secret(
+        &self,
+        params: VaultSetSecretParams,
+    ) -> Result<VaultSetSecretInfo, AdapterError>;
+
+    /// Delete a credential. Honors the D29 cascade contract:
+    /// `params.force=false` + active grants → reject; `force=true` →
+    /// cascade-revoke grants by label then delete.
+    fn vault_delete_secret(
+        &self,
+        params: VaultDeleteSecretParams,
+    ) -> Result<VaultDeleteSecretInfo, AdapterError>;
+
+    /// Enumerate labels stored under the daemon's service_id.
+    fn vault_list_labels(
+        &self,
+        params: VaultListLabelsParams,
+    ) -> Result<VaultListLabelsInfo, AdapterError>;
+
+    /// Snapshot of the keychain backend's health + last-error state.
+    /// Stable JSON schema per A-W6.4.
+    fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError>;
+
     /// Run garbage collection on the content store (`gc.run`). `ttl_days`
     /// is the maximum age (in days) of unreferenced blobs to retain;
     /// blobs older than `ttl_days` whose referenced-by set is empty are
@@ -264,6 +292,107 @@ pub struct VaultAddInfo {
     pub status: String,
 }
 
+// ── v0.9.4 W6: direct credential CRUD wire types ────────────────────
+
+/// Wire params for `vault.set_secret`. The secret travels as hex (per
+/// existing `ContentData` convention) so binary payloads round-trip
+/// safely over JSON-RPC without escape ambiguity. The CLI hex-encodes
+/// raw bytes; the daemon decodes and wraps in `Zeroizing<Vec<u8>>` at
+/// the bridge boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultSetSecretParams {
+    pub label: String,
+    /// Lowercase hex (no `0x` prefix).
+    pub secret_hex: String,
+    /// Mirror of the CLI flag — if `false` and the label already
+    /// exists, the daemon returns `AlreadyExists` (exit 5). If `true`,
+    /// silently upsert. The trait-level `Vault::set_secret` always
+    /// upserts; the safety check lives at this wire boundary.
+    #[serde(default)]
+    pub overwrite: bool,
+    /// Session in which to record G5a/G5b audit entries. `None` means
+    /// sessionless (`loom vault add` without `--session`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+/// Wire receipt for `vault.set_secret` success.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultSetSecretInfo {
+    pub label: String,
+    /// `true` if an existing entry was overwritten.
+    pub replaced: bool,
+    /// Three-tier size category (D24): `"small"` | `"medium"` | `"large"`.
+    pub size_bucket: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultDeleteSecretParams {
+    pub label: String,
+    /// When `true`, cascade-revoke active grants by `label` before
+    /// deleting (D29). When `false` and active grants exist, returns
+    /// `VaultRejection { code: "credential_in_use" }` and the
+    /// credential is left intact.
+    #[serde(default)]
+    pub force: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultDeleteSecretInfo {
+    pub label: String,
+    /// Count of grants the `--force` cascade revoked. `0` when no
+    /// cascade was needed.
+    pub cascade_revoked_grants: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultListLabelsParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultListLabelsInfo {
+    pub labels: Vec<String>,
+    pub count: u32,
+}
+
+/// Wire shape for `vault.diagnose` per plan amendment A-W6.4. Stable
+/// across patch releases so power users can `jq` against this schema.
+///
+/// `last_keychain_error` is the most recent backend op error; `None`
+/// when no op has failed since daemon startup. The `internal_hash`
+/// field on the inner shape is what the operator pastes into their
+/// daemon log search to recover the original third-party message
+/// (A-W6.3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultDiagnoseInfo {
+    pub backend: String,
+    pub init_status: VaultDiagnoseInitStatus,
+    pub service_id: String,
+    pub label_count: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_keychain_error: Option<VaultDiagnoseLastError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultDiagnoseInitStatus {
+    Ok,
+    Error { reason: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultDiagnoseLastError {
+    /// Snake_case `KeychainErrorKind` variant string.
+    pub kind: String,
+    pub when_ts: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub internal_hash: Option<String>,
+}
+
 // `AdapterError` is the loom-rpc-local view of `LoomErrorCode`; the
 // canonical type lives in `loom_core::error`.
 pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode;
@@ -319,6 +448,24 @@ pub trait CoreServiceAdapterApi: Send + Sync {
     fn vault_list_grants(&self, session_id: Option<&str>) -> Result<Vec<GrantInfo>, AdapterError>;
 
     fn vault_add(&self, params: VaultAddParams) -> Result<VaultAddInfo, AdapterError>;
+
+    // v0.9.4 W6 direct credential CRUD.
+    fn vault_set_secret(
+        &self,
+        params: VaultSetSecretParams,
+    ) -> Result<VaultSetSecretInfo, AdapterError>;
+
+    fn vault_delete_secret(
+        &self,
+        params: VaultDeleteSecretParams,
+    ) -> Result<VaultDeleteSecretInfo, AdapterError>;
+
+    fn vault_list_labels(
+        &self,
+        params: VaultListLabelsParams,
+    ) -> Result<VaultListLabelsInfo, AdapterError>;
+
+    fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError>;
 
     /// Run GC on the content store. Returns scanned/collected/bytes-freed.
     fn gc_run(

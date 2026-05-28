@@ -28,7 +28,9 @@ use loom_rpc::auth_middleware::auth_middleware::{AuthMiddleware, Token};
 use loom_rpc::connection_handler::connection_handler::ConnectionHandlerDeps;
 use loom_rpc::core_service_adapter::core_service_adapter::{
     AdapterError, CoreFacadeBridge, CoreServiceAdapter, ExportInfo, GrantInfo, GrantParams,
-    PlaywrightImportInfo, VaultAddInfo, VaultAddParams,
+    PlaywrightImportInfo, VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo,
+    VaultDeleteSecretParams, VaultDiagnoseInfo, VaultDiagnoseInitStatus, VaultListLabelsInfo,
+    VaultListLabelsParams, VaultSetSecretInfo, VaultSetSecretParams,
 };
 use loom_rpc::host_service_adapter::host_service_adapter::{
     Action, AdapterError as HostAdapterError, HostServiceAdapter, Receipt, WasmHostBridge,
@@ -548,6 +550,191 @@ impl CoreFacadeBridge for CoreBridge {
         })
     }
 
+    // ── v0.9.4 W6 direct credential bridge methods ──────────────────
+
+    fn vault_set_secret(
+        &self,
+        p: VaultSetSecretParams,
+    ) -> Result<VaultSetSecretInfo, AdapterError> {
+        use loom_core::manifest_writer::SessionId;
+        use zeroize::Zeroizing;
+
+        // D37 label validation at the wire boundary; the W5.10 manifest-
+        // writer gate is the belt-and-suspenders below.
+        validate_label_canonical(&p.label).map_err(|e| {
+            map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                e,
+            ))
+        })?;
+
+        let bytes = hex::decode(p.secret_hex.as_bytes()).map_err(|e| {
+            map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                format!("vault.set_secret: secret_hex is not valid hex: {e}"),
+            ))
+        })?;
+        if bytes.is_empty() {
+            return Err(map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                "vault.set_secret: empty secret rejected",
+            )));
+        }
+        const MAX_SECRET_BYTES: usize = 1 << 20; // 1 MiB (matches A-W6.2 / D22)
+        if bytes.len() > MAX_SECRET_BYTES {
+            return Err(map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                format!(
+                    "vault.set_secret: secret exceeds 1 MiB cap ({} bytes)",
+                    bytes.len()
+                ),
+            )));
+        }
+        let size_bucket = if bytes.len() <= 256 {
+            "small"
+        } else if bytes.len() <= 4096 {
+            "medium"
+        } else {
+            "large"
+        };
+
+        // A-W6.1 overwrite contract: when overwrite=false and the label
+        // already exists, reject before the keychain write so the audit
+        // trail records a refusal, not a silent upsert.
+        let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
+        let pre_existed = self
+            .core
+            .vault
+            .get_secret_direct(session.as_ref(), &p.label)
+            .is_ok();
+        if pre_existed && !p.overwrite {
+            return Err(map_loom_error(
+                &LoomError::new(
+                    loom_core::error::LoomErrorCode::VaultRejection,
+                    format!(
+                        "credential '{}' already exists; pass --overwrite to replace it",
+                        p.label
+                    ),
+                )
+                .with_context(serde_json::json!({
+                    "code": "already_exists",
+                    "label": p.label,
+                })),
+            ));
+        }
+
+        self.core
+            .vault
+            .set_secret(session.as_ref(), &p.label, Zeroizing::new(bytes))
+            .map_err(|e| map_loom_error(&e))?;
+
+        Ok(VaultSetSecretInfo {
+            label: p.label,
+            replaced: pre_existed,
+            size_bucket: size_bucket.to_string(),
+        })
+    }
+
+    fn vault_delete_secret(
+        &self,
+        p: VaultDeleteSecretParams,
+    ) -> Result<VaultDeleteSecretInfo, AdapterError> {
+        use loom_core::manifest_writer::SessionId;
+        validate_label_canonical(&p.label).map_err(|e| {
+            map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                e,
+            ))
+        })?;
+        let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
+        let outcome = self
+            .core
+            .vault
+            .delete_secret(session.as_ref(), &p.label, p.force)
+            .map_err(|e| map_loom_error(&e))?;
+        Ok(VaultDeleteSecretInfo {
+            label: p.label,
+            cascade_revoked_grants: outcome.cascade_revoked_grants,
+        })
+    }
+
+    fn vault_list_labels(
+        &self,
+        p: VaultListLabelsParams,
+    ) -> Result<VaultListLabelsInfo, AdapterError> {
+        use loom_core::manifest_writer::SessionId;
+        let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
+        let labels = self
+            .core
+            .vault
+            .list_labels(session.as_ref())
+            .map_err(|e| map_loom_error(&e))?;
+        let count = u32::try_from(labels.len()).unwrap_or(u32::MAX);
+        Ok(VaultListLabelsInfo { labels, count })
+    }
+
+    fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError> {
+        // v0.9.4 minimum-viable diagnose per A-W6.4. Probes the
+        // keychain by attempting a list_labels call; success counts as
+        // `init_status.ok`, failure surfaces the typed `KeychainErrorKind`
+        // (snake_case) as the `last_keychain_error.kind`. The shape is
+        // stable; richer state (cached last-error, backend identity from
+        // KeychainConfig) lands in a follow-up that wires those signals
+        // through `CoreApiFacade`.
+        let (label_count, last_keychain_error, init_status) =
+            match self.core.vault.list_labels(None) {
+                Ok(labels) => (
+                    u32::try_from(labels.len()).unwrap_or(u32::MAX),
+                    None,
+                    VaultDiagnoseInitStatus::Ok,
+                ),
+                Err(e) => {
+                    // The LoomError code → KeychainErrorKind snake_case round-trip
+                    // (string match is fine — the set is closed at 6).
+                    let kind = match e.code {
+                        loom_core::error::LoomErrorCode::VaultUnknownLabel => "not_found",
+                        loom_core::error::LoomErrorCode::VaultPermissionDenied => "denied",
+                        loom_core::error::LoomErrorCode::VaultBackendUnavailable => "unavailable",
+                        loom_core::error::LoomErrorCode::VaultBackendTimeout => "timed_out",
+                        loom_core::error::LoomErrorCode::VaultNonInteractivePrompt => {
+                            "non_interactive_prompt"
+                        }
+                        loom_core::error::LoomErrorCode::VaultInternal => "internal",
+                        _ => "internal",
+                    };
+                    let internal_hash = e
+                        .context
+                        .as_ref()
+                        .and_then(|c| c.get("internal_hash"))
+                        .and_then(|h| h.as_str())
+                        .map(str::to_owned);
+                    let when_ts =
+                        humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
+                    (
+                        0,
+                        Some(loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseLastError {
+                            kind: kind.to_string(),
+                            when_ts,
+                            internal_hash,
+                        }),
+                        VaultDiagnoseInitStatus::Error {
+                            reason: e.message.clone(),
+                        },
+                    )
+                }
+            };
+
+        let backend = default_backend_name();
+        Ok(VaultDiagnoseInfo {
+            backend,
+            init_status,
+            // Hardcoded `"loom"` per D36 in v0.9.4.
+            service_id: "loom".to_string(),
+            label_count,
+            last_keychain_error,
+        })
+    }
+
     fn gc_run(
         &self,
         ttl_days: Option<u64>,
@@ -629,6 +816,50 @@ fn map_loom_error(e: &LoomError) -> AdapterError {
         // signal about what to change.)
         CoreCode::InvalidArgument => RpcCode::SchemaViolation,
         _ => RpcCode::InternalError,
+    }
+}
+
+// ─── Vault W6 wire-boundary helpers ────────────────────────────────────────
+
+/// D37 canonical label policy enforced at the wire boundary. The
+/// `manifest_writer::append_audit` gate (W5.10 / A-W8.5) catches the
+/// same shape as belt-and-suspenders if a future code path bypasses
+/// this check.
+fn validate_label_canonical(label: &str) -> Result<(), String> {
+    if label.is_empty() {
+        return Err("label is empty".into());
+    }
+    if label.len() > 64 {
+        return Err(format!("label exceeds 64 chars ({} chars)", label.len()));
+    }
+    if !label
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "label {label:?} fails canonical validation ^[A-Za-z0-9:_-]{{1,64}}$"
+        ));
+    }
+    Ok(())
+}
+
+/// Best-effort backend name for `vault.diagnose` per A-W6.4 schema. The
+/// daemon today builds the `KeychainConfig` via env var + TTY at
+/// `async_main`; this returns the platform default when no override is
+/// detected. Refined when the follow-up wires the resolved `BackendChoice`
+/// through `CoreApiFacade`.
+fn default_backend_name() -> String {
+    if let Ok(env) = std::env::var("LOOM_KEYCHAIN_BACKEND") {
+        if !env.is_empty() {
+            return env;
+        }
+    }
+    if cfg!(target_os = "macos") {
+        "macos".to_string()
+    } else if cfg!(target_os = "linux") {
+        "linux".to_string()
+    } else {
+        "stub".to_string()
     }
 }
 

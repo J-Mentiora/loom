@@ -35,8 +35,12 @@ mod session_list;
 mod session_replay;
 mod session_validate;
 mod vault_add;
+mod vault_delete;
+mod vault_diagnose;
 mod vault_grant_revoke;
 mod vault_list;
+mod vault_list_labels;
+mod vault_set_secret;
 mod web_evaluate;
 mod web_generic_action;
 mod web_navigate;
@@ -103,6 +107,19 @@ fn registry() -> &'static HashMap<&'static str, RendererBox> {
             "vault.revoke",
             Box::new(vault_grant_revoke::VaultGrantRevoke),
         );
+        m.insert(
+            "vault.set_secret",
+            Box::new(vault_set_secret::VaultSetSecret),
+        );
+        m.insert(
+            "vault.delete_secret",
+            Box::new(vault_delete::VaultDelete),
+        );
+        m.insert(
+            "vault.list_labels",
+            Box::new(vault_list_labels::VaultListLabels),
+        );
+        m.insert("vault.diagnose", Box::new(vault_diagnose::VaultDiagnose));
         m.insert("gc.run", Box::new(gc::Gc));
         m.insert("doctor", Box::new(doctor::Doctor));
         m.insert(

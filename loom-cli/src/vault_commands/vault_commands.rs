@@ -65,18 +65,77 @@ pub struct VaultListArgs {
     pub session: Option<String>,
 }
 
-/// `loom vault add <provider>` arguments. Only command in the CLI that
-/// may prompt; respects `--yes` for non-interactive use.
+/// `loom vault add <provider>` arguments. Two flows:
+///
+/// 1. **OAuth device flow** (existing) — `loom vault add <provider>`
+///    where `provider` is OAuth-allowlisted (`github` today). The CLI
+///    drives the device-flow handshake.
+/// 2. **Direct credential injection** (v0.9.4 W6) — `loom vault add
+///    --label <name> --from-stdin` OR `--from-file <path>`. Reads raw
+///    bytes (binary-safe per A-W6.2), validates `--label` per D37,
+///    and dispatches `vault.set_secret`. Mutually exclusive with the
+///    positional `provider`.
+///
+/// `--overwrite` enables the W6 replace-existing path; without it,
+/// the daemon returns `AlreadyExists` (exit 5 per D33). `--yes` is
+/// honored by both flows for non-interactive use.
 #[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct VaultAddArgs {
-    /// OAuth provider name (e.g. `google`, `github`).
-    pub provider: String,
+    /// OAuth provider name (e.g. `github`). Required when no
+    /// `--from-stdin` / `--from-file` is set; rejected when either is.
+    #[arg(value_parser, required = false)]
+    pub provider: Option<String>,
+    /// Label under which to store the credential. Required for the
+    /// direct injection flow (with `--from-stdin` / `--from-file`);
+    /// optional for the OAuth flow (defaults to the provider name).
     #[arg(long)]
     pub label: Option<String>,
+    /// Read raw secret bytes from stdin until EOF (A-W6.2). Mutually
+    /// exclusive with `--from-file` and the OAuth flow.
+    #[arg(long)]
+    pub from_stdin: bool,
+    /// Read raw secret bytes from `<path>` (`-` reads stdin). Mutually
+    /// exclusive with `--from-stdin` and the OAuth flow.
+    #[arg(long, value_name = "PATH")]
+    pub from_file: Option<String>,
+    /// Replace an existing credential under the same label. Without
+    /// this flag, the daemon returns `AlreadyExists` (exit 5).
+    #[arg(long)]
+    pub overwrite: bool,
+    /// Optional session id; in-session calls write G5a/G5b audit
+    /// entries to the named session's manifest. Sessionless `vault add`
+    /// (the default) records only via `tracing::info!`.
+    #[arg(long)]
+    pub session: Option<String>,
     /// Skip interactive confirmation; required in CI / scripts.
     #[arg(long)]
     pub yes: bool,
 }
+
+/// `loom vault delete <label>` arguments (W6.3).
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
+pub struct VaultDeleteArgs {
+    /// Label of the credential to delete.
+    pub label: String,
+    /// Cascade-revoke active grants by `label` before deleting (D29).
+    /// Without this flag, an active grant blocks the delete with
+    /// `VaultRejection { code: credential_in_use }`.
+    #[arg(long)]
+    pub force: bool,
+    #[arg(long)]
+    pub session: Option<String>,
+}
+
+/// `loom vault list-labels` arguments (W6.4).
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
+pub struct VaultListLabelsArgs {
+    #[arg(long)]
+    pub session: Option<String>,
+}
+
+/// `loom vault diagnose` arguments (W6.5).
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
+pub struct VaultDiagnoseArgs {}
 
 pub async fn grant(rpc: &RpcClient, cfg: &CliConfig, args: VaultGrantArgs) -> Result<(), CliError> {
     // Per loom-rpc_contract: vault.grant takes session_id / ttl_seconds
@@ -137,15 +196,122 @@ pub async fn list(rpc: &RpcClient, cfg: &CliConfig, args: VaultListArgs) -> Resu
     Ok(())
 }
 
-/// `vault add` — the SOLE handler permitted to prompt the user.
-/// Implementation drives the OAuth device-flow; `--yes` short-circuits
-/// confirmation for non-interactive shells.
+/// D37 canonical label policy enforced at the CLI boundary. The
+/// daemon's wire boundary + manifest-writer (W5.10) re-validate as
+/// belt-and-suspenders.
+fn validate_label_cli(label: &str) -> Result<(), CliError> {
+    if label.is_empty() {
+        return Err(CliError::Usage("label is empty".into()));
+    }
+    if label.len() > 64 {
+        return Err(CliError::Usage(format!(
+            "label exceeds 64 chars ({} chars)",
+            label.len()
+        )));
+    }
+    if !label
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_' || c == '-')
+    {
+        return Err(CliError::Usage(format!(
+            "label {label:?} fails canonical validation ^[A-Za-z0-9:_-]{{1,64}}$"
+        )));
+    }
+    Ok(())
+}
+
+/// Read raw bytes until EOF per A-W6.2 — no newline stripping, no
+/// charset conversion. Caps at 1 MiB (D22) before sending.
+fn read_secret_bytes(args: &VaultAddArgs) -> Result<Vec<u8>, CliError> {
+    use std::io::Read;
+    const MAX_BYTES: usize = 1 << 20; // 1 MiB
+    let mut buf = Vec::new();
+    if args.from_stdin {
+        std::io::stdin()
+            .lock()
+            .take((MAX_BYTES + 1) as u64)
+            .read_to_end(&mut buf)
+            .map_err(|e| CliError::Usage(format!("read stdin: {e}")))?;
+    } else if let Some(path) = &args.from_file {
+        if path == "-" {
+            std::io::stdin()
+                .lock()
+                .take((MAX_BYTES + 1) as u64)
+                .read_to_end(&mut buf)
+                .map_err(|e| CliError::Usage(format!("read stdin: {e}")))?;
+        } else {
+            let f = std::fs::File::open(path)
+                .map_err(|e| CliError::Usage(format!("open {path}: {e}")))?;
+            std::io::BufReader::new(f)
+                .take((MAX_BYTES + 1) as u64)
+                .read_to_end(&mut buf)
+                .map_err(|e| CliError::Usage(format!("read {path}: {e}")))?;
+        }
+    } else {
+        return Err(CliError::Usage(
+            "internal: read_secret_bytes called without --from-stdin or --from-file".into(),
+        ));
+    }
+    if buf.len() > MAX_BYTES {
+        return Err(CliError::Usage(format!(
+            "secret exceeds 1 MiB cap ({} bytes)",
+            buf.len()
+        )));
+    }
+    if buf.is_empty() {
+        return Err(CliError::Usage("secret is empty".into()));
+    }
+    Ok(buf)
+}
+
+/// `vault add` — dispatches to either the W6 direct-injection flow
+/// (when `--from-stdin` / `--from-file` is set) or the legacy OAuth
+/// device flow (when a positional `provider` is given).
 pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result<(), CliError> {
+    let direct = args.from_stdin || args.from_file.is_some();
+    if direct {
+        if args.provider.is_some() {
+            return Err(CliError::Usage(
+                "`vault add <provider>` and --from-stdin / --from-file are mutually exclusive"
+                    .into(),
+            ));
+        }
+        let label = args.label.clone().ok_or_else(|| {
+            CliError::Usage("direct credential injection requires --label".into())
+        })?;
+        validate_label_cli(&label)?;
+        let bytes = read_secret_bytes(&args)?;
+        let secret_hex = hex::encode(&bytes);
+        drop(bytes);
+
+        let resp = rpc
+            .call(
+                "vault.set_secret",
+                serde_json::json!({
+                    "label": label,
+                    "secret_hex": secret_hex,
+                    "overwrite": args.overwrite,
+                    "session_id": args.session,
+                }),
+            )
+            .await?;
+        emit_to_stdout("vault.set_secret", &resp, cfg, None)?;
+        return Ok(());
+    }
+
+    // Legacy OAuth flow.
+    let provider = args.provider.clone().ok_or_else(|| {
+        CliError::Usage(
+            "`vault add` requires a positional <provider> (e.g. `vault add github`) \
+             OR --from-stdin / --from-file with --label"
+                .into(),
+        )
+    })?;
     let resp = rpc
         .call(
             "vault.add",
             serde_json::json!({
-                "provider": args.provider,
+                "provider": provider,
                 "label": args.label,
                 "yes": args.yes,
             }),
@@ -155,10 +321,61 @@ pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result
     Ok(())
 }
 
+pub async fn delete(
+    rpc: &RpcClient,
+    cfg: &CliConfig,
+    args: VaultDeleteArgs,
+) -> Result<(), CliError> {
+    validate_label_cli(&args.label)?;
+    let resp = rpc
+        .call(
+            "vault.delete_secret",
+            serde_json::json!({
+                "label": args.label,
+                "force": args.force,
+                "session_id": args.session,
+            }),
+        )
+        .await?;
+    emit_to_stdout("vault.delete_secret", &resp, cfg, None)?;
+    Ok(())
+}
+
+pub async fn list_labels(
+    rpc: &RpcClient,
+    cfg: &CliConfig,
+    args: VaultListLabelsArgs,
+) -> Result<(), CliError> {
+    let resp = rpc
+        .call(
+            "vault.list_labels",
+            serde_json::json!({"session_id": args.session}),
+        )
+        .await?;
+    emit_to_stdout("vault.list_labels", &resp, cfg, None)?;
+    Ok(())
+}
+
+pub async fn diagnose(
+    rpc: &RpcClient,
+    cfg: &CliConfig,
+    _args: VaultDiagnoseArgs,
+) -> Result<(), CliError> {
+    let resp = rpc
+        .call("vault.diagnose", serde_json::Value::Null)
+        .await?;
+    emit_to_stdout("vault.diagnose", &resp, cfg, None)?;
+    Ok(())
+}
+
 /// Subcommand → RPC mapping table — `interface_tests` asserts coverage.
 pub const SUBCOMMAND_RPC_MAP: &[(&str, &str)] = &[
     ("grant", "vault.grant"),
     ("revoke", "vault.revoke"),
     ("list", "vault.list_grants"),
     ("add", "vault.add"),
+    ("add-direct", "vault.set_secret"),
+    ("delete", "vault.delete_secret"),
+    ("list-labels", "vault.list_labels"),
+    ("diagnose", "vault.diagnose"),
 ];

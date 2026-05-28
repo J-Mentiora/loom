@@ -2352,6 +2352,8 @@ dependencies = [
  "async-trait",
  "ciborium",
  "dirs",
+ "hex",
+ "humantime",
  "loom-core",
  "loom-host",
  "loom-keychain",
@@ -2364,6 +2366,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

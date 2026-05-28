@@ -92,6 +92,9 @@ fn vault_subcommand_variant_set_locked() {
             VaultCmd::Revoke(_) => "revoke",
             VaultCmd::List(_) => "list",
             VaultCmd::Add(_) => "add",
+            VaultCmd::Delete(_) => "delete",
+            VaultCmd::ListLabels(_) => "list-labels",
+            VaultCmd::Diagnose(_) => "diagnose",
         }
     }
     let _ = _ck;

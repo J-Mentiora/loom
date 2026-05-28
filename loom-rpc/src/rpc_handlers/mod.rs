@@ -8,7 +8,8 @@ mod interface_tests;
 use crate::core_service_adapter::core_service_adapter::{
     ContentData, CoreServiceAdapterApi, CreateSessionParams, DiffReport, ExportInfo, GcRunReport,
     GrantInfo, GrantParams, PlaywrightImportInfo, SessionInfo, SessionInspection, ValidationResult,
-    VaultAddInfo, VaultAddParams,
+    VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo, VaultDeleteSecretParams, VaultDiagnoseInfo,
+    VaultListLabelsInfo, VaultListLabelsParams, VaultSetSecretInfo, VaultSetSecretParams,
 };
 use crate::error_translator::error_translator::LoomErrorCode;
 use crate::host_service_adapter::host_service_adapter::{Action, HostServiceAdapterApi, Receipt};
@@ -368,6 +369,53 @@ impl RpcHandlers {
         self.core.vault_add(p).map_err(|code| JsonRpcError {
             code,
             message: "vault.add failed".to_string(),
+            data: None,
+        })
+    }
+
+    pub async fn vault_set_secret(
+        &self,
+        p: VaultSetSecretParams,
+    ) -> HandlerResult<VaultSetSecretInfo> {
+        let label = p.label.clone();
+        self.core.vault_set_secret(p).map_err(|code| JsonRpcError {
+            code,
+            message: format!("vault.set_secret failed for label '{label}'"),
+            data: None,
+        })
+    }
+
+    pub async fn vault_delete_secret(
+        &self,
+        p: VaultDeleteSecretParams,
+    ) -> HandlerResult<VaultDeleteSecretInfo> {
+        let label = p.label.clone();
+        self.core
+            .vault_delete_secret(p)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: format!("vault.delete_secret failed for label '{label}'"),
+                data: None,
+            })
+    }
+
+    pub async fn vault_list_labels(
+        &self,
+        p: VaultListLabelsParams,
+    ) -> HandlerResult<VaultListLabelsInfo> {
+        self.core
+            .vault_list_labels(p)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: "vault.list_labels failed".to_string(),
+                data: None,
+            })
+    }
+
+    pub async fn vault_diagnose(&self) -> HandlerResult<VaultDiagnoseInfo> {
+        self.core.vault_diagnose().map_err(|code| JsonRpcError {
+            code,
+            message: "vault.diagnose failed".to_string(),
             data: None,
         })
     }

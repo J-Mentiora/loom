@@ -63,7 +63,8 @@ impl RequestRouter {
 impl RequestRouterApi for RequestRouter {
     async fn dispatch(&self, method: &str, params: serde_json::Value) -> Vec<u8> {
         use crate::core_service_adapter::core_service_adapter::{
-            CreateSessionParams, GrantParams, VaultAddParams,
+            CreateSessionParams, GrantParams, VaultAddParams, VaultDeleteSecretParams,
+            VaultListLabelsParams, VaultSetSecretParams,
         };
         match method {
             "health.ping" => canonical_bytes(&serde_json::json!({"status": "ok"})),
@@ -292,6 +293,53 @@ impl RequestRouterApi for RequestRouter {
                     Err(e) => error_bytes(&e),
                 }
             }
+            "vault.set_secret" => {
+                let p: VaultSetSecretParams = match serde_json::from_value(params) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let err = JsonRpcError {
+                            code: LoomErrorCode::SchemaViolation,
+                            message: format!("invalid params: {e}"),
+                            data: None,
+                        };
+                        return error_bytes(&err);
+                    }
+                };
+                match self.ctx.handlers.vault_set_secret(p).await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
+            "vault.delete_secret" => {
+                let p: VaultDeleteSecretParams = match serde_json::from_value(params) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        let err = JsonRpcError {
+                            code: LoomErrorCode::SchemaViolation,
+                            message: format!("invalid params: {e}"),
+                            data: None,
+                        };
+                        return error_bytes(&err);
+                    }
+                };
+                match self.ctx.handlers.vault_delete_secret(p).await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
+            "vault.list_labels" => {
+                let p: VaultListLabelsParams = serde_json::from_value(params).unwrap_or(
+                    VaultListLabelsParams { session_id: None },
+                );
+                match self.ctx.handlers.vault_list_labels(p).await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
+            "vault.diagnose" => match self.ctx.handlers.vault_diagnose().await {
+                Ok(v) => canonical_bytes(&v),
+                Err(e) => error_bytes(&e),
+            },
             "content.get" => {
                 let artifact_ref = params
                     .get("artifact_ref")
