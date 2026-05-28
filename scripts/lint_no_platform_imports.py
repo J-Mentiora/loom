@@ -29,10 +29,21 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 LOOM_ROOT = SCRIPT_DIR.parent
 
-# Directories to scan (relative to LOOM_ROOT)
+# Directories to scan (relative to LOOM_ROOT). The workspace puts each
+# crate at the repo root (not under `src/`), so the path is
+# `<crate>/src`, not `src/<crate>/src` (which was the v0.9.3 bug per
+# A-W8 / FND-0040 / D40 — silently scanning zero files).
+#
+# `loom-keychain` is deliberately NOT scanned: it's the one crate
+# permitted to import `security-framework` / `secret-service` because
+# it owns the platform abstraction. The keychain trait surface (which
+# loom-host / loom-core depend on) is platform-agnostic; the platform-
+# specific impls live in `loom-keychain/src/{macos,linux}.rs` behind
+# `cfg(target_os = "…")` and are scoped via the `wrappers` allowlist
+# in `deny.toml`.
 SCAN_DIRS = [
-    LOOM_ROOT / "src" / "loom-host" / "src",
-    LOOM_ROOT / "src" / "loom-core" / "src",
+    LOOM_ROOT / "loom-host" / "src",
+    LOOM_ROOT / "loom-core" / "src",
 ]
 
 # Exact-string banned terms (case-sensitive)
