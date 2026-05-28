@@ -819,6 +819,73 @@ fn map_loom_error(e: &LoomError) -> AdapterError {
     }
 }
 
+// ─── A-W8.1 / W8.5 auth-file permission helpers ────────────────────────────
+
+/// Refuse to start when an existing auth file has loose perms
+/// (any of `g+r g+w g+x o+r o+w o+x` set). On a fresh install the file
+/// doesn't exist yet → no-op. On Unix only; Windows ACLs are out of
+/// scope for v0.9.4.
+#[cfg(unix)]
+fn probe_auth_perms_or_refuse(path: &std::path::Path, what: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "auth-file stat failed for {} at {}: {}",
+                what,
+                path.display(),
+                e
+            ));
+        }
+    };
+    let mode = meta.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        tracing::error!(
+            path = %path.display(),
+            mode = format!("{:04o}", mode),
+            "auth file has loose permissions; refusing to start"
+        );
+        anyhow::bail!(
+            "{} at {} has mode {:04o} (group/world bits set); \
+             expected 0600. Run `chmod 600 {}` and restart.",
+            what,
+            path.display(),
+            mode,
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn probe_auth_perms_or_refuse(_path: &std::path::Path, _what: &str) -> Result<()> {
+    // Windows ACLs aren't a chmod analogue; v0.9.4 leaves the probe a
+    // no-op there. A follow-up that uses `windows::Win32::Security` can
+    // implement a similar refuse-on-non-private-DACL check.
+    Ok(())
+}
+
+/// Tighten a freshly-written auth file to 0600 unconditionally.
+/// Unix only; Windows uses ACLs and is out of scope for v0.9.4.
+#[cfg(unix)]
+fn apply_auth_perms_0600(path: &std::path::Path, what: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).with_context(|| {
+        format!(
+            "set 0600 on {} at {}; required by the A-W8.1 startup-perms contract",
+            what,
+            path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn apply_auth_perms_0600(_path: &std::path::Path, _what: &str) -> Result<()> {
+    Ok(())
+}
+
 // ─── Vault W6 wire-boundary helpers ────────────────────────────────────────
 
 /// D37 canonical label policy enforced at the wire boundary. The
@@ -1880,10 +1947,28 @@ async fn async_main() -> Result<()> {
         .with_context(|| format!("create auth dir {}", auth_dir.display()))?;
     let token_path = auth_dir.join("hello.token");
     let pid_path = auth_dir.join("daemon.pid");
+
+    // 7a. A-W8.1 / W8.5 0600 startup probe: refuse to start if a pre-
+    //     existing auth file has loose mode bits (group/world readable
+    //     or writable). Catches the "operator rsync'd $HOME with default
+    //     umask and lost the 0600" class of incidents BEFORE the token
+    //     is reused. Crash-only; no auto-chmod (the operator must
+    //     consciously remediate so the audit trail records intent).
+    probe_auth_perms_or_refuse(&token_path, "hello.token")?;
+    probe_auth_perms_or_refuse(&pid_path, "daemon.pid")?;
+
     std::fs::write(&token_path, server.token.0.as_bytes())
         .with_context(|| format!("write hello.token to {}", token_path.display()))?;
     std::fs::write(&pid_path, std::process::id().to_string().as_bytes())
         .with_context(|| format!("write daemon.pid to {}", pid_path.display()))?;
+
+    // 7b. A-W8.1 second leg: tighten the freshly-written files to 0600.
+    //     The umask on default Linux installs is 0022 → files land at
+    //     0644 → group + world can read the daemon's auth token. Set
+    //     explicit perms so the file mode matches the socket's 0600
+    //     contract (SOCKET_MODE in loom-rpc).
+    apply_auth_perms_0600(&token_path, "hello.token")?;
+    apply_auth_perms_0600(&pid_path, "daemon.pid")?;
 
     // 8. Print HELLO_TOKEN to stdout .
     println!("HELLO_TOKEN={}", server.token.0);
