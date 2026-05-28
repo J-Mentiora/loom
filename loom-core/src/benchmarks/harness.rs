@@ -127,6 +127,7 @@ impl Vault for BenchmarkVault {
 
     fn set_secret(
         &self,
+        _session: Option<&SessionId>,
         _label: &str,
         _secret: zeroize::Zeroizing<Vec<u8>>,
     ) -> Result<(), LoomError> {
@@ -138,6 +139,7 @@ impl Vault for BenchmarkVault {
 
     fn get_secret_direct(
         &self,
+        _session: Option<&SessionId>,
         _label: &str,
     ) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
         Err(LoomError::new(
@@ -146,11 +148,18 @@ impl Vault for BenchmarkVault {
         ))
     }
 
-    fn delete_secret(&self, _label: &str) -> Result<(), LoomError> {
-        Ok(())
+    fn delete_secret(
+        &self,
+        _session: Option<&SessionId>,
+        _label: &str,
+        _force: bool,
+    ) -> Result<crate::vault::vault::DeleteSecretOutcome, LoomError> {
+        Ok(crate::vault::vault::DeleteSecretOutcome {
+            cascade_revoked_grants: 0,
+        })
     }
 
-    fn list_labels(&self) -> Result<Vec<String>, LoomError> {
+    fn list_labels(&self, _session: Option<&SessionId>) -> Result<Vec<String>, LoomError> {
         Ok(Vec::new())
     }
 }

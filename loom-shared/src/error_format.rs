@@ -24,6 +24,32 @@ pub enum LoomErrorCode {
     VaultGrantExpired,
     VaultGrantRevoked,
     VaultUnknownLabel,
+    /// Backend refused the op (e.g. user cancelled the OS auth prompt
+    /// or the collection is locked). Maps from `KeychainErrorKind::Denied`.
+    /// Per A-W5.2 (v0.9.4 W5 inline error-translation table).
+    VaultPermissionDenied,
+    /// Backend is not available (not initialised, IPC failure, D-Bus
+    /// owner changed). Maps from `KeychainErrorKind::Unavailable`.
+    VaultBackendUnavailable,
+    /// Backend op exceeded its per-op time budget (see
+    /// `loom-core::vault::BlockingKeychain`). Maps from
+    /// `KeychainErrorKind::TimedOut`.
+    VaultBackendTimeout,
+    /// Backend would have triggered a UI prompt but `allow_prompt = false`
+    /// (default in non-TTY). Maps from `KeychainErrorKind::NonInteractivePrompt`.
+    VaultNonInteractivePrompt,
+    /// Catch-all for backend errors that don't map to a more specific
+    /// kind. `LoomError.context` carries `{ internal_hash: "<sha256-hex>" }`
+    /// so support can correlate to the daemon's `tracing::error!` log
+    /// (per A-W6.3) without the third-party message ever reaching the
+    /// audit-chain manifest. Maps from `KeychainErrorKind::Internal`.
+    VaultInternal,
+    /// Label failed the canonical `^[A-Za-z0-9:_-]{1,64}$` validation
+    /// at the CLI boundary (D37) or the manifest-writer defense-in-depth
+    /// gate (A-W8.5). The latter forces a refactor if a future code path
+    /// bypasses CLI validation rather than silently accepting an unsafe
+    /// label into the audit chain.
+    VaultInvalidLabel,
 
     // ---- Budget ----
     BudgetExceeded,
@@ -139,6 +165,12 @@ impl LoomErrorCode {
             LoomErrorCode::VaultGrantExpired => "vault-grant-expired",
             LoomErrorCode::VaultGrantRevoked => "vault-grant-revoked",
             LoomErrorCode::VaultUnknownLabel => "vault-unknown-label",
+            LoomErrorCode::VaultPermissionDenied => "vault-permission-denied",
+            LoomErrorCode::VaultBackendUnavailable => "vault-backend-unavailable",
+            LoomErrorCode::VaultBackendTimeout => "vault-backend-timeout",
+            LoomErrorCode::VaultNonInteractivePrompt => "vault-non-interactive-prompt",
+            LoomErrorCode::VaultInternal => "vault-internal",
+            LoomErrorCode::VaultInvalidLabel => "vault-invalid-label",
             LoomErrorCode::BudgetExceeded => "budget-exceeded",
             LoomErrorCode::BudgetRateLimited => "budget-rate-limited",
             LoomErrorCode::StoreIntegrityFailed => "store-integrity-failed",

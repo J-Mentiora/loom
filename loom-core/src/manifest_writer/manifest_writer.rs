@@ -77,7 +77,7 @@ pub enum ManifestEntry {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuditKind {
     GrantIssued,
@@ -90,6 +90,46 @@ pub enum AuditKind {
     /// Canonical bytes carry `{matched_pattern, reason, url}` (JCS sorts
     /// keys at encode).
     BlockedUrl,
+    // ─── v0.9.4 credential-lifecycle audits (W5.1 / plan §6 W5) ───
+    /// G5b — operator intent to start a credential op. Appended within
+    /// 100ms of the RPC arriving, BEFORE the blocking keychain call. Per
+    /// D8 / plan §6 W5 step 4. Canonical bytes: `{label, op}` (op is one
+    /// of `"set" | "get" | "delete" | "list"`).
+    SecretOpPending,
+    /// G5a success — credential persisted. Appended within 100ms of the
+    /// keychain RPC returning. Canonical bytes: `SecretAuditPayload::Stored {
+    /// label, size_bucket }`. Per D24 size buckets, never raw byte counts.
+    SecretStored,
+    /// G5a success — credential fetched by the direct CLI path (NOT the
+    /// substitution path; `Grant` lifecycle audits handle those).
+    SecretFetched,
+    /// G5a success — credential removed via `vault delete`.
+    SecretDeleted,
+    /// G5a success — `set_secret` overwrote an existing entry. Distinct
+    /// from `SecretStored` so operators can grep replace events.
+    SecretReplaced,
+    /// G5a success — list-labels op completed. Per D14: ONE audit per
+    /// call carrying `{count, service_id}` — NO per-label entries.
+    SecretsListed,
+    /// G5a failure paths. Canonical bytes carry `{label, reason}` where
+    /// `reason` is a typed `KeychainErrorKind` snake_case string. Per D30.
+    SecretStoreFailed,
+    SecretDeleteFailed,
+    SecretFetchFailed,
+    /// `loom-daemon` refused an op because `allow_prompt = false` would
+    /// have triggered an OS prompt. Per D26.
+    PromptBlocked,
+    /// Per-op D-Bus owner-pinning re-check on Linux detected drift
+    /// (A-W3.1). Canonical bytes: `{pinned_owner, current_owner}`. The
+    /// daemon must be restarted to re-pin.
+    SecretServiceOwnerChanged,
+    /// Forward-compatibility (D39). Older daemons reading a manifest
+    /// written by a newer daemon with an `AuditKind` they don't know
+    /// see this variant via `#[serde(other)]`. Validators MUST treat
+    /// `Unknown` entries as opaque-but-valid (do not break the hash
+    /// chain). Round-trip test in `interface_tests.rs`.
+    #[serde(other)]
+    Unknown,
 }
 
 /// Per-session writer handle. Owned by `Session` in `SessionManager`.

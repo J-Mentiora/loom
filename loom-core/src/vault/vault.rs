@@ -21,6 +21,7 @@
 //   `loom-keychain` (feature-gated). `Vault` calls a small trait
 //   `KeychainAccess` whose impl is selected by cargo feature.
 
+use crate::vault::blocking_keychain::BlockingKeychain;
 use loom_core::error::LoomError;
 use loom_core::manifest_writer::{ManifestWriter, SessionId};
 use loom_core::observability::Observability;
@@ -136,8 +137,13 @@ pub(crate) struct Grant {
 }
 
 /// Concrete Vault implementation.
+///
+/// `keychain` is wrapped in a `BlockingKeychain` (A-W5.1) so every backend
+/// call goes through the per-op timeout + `spawn_blocking` adapter. The
+/// adapter falls back to a direct synchronous call when no tokio runtime
+/// is present (sync unit tests against `InMemoryKeychain`).
 pub struct LocalVault {
-    pub(crate) keychain: Arc<dyn KeychainAccess>,
+    pub(crate) keychain: Arc<BlockingKeychain>,
     pub(crate) manifest_writer: Arc<dyn ManifestWriter>,
     pub(crate) obs: Arc<Observability>,
     pub(crate) grants: parking_lot::RwLock<BTreeMap<GrantId, Grant>>,
@@ -150,7 +156,7 @@ impl LocalVault {
         obs: Arc<Observability>,
     ) -> Self {
         Self {
-            keychain,
+            keychain: Arc::new(crate::vault::BlockingKeychain::new(keychain)),
             manifest_writer,
             obs,
             grants: parking_lot::RwLock::new(BTreeMap::new()),
@@ -195,36 +201,69 @@ pub trait Vault: Send + Sync {
     /// valid outcome.
     fn list_grants(&self, session: Option<SessionId>) -> Result<Vec<GrantSnapshot>, LoomError>;
 
-    // ─── Credential-management methods (v0.9.4) ───────────────────────
+    // ─── Credential-management methods (v0.9.4 W5 full) ───────────────
     // Direct mediation between the CLI's `vault.add` / `vault.delete` /
     // `vault.list_labels` RPCs and the backing keychain. These methods
     // bypass the Grant lifecycle (Grant is per-session use-authorisation;
     // these manage the underlying Credential that grants reference).
     //
-    // v0.9.4 ships these as direct keychain pass-throughs with structured
-    // tracing logs. A follow-up (per plan W5 amendments A-W5.1 through
-    // A-W5.3) will add the BlockingKeychain adapter with timeouts +
-    // the full SecretAuditPayload audit-chain entries + the G5a 100ms
-    // perf test.
+    // **Audit semantics.** Each call appends a `SecretOpPending` G5b
+    // audit before invoking the keychain, then a typed success/failure
+    // G5a audit after the call returns — both go on the same hash chain
+    // as Grant lifecycle entries. The audit target is `session`; when
+    // `None` (sessionless `loom vault add`) no manifest write occurs and
+    // operations are observable only via `tracing::info!`/`tracing::error!`.
+    // Backend calls dispatch through the `BlockingKeychain` adapter
+    // (`spawn_blocking` + per-op `tokio::time::timeout`) per A-W5.1.
 
     /// Persist a credential under the given label. CLI safety
     /// (fail-by-default on existing label) lives at the CLI layer per
     /// A-W6.1; the trait method itself silently upserts.
-    fn set_secret(&self, label: &str, secret: Zeroizing<Vec<u8>>) -> Result<(), LoomError>;
+    fn set_secret(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+        secret: Zeroizing<Vec<u8>>,
+    ) -> Result<(), LoomError>;
 
     /// Fetch a credential by label (CLI's `vault.get` — distinct from
     /// the production-substitution path in `substitute()`). Returns the
     /// raw bytes wrapped in `Zeroizing`. v0.9.4 has no `vault show` CLI
     /// (Non-Goal per D13); this trait method exists for completeness
-    /// and for the eventual `BlockingKeychain` perf-test path.
-    fn get_secret_direct(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError>;
+    /// and for the audit-timing perf test.
+    fn get_secret_direct(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, LoomError>;
 
-    /// Delete a credential. Idempotent at the keychain level. Cascade
-    /// behavior on active Grants (D29) lives at the CLI layer in v0.9.4.
-    fn delete_secret(&self, label: &str) -> Result<(), LoomError>;
+    /// Delete a credential. Idempotent at the keychain level. When
+    /// `force = false` and one or more active Grants reference `label`
+    /// the call fails with `VaultRejection { code: "credential_in_use" }`
+    /// and the credential is left intact. When `force = true` each
+    /// active Grant is revoked with reason `credential_deleted` (one
+    /// `GrantRevoked` audit per grant) before the keychain delete. Per
+    /// D29.
+    fn delete_secret(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+        force: bool,
+    ) -> Result<DeleteSecretOutcome, LoomError>;
 
-    /// Enumerate stored credential labels for this service_id.
-    fn list_labels(&self) -> Result<Vec<String>, LoomError>;
+    /// Enumerate stored credential labels for this service_id. Per D14:
+    /// no pagination, no per-label audit — ONE `SecretsListed` audit
+    /// carrying `{count, service_id}` is appended after the keychain
+    /// returns.
+    fn list_labels(&self, session: Option<&SessionId>) -> Result<Vec<String>, LoomError>;
+}
+
+/// Outcome of `Vault::delete_secret`. `cascade_revoked_grants` is 0
+/// unless `force = true` triggered a cascade revoke; the CLI uses it to
+/// emit the "deleted (cascade-revoked N grants)" plain-language message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteSecretOutcome {
+    pub cascade_revoked_grants: u32,
 }
 
 // impl Vault for LocalVault is in impl_local.rs.

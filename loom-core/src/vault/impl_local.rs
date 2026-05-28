@@ -12,31 +12,45 @@
 use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::manifest_writer::{AuditKind, SessionId};
 use crate::vault::vault::{
-    AddCredentialOpts, AddCredentialReceipt, CredentialType, Grant, GrantId, GrantOpts,
-    GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault, OAUTH_PROVIDER_ALLOWLIST,
+    AddCredentialOpts, AddCredentialReceipt, CredentialType, DeleteSecretOutcome, Grant, GrantId,
+    GrantOpts, GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault, OAUTH_PROVIDER_ALLOWLIST,
 };
-use loom_keychain::{KeychainError, KeychainErrorKind};
-use serde::Serialize;
+use loom_keychain::{KeychainAccess, KeychainError, KeychainErrorKind};
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
-/// Translate a backend-layer `KeychainError` into a vault-layer `LoomError`.
-/// W1 uses a minimal mapping that preserves existing test semantics; W5
-/// refines this with five new `LoomErrorCode` variants
-/// (`VaultPermissionDenied`, `VaultBackendUnavailable`, `VaultBackendTimeout`,
-/// `VaultNonInteractivePrompt`, `VaultInternal`) — see plan amendment A-W5.2.
+/// Translate a backend-layer `KeychainError` into a vault-layer `LoomError`
+/// per the A-W5.2 inline error-translation table:
+///
+/// | `KeychainErrorKind`     | `LoomErrorCode`            |
+/// |-------------------------|----------------------------|
+/// | `NotFound`              | `VaultUnknownLabel`        |
+/// | `Denied`                | `VaultPermissionDenied`    |
+/// | `Unavailable`           | `VaultBackendUnavailable`  |
+/// | `TimedOut`              | `VaultBackendTimeout`      |
+/// | `NonInteractivePrompt`  | `VaultNonInteractivePrompt`|
+/// | `Internal`              | `VaultInternal`            |
+///
+/// `Internal` carries the SHA-256-hashed identifier of the original
+/// error message in `LoomError.context.internal_hash` so support can
+/// correlate to the daemon's `tracing::error!` log (A-W6.3) — the
+/// original message itself is never persisted in any session manifest.
 fn from_keychain_err(err: KeychainError) -> LoomError {
     let code = match err.kind() {
         KeychainErrorKind::NotFound => LoomErrorCode::VaultUnknownLabel,
-        // W1 collapses every non-NotFound kind into VaultRejection so the
-        // existing tests stay green. W5 splits this into five typed codes.
-        KeychainErrorKind::Denied
-        | KeychainErrorKind::Unavailable
-        | KeychainErrorKind::TimedOut
-        | KeychainErrorKind::NonInteractivePrompt
-        | KeychainErrorKind::Internal => LoomErrorCode::VaultRejection,
+        KeychainErrorKind::Denied => LoomErrorCode::VaultPermissionDenied,
+        KeychainErrorKind::Unavailable => LoomErrorCode::VaultBackendUnavailable,
+        KeychainErrorKind::TimedOut => LoomErrorCode::VaultBackendTimeout,
+        KeychainErrorKind::NonInteractivePrompt => LoomErrorCode::VaultNonInteractivePrompt,
+        KeychainErrorKind::Internal => LoomErrorCode::VaultInternal,
     };
-    LoomError::new(code, err.to_string())
+    let internal_hash = err.internal_hash().map(str::to_owned);
+    let mut out = LoomError::new(code, err.to_string());
+    if let Some(hash) = internal_hash {
+        out = out.with_context(serde_json::json!({ "internal_hash": hash }));
+    }
+    out
 }
 
 fn now_ms() -> u64 {
@@ -66,6 +80,130 @@ struct VaultAuditPayload<'a> {
 
 fn audit_bytes(payload: &VaultAuditPayload<'_>) -> Vec<u8> {
     // JCS (sorted keys) required for hash-chain integrity.
+    serde_jcs::to_string(payload)
+        .unwrap_or_else(|_| serde_json::to_string(payload).unwrap_or_default())
+        .into_bytes()
+}
+
+// ─── v0.9.4 credential-lifecycle audit payloads (W5.3) ────────────────
+
+/// Three-tier size category for stored credentials (D24). Eliminates
+/// the exact-byte side-channel that `byte_count` would expose in the
+/// hash-chained audit manifest.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SizeBucket {
+    /// ≤ 256 bytes (typical for OAuth bearer tokens, API keys).
+    Small,
+    /// ≤ 4096 bytes (long tokens, refresh-token bundles).
+    Medium,
+    /// > 4096 bytes (large session cookies, multi-part credentials).
+    Large,
+}
+
+fn size_bucket(byte_count: usize) -> SizeBucket {
+    if byte_count <= 256 {
+        SizeBucket::Small
+    } else if byte_count <= 4096 {
+        SizeBucket::Medium
+    } else {
+        SizeBucket::Large
+    }
+}
+
+/// Wire-stable category of a `KeychainError` for audit-entry payloads
+/// (D30 typed-reason requirement). Mirrors `KeychainErrorKind` but is
+/// serialised as snake_case strings inside `SecretAuditPayload::*Failed`
+/// variants — NOT free-form messages, which could leak third-party
+/// error text into the persistent hash chain.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SecretReason {
+    NotFound,
+    Denied,
+    Unavailable,
+    TimedOut,
+    NonInteractivePrompt,
+    Internal,
+}
+
+fn secret_reason(err: &KeychainError) -> SecretReason {
+    match err.kind() {
+        KeychainErrorKind::NotFound => SecretReason::NotFound,
+        KeychainErrorKind::Denied => SecretReason::Denied,
+        KeychainErrorKind::Unavailable => SecretReason::Unavailable,
+        KeychainErrorKind::TimedOut => SecretReason::TimedOut,
+        KeychainErrorKind::NonInteractivePrompt => SecretReason::NonInteractivePrompt,
+        KeychainErrorKind::Internal => SecretReason::Internal,
+    }
+}
+
+/// Discriminator for the pre-op `SecretOpPending` audit (D8 G5b).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum SecretOp {
+    Set,
+    Get,
+    Delete,
+    List,
+}
+
+/// Tagged audit payload for credential lifecycle. JCS-encoded via
+/// `secret_audit_bytes` and embedded in `ManifestEntry::AuditEntry::canonical_bytes`.
+///
+/// **Never carries raw secret bytes.** `Stored` reports a 3-tier
+/// `size_bucket` (D24) rather than `byte_count` to eliminate the
+/// exact-size side-channel.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(tag = "event", rename_all = "snake_case")]
+#[allow(dead_code)] // OwnerChanged is emitted by Linux-backend audit wiring (W5 follow-up)
+enum SecretAuditPayload<'a> {
+    OpPending {
+        label: &'a str,
+        op: SecretOp,
+    },
+    Stored {
+        label: &'a str,
+        size_bucket: SizeBucket,
+        replaced: bool,
+    },
+    Fetched {
+        label: &'a str,
+    },
+    Deleted {
+        label: &'a str,
+        cascade_revoked_grants: u32,
+    },
+    Listed {
+        count: u32,
+        service_id: &'a str,
+    },
+    StoreFailed {
+        label: &'a str,
+        reason: SecretReason,
+        internal_hash: Option<&'a str>,
+    },
+    DeleteFailed {
+        label: &'a str,
+        reason: SecretReason,
+        internal_hash: Option<&'a str>,
+    },
+    FetchFailed {
+        label: &'a str,
+        reason: SecretReason,
+        internal_hash: Option<&'a str>,
+    },
+    PromptBlocked {
+        label: &'a str,
+        op: SecretOp,
+    },
+    OwnerChanged {
+        pinned: &'a str,
+        current: &'a str,
+    },
+}
+
+fn secret_audit_bytes(payload: &SecretAuditPayload<'_>) -> Vec<u8> {
     serde_jcs::to_string(payload)
         .unwrap_or_else(|_| serde_json::to_string(payload).unwrap_or_default())
         .into_bytes()
@@ -385,42 +523,341 @@ impl Vault for LocalVault {
         Ok(snapshots)
     }
 
-    // ─── v0.9.4 credential-management methods (W5 minimal) ───────────
-    // Direct keychain pass-throughs. Structured tracing; no audit-chain
-    // entries yet (deferred to follow-up per build-budget cut). Each
-    // method translates KeychainError -> LoomError via from_keychain_err.
+    // ─── v0.9.4 credential-management methods (W5 full) ───────────
+    // Each method:
+    //   1. (G5b) Append `SecretOpPending{label, op}` audit if `session.is_some()`.
+    //   2. Dispatch to backend via `BlockingKeychain` (spawn_blocking + timeout).
+    //   3. (G5a) On success: append the typed `Secret*Stored/Fetched/Deleted/Listed`
+    //      audit; on failure: append `Secret*Failed{label, reason, internal_hash}`.
+    //   4. Translate `KeychainError → LoomError` per A-W5.2 and bubble up.
+    //
+    // When `session` is `None` (sessionless `loom vault add`) the audit
+    // writes are skipped entirely — only `tracing::info!`/`tracing::error!`
+    // give visibility. Per the plan there is no global "ops" manifest;
+    // sessionless audit is a documented v0.9.5 follow-up.
 
-    fn set_secret(&self, label: &str, secret: Zeroizing<Vec<u8>>) -> Result<(), LoomError> {
+    fn set_secret(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+        secret: Zeroizing<Vec<u8>>,
+    ) -> Result<(), LoomError> {
         let byte_count = secret.len();
-        tracing::info!(
-            label = %label,
-            byte_count = byte_count,
-            "vault.set_secret"
-        );
-        self.keychain
-            .set_secret(label, secret)
-            .map_err(from_keychain_err)
+        tracing::info!(label = %label, byte_count, "vault.set_secret");
+
+        // Pre-existence check feeds the `replaced` field of the success audit
+        // and the W5.9/A-W8.6 ownership contract (deferred — see comment
+        // at end of method).
+        let pre_existed = self.keychain.get_secret(label).is_ok();
+
+        self.append_secret_op_pending(session, label, SecretOp::Set);
+
+        match self.keychain.set_secret(label, secret) {
+            Ok(()) => {
+                self.append_secret_audit(
+                    session,
+                    AuditKind::SecretStored,
+                    &SecretAuditPayload::Stored {
+                        label,
+                        size_bucket: size_bucket(byte_count),
+                        replaced: pre_existed,
+                    },
+                );
+                if pre_existed {
+                    // Distinct audit kind so operators can grep replace events
+                    // separately from first-write events (the `replaced` field
+                    // inside Stored carries the same signal for JSON consumers).
+                    self.append_secret_audit(
+                        session,
+                        AuditKind::SecretReplaced,
+                        &SecretAuditPayload::Stored {
+                            label,
+                            size_bucket: size_bucket(byte_count),
+                            replaced: true,
+                        },
+                    );
+                }
+                Ok(())
+            }
+            Err(err) => {
+                self.append_secret_failure(
+                    session,
+                    AuditKind::SecretStoreFailed,
+                    label,
+                    &err,
+                    SecretFailureSlot::Store,
+                );
+                Err(from_keychain_err(err))
+            }
+        }
+        // W5.9 / A-W8.6 ownership check on existing label is deferred —
+        // depends on W2's `kSecAttrCreator` discriminator (also deferred
+        // per the W2 known-limitation comment in loom-keychain/src/macos.rs).
+        // Re-enable when the v0.9.5 follow-up wires the lower-level
+        // SecItem path that exposes creator inspection.
     }
 
-    fn get_secret_direct(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+    fn get_secret_direct(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+    ) -> Result<Zeroizing<Vec<u8>>, LoomError> {
         tracing::info!(label = %label, "vault.get_secret_direct");
-        self.keychain
-            .get_secret(label)
-            .map_err(from_keychain_err)
+        self.append_secret_op_pending(session, label, SecretOp::Get);
+
+        match self.keychain.get_secret(label) {
+            Ok(bytes) => {
+                self.append_secret_audit(
+                    session,
+                    AuditKind::SecretFetched,
+                    &SecretAuditPayload::Fetched { label },
+                );
+                Ok(bytes)
+            }
+            Err(err) => {
+                self.append_secret_failure(
+                    session,
+                    AuditKind::SecretFetchFailed,
+                    label,
+                    &err,
+                    SecretFailureSlot::Fetch,
+                );
+                Err(from_keychain_err(err))
+            }
+        }
     }
 
-    fn delete_secret(&self, label: &str) -> Result<(), LoomError> {
-        tracing::info!(label = %label, "vault.delete_secret");
-        self.keychain
-            .delete_secret(label)
-            .map_err(from_keychain_err)
+    fn delete_secret(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+        force: bool,
+    ) -> Result<DeleteSecretOutcome, LoomError> {
+        tracing::info!(label = %label, force, "vault.delete_secret");
+        self.append_secret_op_pending(session, label, SecretOp::Delete);
+
+        // D29 cascade semantics: collect alive grants that reference this
+        // label, then either error (default) or revoke them all (force).
+        let now = now_ms();
+        let referencing_grants: Vec<GrantId> = {
+            let grants = self.grants.read();
+            grants
+                .iter()
+                .filter(|(_, g)| {
+                    g.label == label
+                        && !g.revoked
+                        && now < g.issued_at_ms.saturating_add(g.ttl_ms)
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+
+        if !force && !referencing_grants.is_empty() {
+            // SecretDeleteFailed audit not emitted — the keychain backend
+            // was never called. Use VaultRejection with a structured code
+            // so the CLI can render the actionable message + exit code 1.
+            return Err(LoomError::new(
+                LoomErrorCode::VaultRejection,
+                format!(
+                    "credential '{label}' is in use by {} active grant(s); pass --force to cascade-revoke",
+                    referencing_grants.len()
+                ),
+            )
+            .with_context(serde_json::json!({
+                "code": "credential_in_use",
+                "label": label,
+                "active_grants": referencing_grants.len(),
+            })));
+        }
+
+        let mut cascade_revoked: u32 = 0;
+        if force {
+            // Revoke each referencing grant. Mirrors `Vault::revoke` flow
+            // (sets `revoked = true`, appends GrantRevoked audit per grant
+            // to that grant's session manifest).
+            for gid in &referencing_grants {
+                if let Err(e) = self.revoke(
+                    gid.clone(),
+                    RevokeReason {
+                        reason: "credential_deleted".to_string(),
+                    },
+                ) {
+                    tracing::warn!(grant_id = %gid.0, error = %e, "cascade revoke failed");
+                    // Best-effort — D29 / plan §6 Non-Goals A-W8.6 #15: partial
+                    // failure mid-cascade leaves the keychain entry intact.
+                    return Err(e);
+                }
+                cascade_revoked = cascade_revoked.saturating_add(1);
+            }
+        }
+
+        match self.keychain.delete_secret(label) {
+            Ok(()) => {
+                self.append_secret_audit(
+                    session,
+                    AuditKind::SecretDeleted,
+                    &SecretAuditPayload::Deleted {
+                        label,
+                        cascade_revoked_grants: cascade_revoked,
+                    },
+                );
+                Ok(DeleteSecretOutcome {
+                    cascade_revoked_grants: cascade_revoked,
+                })
+            }
+            Err(err) => {
+                self.append_secret_failure(
+                    session,
+                    AuditKind::SecretDeleteFailed,
+                    label,
+                    &err,
+                    SecretFailureSlot::Delete,
+                );
+                Err(from_keychain_err(err))
+            }
+        }
     }
 
-    fn list_labels(&self) -> Result<Vec<String>, LoomError> {
+    fn list_labels(&self, session: Option<&SessionId>) -> Result<Vec<String>, LoomError> {
         tracing::info!("vault.list_labels");
-        self.keychain
-            .list_labels()
-            .map_err(from_keychain_err)
+        // D14: NO pre-op `SecretOpPending` for list (it's not "intent to
+        // mutate"). One success/failure audit per call.
+
+        match self.keychain.list_labels() {
+            Ok(labels) => {
+                self.append_secret_audit(
+                    session,
+                    AuditKind::SecretsListed,
+                    &SecretAuditPayload::Listed {
+                        count: u32::try_from(labels.len()).unwrap_or(u32::MAX),
+                        // service_id is currently hardcoded `"loom"` per D36;
+                        // when the follow-up makes it configurable, source
+                        // from the keychain config.
+                        service_id: "loom",
+                    },
+                );
+                Ok(labels)
+            }
+            Err(err) => {
+                // FetchFailed slot is the closest analogue (list is a
+                // read-side op); operators consuming the audit chain
+                // distinguish via the AuditKind tag.
+                self.append_secret_failure(
+                    session,
+                    AuditKind::SecretFetchFailed,
+                    "<list>",
+                    &err,
+                    SecretFailureSlot::Fetch,
+                );
+                Err(from_keychain_err(err))
+            }
+        }
+    }
+}
+
+/// Internal discriminator for which success-side audit kind a failure
+/// belongs to — used to keep the `append_secret_failure` helper compact
+/// without three near-identical method bodies.
+#[derive(Debug, Clone, Copy)]
+enum SecretFailureSlot {
+    Store,
+    Delete,
+    Fetch,
+}
+
+impl LocalVault {
+    /// Append a G5b `SecretOpPending` audit for the named op. No-op when
+    /// `session` is `None` (sessionless CLI flow). Failures to write the
+    /// audit are logged-and-swallowed — same convention as the existing
+    /// `grant`/`consume`/`revoke` flows above.
+    fn append_secret_op_pending(
+        &self,
+        session: Option<&SessionId>,
+        label: &str,
+        op: SecretOp,
+    ) {
+        let Some(session) = session else { return };
+        let payload = SecretAuditPayload::OpPending { label, op };
+        let bytes = secret_audit_bytes(&payload);
+        if let Err(e) = self.manifest_writer.append_audit(
+            session.clone(),
+            AuditKind::SecretOpPending,
+            bytes,
+        ) {
+            tracing::warn!(error = %e, "append SecretOpPending failed");
+        }
+    }
+
+    /// Append a success-side audit (`SecretStored`/`SecretFetched`/
+    /// `SecretDeleted`/`SecretsListed`/`SecretReplaced`). No-op when
+    /// `session` is `None`.
+    fn append_secret_audit(
+        &self,
+        session: Option<&SessionId>,
+        kind: AuditKind,
+        payload: &SecretAuditPayload<'_>,
+    ) {
+        let Some(session) = session else { return };
+        let bytes = secret_audit_bytes(payload);
+        let kind_for_log = kind.clone();
+        if let Err(e) = self.manifest_writer.append_audit(session.clone(), kind, bytes) {
+            tracing::warn!(error = %e, kind = ?kind_for_log, "append secret audit failed");
+        }
+    }
+
+    /// Append a failure-side audit (`Secret*Failed`). The original error
+    /// message is hashed into `internal_hash` for support correlation
+    /// (A-W6.3) — operators paste the hash into the daemon log to
+    /// recover the original message; the message itself never reaches
+    /// the persistent manifest.
+    fn append_secret_failure(
+        &self,
+        session: Option<&SessionId>,
+        kind: AuditKind,
+        label: &str,
+        err: &KeychainError,
+        slot: SecretFailureSlot,
+    ) {
+        // A-W6.3: structured tracing::error! echo with the internal_hash
+        // for ALL Internal-kind errors so support can correlate.
+        if matches!(err.kind(), KeychainErrorKind::Internal) {
+            tracing::error!(
+                internal_hash = err.internal_hash().unwrap_or("<missing>"),
+                original_message = %err.message(),
+                "vault.{} internal error",
+                match slot {
+                    SecretFailureSlot::Store => "set_secret",
+                    SecretFailureSlot::Delete => "delete_secret",
+                    SecretFailureSlot::Fetch => "get_secret",
+                }
+            );
+        }
+
+        let Some(session) = session else { return };
+        let reason = secret_reason(err);
+        let internal_hash = err.internal_hash();
+        let payload = match slot {
+            SecretFailureSlot::Store => SecretAuditPayload::StoreFailed {
+                label,
+                reason,
+                internal_hash,
+            },
+            SecretFailureSlot::Delete => SecretAuditPayload::DeleteFailed {
+                label,
+                reason,
+                internal_hash,
+            },
+            SecretFailureSlot::Fetch => SecretAuditPayload::FetchFailed {
+                label,
+                reason,
+                internal_hash,
+            },
+        };
+        let bytes = secret_audit_bytes(&payload);
+        let kind_for_log = kind.clone();
+        if let Err(e) = self.manifest_writer.append_audit(session.clone(), kind, bytes) {
+            tracing::warn!(error = %e, kind = ?kind_for_log, "append secret failure audit failed");
+        }
     }
 }
 
@@ -1080,5 +1517,246 @@ mod tests {
         vault.substitute(gid, &mut r2).unwrap();
         assert!(r1.headers.contains_key("Authorization"));
         assert!(r2.headers.contains_key("Authorization"));
+    }
+
+    // ── W5.12 credential-management methods (set/get/delete/list) ───────
+
+    /// Fixture variant backed by `InMemoryKeychain` (mutable, supports
+    /// set/get/delete/list) — distinct from the read-only `StubKeychain`
+    /// fixture used by Grant lifecycle tests.
+    fn fixture_mem() -> (LocalVault, Arc<LocalManifestWriter>, SessionId) {
+        use loom_keychain::InMemoryKeychain;
+        let unique = ulid::Ulid::new().to_string();
+        let sessions_root = std::env::temp_dir().join(format!("loom-vault-mem-{unique}"));
+        std::fs::create_dir_all(&sessions_root).ok();
+
+        let obs = Observability::new(sessions_root.join("test.log"), false);
+        let mw = Arc::new(LocalManifestWriter::new(sessions_root, obs.clone()));
+        let sid = SessionId(unique);
+        mw.open_manifest(sid.clone(), None).ok();
+
+        let kc: Arc<dyn KeychainAccess> = Arc::new(InMemoryKeychain::new());
+        let vault = LocalVault::new(kc, mw.clone() as Arc<dyn ManifestWriter>, obs);
+        (vault, mw, sid)
+    }
+
+    #[test]
+    fn set_get_round_trip_against_in_memory_backend() {
+        let (vault, _mw, sid) = fixture_mem();
+        let secret = Zeroizing::new(b"round-trip-bytes".to_vec());
+        vault
+            .set_secret(Some(&sid), "my-token", secret.clone())
+            .expect("set ok");
+        let fetched = vault
+            .get_secret_direct(Some(&sid), "my-token")
+            .expect("get ok");
+        assert_eq!(&fetched[..], &secret[..]);
+    }
+
+    #[test]
+    fn set_secret_silently_upserts() {
+        let (vault, _mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "rotate", Zeroizing::new(b"v1".to_vec()))
+            .unwrap();
+        vault
+            .set_secret(Some(&sid), "rotate", Zeroizing::new(b"v2".to_vec()))
+            .unwrap();
+        let fetched = vault.get_secret_direct(Some(&sid), "rotate").unwrap();
+        assert_eq!(&fetched[..], b"v2");
+    }
+
+    #[test]
+    fn delete_secret_no_grants_no_force_succeeds() {
+        let (vault, _mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "ephemeral", Zeroizing::new(b"x".to_vec()))
+            .unwrap();
+        let outcome = vault
+            .delete_secret(Some(&sid), "ephemeral", false)
+            .expect("delete ok");
+        assert_eq!(outcome.cascade_revoked_grants, 0);
+        // Subsequent get returns NotFound → VaultUnknownLabel.
+        let err = vault
+            .get_secret_direct(Some(&sid), "ephemeral")
+            .expect_err("get must fail post-delete");
+        assert_eq!(err.code, LoomErrorCode::VaultUnknownLabel);
+    }
+
+    #[test]
+    fn delete_secret_unknown_label_is_idempotent() {
+        let (vault, _mw, sid) = fixture_mem();
+        let outcome = vault
+            .delete_secret(Some(&sid), "never-existed", false)
+            .expect("delete-of-missing must be idempotent");
+        assert_eq!(outcome.cascade_revoked_grants, 0);
+    }
+
+    #[test]
+    fn delete_secret_with_active_grants_requires_force_d29() {
+        let (vault, _mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "with-grants", Zeroizing::new(b"x".to_vec()))
+            .unwrap();
+        // Manually insert a grant referencing this label (skip the
+        // full `grant()` flow — we just need an alive Grant record).
+        {
+            let mut grants = vault.grants.write();
+            grants.insert(
+                GrantId("01HZACTIVEGRANTAAAAAAAAAAAA".to_string()),
+                Grant {
+                    session_id: sid.clone(),
+                    label: "with-grants".to_string(),
+                    origin: "api.example.com".to_string(),
+                    scopes: vec!["read".to_string()],
+                    issued_at_ms: now_ms(),
+                    ttl_ms: 600_000,
+                    revoked: false,
+                },
+            );
+        }
+
+        // Default delete fails with VaultRejection { code: credential_in_use }.
+        let err = vault
+            .delete_secret(Some(&sid), "with-grants", false)
+            .expect_err("delete must fail on active grant");
+        assert_eq!(err.code, LoomErrorCode::VaultRejection);
+        let ctx = err.context.expect("error context");
+        assert_eq!(ctx["code"], "credential_in_use");
+        assert_eq!(ctx["active_grants"], 1);
+
+        // With --force, the cascade revokes the grant and deletes.
+        let outcome = vault
+            .delete_secret(Some(&sid), "with-grants", true)
+            .expect("force delete ok");
+        assert_eq!(outcome.cascade_revoked_grants, 1);
+        // Grant is now revoked.
+        let grants = vault.grants.read();
+        let g = grants
+            .get(&GrantId("01HZACTIVEGRANTAAAAAAAAAAAA".to_string()))
+            .expect("grant still in map");
+        assert!(g.revoked, "grant must be marked revoked");
+    }
+
+    #[test]
+    fn list_labels_returns_inserted_labels() {
+        let (vault, _mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "alpha", Zeroizing::new(b"1".to_vec()))
+            .unwrap();
+        vault
+            .set_secret(Some(&sid), "beta", Zeroizing::new(b"2".to_vec()))
+            .unwrap();
+        let mut labels = vault.list_labels(Some(&sid)).expect("list ok");
+        labels.sort();
+        assert_eq!(labels, vec!["alpha", "beta"]);
+    }
+
+    #[test]
+    fn sessionless_methods_succeed_without_audit() {
+        let (vault, mw, sid) = fixture_mem();
+        // Operations work the same with session=None — only the audit
+        // chain is skipped. Snapshot the WAL before + after; audit-entry
+        // count must be unchanged.
+        let before = read_audit_entries(&mw, &sid).len();
+
+        vault
+            .set_secret(None, "noaudit", Zeroizing::new(b"x".to_vec()))
+            .unwrap();
+        let _ = vault.get_secret_direct(None, "noaudit").unwrap();
+        vault.delete_secret(None, "noaudit", false).unwrap();
+        let _ = vault.list_labels(None).unwrap();
+
+        let after = read_audit_entries(&mw, &sid).len();
+        assert_eq!(before, after, "sessionless ops must not append audits");
+    }
+
+    #[test]
+    fn set_secret_appends_secret_op_pending_then_secret_stored() {
+        let (vault, mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "newentry", Zeroizing::new(b"x".to_vec()))
+            .unwrap();
+        let entries = read_audit_entries(&mw, &sid);
+        let kinds: Vec<String> = entries
+            .iter()
+            .map(|e| e["audit_kind"].as_str().unwrap_or("").to_string())
+            .collect();
+        assert!(
+            kinds.contains(&"secret_op_pending".to_string()),
+            "missing G5b SecretOpPending audit; got {kinds:?}"
+        );
+        assert!(
+            kinds.contains(&"secret_stored".to_string()),
+            "missing G5a SecretStored audit; got {kinds:?}"
+        );
+
+        let stored = entries
+            .iter()
+            .find(|e| e["audit_kind"] == "secret_stored")
+            .unwrap();
+        let payload = audit_payload_from_entry(stored).expect("payload parses");
+        assert_eq!(payload["label"], "newentry");
+        assert_eq!(payload["size_bucket"], "small");
+        assert_eq!(payload["replaced"], false);
+    }
+
+    #[test]
+    fn set_secret_on_existing_label_emits_secret_replaced() {
+        let (vault, mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "rotate2", Zeroizing::new(b"v1".to_vec()))
+            .unwrap();
+        vault
+            .set_secret(Some(&sid), "rotate2", Zeroizing::new(b"v2".to_vec()))
+            .unwrap();
+        let entries = read_audit_entries(&mw, &sid);
+        let kinds: Vec<String> = entries
+            .iter()
+            .map(|e| e["audit_kind"].as_str().unwrap_or("").to_string())
+            .collect();
+        let stored_count = kinds.iter().filter(|k| k.as_str() == "secret_stored").count();
+        let replaced_count = kinds.iter().filter(|k| k.as_str() == "secret_replaced").count();
+        assert_eq!(stored_count, 2, "two stores → two secret_stored audits");
+        assert_eq!(replaced_count, 1, "second store → one secret_replaced audit");
+    }
+
+    #[test]
+    fn get_missing_label_appends_fetch_failed_with_typed_reason() {
+        let (vault, mw, sid) = fixture_mem();
+        let err = vault
+            .get_secret_direct(Some(&sid), "nope")
+            .expect_err("must fail");
+        assert_eq!(err.code, LoomErrorCode::VaultUnknownLabel);
+
+        let entries = read_audit_entries(&mw, &sid);
+        let failed = entries
+            .iter()
+            .find(|e| e["audit_kind"] == "secret_fetch_failed")
+            .expect("FetchFailed audit");
+        let payload = audit_payload_from_entry(failed).expect("payload parses");
+        assert_eq!(payload["label"], "nope");
+        assert_eq!(payload["reason"], "not_found");
+    }
+
+    #[test]
+    fn list_labels_appends_secrets_listed_with_count_and_service_id() {
+        let (vault, mw, sid) = fixture_mem();
+        vault
+            .set_secret(Some(&sid), "a", Zeroizing::new(b"1".to_vec()))
+            .unwrap();
+        vault
+            .set_secret(Some(&sid), "b", Zeroizing::new(b"2".to_vec()))
+            .unwrap();
+        let _ = vault.list_labels(Some(&sid)).unwrap();
+
+        let entries = read_audit_entries(&mw, &sid);
+        let listed = entries
+            .iter()
+            .find(|e| e["audit_kind"] == "secrets_listed")
+            .expect("SecretsListed audit");
+        let payload = audit_payload_from_entry(listed).expect("payload parses");
+        assert_eq!(payload["count"], 2);
+        assert_eq!(payload["service_id"], "loom");
     }
 }
