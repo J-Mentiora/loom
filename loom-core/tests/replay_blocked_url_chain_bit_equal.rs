@@ -18,7 +18,6 @@
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
 use loom_core::determinism_harness::DeterminismHarness;
-use loom_core::error::LoomError;
 use loom_core::manifest_writer::{
     AuditKind, LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId,
 };
@@ -26,14 +25,24 @@ use loom_core::observability::Observability;
 use loom_core::replay_engine::{LocalReplayEngine, ReplayEngine, ReplayOpts};
 use loom_core::session_manager::LocalSessionManager;
 use loom_core::vault::{KeychainAccess, LocalVault, Vault};
+use loom_keychain::{KeychainError, KeychainErrorKind};
 use std::path::PathBuf;
 use std::sync::Arc;
 use zeroize::Zeroizing;
 
 struct StubKc;
 impl KeychainAccess for StubKc {
-    fn get_secret(&self, _label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+    fn get_secret(&self, _label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         Ok(Zeroizing::new(vec![0u8; 16]))
+    }
+    fn set_secret(&self, _label: &str, _secret: Zeroizing<Vec<u8>>) -> Result<(), KeychainError> {
+        Err(KeychainError::new(KeychainErrorKind::Unavailable, "test stub"))
+    }
+    fn delete_secret(&self, _label: &str) -> Result<(), KeychainError> {
+        Err(KeychainError::new(KeychainErrorKind::Unavailable, "test stub"))
+    }
+    fn list_labels(&self) -> Result<Vec<String>, KeychainError> {
+        Err(KeychainError::new(KeychainErrorKind::Unavailable, "test stub"))
     }
 }
 

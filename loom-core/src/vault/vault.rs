@@ -27,7 +27,13 @@ use loom_core::observability::Observability;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
-use zeroize::Zeroizing;
+
+// Re-export the canonical KeychainAccess trait from the platform-leaf
+// crate. v0.9.4 unified the previous duplicate definitions (one here, one
+// in loom-keychain) — `loom_core::vault::KeychainAccess` now resolves to
+// the loom-keychain trait so backends, the daemon, and vault tests all
+// reference the same surface.
+pub use loom_keychain::KeychainAccess;
 
 /// Opaque grant token visible to WASM. ULID-shaped string; carries no
 /// secret material.
@@ -126,15 +132,6 @@ pub(crate) struct Grant {
     pub issued_at_ms: u64,
     pub ttl_ms: u64,
     pub revoked: bool,
-}
-
-/// External keychain interface. The IMPL of this trait lives in the
-/// out-of-crate, feature-gated `loom-keychain` crate (no platform
-/// symbols inside `loom-core`).
-pub trait KeychainAccess: Send + Sync {
-    /// Return the raw secret bytes for `label`, wrapped in `Zeroizing`.
-    /// The returned buffer drops zeroize when it leaves scope.
-    fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError>;
 }
 
 /// Concrete Vault implementation.

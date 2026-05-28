@@ -90,17 +90,14 @@ impl CoreApiFacade {
                 Arc::clone(&obs),
             ));
 
-        // Scaffold keychain — a later release wires the real platform backend.
-        struct NullKeychain;
-        impl loom_core::vault::KeychainAccess for NullKeychain {
-            fn get_secret(&self, label: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
-                Err(LoomError::new(
-                    loom_core::error::LoomErrorCode::VaultUnknownLabel,
-                    format!("keychain not configured for label={label}"),
-                ))
-            }
-        }
-        let keychain: Arc<dyn loom_core::vault::KeychainAccess> = Arc::new(NullKeychain);
+        // Scaffold keychain — kept as `StubKeychain` (always-error) until
+        // W4 lands the `select_keychain()` daemon-startup wiring. Note: the
+        // production daemon will refuse to start with the stub backend
+        // unless `LOOM_KEYCHAIN_BACKEND=stub` is set explicitly (per D7);
+        // this code path remains for in-process callers that construct
+        // `CoreApiFacade` directly (mostly tests).
+        let keychain: Arc<dyn loom_core::vault::KeychainAccess> =
+            Arc::new(loom_keychain::StubKeychain);
         let vault: Arc<dyn Vault> = Arc::new(loom_core::vault::LocalVault::new(
             keychain,
             Arc::clone(&manifest_writer),

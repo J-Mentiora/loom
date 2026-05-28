@@ -11,18 +11,28 @@ description.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Feature-gated keychain access. `loom-core` stays platform-agnostic;
-# this crate is the only place that pulls in OS-specific keychain deps.
-# Future expansion (gated behind feature flags):
-#   - macOS:   security-framework
-#   - Linux:   secret-service
-#   - Windows: windows-credentials
-
 [dependencies]
 zeroize = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
-# Platform-specific deps under [target.'cfg(...)'.dependencies] go here
-# once the per-platform backends are wired in.
+# macOS Security Framework backend — kSecClassGenericPassword storage
+# with kSecAttrAccessible=WhenUnlockedThisDeviceOnly + kSecAttrCreator
+# discriminator (squatting-prevention per AB8).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+security-framework-sys = "2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+# Linux Secret Service backend — pure-Rust zbus client (no libdbus-1
+# system dep needed for the crate; tests need a running daemon).
+# `blocking` feature exposes the sync API matching this trait's shape.
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
+
+[dev-dependencies]
+rand = { workspace = true }
 
 [lints]
 workspace = true

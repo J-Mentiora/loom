@@ -15,9 +15,29 @@ use crate::vault::vault::{
     AddCredentialOpts, AddCredentialReceipt, CredentialType, Grant, GrantId, GrantOpts,
     GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault, OAUTH_PROVIDER_ALLOWLIST,
 };
+use loom_keychain::{KeychainError, KeychainErrorKind};
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
+
+/// Translate a backend-layer `KeychainError` into a vault-layer `LoomError`.
+/// W1 uses a minimal mapping that preserves existing test semantics; W5
+/// refines this with five new `LoomErrorCode` variants
+/// (`VaultPermissionDenied`, `VaultBackendUnavailable`, `VaultBackendTimeout`,
+/// `VaultNonInteractivePrompt`, `VaultInternal`) — see plan amendment A-W5.2.
+fn from_keychain_err(err: KeychainError) -> LoomError {
+    let code = match err.kind() {
+        KeychainErrorKind::NotFound => LoomErrorCode::VaultUnknownLabel,
+        // W1 collapses every non-NotFound kind into VaultRejection so the
+        // existing tests stay green. W5 splits this into five typed codes.
+        KeychainErrorKind::Denied
+        | KeychainErrorKind::Unavailable
+        | KeychainErrorKind::TimedOut
+        | KeychainErrorKind::NonInteractivePrompt
+        | KeychainErrorKind::Internal => LoomErrorCode::VaultRejection,
+    };
+    LoomError::new(code, err.to_string())
+}
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -75,7 +95,10 @@ impl Vault for LocalVault {
         }
 
         // Step 3: Verify secret exists before issuing grant (fail fast; no Zeroizing held)
-        let _ = self.keychain.get_secret(&opts.label)?;
+        let _ = self
+            .keychain
+            .get_secret(&opts.label)
+            .map_err(from_keychain_err)?;
 
         // Step 4: Generate opaque grant ID — ULID, no secret material
         let grant_id = new_grant_id();
@@ -249,7 +272,10 @@ impl Vault for LocalVault {
         }
 
         // Fetch secret from keychain — Zeroizing<Vec<u8>> zeroizes on drop
-        let secret: Zeroizing<Vec<u8>> = self.keychain.get_secret(&label)?;
+        let secret: Zeroizing<Vec<u8>> = self
+            .keychain
+            .get_secret(&label)
+            .map_err(from_keychain_err)?;
 
         // Write Authorization header in-place — the SINGLE site for raw secret bytes.
         // `secret` zeroizes when dropped at end of this scope.
@@ -371,6 +397,7 @@ mod tests {
         AddCredentialOpts, CredentialType, Grant, GrantId, GrantOpts, KeychainAccess, LocalVault,
         NetRequest, RevokeReason, Vault,
     };
+    use loom_keychain::{KeychainError, KeychainErrorKind};
     use serde_json::Value;
     use std::collections::BTreeMap;
     use std::sync::Arc;
@@ -382,15 +409,40 @@ mod tests {
     }
 
     impl KeychainAccess for StubKeychain {
-        fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+        fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
             if label == self.label {
                 Ok(Zeroizing::new(self.secret.clone()))
             } else {
-                Err(LoomError::new(
-                    LoomErrorCode::VaultUnknownLabel,
+                Err(KeychainError::new(
+                    KeychainErrorKind::NotFound,
                     "label not found",
                 ))
             }
+        }
+
+        fn set_secret(
+            &self,
+            _label: &str,
+            _secret: Zeroizing<Vec<u8>>,
+        ) -> Result<(), KeychainError> {
+            Err(KeychainError::new(
+                KeychainErrorKind::Unavailable,
+                "vault unit-test stub does not exercise set",
+            ))
+        }
+
+        fn delete_secret(&self, _label: &str) -> Result<(), KeychainError> {
+            Err(KeychainError::new(
+                KeychainErrorKind::Unavailable,
+                "vault unit-test stub does not exercise delete",
+            ))
+        }
+
+        fn list_labels(&self) -> Result<Vec<String>, KeychainError> {
+            Err(KeychainError::new(
+                KeychainErrorKind::Unavailable,
+                "vault unit-test stub does not exercise list",
+            ))
         }
     }
 
