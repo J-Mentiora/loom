@@ -2411,6 +2411,8 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "sha2 0.11.0",
+ "tracing",
+ "zbus",
  "zeroize",
 ]
 

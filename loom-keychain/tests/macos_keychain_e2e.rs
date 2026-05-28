@@ -89,7 +89,7 @@ fn canary_byte_preservation() {
     // any future regression that adds an unintended decode step.
     let kc = fresh_backend();
     let label = fresh_label();
-    let canary: Vec<u8> = (0u8..=255).chain(std::iter::repeat(0).take(16)).collect();
+    let canary: Vec<u8> = (0u8..=255).chain(std::iter::repeat_n(0, 16)).collect();
     let secret = Zeroizing::new(canary.clone());
 
     kc.set_secret(&label, secret).expect("set canary");
