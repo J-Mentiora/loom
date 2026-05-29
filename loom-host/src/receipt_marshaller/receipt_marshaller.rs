@@ -831,4 +831,83 @@ mod cookies_canonical_bytes_tests {
         assert!(s.contains(r#""matched":true"#));
         assert!(s.contains(r#""name":"sid""#));
     }
+
+    // === Cross-crate replay byte-identity integration tests ===
+    // Wires loom-core::replay_engine::cookie_replay::substitute_cookie_values
+    // into the loom-host receipt marshaller and verifies the end-to-end
+    // record→replay byte-identity invariant.
+
+    #[test]
+    fn record_then_replay_byte_identity_via_cookie_replay_substitution() {
+        use loom_core::replay_engine::cookie_replay::{
+            substitute_cookie_values, ReplayCookieValues,
+        };
+
+        // STEP 1: Recorded receipt — real cookie values.
+        let recorded_payload =
+            r#"[{"name":"sid","domain":"example.com","path":"/","value":"REAL_SESSION_TOKEN"}]"#;
+        let mut recorded = fixture_builder();
+        recorded.get_cookies_result = Some(recorded_payload.to_string());
+        let recorded_bytes =
+            ReceiptMarshaller::assemble_canonical_bytes(&recorded).expect("record canonical");
+
+        // STEP 2: Replay receipt — substitute via cookie_replay.
+        let mut replay_values: ReplayCookieValues = std::collections::BTreeMap::new();
+        replay_values.insert(
+            ("sid".to_string(), "example.com".to_string(), "/".to_string()),
+            "REPLAY_PLACEHOLDER_VALUE".to_string(),
+        );
+        let replayed_payload =
+            substitute_cookie_values(recorded.action_id, recorded_payload, &replay_values)
+                .expect("substitute ok");
+        // The substituted JSON has the replay placeholder, not the
+        // recorded value.
+        assert!(replayed_payload.contains("REPLAY_PLACEHOLDER_VALUE"));
+        assert!(!replayed_payload.contains("REAL_SESSION_TOKEN"));
+
+        let mut replay = fixture_builder();
+        replay.get_cookies_result = Some(replayed_payload);
+        let replay_bytes =
+            ReceiptMarshaller::assemble_canonical_bytes(&replay).expect("replay canonical");
+
+        // STEP 3: Byte-identity holds — the marshaller redacts values
+        // in both paths, so the canonical bytes are identical regardless
+        // of which placeholder the replay supplied.
+        assert_eq!(
+            recorded_bytes, replay_bytes,
+            "record→replay canonical bytes must be byte-identical when (name,domain,path) tuples match"
+        );
+    }
+
+    #[test]
+    fn replay_missing_value_propagates_typed_error_through_substitution() {
+        use loom_core::replay_engine::cookie_replay::{
+            substitute_cookie_values, ReplayCookieValues, ReplayError,
+        };
+
+        let recorded_payload =
+            r#"[{"name":"sid","domain":"example.com","path":"/api","value":"X"}]"#;
+        // Supply value for "/" but the recorded path is "/api" — tuple mismatch.
+        let mut replay_values: ReplayCookieValues = std::collections::BTreeMap::new();
+        replay_values.insert(
+            ("sid".to_string(), "example.com".to_string(), "/".to_string()),
+            "P".to_string(),
+        );
+        let err = substitute_cookie_values(123, recorded_payload, &replay_values)
+            .expect_err("must error");
+        match err {
+            ReplayError::MissingCookieValue {
+                action_id,
+                name,
+                domain,
+                path,
+            } => {
+                assert_eq!(action_id, 123);
+                assert_eq!(name, "sid");
+                assert_eq!(domain, "example.com");
+                assert_eq!(path, "/api");
+            }
+            other => panic!("expected MissingCookieValue, got {other:?}"),
+        }
+    }
 }
