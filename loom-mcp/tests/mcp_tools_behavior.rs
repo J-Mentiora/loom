@@ -93,3 +93,49 @@ fn test_mock_dispatcher_list_has_expected_tool_names() {
         "loom.session.create must appear in the mock tool catalog; got {names:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// v0.9.6 web-cookie-injection: cookie verbs surface in tools/list
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "mock")]
+#[test]
+fn test_mock_dispatcher_list_includes_four_cookie_verbs() {
+    // Per v0.9.6 (web-cookie-injection): MCP exposes 4 cookie tools in
+    // addition to the original 10 web verbs. The MockMcpDispatcher
+    // catalog must include them.
+    let catalog = loom_mcp::mocks::MockMcpDispatcher::list_tools();
+    let tools = catalog["tools"].as_array().expect("tools must be an array");
+    let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+
+    for expected in [
+        "loom.web.set_cookies",
+        "loom.web.get_cookies",
+        "loom.web.clear_cookies",
+        "loom.web.delete_cookies",
+    ] {
+        assert!(
+            names.contains(&expected),
+            "{expected} must appear in tools/list (v0.9.6 cookie verb); got {names:?}"
+        );
+    }
+}
+
+#[test]
+fn test_cookie_verbs_obey_loom_dot_prefix_convention() {
+    // The MCP wire names for cookie verbs follow the same convention
+    // as the rest of the catalog — `loom.web.<verb>`.
+    for rpc_name in [
+        "web.set_cookies",
+        "web.get_cookies",
+        "web.clear_cookies",
+        "web.delete_cookies",
+    ] {
+        let mcp_name = ToolCache::rpc_to_mcp_name(rpc_name);
+        assert!(
+            mcp_name.starts_with("loom."),
+            "cookie verb {rpc_name} → {mcp_name} must obey loom. prefix"
+        );
+        assert_eq!(ToolCache::mcp_to_rpc_name(&mcp_name), Some(rpc_name));
+    }
+}

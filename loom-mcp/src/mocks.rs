@@ -13,6 +13,15 @@ impl MockMcpDispatcher {
                 {"name": "loom.session.create"},
                 {"name": "loom.session.close"},
                 {"name": "loom.action.dispatch"},
+                // v0.9.6 web-cookie-injection: 4 cookie verbs surface
+                // via the same MCP convention. The real dispatcher
+                // resolves these from the registry on the daemon side;
+                // the mock catalog mirrors them so tests can assert
+                // tools/list contents without spinning up a daemon.
+                {"name": "loom.web.set_cookies"},
+                {"name": "loom.web.get_cookies"},
+                {"name": "loom.web.clear_cookies"},
+                {"name": "loom.web.delete_cookies"},
             ]
         })
     }
@@ -29,6 +38,6 @@ pub struct MockToolCache;
 
 impl MockToolCache {
     pub fn cached_count() -> usize {
-        3
+        7
     }
 }
