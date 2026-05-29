@@ -1,28 +1,33 @@
-// Interface tests for `GuestBindings`. Verifies that all 10 web verbs
-// are implemented via wit-bindgen (no hand-rolled exports) and that
-// the bytecode is mode-agnostic (same bytes for live and replay).
+// Interface tests for `GuestBindings`. Verifies that all 14 web verbs
+// (10 original + 4 cookie verbs added in v0.9.6) are implemented via
+// wit-bindgen (no hand-rolled exports) and that the bytecode is
+// mode-agnostic (same bytes for live and replay).
 
 extern crate alloc;
 
 use super::guest_bindings::{WebSurface, WebSurfaceImpl, WEB_SURFACE_VERBS};
+use crate::clear_cookies_verb::clear_cookies_verb::ClearCookiesAction;
 use crate::click_verb::click_verb::ClickAction;
+use crate::delete_cookies_verb::delete_cookies_verb::DeleteCookiesAction;
 use crate::error_mapper::error_mapper::HostError;
 use crate::evaluate_verb::evaluate_verb::EvaluateAction;
+use crate::get_cookies_verb::get_cookies_verb::GetCookiesAction;
 use crate::hover_verb::hover_verb::HoverAction;
 use crate::navigate_verb::navigate_verb::NavigateAction;
 use crate::receipt_builder::receipt_builder::Receipt;
 use crate::screenshot_verb::screenshot_verb::ScreenshotAction;
 use crate::scroll_verb::scroll_verb::ScrollAction;
 use crate::select_verb::select_verb::SelectAction;
+use crate::set_cookies_verb::set_cookies_verb::SetCookiesAction;
 use crate::snapshot_verb::snapshot_verb::SnapshotAction;
 use crate::type_text_verb::type_text_verb::TypeTextAction;
 use crate::wait_verb::wait_verb::WaitAction;
 
-// === 10 verbs, names match the WIT contract ===
+// === 14 verbs, names match the WIT contract ===
 
 #[test]
-fn web_surface_exposes_exactly_ten_verbs() {
-    assert_eq!(WEB_SURFACE_VERBS.len(), 10);
+fn web_surface_exposes_exactly_fourteen_verbs() {
+    assert_eq!(WEB_SURFACE_VERBS.len(), 14);
 }
 
 #[test]
@@ -38,6 +43,11 @@ fn web_surface_verb_names_match_wit_contract() {
         "evaluate",
         "screenshot",
         "snapshot",
+        // v0.9.6 cookie verbs.
+        "set-cookies",
+        "get-cookies",
+        "clear-cookies",
+        "delete-cookies",
     ];
     for name in expected {
         assert!(
@@ -51,7 +61,7 @@ fn web_surface_verb_names_match_wit_contract() {
 // === each WIT method has a corresponding impl method ===
 
 #[test]
-fn web_surface_impl_provides_all_ten_methods() {
+fn web_surface_impl_provides_all_fourteen_methods() {
     // Type-level: each method exists with the right signature
     // `func(action) -> result<receipt, host-error>`. If a verb name in
     // WIT diverges from the impl method, this file fails to compile.
@@ -65,6 +75,11 @@ fn web_surface_impl_provides_all_ten_methods() {
     let _: fn(EvaluateAction) -> Result<Receipt, HostError> = WebSurfaceImpl::evaluate;
     let _: fn(ScreenshotAction) -> Result<Receipt, HostError> = WebSurfaceImpl::screenshot;
     let _: fn(SnapshotAction) -> Result<Receipt, HostError> = WebSurfaceImpl::snapshot;
+    // v0.9.6 cookie verbs.
+    let _: fn(SetCookiesAction) -> Result<Receipt, HostError> = WebSurfaceImpl::set_cookies;
+    let _: fn(GetCookiesAction) -> Result<Receipt, HostError> = WebSurfaceImpl::get_cookies;
+    let _: fn(ClearCookiesAction) -> Result<Receipt, HostError> = WebSurfaceImpl::clear_cookies;
+    let _: fn(DeleteCookiesAction) -> Result<Receipt, HostError> = WebSurfaceImpl::delete_cookies;
 }
 
 // === no mode-awareness — same bytecode for live + replay ===
