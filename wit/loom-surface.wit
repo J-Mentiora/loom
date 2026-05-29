@@ -35,6 +35,22 @@ interface types {
         // the content store.
         return-value-json: option<string>,
         return-value-blob-ref: option<content-ref>,
+        // v0.9.6 web-cookie-injection cookie-result fields. Each is a
+        // JSON-encoded payload (loom-surfaces wraps in Vec<u8> on emit;
+        // the host's decode_typed_receipt re-parses for shape).
+        //   set-cookies-result:  Vec<SetCookieResult>
+        //   get-cookies-result:  Vec<NetworkCookie> (raw values per D7
+        //                        — receipt operator-facing; structured
+        //                        logs scrub via mcp_observability §6)
+        //   clear-cookies-result: ClearCookiesResult {cleared_count}
+        //   delete-cookies-result: DeleteCookiesResult {name, matched}
+        // D13 tuple-identity sort (by name,domain,path UTF-16 lex)
+        // is applied host-side in ReceiptMarshaller before JCS-encoding
+        // canonical bytes so byte-identity holds across record/replay.
+        set-cookies-result: option<string>,
+        get-cookies-result: option<string>,
+        clear-cookies-result: option<string>,
+        delete-cookies-result: option<string>,
     }
 
     /// Result returned by the navigate-execute host function.

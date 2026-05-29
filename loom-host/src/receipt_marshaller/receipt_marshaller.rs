@@ -82,6 +82,20 @@ pub struct ReceiptBuilder {
     /// ContentRef when canonical-JSON bytes > 64KB.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub evaluate_return_value_blob_ref: Option<loom_core::content_store::ContentRef>,
+    // ---- v0.9.6 cookie tier fields ----
+    // Populated by decode_typed_receipt when the WIT receipt carries them.
+    // Each is a JSON-encoded payload from the verb's
+    // ReceiptBuilder::build_cookies_receipt. Sort/redact transforms
+    // happen in `assemble_cookies_canonical_bytes` before JCS encoding
+    // (D13 tuple-identity sort).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub set_cookies_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub get_cookies_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub clear_cookies_result: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delete_cookies_result: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -257,6 +271,17 @@ impl ReceiptMarshaller {
             || is_evaluate_error
         {
             return assemble_evaluate_canonical_bytes(builder);
+        }
+
+        // v0.9.6 cookie tier — any cookie-result field set routes to the
+        // cookies canonical-bytes path with D13 tuple-identity sort and
+        // value redaction (for replay byte-identity).
+        if builder.set_cookies_result.is_some()
+            || builder.get_cookies_result.is_some()
+            || builder.clear_cookies_result.is_some()
+            || builder.delete_cookies_result.is_some()
+        {
+            return assemble_cookies_canonical_bytes(builder);
         }
 
         let json = serde_jcs::to_string(builder)
@@ -558,4 +583,252 @@ fn assemble_evaluate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
     };
 
     payload.canonical_bytes()
+}
+
+/// v0.9.6 web-cookie-injection cookies-tier canonical bytes assembly.
+///
+/// Produces JCS-encoded bytes for receipts where any cookie-result field
+/// is populated. Two transforms run BEFORE JCS encoding:
+///
+///   - **D13 tuple-identity sort.** Cookie arrays (set_cookies_result,
+///     get_cookies_result) are sorted by `(name, domain.unwrap_or_default(),
+///     path.unwrap_or_default())` byte-lex. RFC 6265 §5.3 identifies a
+///     cookie by this triple, so the sort guarantees byte-identity
+///     between record and replay even when two cookies share a `name`
+///     but differ in domain/path. (For ASCII inputs — and cookie names
+///     are restricted to RFC 6265 token chars — byte-lex matches the
+///     UTF-16 lex specified by JCS.)
+///
+///   - **Value redaction.** `value` fields on cookies are replaced with
+///     `"[REDACTED]"` in the canonical bytes. The receipt's outcome_hash
+///     therefore depends on cookie *names* + *structure* but NOT on
+///     cookie *values*, so replay (which substitutes values from a
+///     `replay_cookie_values` map) reproduces byte-identical canonical
+///     bytes regardless of which specific value is provided.
+///
+/// The operator-facing wire receipt (sent over JSON-RPC) is a separate
+/// path that preserves raw values per D7 — see `build_navigate_wire_receipt`
+/// in `loom-daemon`.
+fn assemble_cookies_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>, LoomError> {
+    use loom_core::error::LoomErrorCode;
+
+    let payload = serde_json::json!({
+        "action_id": builder.action_id,
+        "status": builder.status,
+        "started_at_ms": builder.started_at_ms,
+        "finished_at_ms": builder.finished_at_ms,
+        "side_effects_count": builder.side_effects_count,
+        "host_call_count": builder.host_call_count,
+        "error_code": builder.error_code,
+        "error_details": builder.error_details,
+        "action_hash": builder.action_hash,
+        "outcome_hash": builder.outcome_hash,
+        "emitted_at_ms": builder.emitted_at_ms,
+        "set_cookies_result": prepare_cookies_field(builder.set_cookies_result.as_deref())?,
+        "get_cookies_result": prepare_cookies_field(builder.get_cookies_result.as_deref())?,
+        "clear_cookies_result": prepare_passthrough_field(builder.clear_cookies_result.as_deref())?,
+        "delete_cookies_result": prepare_passthrough_field(builder.delete_cookies_result.as_deref())?,
+    });
+
+    serde_jcs::to_string(&payload)
+        .map(String::into_bytes)
+        .map_err(|e| {
+            LoomError::new(
+                LoomErrorCode::Internal,
+                format!("assemble_cookies_canonical_bytes: JCS encode failed: {e}"),
+            )
+        })
+}
+
+/// Parse a JSON-encoded cookie array, redact `value` fields, sort by
+/// (name, domain, path) tuple. Returns the cookie array as a
+/// `serde_json::Value` ready to embed in the receipt payload (or
+/// `Value::Null` when the input is None — JCS encodes Null verbatim).
+fn prepare_cookies_field(raw: Option<&str>) -> Result<serde_json::Value, LoomError> {
+    use loom_core::error::LoomErrorCode;
+    let Some(s) = raw else {
+        return Ok(serde_json::Value::Null);
+    };
+    let mut v: serde_json::Value = serde_json::from_str(s).map_err(|e| {
+        LoomError::new(
+            LoomErrorCode::Internal,
+            format!("prepare_cookies_field: parse failed: {e}"),
+        )
+    })?;
+    if let Some(arr) = v.as_array_mut() {
+        arr.sort_by(|a, b| cookie_sort_key(a).cmp(&cookie_sort_key(b)));
+        for item in arr.iter_mut() {
+            if let Some(obj) = item.as_object_mut() {
+                if obj.contains_key("value") {
+                    obj.insert(
+                        "value".to_string(),
+                        serde_json::Value::String("[REDACTED]".to_string()),
+                    );
+                }
+            }
+        }
+    }
+    Ok(v)
+}
+
+/// Passthrough for `clear_cookies_result` / `delete_cookies_result` —
+/// single-item structs with no value field, no array to sort. Parses
+/// the JSON string into a Value so JCS encodes structure rather than
+/// the escaped JSON string.
+fn prepare_passthrough_field(raw: Option<&str>) -> Result<serde_json::Value, LoomError> {
+    use loom_core::error::LoomErrorCode;
+    let Some(s) = raw else {
+        return Ok(serde_json::Value::Null);
+    };
+    serde_json::from_str(s).map_err(|e| {
+        LoomError::new(
+            LoomErrorCode::Internal,
+            format!("prepare_passthrough_field: parse failed: {e}"),
+        )
+    })
+}
+
+fn cookie_sort_key(c: &serde_json::Value) -> (String, String, String) {
+    let s = |k: &str| {
+        c.get(k)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    };
+    (s("name"), s("domain"), s("path"))
+}
+
+#[cfg(test)]
+mod cookies_canonical_bytes_tests {
+    use super::*;
+
+    fn fixture_builder() -> ReceiptBuilder {
+        ReceiptBuilder {
+            action_id: 42,
+            started_at_ms: 1000,
+            finished_at_ms: 1010,
+            status: ReceiptStatus::Ok,
+            side_effects_count: 0,
+            host_call_count: 1,
+            error_code: None,
+            error_details: None,
+            action_hash: "ah".to_string(),
+            outcome_hash: "oh".to_string(),
+            emitted_at_ms: 1010,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn assemble_cookies_path_invokes_when_set_cookies_result_present() {
+        let mut b = fixture_builder();
+        b.set_cookies_result = Some(r#"[{"name":"sid","success":true}]"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("set_cookies_result"));
+        assert!(s.contains("sid"));
+    }
+
+    #[test]
+    fn d13_sort_places_cookies_with_same_name_distinct_domains_in_canonical_order() {
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[
+                {"name":"sid","domain":"example.com","path":"/","value":"v1"},
+                {"name":"sid","domain":"api.example.com","path":"/","value":"v2"}
+            ]"#
+            .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        let api_pos = s.find("api.example.com").expect("api domain in output");
+        let example_pos = s
+            .find("\"example.com\"")
+            .expect("example.com domain in output");
+        assert!(
+            api_pos < example_pos,
+            "D13 sort: api.example.com should precede example.com (byte-lex)"
+        );
+    }
+
+    #[test]
+    fn d13_sort_distinguishes_cookies_with_same_name_distinct_paths() {
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[
+                {"name":"sid","domain":"x.com","path":"/api","value":"v1"},
+                {"name":"sid","domain":"x.com","path":"/","value":"v2"}
+            ]"#
+            .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        let root_pos = s.find("\"/\"").expect("/ path");
+        let api_pos = s.find("\"/api\"").expect("/api path");
+        assert!(
+            root_pos < api_pos,
+            "/ should precede /api byte-lex"
+        );
+    }
+
+    #[test]
+    fn cookie_values_are_redacted_in_canonical_bytes_per_replay_byte_identity() {
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[{"name":"sid","domain":"x.com","path":"/","value":"super-secret-token"}]"#
+                .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(
+            !s.contains("super-secret-token"),
+            "raw cookie value must not appear in canonical bytes"
+        );
+        assert!(
+            s.contains("[REDACTED]"),
+            "canonical bytes must carry [REDACTED] as the value substitute"
+        );
+    }
+
+    #[test]
+    fn byte_identity_holds_when_values_differ_but_tuples_match() {
+        // Replay byte-identity guarantee: two receipts with same
+        // (name, domain, path) but different cookie *values* must
+        // produce IDENTICAL canonical bytes.
+        let mut b1 = fixture_builder();
+        b1.get_cookies_result = Some(
+            r#"[{"name":"sid","domain":"x.com","path":"/","value":"VALUE_A"}]"#
+                .to_string(),
+        );
+        let mut b2 = fixture_builder();
+        b2.get_cookies_result = Some(
+            r#"[{"name":"sid","domain":"x.com","path":"/","value":"DIFFERENT_VALUE_B"}]"#
+                .to_string(),
+        );
+        let bytes1 = ReceiptMarshaller::assemble_canonical_bytes(&b1).expect("ok");
+        let bytes2 = ReceiptMarshaller::assemble_canonical_bytes(&b2).expect("ok");
+        assert_eq!(
+            bytes1, bytes2,
+            "canonical bytes must be identical regardless of cookie value (replay-byte-identity)"
+        );
+    }
+
+    #[test]
+    fn clear_cookies_result_passes_through_as_structured_object() {
+        let mut b = fixture_builder();
+        b.clear_cookies_result = Some(r#"{"cleared_count":7}"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains(r#""cleared_count":7"#));
+    }
+
+    #[test]
+    fn delete_cookies_result_passes_through_with_matched_bool() {
+        let mut b = fixture_builder();
+        b.delete_cookies_result = Some(r#"{"name":"sid","matched":true}"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains(r#""matched":true"#));
+        assert!(s.contains(r#""name":"sid""#));
+    }
 }
