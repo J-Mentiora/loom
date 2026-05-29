@@ -79,6 +79,130 @@ fn redact_arguments_signature() {
     let _ = _ck;
 }
 
+// === v0.9.6 cookie redaction (path-level) ===
+
+use super::mcp_observability::{
+    redact_cookie_paths_in_place, COOKIE_REDACTED_TOOL_NAMES,
+};
+
+#[test]
+fn cookie_redacted_tool_names_includes_four_cookie_verbs() {
+    assert!(COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.set_cookies"));
+    assert!(COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.get_cookies"));
+    assert!(COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.clear_cookies"));
+    assert!(COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.delete_cookies"));
+}
+
+#[test]
+fn redact_cookie_paths_strips_value_from_set_cookies_inline_source() {
+    let mut v = serde_json::json!({
+        "params": {
+            "source": {
+                "source": "inline",
+                "cookies": [
+                    {"name": "sid", "value": "SECRET", "domain": "example.com"},
+                    {"name": "uid", "value": "OTHER_SECRET", "domain": "x"}
+                ]
+            }
+        }
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("SECRET"));
+    assert!(!s.contains("OTHER_SECRET"));
+    assert!(s.contains("[REDACTED]"));
+    // Names + structure preserved.
+    assert!(s.contains("\"name\":\"sid\""));
+    assert!(s.contains("\"domain\":\"example.com\""));
+}
+
+#[test]
+fn redact_cookie_paths_strips_value_from_flat_cookies_array() {
+    let mut v = serde_json::json!({
+        "params": {
+            "cookies": [
+                {"name": "sid", "value": "SECRET", "domain": "x"}
+            ]
+        }
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("SECRET"));
+    assert!(s.contains("[REDACTED]"));
+}
+
+#[test]
+fn redact_cookie_paths_strips_value_from_get_cookies_result_array() {
+    let mut v = serde_json::json!({
+        "result": {
+            "get_cookies_result": [
+                {"name": "sid", "value": "LIVE_TOKEN", "domain": "x", "path": "/"}
+            ]
+        }
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("LIVE_TOKEN"));
+    assert!(s.contains("[REDACTED]"));
+}
+
+#[test]
+fn redact_cookie_paths_preserves_set_cookies_result_error_code_taxonomy() {
+    // error_code is taxonomy text (not a value); must NOT be redacted.
+    let mut v = serde_json::json!({
+        "result": {
+            "set_cookies_result": [
+                {"name": "sid", "success": false, "error_code": "name_empty"}
+            ]
+        }
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(s.contains("\"error_code\":\"name_empty\""), "got: {s}");
+}
+
+#[test]
+fn redact_arguments_with_redact_vault_strips_cookie_values_for_set_cookies_tool() {
+    let obs = McpObservability::new(true); // redact_vault on
+    let args = serde_json::json!({
+        "source": {
+            "source": "inline",
+            "cookies": [
+                {"name": "sid", "value": "ULTRA_SECRET", "domain": "x"}
+            ]
+        }
+    });
+    let redacted = obs.redact_arguments("loom.web.set_cookies", args);
+    let s = redacted.to_string();
+    assert!(!s.contains("ULTRA_SECRET"));
+    assert!(s.contains("[REDACTED]"));
+}
+
+#[test]
+fn redact_arguments_passes_through_when_redact_vault_off() {
+    let obs = McpObservability::new(false); // redact_vault off
+    let args = serde_json::json!({
+        "source": {
+            "source": "inline",
+            "cookies": [
+                {"name": "sid", "value": "ULTRA_SECRET", "domain": "x"}
+            ]
+        }
+    });
+    let redacted = obs.redact_arguments("loom.web.set_cookies", args);
+    let s = redacted.to_string();
+    // redact_vault is OFF — values pass through unchanged.
+    assert!(s.contains("ULTRA_SECRET"));
+}
+
+#[test]
+fn redact_arguments_for_non_cookie_non_vault_tool_is_passthrough() {
+    let obs = McpObservability::new(true);
+    let args = serde_json::json!({"selector": "#submit"});
+    let out = obs.redact_arguments("loom.web.click", args.clone());
+    assert_eq!(out, args);
+}
+
 // === Logging level signatures (stderr-only writer is wired by init_subscriber) ===
 
 #[test]
