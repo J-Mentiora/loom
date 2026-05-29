@@ -673,6 +673,38 @@ impl CoreFacadeBridge for CoreBridge {
         Ok(VaultListLabelsInfo { labels, count })
     }
 
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo, AdapterError> {
+        use loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo;
+        use loom_rpc::error_translator::error_translator::LoomErrorCode;
+        // Enumerate sessions; pick the most recently created Active one.
+        // Returns SessionNotFound when no active sessions exist.
+        let infos = self
+            .core
+            .list_sessions_info()
+            .map_err(|e| map_loom_error(&e))?;
+        let mut active: Vec<&(String, String, u64)> = infos
+            .iter()
+            .filter(|(_id, status, _ts)| {
+                // The status string from list_sessions_info is the
+                // session's snake_case status; "active" indicates a
+                // live session ready to accept actions.
+                status == "active"
+            })
+            .collect();
+        if active.is_empty() {
+            return Err(LoomErrorCode::SessionNotFound);
+        }
+        active.sort_by_key(|(_id, _status, ts)| *ts);
+        let unambiguous = active.len() == 1;
+        let (session_id, _, _) = active.last().unwrap();
+        Ok(VaultGetSessionContextInfo {
+            session_id: session_id.clone(),
+            unambiguous,
+        })
+    }
+
     fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError> {
         // v0.9.4 minimum-viable diagnose per A-W6.4. Probes the
         // keychain by attempting a list_labels call; success counts as

@@ -339,6 +339,14 @@ impl RequestRouterApi for RequestRouter {
                 Ok(v) => canonical_bytes(&v),
                 Err(e) => error_bytes(&e),
             },
+            // v0.9.6 web-cookie-injection: session-context lookup for
+            // `loom vault add --credential-type cookie` binding (D5).
+            "vault.get_session_context" => {
+                match self.ctx.handlers.vault_get_session_context().await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
             "content.get" => {
                 let artifact_ref = params
                     .get("artifact_ref")

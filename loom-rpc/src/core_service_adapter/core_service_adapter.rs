@@ -146,6 +146,18 @@ pub trait CoreFacadeBridge: Send + Sync {
     /// Stable JSON schema per A-W6.4.
     fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError>;
 
+    /// v0.9.6 web-cookie-injection support: return the operator's
+    /// current session context so the CLI can bind a
+    /// `--credential-type cookie` grant to it. Picks the most recently
+    /// created Active session; errors with a typed code when zero
+    /// active sessions exist (operator must `loom session create`
+    /// first) or when ambiguity demands explicit `--session` (multiple
+    /// active sessions — the most-recent heuristic is fine but the
+    /// caller can override).
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<VaultGetSessionContextInfo, AdapterError>;
+
     /// Run garbage collection on the content store (`gc.run`). `ttl_days`
     /// is the maximum age (in days) of unreferenced blobs to retain;
     /// blobs older than `ttl_days` whose referenced-by set is empty are
@@ -384,6 +396,21 @@ pub enum VaultDiagnoseInitStatus {
     Error { reason: String },
 }
 
+/// v0.9.6 web-cookie-injection — response for `vault.get_session_context`.
+/// `session_id` is the operator's current Active session (most recently
+/// created). The CLI uses this when issuing `loom vault add
+/// --credential-type cookie` so the grant gets bound to the right
+/// session per D5 / FND-0008.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultGetSessionContextInfo {
+    pub session_id: String,
+    /// True when the daemon has exactly one Active session — the
+    /// resolution is unambiguous. False when multiple Actives exist
+    /// and the most-recent heuristic was applied; the CLI may want
+    /// to confirm with the operator.
+    pub unambiguous: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultDiagnoseLastError {
     /// Snake_case `KeychainErrorKind` variant string.
@@ -472,6 +499,11 @@ pub trait CoreServiceAdapterApi: Send + Sync {
     ) -> Result<VaultListLabelsInfo, AdapterError>;
 
     fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError>;
+
+    /// v0.9.6 — see other `vault_get_session_context` doc.
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<VaultGetSessionContextInfo, AdapterError>;
 
     /// Run GC on the content store. Returns scanned/collected/bytes-freed.
     fn gc_run(
