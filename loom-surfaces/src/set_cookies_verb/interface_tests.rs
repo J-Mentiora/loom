@@ -19,6 +19,12 @@ fn action_struct_round_trips_serde() {
 
 #[test]
 fn safety_profile_serializes_to_lowercase() {
-    assert_eq!(serde_json::to_string(&SafetyProfile::Default).unwrap(), "\"default\"");
-    assert_eq!(serde_json::to_string(&SafetyProfile::Safe).unwrap(), "\"safe\"");
+    assert_eq!(
+        serde_json::to_string(&SafetyProfile::Default).unwrap(),
+        "\"default\""
+    );
+    assert_eq!(
+        serde_json::to_string(&SafetyProfile::Safe).unwrap(),
+        "\"safe\""
+    );
 }

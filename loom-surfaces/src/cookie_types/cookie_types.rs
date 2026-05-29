@@ -134,12 +134,8 @@ pub enum CookieSourceScheme {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "snake_case")]
 pub enum CookieSource {
-    Inline {
-        cookies: Vec<NetworkCookieParam>,
-    },
-    Grant {
-        grant_id: String,
-    },
+    Inline { cookies: Vec<NetworkCookieParam> },
+    Grant { grant_id: String },
 }
 
 /// Typed validation errors for the synchronous per-cookie pass (D9 / council
@@ -158,7 +154,9 @@ pub enum CookieValidationError {
     ValueTooLarge { size: usize },
     #[error("invalid sameSite value: {0:?}")]
     InvalidSameSite(String),
-    #[error("invalid expires value: {0} (must be -1 for session cookie or >=1.0 seconds since epoch)")]
+    #[error(
+        "invalid expires value: {0} (must be -1 for session cookie or >=1.0 seconds since epoch)"
+    )]
     InvalidExpires(f64),
     #[error("too many cookies in set_cookies call: {0} (max 64)")]
     TooManyCookies(usize),

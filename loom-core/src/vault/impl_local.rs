@@ -513,17 +513,16 @@ impl Vault for LocalVault {
         // rejected with a typed envelope so the daemon can map it back to
         // the MCP error surface.
         if grant_session != session {
-            return Err(LoomError::new(
-                LoomErrorCode::VaultRejection,
-                "vault-session-mismatch",
-            )
-            .with_context(serde_json::json!({
-                "code": "vault_session_mismatch",
-                "details": {
-                    "expected_session": grant_session.0,
-                    "observed_session": session.0,
-                }
-            })));
+            return Err(
+                LoomError::new(LoomErrorCode::VaultRejection, "vault-session-mismatch")
+                    .with_context(serde_json::json!({
+                        "code": "vault_session_mismatch",
+                        "details": {
+                            "expected_session": grant_session.0,
+                            "observed_session": session.0,
+                        }
+                    })),
+            );
         }
 
         // Check 3: TTL

@@ -134,8 +134,7 @@ mod tests {
 
     #[test]
     fn nested_with_zeroizing_serialize_still_redacts() {
-        let r: Redacted<Zeroizing<String>> =
-            Redacted::new(Zeroizing::new("hunter2".to_string()));
+        let r: Redacted<Zeroizing<String>> = Redacted::new(Zeroizing::new("hunter2".to_string()));
         let json = serde_json::to_string(&r).expect("serialize");
         assert_eq!(json, "\"[REDACTED]\"");
     }
@@ -156,7 +155,7 @@ mod tests {
         {
             let _r: Redacted<String> = Redacted::new("hunter2".to_string());
         } // drop fires here
-        // No assert needed — compilation + clean drop is the contract.
+          // No assert needed — compilation + clean drop is the contract.
     }
 
     #[test]

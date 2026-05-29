@@ -37,7 +37,10 @@ fn cookie_param_camelcase_fields() {
     let j = serde_json::to_value(&c).expect("serialize");
     assert!(j.get("httpOnly").is_some(), "expected httpOnly camelCase");
     assert!(j.get("sameSite").is_some(), "expected sameSite camelCase");
-    assert!(j.get("sourcePort").is_some(), "expected sourcePort camelCase");
+    assert!(
+        j.get("sourcePort").is_some(),
+        "expected sourcePort camelCase"
+    );
 }
 
 #[test]
@@ -77,27 +80,53 @@ fn cookie_decode_full() {
 
 #[test]
 fn same_site_enum_pascal_case() {
-    assert_eq!(serde_json::to_string(&CookieSameSite::Strict).unwrap(), "\"Strict\"");
-    assert_eq!(serde_json::to_string(&CookieSameSite::Lax).unwrap(), "\"Lax\"");
-    assert_eq!(serde_json::to_string(&CookieSameSite::None).unwrap(), "\"None\"");
+    assert_eq!(
+        serde_json::to_string(&CookieSameSite::Strict).unwrap(),
+        "\"Strict\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CookieSameSite::Lax).unwrap(),
+        "\"Lax\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CookieSameSite::None).unwrap(),
+        "\"None\""
+    );
 }
 
 #[test]
 fn priority_enum_pascal_case() {
-    assert_eq!(serde_json::to_string(&CookiePriority::Low).unwrap(), "\"Low\"");
-    assert_eq!(serde_json::to_string(&CookiePriority::High).unwrap(), "\"High\"");
+    assert_eq!(
+        serde_json::to_string(&CookiePriority::Low).unwrap(),
+        "\"Low\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CookiePriority::High).unwrap(),
+        "\"High\""
+    );
 }
 
 #[test]
 fn source_scheme_enum_pascal_case() {
-    assert_eq!(serde_json::to_string(&CookieSourceScheme::Unset).unwrap(), "\"Unset\"");
-    assert_eq!(serde_json::to_string(&CookieSourceScheme::NonSecure).unwrap(), "\"NonSecure\"");
-    assert_eq!(serde_json::to_string(&CookieSourceScheme::Secure).unwrap(), "\"Secure\"");
+    assert_eq!(
+        serde_json::to_string(&CookieSourceScheme::Unset).unwrap(),
+        "\"Unset\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CookieSourceScheme::NonSecure).unwrap(),
+        "\"NonSecure\""
+    );
+    assert_eq!(
+        serde_json::to_string(&CookieSourceScheme::Secure).unwrap(),
+        "\"Secure\""
+    );
 }
 
 #[test]
 fn cookie_source_inline_tagged_serialize() {
-    let s = CookieSource::Inline { cookies: vec![cookie_param("sid", "abc")] };
+    let s = CookieSource::Inline {
+        cookies: vec![cookie_param("sid", "abc")],
+    };
     let j = serde_json::to_value(&s).expect("serialize");
     assert_eq!(j["source"], "inline");
     assert!(j["cookies"].is_array());
@@ -105,7 +134,9 @@ fn cookie_source_inline_tagged_serialize() {
 
 #[test]
 fn cookie_source_grant_tagged_serialize() {
-    let s = CookieSource::Grant { grant_id: "01HZX0000000000000000000A0".to_string() };
+    let s = CookieSource::Grant {
+        grant_id: "01HZX0000000000000000000A0".to_string(),
+    };
     let j = serde_json::to_value(&s).expect("serialize");
     assert_eq!(j["source"], "grant");
     assert_eq!(j["grant_id"], "01HZX0000000000000000000A0");
@@ -125,21 +156,28 @@ fn validate_empty_array_ok() {
 
 #[test]
 fn validate_rejects_too_many_cookies() {
-    let many: Vec<_> = (0..65).map(|i| cookie_param(&format!("c{i}"), "v")).collect();
+    let many: Vec<_> = (0..65)
+        .map(|i| cookie_param(&format!("c{i}"), "v"))
+        .collect();
     let err = validate_cookie_params(&many).expect_err("should reject");
     assert_eq!(err, CookieValidationError::TooManyCookies(65));
 }
 
 #[test]
 fn validate_accepts_64_cookies() {
-    let exactly: Vec<_> = (0..64).map(|i| cookie_param(&format!("c{i}"), "v")).collect();
+    let exactly: Vec<_> = (0..64)
+        .map(|i| cookie_param(&format!("c{i}"), "v"))
+        .collect();
     assert!(validate_cookie_params(&exactly).is_ok());
 }
 
 #[test]
 fn validate_rejects_empty_name() {
     let c = cookie_param("", "v");
-    assert_eq!(validate_cookie_params(&[c]).unwrap_err(), CookieValidationError::NameEmpty);
+    assert_eq!(
+        validate_cookie_params(&[c]).unwrap_err(),
+        CookieValidationError::NameEmpty
+    );
 }
 
 #[test]
