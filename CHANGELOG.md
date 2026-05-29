@@ -6,6 +6,116 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.5] — 2026-05-29 — Cookie Injection (scaffolding milestone)
+
+First milestone of the **web-cookie-injection** feature. v0.9.5 ships the
+foundation types, vault extension, CDP cookie encoder, and verb-Action
+scaffolding for the four upcoming MCP verbs (`web.set_cookies`,
+`web.get_cookies`, `web.clear_cookies`, `web.delete_cookies`). The
+verb-level `execute()` implementations + daemon dispatch + first
+end-to-end stdio MCP acceptance test will ship in v0.9.6 — see the
+follow-up tracking ticket.
+
+### Added
+
+- **`loom_shared::Redacted<T>` newtype.** Hides values in
+  Debug/Display/Serialize output (all emit `"[REDACTED]"`); normal
+  Deserialize. Bound `T: Zeroize` enforced at the struct level so Drop
+  can zeroize the inner value. `expose()` and `into_inner()` (via
+  `ManuallyDrop`) are the explicit move-out escape hatches.
+- **`CredentialType::Cookie`** vault variant. Cookie grants are
+  session-bound (D5 / council FND-0008): `Vault::substitute_cookies(grant_id,
+  session_id)` rejects on session mismatch with a typed
+  `vault_session_mismatch` envelope.
+- **`Vault::substitute_cookies` trait method.** Parallel to the existing
+  OAuth-header `substitute()` path: keychain blob → `Zeroizing<Vec<u8>>` →
+  returned to caller for decoding into the typed `NetworkCookieParam`
+  shape. Cookie *names* land in the audit chain (replay-deterministic);
+  values never appear in audit / receipts / logs.
+- **Per-CredentialType `grant()` policy (D3 simplified).** Replaces the
+  prior single-line OAuth check with an explicit `match` on
+  `CredentialType`; `OAuth | Cookie` are accepted, `ApiKey | Saml | Basic`
+  remain reserved-and-rejected. Error envelope expanded to advertise both
+  `oauth2_authorization_code_pkce` and `cookie` in `allowed_types`.
+- **`AuditKind::CookiesSubstituted`** with canonical-bytes shape
+  `{grant_id, session_id, cookie_names}` — names for replay determinism,
+  no values.
+- **`AuditKind::CookiesCleared`** with canonical-bytes shape
+  `{target_id, session_id, count_before}` — for `web.clear_cookies` audit.
+- **CDP cookie wire types** in `loom-surfaces`: `NetworkCookieParam` (13
+  fields, input shape) and `NetworkCookie` (15 fields, output shape) per
+  the asymmetric Chrome DevTools spec (council FND-0002). Hand-written
+  (chromiumoxide banned in `loom-surfaces` per `deny.toml`).
+  `CookieSameSite` / `CookiePriority` / `CookieSourceScheme` enums match
+  the CDP PascalCase wire format.
+- **`CookieSource` enum** (`Inline { cookies }` | `Grant { grant_id }`) —
+  type-safe XOR for `set_cookies` input (council FND-0042); replaces
+  runtime `Option<>` XOR.
+- **`CookieValidationError` typed enum + `validate_cookie_params()`** —
+  enforces a 64-cookie cap (DoS guard per council FND-0044); rejects
+  empty names, invalid name characters, oversized values (>4096 bytes),
+  pre-1970 expires.
+- **4 new `CdpMessage` variants:** `NetworkSetCookies`, `NetworkGetCookies`,
+  `NetworkClearBrowserCookies`, `NetworkDeleteCookies`. Encode arms
+  produce CBOR envelopes following the existing pattern. `expires` is
+  `f64` per CDP spec (the encoder's `f64`-ban applies only to mouse
+  coordinates).
+- **Verb-level safety stubs:** `SafetyPolicy::check_set_cookies`,
+  `check_get_cookies`, `check_clear_cookies`, `check_delete_cookies` —
+  all always-`None` (allow-all) under both Default and Safe profiles.
+  Authoritative gate lives at the daemon layer per the EvaluateVerb
+  dead-code pattern.
+- **Verb-Action scaffolding:** `set_cookies_verb`, `get_cookies_verb`,
+  `clear_cookies_verb`, `delete_cookies_verb` directories with
+  `Action` structs and serde round-trip unit tests. Full `execute()`
+  + receipt-builder integration deferred to v0.9.6.
+
+### Changed
+
+- **`Vault::grant()` rejection envelope** — `details.allowed_types` array
+  expanded from `["oauth2_authorization_code_pkce"]` to
+  `["oauth2_authorization_code_pkce", "cookie"]`. ApiKey/Saml/Basic
+  callers see the same `vault_credential_type_unsupported` code; the
+  advertised allowlist grows by one entry.
+
+### Security
+
+- **`Redacted<T>` heap-wipe caveat (council FND-0001).** Cookie value
+  fields are typed `Redacted<String>` (originally `Redacted<Zeroizing<String>>`
+  per D12; rolled back when `Zeroizing<T>` was found to not implement
+  `serde::Deserialize`). `String::zeroize()` from `zeroize` 1.6+ calls
+  `Vec::clear()` which sets length to 0 but does not write zeros to the
+  heap buffer — so memory contents may persist briefly after drop.
+  Documented in `security/vault_threat_model.md` as a known caveat;
+  proper heap-wipe (via `Zeroizing<Vec<u8>>` at the keychain boundary)
+  is a v0.9.6 follow-up.
+- **Session binding for cookie grants (D5 / council FND-0008).**
+  `Vault::substitute_cookies` returns `vault_session_mismatch` when the
+  consuming session_id differs from the grant's stored session_id.
+  Defends against intra-daemon IDOR.
+
+### Deferred to v0.9.6
+
+The following Phase 2 plan items did not ship in v0.9.5 and are tracked
+for the next release:
+
+- Verb-level `execute()` implementations for the four cookie verbs
+  (CDP encode + `host::shim_call` plumbing + receipt assembly).
+- Daemon dispatch wiring in
+  `loom-daemon::WasmBridge::dispatch_action_blocking`.
+- Receipt marshaller extensions for cookie tags + JCS sort by
+  (name, domain, path) tuple per D13 (council FND-0039).
+- Replay-engine `ReplayError::MissingCookieValue` + fixture-based
+  byte-identity tests.
+- `loom-mcp::mcp_observability` cookie-value JSONPath redaction.
+- `vault.get_session_context` RPC for CLI session-id resolution (D5).
+- CLI `loom vault add --credential-type cookie` flag.
+- First end-to-end stdio MCP integration test at
+  `loom-cli/tests/cookie_injection_acceptance.rs`.
+- `security/vault_threat_model.md` cookie-credentials section
+  (D6 + D7 caveats).
+- `docs/audit.md` documentation of new audit entries.
+
 ## [0.9.4] — 2026-05-29
 
 Vault hardening release. Replaces the v0.9.3 placeholder `StubKeychain` with

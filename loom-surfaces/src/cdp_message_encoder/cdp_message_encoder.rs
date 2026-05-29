@@ -140,10 +140,44 @@ pub struct PageCaptureScreenshot {
     pub capture_beyond_viewport: bool,
 }
 
+/// CDP `Network.setCookies` request. The `f64`/`f32` ban that applies to
+/// *coordinates* in this module does NOT apply to cookie `expires` —
+/// `expires` is `f64` per the CDP spec and we honour the spec rather than
+/// invent a custom encoding. v0.9.5.
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkSetCookies {
+    pub cookies: Vec<crate::cookie_types::NetworkCookieParam>,
+}
+
+/// CDP `Network.getCookies` request — optional `urls` filter. v0.9.5.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct NetworkGetCookies {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub urls: Option<Vec<String>>,
+}
+
+/// CDP `Network.clearBrowserCookies` request — empty struct (no params).
+/// v0.9.5.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct NetworkClearBrowserCookies {}
+
+/// CDP `Network.deleteCookies` request — name + optional scoping fields.
+/// v0.9.5.
+#[derive(Debug, Clone, Serialize)]
+pub struct NetworkDeleteCookies {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 /// Tagged enum the encoder accepts. One variant per CDP method we issue
 /// from any verb. Encoding is method-name-prefixed so the chromium shim
 /// can dispatch by tag without parsing CDP-style nested JSON.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum CdpMessage {
     PageNavigate(PageNavigate),
     PageAddScriptToEvaluateOnNewDocument(PageAddScriptToEvaluateOnNewDocument),
@@ -157,6 +191,10 @@ pub enum CdpMessage {
     DomScrollIntoViewIfNeeded(DomScrollIntoViewIfNeeded),
     PageGetLayoutMetrics(PageGetLayoutMetrics),
     PageCaptureScreenshot(PageCaptureScreenshot),
+    NetworkSetCookies(NetworkSetCookies),
+    NetworkGetCookies(NetworkGetCookies),
+    NetworkClearBrowserCookies(NetworkClearBrowserCookies),
+    NetworkDeleteCookies(NetworkDeleteCookies),
 }
 
 impl CdpMessage {
@@ -178,6 +216,10 @@ impl CdpMessage {
             Self::DomScrollIntoViewIfNeeded(_) => "DOM.scrollIntoViewIfNeeded",
             Self::PageGetLayoutMetrics(_) => "Page.getLayoutMetrics",
             Self::PageCaptureScreenshot(_) => "Page.captureScreenshot",
+            Self::NetworkSetCookies(_) => "Network.setCookies",
+            Self::NetworkGetCookies(_) => "Network.getCookies",
+            Self::NetworkClearBrowserCookies(_) => "Network.clearBrowserCookies",
+            Self::NetworkDeleteCookies(_) => "Network.deleteCookies",
         }
     }
 }
@@ -286,6 +328,34 @@ impl CdpMessageEncoder {
                 &mut buf,
             ),
             CdpMessage::PageCaptureScreenshot(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::NetworkSetCookies(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::NetworkGetCookies(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::NetworkClearBrowserCookies(p) => ciborium::ser::into_writer(
+                &CdpEnvelope {
+                    method: msg.method_name(),
+                    params: p,
+                },
+                &mut buf,
+            ),
+            CdpMessage::NetworkDeleteCookies(p) => ciborium::ser::into_writer(
                 &CdpEnvelope {
                     method: msg.method_name(),
                     params: p,

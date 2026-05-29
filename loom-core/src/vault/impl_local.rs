@@ -65,6 +65,30 @@ fn new_grant_id() -> GrantId {
     GrantId(ulid::Ulid::new().to_string())
 }
 
+/// Parse cookie names from a raw vault blob without holding raw values
+/// beyond this function. The blob shape is
+/// `{"schema_version": 1, "cookies": [{"name": "...", ...}, ...]}` per
+/// the CLI `vault add --credential-type cookie --from-file` contract.
+///
+/// On parse failure (blob is malformed JSON or missing the cookies array)
+/// returns an empty Vec — the daemon's CDP encode step will surface the
+/// parse error to the caller via the typed surface error; the audit gets
+/// an empty `cookie_names` array rather than a partial / wrong list.
+fn extract_cookie_names(blob: &[u8]) -> Vec<String> {
+    let v: serde_json::Value = match serde_json::from_slice(blob) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    v.get("cookies")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| c.get("name").and_then(|n| n.as_str()).map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Canonical audit payload for vault lifecycle events.
 /// Serialized to JCS bytes.
 /// NEVER contains raw secret bytes.
@@ -212,16 +236,27 @@ fn secret_audit_bytes(payload: &SecretAuditPayload<'_>) -> Vec<u8> {
 
 impl Vault for LocalVault {
     fn grant(&self, session: SessionId, opts: GrantOpts) -> Result<GrantId, LoomError> {
-        // Step 1: OAuth-only at v1
-        if opts.credential_type != CredentialType::OAuth {
-            return Err(
-                LoomError::new(LoomErrorCode::VaultRejection, "vault-oauth-only").with_context(
-                    serde_json::json!({
-                        "code": "vault_credential_type_unsupported",
-                        "details": { "allowed_types": ["oauth2_authorization_code_pkce"] }
-                    }),
-                ),
-            );
+        // Step 1: Per-CredentialType policy (D3, v0.9.5).
+        // OAuth + Cookie are allowed; ApiKey/Saml/Basic remain reserved slots
+        // that reject with VaultCredentialTypeUnsupported until a future
+        // release adds gating logic for them.
+        match opts.credential_type {
+            CredentialType::OAuth | CredentialType::Cookie => {}
+            CredentialType::ApiKey | CredentialType::Saml | CredentialType::Basic => {
+                return Err(LoomError::new(
+                    LoomErrorCode::VaultRejection,
+                    "vault-credential-type-unsupported",
+                )
+                .with_context(serde_json::json!({
+                    "code": "vault_credential_type_unsupported",
+                    "details": {
+                        "allowed_types": [
+                            "oauth2_authorization_code_pkce",
+                            "cookie"
+                        ]
+                    }
+                })));
+            }
         }
 
         // Step 2: Threat model acknowledgement gate
@@ -441,6 +476,91 @@ impl Vault for LocalVault {
         );
 
         Ok(())
+    }
+
+    fn substitute_cookies(
+        &self,
+        grant: GrantId,
+        session: SessionId,
+    ) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+        // Resolve grant under read lock — TOCTOU-free clone of fields.
+        let (label, issued_at_ms, ttl_ms, revoked, grant_session) = {
+            let grants = self.grants.read();
+            let g = grants.get(&grant).ok_or_else(|| {
+                LoomError::new(LoomErrorCode::VaultRejection, "vault-grant-not-found")
+            })?;
+            (
+                g.label.clone(),
+                g.issued_at_ms,
+                g.ttl_ms,
+                g.revoked,
+                g.session_id.clone(),
+            )
+        };
+
+        let now = now_ms();
+
+        // Check 1: Revoked
+        if revoked {
+            return Err(LoomError::new(
+                LoomErrorCode::VaultGrantRevoked,
+                "cookie grant revoked",
+            ));
+        }
+
+        // Check 2: Session binding (D5 / council FND-0008).
+        // Cookie grants bind to a specific session_id; cross-session use is
+        // rejected with a typed envelope so the daemon can map it back to
+        // the MCP error surface.
+        if grant_session != session {
+            return Err(LoomError::new(
+                LoomErrorCode::VaultRejection,
+                "vault-session-mismatch",
+            )
+            .with_context(serde_json::json!({
+                "code": "vault_session_mismatch",
+                "details": {
+                    "expected_session": grant_session.0,
+                    "observed_session": session.0,
+                }
+            })));
+        }
+
+        // Check 3: TTL
+        if now > issued_at_ms.saturating_add(ttl_ms) {
+            return Err(LoomError::new(
+                LoomErrorCode::VaultGrantExpired,
+                "cookie grant ttl exceeded",
+            ));
+        }
+
+        // Fetch keychain bytes — Zeroizing<Vec<u8>> drops at function exit.
+        let secret: Zeroizing<Vec<u8>> = self
+            .keychain
+            .get_secret(&label)
+            .map_err(from_keychain_err)?;
+
+        // Emit CookiesSubstituted audit. Per D5, the audit chain includes
+        // cookie *names* (for replay determinism) but NOT *values*. Extracting
+        // names requires parsing the JSON blob; we do that without holding
+        // raw value bytes after the parse — names go to the audit, the blob
+        // is returned to the caller which decodes once at the CDP boundary.
+        let cookie_names = extract_cookie_names(&secret);
+        let payload = serde_json::json!({
+            "grant_id": grant.0,
+            "session_id": session.0,
+            "cookie_names": cookie_names,
+        });
+        let audit_payload = serde_jcs::to_string(&payload)
+            .unwrap_or_else(|_| serde_json::to_string(&payload).unwrap_or_default())
+            .into_bytes();
+        let _ = self.manifest_writer.append_audit(
+            session,
+            AuditKind::CookiesSubstituted,
+            audit_payload,
+        );
+
+        Ok(secret)
     }
 
     fn revoke(&self, grant: GrantId, reason: RevokeReason) -> Result<(), LoomError> {

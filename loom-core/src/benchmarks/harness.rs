@@ -110,6 +110,17 @@ impl Vault for BenchmarkVault {
         ))
     }
 
+    fn substitute_cookies(
+        &self,
+        _grant: GrantId,
+        _session: SessionId,
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
+        Err(LoomError::new(
+            loom_shared::error_format::LoomErrorCode::VaultRejection,
+            "benchmark vault: no credentials configured",
+        ))
+    }
+
     fn revoke(&self, _grant: GrantId, _reason: RevokeReason) -> Result<(), LoomError> {
         Ok(())
     }

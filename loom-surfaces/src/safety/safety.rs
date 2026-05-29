@@ -93,6 +93,27 @@ impl SafetyPolicy {
         None
     }
 
+    /// Cookie-verb safety stubs (v0.9.5 / D9). The authoritative gate
+    /// lives in the daemon layer per the EvaluateVerb dead-code pattern;
+    /// these verb-level checks exist for symmetry with `check_evaluate`
+    /// and for future-proofing. Today they always return `None`
+    /// (allow-all) under both Default and Safe — the structured
+    /// `set_cookies` path is the operator-blessed legitimate channel for
+    /// cookie mutation, and the `document.cookie=` write-side block in
+    /// `EVALUATE_DENYLIST` stays as the XSS-shaped-escape-hatch deterrent.
+    pub fn check_set_cookies(_profile: SafetyProfile) -> Option<PolicyViolation> {
+        None
+    }
+    pub fn check_get_cookies(_profile: SafetyProfile) -> Option<PolicyViolation> {
+        None
+    }
+    pub fn check_clear_cookies(_profile: SafetyProfile) -> Option<PolicyViolation> {
+        None
+    }
+    pub fn check_delete_cookies(_profile: SafetyProfile) -> Option<PolicyViolation> {
+        None
+    }
+
     /// Check whether `path` is inside `session_downloads_dir`.
     ///
     /// Returns `true` when `path` starts with `session_downloads_dir/`

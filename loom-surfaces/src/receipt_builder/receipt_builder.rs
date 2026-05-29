@@ -87,6 +87,15 @@ pub enum VerbKind {
     Evaluate,
     Screenshot,
     Snapshot,
+    // v0.9.5 cookie verbs (web-cookie-injection feature). Verb-level
+    // `execute()` implementations + receipt-builder tier wiring land in a
+    // Phase 3 follow-up; this enum variant exists today so the daemon
+    // dispatch table + safety::check_* stubs can reference a single
+    // canonical name.
+    SetCookies,
+    GetCookies,
+    ClearCookies,
+    DeleteCookies,
 }
 
 /// The Receipt struct emitted via `host::receipt_emit`. Mirrors WIT
