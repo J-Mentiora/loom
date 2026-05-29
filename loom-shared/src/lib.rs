@@ -22,5 +22,5 @@ pub mod types;
 
 // Convenience re-exports so downstream crates can `use loom_shared::*;`
 pub use error_format::{LoomError, LoomErrorCode};
-pub use redacted::Redacted;
+pub use redacted::{wipe_byte_buffer_in_place, wipe_string_buffer_in_place, Redacted};
 pub use types::{EpochMs, Seed};

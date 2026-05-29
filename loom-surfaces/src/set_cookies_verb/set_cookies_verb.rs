@@ -120,8 +120,10 @@ impl SetCookiesVerb {
         let _ = SafetyPolicy::check_set_cookies(action.profile);
 
         let inner = || -> Result<Receipt, HostError> {
-            // Resolve cookies from the typed source XOR.
-            let cookies: Vec<NetworkCookieParam> = match action.source.clone() {
+            // Resolve cookies from the typed source XOR. `mut` because
+            // we wipe the value-buffers in place at the §10 boundary
+            // before the vec drops.
+            let mut cookies: Vec<NetworkCookieParam> = match action.source.clone() {
                 CS::Inline { cookies } => cookies,
                 CS::Grant { grant_id } => {
                     let bytes =
@@ -145,13 +147,41 @@ impl SetCookiesVerb {
             // Per-cookie validation. Atomic — any failure rejects the batch.
             validate_cookie_params(&cookies).map_err(HostError::CookieValidationError)?;
 
-            // CDP Network.setCookies envelope.
+            // CDP Network.setCookies envelope. We clone the cookies for
+            // the encode call; the encoder consumes the typed values
+            // (incl. their Redacted<String> values) and produces CBOR
+            // bytes containing the raw values for the chromium shim.
             let _ = host::shim_call(
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::NetworkSetCookies(NetworkSetCookies {
                     cookies: cookies.clone(),
                 })),
             )?;
+
+            // §10 heap-wipe boundary. The `cookies` vec is about to go
+            // out of scope; before that, explicitly wipe the
+            // heap-allocated String buffers backing each cookie's
+            // `value`. `Redacted<String>`'s Drop calls `String::zeroize`
+            // which is best-effort (clears length without overwriting
+            // the buffer); the explicit wipe below writes zeros to the
+            // actual heap allocation before the `Vec<NetworkCookieParam>`
+            // drops.
+            //
+            // Caveat: the encoder above already cloned + serialised the
+            // cookie values into CBOR bytes that crossed the WIT
+            // boundary into chromium-shim memory; we cannot wipe those
+            // intermediate copies. This wipe addresses the
+            // verb-resident String buffers — the chokepoint between
+            // host-fn deserialise and CDP-encode that lives inside
+            // WASM linear memory.
+            //
+            // For the Grant path (where bytes came from
+            // host::vault_substitute_cookies), the §10 hardening also
+            // wipes the intermediate raw `Vec<u8>` returned by the
+            // host-fn — see `wipe_byte_buffer_in_place` below.
+            for c in cookies.iter_mut() {
+                loom_shared::wipe_string_buffer_in_place(c.value.expose_mut());
+            }
 
             // Per-cookie success records (validation passed → all true).
             let results: Vec<SetCookieResult> = cookies

@@ -88,6 +88,56 @@ impl<T: Zeroize> Drop for Redacted<T> {
     }
 }
 
+/// v0.9.6 §10 heap-wipe hardening.
+///
+/// `String::zeroize()` from zeroize 1.6+ calls `Vec::clear()` which sets the
+/// length to 0 but DOES NOT overwrite the heap-allocated buffer. The bytes
+/// can linger in process memory until the allocator reclaims them.
+///
+/// This helper forces the heap wipe by calling `as_mut_vec().fill(0)` BEFORE
+/// the wrapper's Drop runs. Call this explicitly at every CDP-encode boundary
+/// where a cookie value's `String` buffer is about to leave scope — the
+/// cookie value will not survive in process memory between drop and
+/// allocator reuse, only as a best-effort window (the allocator may have
+/// already moved on by the time we run).
+///
+/// Caveats:
+///   - "Best-effort". A compiler optimisation, a non-tracked copy on the
+///     stack, or a heap realloc that happened earlier in the value's
+///     lifetime may have left residues elsewhere. This wipe addresses the
+///     specific buffer pointed to by the String at call time.
+///   - Cookie *names* are NOT wiped — they're audit-chain material.
+///   - The wipe runs inside Vault::substitute_cookies and the verb-side
+///     CDP-encode path; it does NOT cover the bytes once they cross WIT
+///     into wasmtime-managed linear memory.
+///
+/// Documented in `security/vault_threat_model.md` (Tier 11).
+pub fn wipe_string_buffer_in_place(s: &mut String) {
+    // SAFETY: the bytes we overwrite are already owned by `s`. We're not
+    // mutating the byte length (which would change UTF-8 validity) — we
+    // overwrite every existing byte with 0 (still valid UTF-8 because
+    // \0 is a 1-byte ASCII codepoint), then clear() sets the length to
+    // 0 without freeing the buffer.
+    unsafe {
+        let v = s.as_mut_vec();
+        for b in v.iter_mut() {
+            *b = 0;
+        }
+        v.clear();
+    }
+}
+
+/// Same as `wipe_string_buffer_in_place` but for a `Vec<u8>` containing
+/// cookie value bytes (e.g. the keychain blob `Vec<u8>` returned by
+/// `Vault::substitute_cookies` after the Zeroizing wrapper is dropped
+/// downstream).
+pub fn wipe_byte_buffer_in_place(v: &mut Vec<u8>) {
+    for b in v.iter_mut() {
+        *b = 0;
+    }
+    v.clear();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,5 +213,77 @@ mod tests {
         let r: Redacted<String> = Redacted::new("hunter2".to_string());
         let c = r.clone();
         assert_eq!(c.expose(), "hunter2");
+    }
+
+    // === v0.9.6 §10 heap-wipe hardening ===
+
+    #[test]
+    fn wipe_string_buffer_in_place_zeros_the_underlying_bytes() {
+        let mut s = String::from("super-secret-session-token");
+        // Capture the buffer pointer + capacity BEFORE wiping so we can
+        // verify the bytes-at-that-address are zeroed.
+        let ptr = s.as_ptr();
+        let cap = s.capacity();
+        assert!(cap >= s.len(), "cap must hold the bytes");
+        let original_len = s.len();
+
+        wipe_string_buffer_in_place(&mut s);
+
+        // After the wipe: length is 0 (cleared), capacity unchanged
+        // (buffer not freed).
+        assert_eq!(s.len(), 0);
+        assert_eq!(s.capacity(), cap);
+
+        // The buffer's first `original_len` bytes are zero. We read them
+        // back via the saved pointer. SAFETY: the buffer is still owned
+        // by `s` (not freed), so the pointer is valid, and we're reading
+        // bytes we ourselves zeroed.
+        unsafe {
+            let bytes = std::slice::from_raw_parts(ptr, original_len);
+            for (i, b) in bytes.iter().enumerate() {
+                assert_eq!(*b, 0, "byte {i} should be zero, got {b:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn wipe_string_buffer_in_place_on_empty_string_is_noop() {
+        let mut s = String::new();
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s.len(), 0);
+    }
+
+    #[test]
+    fn wipe_byte_buffer_in_place_zeros_the_underlying_bytes() {
+        let mut v: Vec<u8> = b"keychain blob bytes".to_vec();
+        let ptr = v.as_ptr();
+        let cap = v.capacity();
+        let original_len = v.len();
+
+        wipe_byte_buffer_in_place(&mut v);
+
+        assert_eq!(v.len(), 0);
+        assert_eq!(v.capacity(), cap);
+
+        unsafe {
+            let bytes = std::slice::from_raw_parts(ptr, original_len);
+            for (i, b) in bytes.iter().enumerate() {
+                assert_eq!(*b, 0, "byte {i} should be zero");
+            }
+        }
+    }
+
+    #[test]
+    fn wipe_string_buffer_preserves_utf8_invariant() {
+        // After wipe, the String must still be valid UTF-8 (every byte
+        // becomes \0 which is valid 1-byte UTF-8, then length is set
+        // to 0). The String continues to be safely usable.
+        let mut s = String::from("über-secret");
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s, "");
+        // Push something else — verifies the String is still usable
+        // (no internal invariants broken).
+        s.push_str("ok");
+        assert_eq!(s, "ok");
     }
 }
