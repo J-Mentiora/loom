@@ -141,6 +141,23 @@ interface host {
     // conversion, and 64KB content-store offload.
     evaluate-execute: func(action-id: string, expression: string, budget-ms: u64) -> result<evaluate-result, host-error>;
 
+    // Vault-substitute-cookies: v0.9.6 web-cookie-injection grant
+    // resolution. Wraps `Vault::substitute_cookies(grant, session)`
+    // (shipped v0.9.5). Returns the keychain blob bytes — JSON of shape
+    // `{"schema_version":1, "cookies":[NetworkCookieParam, ...]}`. The
+    // WASM guest deserialises into Vec<NetworkCookieParam>, validates,
+    // and dispatches CDP Network.setCookies.
+    //
+    // This is the chokepoint where raw cookie values briefly cross
+    // into the WASM guest's linear memory. The host-side implementation
+    // uses Zeroizing<Vec<u8>> to ensure heap wipe on drop within daemon
+    // memory (D12 / §10).
+    //
+    // Rejection paths: VaultGrantExpired, VaultGrantRevoked,
+    // VaultScopeViolation (grant credential_type != Cookie),
+    // VaultOriginViolation (session_id mismatch — D5 / FND-0008).
+    vault-substitute-cookies: func(grant-id: string, session-id: string) -> result<list<u8>, host-error>;
+
     // Logging + receipt emission
     log-emit: func(level: log-level, msg: string,
                    fields: list<tuple<string, string>>);
@@ -149,16 +166,21 @@ interface host {
 
 interface web-surface {
     use types.{action, receipt, host-error};
-    navigate:   func(a: action) -> result<receipt, host-error>;
-    click:      func(a: action) -> result<receipt, host-error>;
-    type-text:  func(a: action) -> result<receipt, host-error>;
-    select:     func(a: action) -> result<receipt, host-error>;
-    hover:      func(a: action) -> result<receipt, host-error>;
-    scroll:     func(a: action) -> result<receipt, host-error>;
-    wait:       func(a: action) -> result<receipt, host-error>;
-    evaluate:   func(a: action) -> result<receipt, host-error>;
-    screenshot: func(a: action) -> result<receipt, host-error>;
-    snapshot:   func(a: action) -> result<receipt, host-error>;
+    navigate:       func(a: action) -> result<receipt, host-error>;
+    click:          func(a: action) -> result<receipt, host-error>;
+    type-text:      func(a: action) -> result<receipt, host-error>;
+    select:         func(a: action) -> result<receipt, host-error>;
+    hover:          func(a: action) -> result<receipt, host-error>;
+    scroll:         func(a: action) -> result<receipt, host-error>;
+    wait:           func(a: action) -> result<receipt, host-error>;
+    evaluate:       func(a: action) -> result<receipt, host-error>;
+    screenshot:     func(a: action) -> result<receipt, host-error>;
+    snapshot:       func(a: action) -> result<receipt, host-error>;
+    // v0.9.6 web-cookie-injection.
+    set-cookies:    func(a: action) -> result<receipt, host-error>;
+    get-cookies:    func(a: action) -> result<receipt, host-error>;
+    clear-cookies:  func(a: action) -> result<receipt, host-error>;
+    delete-cookies: func(a: action) -> result<receipt, host-error>;
 }
 
 // v1.5 surfaces — WIT defined, WASM not built at v1

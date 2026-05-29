@@ -33,6 +33,11 @@ fn action_enum_has_typed_variants_no_cdp_shaped_value() {
             Action::WebScroll { .. } => {}
             Action::WebWait { .. } => {}
             Action::WebSnapshot { .. } => {}
+            // v0.9.6 cookie verbs.
+            Action::WebSetCookies { .. } => {}
+            Action::WebGetCookies { .. } => {}
+            Action::WebClearCookies { .. } => {}
+            Action::WebDeleteCookies { .. } => {}
         }
     }
     let _ = _audit_variants;
