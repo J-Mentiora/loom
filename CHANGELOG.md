@@ -6,6 +6,147 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.6] — 2026-05-29 — Cookie Injection (ship milestone)
+
+Closes the **web-cookie-injection** deferral list from v0.9.5. The four
+MCP cookie verbs are now reachable end-to-end (`tools/list` →
+`tools/call` → daemon → WASM verb → CDP → chromium). Downstream
+consumers (notably `mentiora-ai/agentic-test-studio`) can pin
+`loom-mcp@0.9.6` and ship the `auth_cookie:` frontmatter feature.
+
+### Added
+
+- **Verb-level `execute()` implementations** for the four cookie
+  verbs in `loom-surfaces`. SetCookies resolves `CookieSource::Inline`
+  directly and `CookieSource::Grant` via the new
+  `host::vault_substitute_cookies` host-fn (see below); validates
+  per-cookie via `validate_cookie_params`; dispatches CDP
+  `Network.setCookies`. GetCookies returns raw values on the
+  operator-facing receipt per D7. ClearCookies emits
+  `CookiesCleared{target_id, session_id, count_before}` audit
+  BEFORE the CDP call (D9 / FND-0050) — `count_before` from a
+  synchronous `getCookies` peek. DeleteCookies uses a peek
+  before-and-after to determine `matched: bool`.
+- **`vault-substitute-cookies` WIT host-fn** (the 11th host-fn).
+  Wraps `Vault::substitute_cookies` (shipped v0.9.5). Chokepoint
+  where keychain blob bytes briefly cross into WASM linear memory.
+  Replay-mode refuses with `HostError::Internal` — replay values
+  come from `replay_cookie_values` per §5.
+- **4 cookie verbs on `web-surface` WIT export**: `set-cookies`,
+  `get-cookies`, `clear-cookies`, `delete-cookies`. `WebSurface`
+  trait + `WebSurfaceImpl` extended; `WEB_SURFACE_VERBS` const now
+  enumerates 14 entries.
+- **4 `Action` enum variants + 4 `Receipt` cookie-result fields**
+  in `loom-rpc/host_service_adapter` so cookie verbs cross the
+  RPC boundary. `source` and `*_result` fields use
+  `serde_json::Value` because `loom-rpc` has no dep on
+  `loom-surfaces` for the typed cookie shapes.
+- **4 `ActionMeta` entries** in `loom-rpc/action_registry`
+  enumerating cookie verbs for `rpc.schemas` / `loom action
+  --help` / man-page generation. Alphabetically sorted to satisfy
+  the existing registry-sort test.
+- **Daemon `WasmBridge` dispatch arms** for the 4 cookie verbs:
+  `action_session_id`, `action_verb`, `build_chromium_args`
+  (returns None for cookie verbs — they route through the WASM
+  guest, not the direct-shim path). Wire-receipt construction
+  (`build_navigate_wire_receipt`) carries the 4 cookie-result
+  fields.
+- **Receipt cookie-result fields + D13 tuple-identity sort** in
+  `loom-host::ReceiptMarshaller`. New `assemble_cookies_canonical_bytes`
+  function: sorts cookie arrays by `(name,
+  domain.unwrap_or_default(), path.unwrap_or_default())` byte-lex
+  (matches UTF-16 lex for ASCII per RFC 6265), replaces every
+  `value` field with `"[REDACTED]"` before JCS-encoding. This is
+  the replay-byte-identity invariant: same `(name, domain, path)`
+  tuples → same canonical bytes → same `outcome_hash`, regardless
+  of the actual cookie value.
+- **Replay cookie value substitution** in `loom-core::replay_engine::
+  cookie_replay`: `substitute_cookie_values(action_id, raw_json,
+  &ReplayCookieValues)` swaps each cookie's value by tuple-key
+  lookup; missing tuple → typed
+  `ReplayError::MissingCookieValue {action_id, name, domain, path}`.
+  `parse_replay_cookie_values(json_text)` accepts both pipe-keyed
+  object `{"name|domain|path": "v"}` and tuple-array
+  `[["name","domain","path","value"]]` shapes for hand-authored
+  replay fixtures.
+- **Path-level cookie redaction at the MCP boundary** in
+  `loom-mcp::mcp_observability`. New `COOKIE_REDACTED_TOOL_NAMES`
+  const (the 4 cookie verbs) + `redact_cookie_paths_in_place(&mut
+  Value)` walker that strips `value` fields from any `cookies`
+  array OR `*_cookies_result` array. Reuses the existing
+  `redact_vault: bool` toggle. Critical: cookie *names* and
+  `error_code` taxonomy strings remain visible; only `value`
+  fields scrub.
+- **`vault.get_session_context` RPC**: returns
+  `{session_id: String, unambiguous: bool}` for the operator's
+  current Active session. Daemon picks the most recently created
+  Active session; `unambiguous=true` when exactly one Active
+  exists; `SessionNotFound` when zero. The CLI uses this so
+  `loom vault add --credential-type cookie` binds to the right
+  session automatically per D5.
+- **`loom vault add --credential-type <oauth|cookie>` CLI flag**.
+  `cookie` requires `--from-file` or `--from-stdin` plus
+  `--label`. Validates the JSON blob schema
+  (`{"schema_version":1, "cookies":[...]}`) before dispatching to
+  the daemon. Resolves session via `vault.get_session_context`
+  when `--session` is omitted. Sequence:
+  `vault.set_secret` (cookie bytes) → `vault.grant` with
+  `credential_type:"cookie"` → prints the resulting GrantId for
+  the operator to paste into MCP `set_cookies({grant_id})` calls.
+  D7 explicit: NO shred-after-read on the input file (operator
+  owns the file lifecycle).
+- **§10 heap-wipe hardening** in `loom-shared::redacted`. New
+  `wipe_string_buffer_in_place(&mut String)` and
+  `wipe_byte_buffer_in_place(&mut Vec<u8>)` helpers explicitly
+  zero the heap allocation before drop (works around
+  `String::zeroize`'s known length-clear-without-overwrite
+  limitation). Wired at the CDP-encode boundary in
+  `SetCookiesVerb::execute`. Test verifies the bytes-at-pointer
+  are zero after the wipe.
+- **`cookie_injection_acceptance.rs` e2e test harness** in
+  `loom-cli/tests/` (gated by `--features e2e`). Hand-rolled
+  stdio MCP JSON-RPC framing (~150 LOC scaffolding, no rmcp dep);
+  sync HTTP echo server (~40 LOC) that captures Cookie request
+  headers for the navigate-echo test. 10 test cases; tests
+  requiring a real chromium shim further gate on
+  `LOOM_TEST_CHROMIUM_AVAILABLE=1`; the harness gracefully skips
+  when the daemon isn't running.
+
+### Breaking from v0.9.5 — IMPORTANT for downstream pins
+
+- `loom.web.*` MCP tool naming was established in v0.9.5 (dropped
+  the redundant `loom.` prefix that earlier versions had).
+  v0.9.6 changes nothing here, but downstream consumers pinning
+  `loom-mcp@0.9.5` and migrating to `0.9.6` SHOULD double-check
+  any string literals referencing the four cookie verb names —
+  they MUST be `loom.web.set_cookies`, `loom.web.get_cookies`,
+  `loom.web.clear_cookies`, `loom.web.delete_cookies` (full MCP
+  wire names, with the `loom.` prefix the dispatcher prepends).
+
+### Security
+
+- **§11 threat-model section** for cookie credentials in
+  `security/vault_threat_model.md`: lawful basis (D6 FND-0010),
+  retention (D6 FND-0011), session binding (D5), audit-chain
+  visibility (names yes, values no), D7 caveats (no
+  shred-after-read on operator file; get_cookies operator-facing
+  raw values), §10 heap-wipe boundary.
+- **`docs/loom-vault-audit.md`** documents `CookiesSubstituted` +
+  `CookiesCleared` audit kinds with canonical-bytes shapes.
+
+### Deferred (still) to a future release
+
+- **Daemon-layer policy gate.** Per D9 / FND-0021, the verb-level
+  `SafetyPolicy::check_*_cookies` stubs remain always-Ok; the
+  authoritative gate would land at the daemon-layer dispatcher as
+  a separate hardening PR.
+- **CHIPS partition cookies** (CDP-pass-through; browser arbitrates).
+- **RFC 6265 edge cases** (Domain leading-dot, IP-host cookies).
+  CDP-pass-through.
+- **Retention TTL on cookie grants** (no auto-expiry in v0.9.6;
+  operator manages via `loom vault delete <label>`).
+- **RBAC, admin tooling, multi-operator workflows.**
+
 ## [0.9.5] — 2026-05-29 — Cookie Injection (scaffolding milestone)
 
 First milestone of the **web-cookie-injection** feature. v0.9.5 ships the

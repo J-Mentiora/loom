@@ -66,6 +66,8 @@ older binaries don't break hash-chain validation.
 | `secret_fetch_failed` | G5a failure | same shape as `secret_store_failed` | After a failed `get_secret_direct` or `list_labels`. |
 | `prompt_blocked` | refusal | `event`, `label`, `op` | The daemon refused to trigger an OS unlock prompt because `allow_prompt = false` (default in non-TTY). Per D26. |
 | `secret_service_owner_changed` | Linux drift | `event`, `pinned`, `current` | Linux backend's per-op D-Bus owner re-check (A-W3.1) detected the `org.freedesktop.secrets` owner has drifted from the value pinned at startup. The op is refused; operator must restart `loom-daemon` to re-pin. |
+| `cookies_substituted` | G5a success (v0.9.6) | `event`, `grant_id`, `session_id`, `cookie_names: [string]` | After a successful `Vault::substitute_cookies` resolution for `web.set_cookies` with a `CookieSource::Grant`. Cookie *names* land in the chain by design (replay determinism per D5); *values* never appear. The verb dispatches CDP `Network.setCookies` only after this entry is appended. |
+| `cookies_cleared` | G5a success (v0.9.6) | `event`, `target_id`, `session_id`, `count_before: u32` | Emitted by `ClearCookiesVerb::execute` via `host::log_emit` BEFORE the destructive `Network.clearBrowserCookies` CDP call. `count_before` comes from a synchronous `getCookies` peek so the audit chain captures the pre-clear count even if the clear call itself fails (D9 / FND-0050). Cookie names NOT included — operators wanting a name-level record should issue `web.get_cookies` first. |
 | `unknown` | forward-compat | — | The current daemon's `AuditKind` enum doesn't know the tag this entry carries. Validators MUST treat as opaque-but-valid. Per D39. |
 
 ### Failure-reason → support correlation

@@ -293,18 +293,22 @@ The server exposes the `loom.web.*` family. The client doesn't need to
 know about session ids — `loom-mcp` lazily creates a session on first
 tool call and reuses it across the conversation.
 
-| Tool                  | Args                                  |
-|-----------------------|---------------------------------------|
-| `loom.web.navigate`   | `url: string`                         |
-| `loom.web.click`      | `selector: string`                    |
-| `loom.web.type`       | `selector: string, text: string`      |
-| `loom.web.select`     | `selector: string, value: string`     |
-| `loom.web.hover`      | `selector: string`                    |
-| `loom.web.scroll`     | `selector: string, delta_y?: int`     |
-| `loom.web.wait`       | `selector: string, timeout_ms?: int`  |
-| `loom.web.evaluate`   | `expression: string`                  |
-| `loom.web.screenshot` | `selector?: string`                   |
-| `loom.web.snapshot`   | (no args)                             |
+| Tool                       | Args                                                            |
+|----------------------------|-----------------------------------------------------------------|
+| `loom.web.navigate`        | `url: string`                                                   |
+| `loom.web.click`           | `selector: string`                                              |
+| `loom.web.type`            | `selector: string, text: string`                                |
+| `loom.web.select`          | `selector: string, value: string`                               |
+| `loom.web.hover`           | `selector: string`                                              |
+| `loom.web.scroll`          | `selector: string, delta_y?: int`                               |
+| `loom.web.wait`            | `selector: string, timeout_ms?: int`                            |
+| `loom.web.evaluate`        | `expression: string`                                            |
+| `loom.web.screenshot`      | `selector?: string`                                             |
+| `loom.web.snapshot`        | (no args)                                                       |
+| `loom.web.set_cookies`     | `source: CookieSource ({inline,cookies}|{grant,grant_id})`      |
+| `loom.web.get_cookies`     | `urls?: [string]`                                               |
+| `loom.web.clear_cookies`   | (no args)                                                       |
+| `loom.web.delete_cookies`  | `name: string, url?: string, domain?: string, path?: string`    |
 
 ## Verbs
 
@@ -320,6 +324,10 @@ tool call and reuses it across the conversation.
 | `web.snapshot`  | Capture a full DOM snapshot of the active page.                         |
 | `web.type`      | Focus an input and type text into it.                                   |
 | `web.wait`      | Wait until a CSS selector resolves (or until timeout).                  |
+| `web.set_cookies`    | Inject cookies into the browser's network stack via CDP `Network.setCookies`. Source XOR: inline cookies or vault grant.       |
+| `web.get_cookies`    | Read cookies from the browser's cookie jar (CDP `Network.getCookies`). Operator-facing — receipt carries raw values per D7.    |
+| `web.clear_cookies`  | Clear ALL cookies in the browser's cookie jar. Audit-before-CDP per D9.                                                        |
+| `web.delete_cookies` | Delete a single cookie scoped by `(name, url?, domain?, path?)`. Returns `matched: bool` via getCookies peek before/after.     |
 
 Full per-action signatures (parameters, return shape, examples, typed
 errors, profile guards) live in [docs/actions.md](docs/actions.md). At the
