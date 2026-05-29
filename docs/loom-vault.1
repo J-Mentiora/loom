@@ -23,7 +23,16 @@ loom\-vault\-list(1)
 `loom vault list` arguments
 .TP
 loom\-vault\-add(1)
-`loom vault add <provider>` arguments. Only command in the CLI that may prompt; respects `\-\-yes` for non\-interactive use
+`loom vault add <provider>` arguments. Two flows:
+.TP
+loom\-vault\-delete(1)
+`vault delete <label> [\-\-force]` — remove a credential. Cascade revokes active grants when `\-\-force` is set; otherwise blocks with `credential_in_use` if any grant references the label
+.TP
+loom\-vault\-list\-labels(1)
+`vault list\-labels` — enumerate stored credential labels. Distinct from `vault list` which lists *grants*
+.TP
+loom\-vault\-diagnose(1)
+`vault diagnose` — backend status + last\-error snapshot. Output is a stable JSON schema (A\-W6.4) for `jq` automation
 .TP
 loom\-vault\-help(1)
 Print this message or the help of the given subcommand(s)

@@ -30,7 +30,10 @@ use crate::session_commands::{
     AbortArgs, CloseArgs, CreateArgs, DiffArgs, ExportArgs, InspectArgs, ListArgs, ReplayArgs,
     ValidateArgs,
 };
-use crate::vault_commands::{VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs};
+use crate::vault_commands::{
+    VaultAddArgs, VaultDeleteArgs, VaultDiagnoseArgs, VaultGrantArgs, VaultListArgs,
+    VaultListLabelsArgs, VaultRevokeArgs,
+};
 use crate::version_command::LOOM_VERSION;
 use crate::CliError;
 
@@ -129,13 +132,26 @@ pub enum SessionCmd {
     Validate(ValidateArgs),
 }
 
-/// Vault subcommand — four RPC-mapped variants.
+/// Vault subcommand. The four legacy `Grant/Revoke/List/Add` variants
+/// plus v0.9.4 W6 `Delete/ListLabels/Diagnose` direct-credential
+/// management.
 #[derive(Debug, Subcommand)]
 pub enum VaultCmd {
     Grant(VaultGrantArgs),
     Revoke(VaultRevokeArgs),
     List(VaultListArgs),
     Add(VaultAddArgs),
+    /// `vault delete <label> [--force]` — remove a credential. Cascade
+    /// revokes active grants when `--force` is set; otherwise blocks
+    /// with `credential_in_use` if any grant references the label.
+    Delete(VaultDeleteArgs),
+    /// `vault list-labels` — enumerate stored credential labels. Distinct
+    /// from `vault list` which lists *grants*.
+    #[command(name = "list-labels")]
+    ListLabels(VaultListLabelsArgs),
+    /// `vault diagnose` — backend status + last-error snapshot. Output
+    /// is a stable JSON schema (A-W6.4) for `jq` automation.
+    Diagnose(VaultDiagnoseArgs),
 }
 
 /// Construct an RpcClient from the resolved CliConfig.
@@ -184,6 +200,11 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 VaultCmd::Revoke(a) => crate::vault_commands::revoke(&rpc, config, a).await,
                 VaultCmd::List(a) => crate::vault_commands::list(&rpc, config, a).await,
                 VaultCmd::Add(a) => crate::vault_commands::add(&rpc, config, a).await,
+                VaultCmd::Delete(a) => crate::vault_commands::delete(&rpc, config, a).await,
+                VaultCmd::ListLabels(a) => {
+                    crate::vault_commands::list_labels(&rpc, config, a).await
+                }
+                VaultCmd::Diagnose(a) => crate::vault_commands::diagnose(&rpc, config, a).await,
             }
         }
 

@@ -11,18 +11,35 @@ description.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
-# Feature-gated keychain access. `loom-core` stays platform-agnostic;
-# this crate is the only place that pulls in OS-specific keychain deps.
-# Future expansion (gated behind feature flags):
-#   - macOS:   security-framework
-#   - Linux:   secret-service
-#   - Windows: windows-credentials
-
 [dependencies]
 zeroize = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
-# Platform-specific deps under [target.'cfg(...)'.dependencies] go here
-# once the per-platform backends are wired in.
+# macOS Security Framework backend — kSecClassGenericPassword storage
+# with kSecAttrAccessible=WhenUnlockedThisDeviceOnly + kSecAttrCreator
+# discriminator (squatting-prevention per AB8).
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3"
+security-framework-sys = "2"
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+
+# Linux Secret Service backend — pure-Rust zbus client (no libdbus-1
+# system dep needed for the crate; tests need a running daemon).
+# `blocking` feature exposes the sync API matching this trait's shape.
+# `zbus` is added directly so we can call `GetNameOwner` for the per-op
+# D-Bus hijack mitigation (A-W3.1): `secret-service` does not expose its
+# internal connection, so we own a second small one just for that probe.
+# Pinned to the same major as the version `secret-service = 5.x` transitively
+# uses, so cargo dedupes and `deny.toml` `multiple-versions = warn` stays quiet.
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "5", features = ["rt-tokio-crypto-rust"] }
+zbus = { version = "5", default-features = false, features = ["tokio", "blocking-api"] }
+tracing = { workspace = true }
+
+[dev-dependencies]
+rand = { workspace = true }
 
 [lints]
 workspace = true

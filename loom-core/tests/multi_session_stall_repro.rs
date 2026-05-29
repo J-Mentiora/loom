@@ -17,7 +17,6 @@
 use loom_core::budget_enforcer::{BudgetEnforcer, BudgetLimits, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
 use loom_core::determinism_harness::DeterminismHarness;
-use loom_core::error::LoomError;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter};
 use loom_core::observability::Observability;
 use loom_core::session_manager::{LocalSessionManager, SessionCreateOpts, SessionStatus};
@@ -30,8 +29,30 @@ use zeroize::Zeroizing;
 
 struct StubKc;
 impl KeychainAccess for StubKc {
-    fn get_secret(&self, _label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+    fn get_secret(&self, _label: &str) -> Result<Zeroizing<Vec<u8>>, loom_keychain::KeychainError> {
         Ok(Zeroizing::new(vec![0u8; 16]))
+    }
+    fn set_secret(
+        &self,
+        _label: &str,
+        _secret: Zeroizing<Vec<u8>>,
+    ) -> Result<(), loom_keychain::KeychainError> {
+        Err(loom_keychain::KeychainError::new(
+            loom_keychain::KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
+    }
+    fn delete_secret(&self, _label: &str) -> Result<(), loom_keychain::KeychainError> {
+        Err(loom_keychain::KeychainError::new(
+            loom_keychain::KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
+    }
+    fn list_labels(&self) -> Result<Vec<String>, loom_keychain::KeychainError> {
+        Err(loom_keychain::KeychainError::new(
+            loom_keychain::KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
 }
 

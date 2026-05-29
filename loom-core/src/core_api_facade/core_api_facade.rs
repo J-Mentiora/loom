@@ -75,7 +75,16 @@ pub struct CoreApiFacade {
 impl CoreApiFacade {
     /// Construct the facade by wiring the nine internal modules.
     /// Called once at daemon startup.
-    pub fn new(config: CoreConfig) -> Result<Arc<Self>, LoomError> {
+    ///
+    /// `keychain` is injected by the caller — typically the daemon runs
+    /// `loom_keychain::select_keychain(&cfg)?` before this call and
+    /// passes the resulting `Arc<dyn KeychainAccess>`. Test code passes
+    /// `Arc::new(InMemoryKeychain::new())` (for vault-layer tests) or
+    /// `Arc::new(StubKeychain)` (for backend-init-failure tests).
+    pub fn new(
+        config: CoreConfig,
+        keychain: Arc<dyn loom_core::vault::KeychainAccess>,
+    ) -> Result<Arc<Self>, LoomError> {
         let sessions_root = config.data_root.join("sessions");
         let cas_root = config.data_root.join("cas");
 
@@ -89,18 +98,6 @@ impl CoreApiFacade {
                 sessions_root.clone(),
                 Arc::clone(&obs),
             ));
-
-        // Scaffold keychain — a later release wires the real platform backend.
-        struct NullKeychain;
-        impl loom_core::vault::KeychainAccess for NullKeychain {
-            fn get_secret(&self, label: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, LoomError> {
-                Err(LoomError::new(
-                    loom_core::error::LoomErrorCode::VaultUnknownLabel,
-                    format!("keychain not configured for label={label}"),
-                ))
-            }
-        }
-        let keychain: Arc<dyn loom_core::vault::KeychainAccess> = Arc::new(NullKeychain);
         let vault: Arc<dyn Vault> = Arc::new(loom_core::vault::LocalVault::new(
             keychain,
             Arc::clone(&manifest_writer),

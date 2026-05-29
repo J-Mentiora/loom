@@ -25,6 +25,47 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// True when this audit kind is part of the v0.9.4 credential-lifecycle
+/// surface — the kinds whose canonical_bytes carry a `label` string field
+/// subject to the A-W8.5 defense-in-depth validation.
+fn is_secret_audit_kind(kind: &AuditKind) -> bool {
+    matches!(
+        kind,
+        AuditKind::SecretOpPending
+            | AuditKind::SecretStored
+            | AuditKind::SecretFetched
+            | AuditKind::SecretDeleted
+            | AuditKind::SecretReplaced
+            | AuditKind::SecretStoreFailed
+            | AuditKind::SecretDeleteFailed
+            | AuditKind::SecretFetchFailed
+            | AuditKind::PromptBlocked
+    )
+    // `SecretsListed` and `SecretServiceOwnerChanged` payloads do not carry
+    // a `label` field — exclude.
+}
+
+/// Canonical label policy (D37): non-empty, ≤64 chars, `[A-Za-z0-9:_-]`.
+fn is_canonical_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 64
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_' || c == '-')
+}
+
+/// Parse `canonical_bytes` as JSON and return the `label` string field
+/// when present. Returns `None` for non-JSON / missing-field / non-string
+/// payloads — those cases are not the A-W8.5 target (the append itself
+/// will surface any JCS-shape problem the same as today).
+fn extract_label_field(canonical_bytes: &[u8]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_slice(canonical_bytes).ok()?;
+    match v.get("label")? {
+        serde_json::Value::String(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
 /// Override the `prev_hash` field in an entry without touching other fields.
 /// `ManifestEntry::Header` carries `Option<String>` for prev_hash and is
 /// never modified here (the Header is the root of the chain).
@@ -243,6 +284,25 @@ impl ManifestWriter for LocalManifestWriter {
         kind: AuditKind,
         canonical_bytes: Vec<u8>,
     ) -> Result<(), LoomError> {
+        // A-W8.5: defense-in-depth label validation at the manifest-writer
+        // boundary. CLI catches first (clean error message); manifest writer
+        // catches as a safety net so a future code path that bypasses CLI
+        // validation cannot silently slip a malformed label into the
+        // hash-chained audit. Canonical regex: ^[A-Za-z0-9:_-]{1,64}$.
+        if is_secret_audit_kind(&kind) {
+            if let Some(label) = extract_label_field(&canonical_bytes) {
+                if !is_canonical_label(&label) {
+                    return Err(LoomError::new(
+                        loom_shared::error_format::LoomErrorCode::VaultInvalidLabel,
+                        format!(
+                            "secret-audit payload label {label:?} fails canonical \
+                             validation ^[A-Za-z0-9:_-]{{1,64}}$"
+                        ),
+                    ));
+                }
+            }
+        }
+
         self.append(
             session,
             ManifestEntry::AuditEntry {

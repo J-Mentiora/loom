@@ -7,10 +7,22 @@ use super::vault_commands::{
 
 // === Subcommand coverage ===
 #[test]
-fn subcommand_rpc_map_covers_four_verbs() {
-    assert_eq!(SUBCOMMAND_RPC_MAP.len(), 4);
+fn subcommand_rpc_map_covers_all_verbs() {
+    // v0.9.4 W6 expands the surface from 4 → 8 verbs (`add-direct` is
+    // the row covering `vault add --from-stdin / --from-file`; the
+    // `add` row remains for the OAuth flow).
+    assert_eq!(SUBCOMMAND_RPC_MAP.len(), 8);
     let verbs: Vec<&str> = SUBCOMMAND_RPC_MAP.iter().map(|(k, _)| *k).collect();
-    for v in ["grant", "revoke", "list", "add"] {
+    for v in [
+        "grant",
+        "revoke",
+        "list",
+        "add",
+        "add-direct",
+        "delete",
+        "list-labels",
+        "diagnose",
+    ] {
         assert!(verbs.contains(&v), "missing verb {v}");
     }
 }
@@ -32,8 +44,12 @@ fn list_rpc_method_is_vault_list_grants_not_vault_list() {
 #[test]
 fn vault_add_args_have_yes_flag() {
     let a = VaultAddArgs {
-        provider: "google".into(),
+        provider: Some("google".into()),
         label: None,
+        from_stdin: false,
+        from_file: None,
+        overwrite: false,
+        session: None,
         yes: true,
     };
     assert!(a.yes);
@@ -42,11 +58,15 @@ fn vault_add_args_have_yes_flag() {
 #[test]
 fn vault_add_provider_is_required_positional() {
     let a = VaultAddArgs {
-        provider: "github".into(),
+        provider: Some("github".into()),
         label: None,
+        from_stdin: false,
+        from_file: None,
+        overwrite: false,
+        session: None,
         yes: false,
     };
-    assert_eq!(a.provider, "github");
+    assert_eq!(a.provider.as_deref(), Some("github"));
 }
 
 #[test]

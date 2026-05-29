@@ -28,7 +28,9 @@ use loom_rpc::auth_middleware::auth_middleware::{AuthMiddleware, Token};
 use loom_rpc::connection_handler::connection_handler::ConnectionHandlerDeps;
 use loom_rpc::core_service_adapter::core_service_adapter::{
     AdapterError, CoreFacadeBridge, CoreServiceAdapter, ExportInfo, GrantInfo, GrantParams,
-    PlaywrightImportInfo, VaultAddInfo, VaultAddParams,
+    PlaywrightImportInfo, VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo,
+    VaultDeleteSecretParams, VaultDiagnoseInfo, VaultDiagnoseInitStatus, VaultListLabelsInfo,
+    VaultListLabelsParams, VaultSetSecretInfo, VaultSetSecretParams,
 };
 use loom_rpc::host_service_adapter::host_service_adapter::{
     Action, AdapterError as HostAdapterError, HostServiceAdapter, Receipt, WasmHostBridge,
@@ -548,6 +550,194 @@ impl CoreFacadeBridge for CoreBridge {
         })
     }
 
+    // ── v0.9.4 W6 direct credential bridge methods ──────────────────
+
+    fn vault_set_secret(
+        &self,
+        p: VaultSetSecretParams,
+    ) -> Result<VaultSetSecretInfo, AdapterError> {
+        use loom_core::manifest_writer::SessionId;
+        use zeroize::Zeroizing;
+
+        // D37 label validation at the wire boundary; the W5.10 manifest-
+        // writer gate is the belt-and-suspenders below.
+        validate_label_canonical(&p.label).map_err(|e| {
+            map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                e,
+            ))
+        })?;
+
+        let bytes = hex::decode(p.secret_hex.as_bytes()).map_err(|e| {
+            map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                format!("vault.set_secret: secret_hex is not valid hex: {e}"),
+            ))
+        })?;
+        if bytes.is_empty() {
+            return Err(map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                "vault.set_secret: empty secret rejected",
+            )));
+        }
+        const MAX_SECRET_BYTES: usize = 1 << 20; // 1 MiB (matches A-W6.2 / D22)
+        if bytes.len() > MAX_SECRET_BYTES {
+            return Err(map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                format!(
+                    "vault.set_secret: secret exceeds 1 MiB cap ({} bytes)",
+                    bytes.len()
+                ),
+            )));
+        }
+        let size_bucket = if bytes.len() <= 256 {
+            "small"
+        } else if bytes.len() <= 4096 {
+            "medium"
+        } else {
+            "large"
+        };
+
+        // A-W6.1 overwrite contract: when overwrite=false and the label
+        // already exists, reject before the keychain write so the audit
+        // trail records a refusal, not a silent upsert.
+        let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
+        let pre_existed = self
+            .core
+            .vault
+            .get_secret_direct(session.as_ref(), &p.label)
+            .is_ok();
+        if pre_existed && !p.overwrite {
+            return Err(map_loom_error(
+                &LoomError::new(
+                    loom_core::error::LoomErrorCode::VaultRejection,
+                    format!(
+                        "credential '{}' already exists; pass --overwrite to replace it",
+                        p.label
+                    ),
+                )
+                .with_context(serde_json::json!({
+                    "code": "already_exists",
+                    "label": p.label,
+                })),
+            ));
+        }
+
+        self.core
+            .vault
+            .set_secret(session.as_ref(), &p.label, Zeroizing::new(bytes))
+            .map_err(|e| map_loom_error(&e))?;
+
+        Ok(VaultSetSecretInfo {
+            label: p.label,
+            replaced: pre_existed,
+            size_bucket: size_bucket.to_string(),
+        })
+    }
+
+    fn vault_delete_secret(
+        &self,
+        p: VaultDeleteSecretParams,
+    ) -> Result<VaultDeleteSecretInfo, AdapterError> {
+        use loom_core::manifest_writer::SessionId;
+        validate_label_canonical(&p.label).map_err(|e| {
+            map_loom_error(&LoomError::new(
+                loom_core::error::LoomErrorCode::InvalidArgument,
+                e,
+            ))
+        })?;
+        let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
+        let outcome = self
+            .core
+            .vault
+            .delete_secret(session.as_ref(), &p.label, p.force)
+            .map_err(|e| map_loom_error(&e))?;
+        Ok(VaultDeleteSecretInfo {
+            label: p.label,
+            cascade_revoked_grants: outcome.cascade_revoked_grants,
+        })
+    }
+
+    fn vault_list_labels(
+        &self,
+        p: VaultListLabelsParams,
+    ) -> Result<VaultListLabelsInfo, AdapterError> {
+        use loom_core::manifest_writer::SessionId;
+        let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
+        let labels = self
+            .core
+            .vault
+            .list_labels(session.as_ref())
+            .map_err(|e| map_loom_error(&e))?;
+        let count = u32::try_from(labels.len()).unwrap_or(u32::MAX);
+        Ok(VaultListLabelsInfo { labels, count })
+    }
+
+    fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError> {
+        // v0.9.4 minimum-viable diagnose per A-W6.4. Probes the
+        // keychain by attempting a list_labels call; success counts as
+        // `init_status.ok`, failure surfaces the typed `KeychainErrorKind`
+        // (snake_case) as the `last_keychain_error.kind`. The shape is
+        // stable; richer state (cached last-error, backend identity from
+        // KeychainConfig) lands in a follow-up that wires those signals
+        // through `CoreApiFacade`.
+        let (label_count, last_keychain_error, init_status) = match self
+            .core
+            .vault
+            .list_labels(None)
+        {
+            Ok(labels) => (
+                u32::try_from(labels.len()).unwrap_or(u32::MAX),
+                None,
+                VaultDiagnoseInitStatus::Ok,
+            ),
+            Err(e) => {
+                // The LoomError code → KeychainErrorKind snake_case round-trip
+                // (string match is fine — the set is closed at 6).
+                let kind = match e.code {
+                    loom_core::error::LoomErrorCode::VaultUnknownLabel => "not_found",
+                    loom_core::error::LoomErrorCode::VaultPermissionDenied => "denied",
+                    loom_core::error::LoomErrorCode::VaultBackendUnavailable => "unavailable",
+                    loom_core::error::LoomErrorCode::VaultBackendTimeout => "timed_out",
+                    loom_core::error::LoomErrorCode::VaultNonInteractivePrompt => {
+                        "non_interactive_prompt"
+                    }
+                    loom_core::error::LoomErrorCode::VaultInternal => "internal",
+                    _ => "internal",
+                };
+                let internal_hash = e
+                    .context
+                    .as_ref()
+                    .and_then(|c| c.get("internal_hash"))
+                    .and_then(|h| h.as_str())
+                    .map(str::to_owned);
+                let diagnosed_at_ts =
+                    humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
+                (
+                        0,
+                        Some(loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseLastError {
+                            kind: kind.to_string(),
+                            diagnosed_at_ts,
+                            internal_hash,
+                        }),
+                        VaultDiagnoseInitStatus::Error {
+                            reason: e.message.clone(),
+                        },
+                    )
+            }
+        };
+
+        let backend = default_backend_name();
+        Ok(VaultDiagnoseInfo {
+            backend,
+            init_status,
+            // Hardcoded `"loom"` per D36 in v0.9.4.
+            service_id: "loom".to_string(),
+            label_count,
+            last_keychain_error,
+        })
+    }
+
     fn gc_run(
         &self,
         ttl_days: Option<u64>,
@@ -629,6 +819,117 @@ fn map_loom_error(e: &LoomError) -> AdapterError {
         // signal about what to change.)
         CoreCode::InvalidArgument => RpcCode::SchemaViolation,
         _ => RpcCode::InternalError,
+    }
+}
+
+// ─── A-W8.1 / W8.5 auth-file permission helpers ────────────────────────────
+
+/// Refuse to start when an existing auth file has loose perms
+/// (any of `g+r g+w g+x o+r o+w o+x` set). On a fresh install the file
+/// doesn't exist yet → no-op. On Unix only; Windows ACLs are out of
+/// scope for v0.9.4.
+#[cfg(unix)]
+fn probe_auth_perms_or_refuse(path: &std::path::Path, what: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => {
+            return Err(anyhow::anyhow!(
+                "auth-file stat failed for {} at {}: {}",
+                what,
+                path.display(),
+                e
+            ));
+        }
+    };
+    let mode = meta.permissions().mode() & 0o777;
+    if mode & 0o077 != 0 {
+        tracing::error!(
+            path = %path.display(),
+            mode = format!("{:04o}", mode),
+            "auth file has loose permissions; refusing to start"
+        );
+        anyhow::bail!(
+            "{} at {} has mode {:04o} (group/world bits set); \
+             expected 0600. Run `chmod 600 {}` and restart.",
+            what,
+            path.display(),
+            mode,
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn probe_auth_perms_or_refuse(_path: &std::path::Path, _what: &str) -> Result<()> {
+    // Windows ACLs aren't a chmod analogue; v0.9.4 leaves the probe a
+    // no-op there. A follow-up that uses `windows::Win32::Security` can
+    // implement a similar refuse-on-non-private-DACL check.
+    Ok(())
+}
+
+/// Tighten a freshly-written auth file to 0600 unconditionally.
+/// Unix only; Windows uses ACLs and is out of scope for v0.9.4.
+#[cfg(unix)]
+fn apply_auth_perms_0600(path: &std::path::Path, what: &str) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).with_context(|| {
+        format!(
+            "set 0600 on {} at {}; required by the A-W8.1 startup-perms contract",
+            what,
+            path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn apply_auth_perms_0600(_path: &std::path::Path, _what: &str) -> Result<()> {
+    Ok(())
+}
+
+// ─── Vault W6 wire-boundary helpers ────────────────────────────────────────
+
+/// D37 canonical label policy enforced at the wire boundary. The
+/// `manifest_writer::append_audit` gate (W5.10 / A-W8.5) catches the
+/// same shape as belt-and-suspenders if a future code path bypasses
+/// this check.
+fn validate_label_canonical(label: &str) -> Result<(), String> {
+    if label.is_empty() {
+        return Err("label is empty".into());
+    }
+    if label.len() > 64 {
+        return Err(format!("label exceeds 64 chars ({} chars)", label.len()));
+    }
+    if !label
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '_' || c == '-')
+    {
+        return Err(format!(
+            "label {label:?} fails canonical validation ^[A-Za-z0-9:_-]{{1,64}}$"
+        ));
+    }
+    Ok(())
+}
+
+/// Best-effort backend name for `vault.diagnose` per A-W6.4 schema. The
+/// daemon today builds the `KeychainConfig` via env var + TTY at
+/// `async_main`; this returns the platform default when no override is
+/// detected. Refined when the follow-up wires the resolved `BackendChoice`
+/// through `CoreApiFacade`.
+fn default_backend_name() -> String {
+    if let Ok(env) = std::env::var("LOOM_KEYCHAIN_BACKEND") {
+        if !env.is_empty() {
+            return env;
+        }
+    }
+    if cfg!(target_os = "macos") {
+        "macos".to_string()
+    } else if cfg!(target_os = "linux") {
+        "linux".to_string()
+    } else {
+        "stub".to_string()
     }
 }
 
@@ -1464,7 +1765,73 @@ async fn async_main() -> Result<()> {
             .with_context(|| format!("create socket dir {}", parent.display()))?;
     }
 
-    // 1. Build CoreApiFacade.
+    // 1a. Resolve the keychain backend per LOOM_KEYCHAIN_BACKEND +
+    //     LOOM_KEYCHAIN_ALLOW_PROMPT. When an OS-backed backend is
+    //     explicitly requested (`macos` | `linux` | `auto`), init failure
+    //     is hard-fail-closed — no silent fallback to a stub (per D7).
+    //     When the env var is UNSET, default to `in_memory` so the
+    //     daemon starts in CI / dev-test contexts that don't have a
+    //     keychain daemon running. Production deployments must opt in
+    //     explicitly via `LOOM_KEYCHAIN_BACKEND=auto` (or =macos / =linux).
+    let keychain_cfg = {
+        use std::io::IsTerminal;
+        let backend = match std::env::var("LOOM_KEYCHAIN_BACKEND").ok().as_deref() {
+            Some("stub") => loom_keychain::BackendChoice::Stub,
+            Some("in_memory") => loom_keychain::BackendChoice::InMemory,
+            Some("macos") => loom_keychain::BackendChoice::MacOs,
+            Some("linux") => loom_keychain::BackendChoice::Linux,
+            Some("auto") => loom_keychain::KeychainConfig::default().backend,
+            Some(other) => {
+                anyhow::bail!(
+                    "loom-daemon: unknown LOOM_KEYCHAIN_BACKEND={other}; \
+                     expected one of: stub | in_memory | macos | linux | auto"
+                );
+            }
+            None => loom_keychain::BackendChoice::InMemory,
+        };
+        let allow_prompt = match std::env::var("LOOM_KEYCHAIN_ALLOW_PROMPT").ok().as_deref() {
+            Some("0") | Some("false") => false,
+            Some("1") | Some("true") => true,
+            Some(other) => {
+                anyhow::bail!(
+                    "loom-daemon: invalid LOOM_KEYCHAIN_ALLOW_PROMPT={other}; expected 0|1"
+                );
+            }
+            None => std::io::stdin().is_terminal() && std::io::stderr().is_terminal(),
+        };
+        loom_keychain::KeychainConfig {
+            backend,
+            allow_prompt,
+            service_id: "loom",
+        }
+    };
+    let keychain = match loom_keychain::select_keychain(&keychain_cfg) {
+        Ok(kc) => {
+            tracing::info!(
+                backend = ?keychain_cfg.backend,
+                service_id = keychain_cfg.service_id,
+                allow_prompt = keychain_cfg.allow_prompt,
+                "loom-daemon: keychain backend initialised"
+            );
+            kc
+        }
+        Err(e) => {
+            tracing::error!(
+                backend = ?keychain_cfg.backend,
+                error = %e,
+                "loom-daemon: keychain backend failed to initialise; refusing to start"
+            );
+            anyhow::bail!(
+                "loom-daemon: {:?} keychain backend failed to initialise: {}. \
+                 Set LOOM_KEYCHAIN_BACKEND=stub to run without keychain persistence \
+                 (NOT recommended for production).",
+                keychain_cfg.backend,
+                e
+            );
+        }
+    };
+
+    // 1b. Build CoreApiFacade with the resolved keychain.
     let core_config = CoreConfig {
         data_root: args.data_root.clone(),
         log_path: args.log_path.clone(),
@@ -1472,7 +1839,7 @@ async fn async_main() -> Result<()> {
         default_seed: args.default_seed,
         checkpoint_every_n: args.checkpoint_every_n,
     };
-    let core = CoreApiFacade::new(core_config).context("CoreApiFacade::new failed")?;
+    let core = CoreApiFacade::new(core_config, keychain).context("CoreApiFacade::new failed")?;
 
     // 2. Crash-recovery sweep.
     let _recovery = core.startup_manager.perform_recovery_sweep();
@@ -1587,10 +1954,28 @@ async fn async_main() -> Result<()> {
         .with_context(|| format!("create auth dir {}", auth_dir.display()))?;
     let token_path = auth_dir.join("hello.token");
     let pid_path = auth_dir.join("daemon.pid");
+
+    // 7a. A-W8.1 / W8.5 0600 startup probe: refuse to start if a pre-
+    //     existing auth file has loose mode bits (group/world readable
+    //     or writable). Catches the "operator rsync'd $HOME with default
+    //     umask and lost the 0600" class of incidents BEFORE the token
+    //     is reused. Crash-only; no auto-chmod (the operator must
+    //     consciously remediate so the audit trail records intent).
+    probe_auth_perms_or_refuse(&token_path, "hello.token")?;
+    probe_auth_perms_or_refuse(&pid_path, "daemon.pid")?;
+
     std::fs::write(&token_path, server.token.0.as_bytes())
         .with_context(|| format!("write hello.token to {}", token_path.display()))?;
     std::fs::write(&pid_path, std::process::id().to_string().as_bytes())
         .with_context(|| format!("write daemon.pid to {}", pid_path.display()))?;
+
+    // 7b. A-W8.1 second leg: tighten the freshly-written files to 0600.
+    //     The umask on default Linux installs is 0022 → files land at
+    //     0644 → group + world can read the daemon's auth token. Set
+    //     explicit perms so the file mode matches the socket's 0600
+    //     contract (SOCKET_MODE in loom-rpc).
+    apply_auth_perms_0600(&token_path, "hello.token")?;
+    apply_auth_perms_0600(&pid_path, "daemon.pid")?;
 
     // 8. Print HELLO_TOKEN to stdout .
     println!("HELLO_TOKEN={}", server.token.0);

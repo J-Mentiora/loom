@@ -13,6 +13,7 @@ categories.workspace = true
 
 [dependencies]
 loom-shared = { workspace = true }
+loom-keychain = { workspace = true }
 loom-core = { workspace = true }
 loom-host = { workspace = true }
 loom-rpc = { workspace = true }
@@ -32,6 +33,9 @@ tracing-subscriber = { workspace = true }
 dirs = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+hex = { workspace = true }
+humantime = { workspace = true }
+zeroize = { workspace = true }
 
 [lib]
 name = "loom_daemon"

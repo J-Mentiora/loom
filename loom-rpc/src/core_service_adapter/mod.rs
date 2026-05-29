@@ -161,6 +161,31 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
         self.core.vault_add(params)
     }
 
+    fn vault_set_secret(
+        &self,
+        params: VaultSetSecretParams,
+    ) -> Result<VaultSetSecretInfo, AdapterError> {
+        self.core.vault_set_secret(params)
+    }
+
+    fn vault_delete_secret(
+        &self,
+        params: VaultDeleteSecretParams,
+    ) -> Result<VaultDeleteSecretInfo, AdapterError> {
+        self.core.vault_delete_secret(params)
+    }
+
+    fn vault_list_labels(
+        &self,
+        params: VaultListLabelsParams,
+    ) -> Result<VaultListLabelsInfo, AdapterError> {
+        self.core.vault_list_labels(params)
+    }
+
+    fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError> {
+        self.core.vault_diagnose()
+    }
+
     fn gc_run(
         &self,
         ttl_days: Option<u64>,

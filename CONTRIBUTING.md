@@ -39,6 +39,72 @@ paths and clobber each other under parallel execution. We accept this
 trade-off because the alternative (per-test tempdirs) bloats the test
 fixtures meaningfully and we'd rather keep the test bodies readable.
 
+### Running Linux keychain integration tests (v0.9.4)
+
+The Linux Secret Service backend (`loom-keychain/src/linux.rs`) talks
+to `org.freedesktop.secrets` via the session D-Bus. The integration
+tests at `loom-keychain/tests/linux_keychain_e2e.rs` are gated
+`#[cfg(target_os = "linux")] #[ignore]` and self-skip with a
+`tracing::info!` when no secret-service daemon is reachable. CI's
+ubuntu-latest cell starts gnome-keyring inline (see
+`.github/workflows/ci.yml`'s "Start gnome-keyring" step); local
+runs require equivalent setup.
+
+**One-time per shell (headless dev machine / container):**
+
+```bash
+# Install Linux Secret Service infra.
+sudo apt-get install -y libdbus-1-3 dbus-x11 gnome-keyring
+
+# Launch a session D-Bus + an empty-passphrase gnome-keyring inside it.
+eval "$(dbus-launch --sh-syntax)"
+echo "" | gnome-keyring-daemon --unlock --components=secrets --daemonize
+```
+
+**Then run the tests for real:**
+
+```bash
+# Force the tests to fail loud if construction fails (instead of
+# self-skipping). The CI step sets this same env var on its success
+# path — local devs should set it too while iterating on the backend.
+export KEYCHAIN_CI_REQUIRE_DAEMON=1
+
+cargo test -p loom-keychain --test linux_keychain_e2e -- --ignored
+```
+
+**Verifying the CI gnome-keyring step works on your fork:** push to
+a branch + watch the ubuntu-latest matrix cell. The relevant log line
+on success is:
+
+> `gnome-keyring-daemon up; Linux backend tests will run (not skip).`
+
+If you see the failure path:
+
+> `gnome-keyring start failed (exit=N); Linux backend tests will self-skip.`
+
+…that's NOT a blocking PR failure (A-W7.2 / FND-0047 — the Linux
+backend has a documented weaker-CI gap per D9). It IS a signal that
+something in the runner image regressed (e.g. IPC_LOCK lockdown
+deeper than `--components` handles); file an issue.
+
+### Hermetic CLI/RPC e2e (no real keychain)
+
+`loom-cli/tests/keychain_e2e_hermetic.rs` exercises the full
+`vault add → list-labels → daemon restart → delete` round trip
+against `LOOM_KEYCHAIN_BACKEND=in_memory`. Runs on every CI cell
+(macOS + Linux) without needing a real OS keychain:
+
+```bash
+cargo build --release --bin loom --bin loom-daemon
+cargo test -p loom-cli --test keychain_e2e_hermetic -- --ignored
+```
+
+The test does a byte-level scan of the daemon's data root after
+`vault add` to enforce the **G1 invariant** (canary substring must
+NEVER appear in any persisted file). If your work touches the
+audit-chain payload shape or the RPC wire format, run this locally
+before pushing.
+
 ## Coding conventions
 
 - **Typed errors.** A failure mode that doesn't surface as a typed

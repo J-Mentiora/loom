@@ -111,7 +111,13 @@ impl From<LoomError> for HostError {
             LoomErrorCode::VaultRejection
             | LoomErrorCode::VaultGrantExpired
             | LoomErrorCode::VaultGrantRevoked
-            | LoomErrorCode::VaultUnknownLabel => HostError::VaultRejection(VaultDetail {
+            | LoomErrorCode::VaultUnknownLabel
+            | LoomErrorCode::VaultPermissionDenied
+            | LoomErrorCode::VaultBackendUnavailable
+            | LoomErrorCode::VaultBackendTimeout
+            | LoomErrorCode::VaultNonInteractivePrompt
+            | LoomErrorCode::VaultInternal
+            | LoomErrorCode::VaultInvalidLabel => HostError::VaultRejection(VaultDetail {
                 reason: err.code.as_wire().to_owned(),
                 grant_id: String::new(),
             }),

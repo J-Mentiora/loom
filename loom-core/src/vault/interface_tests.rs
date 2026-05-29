@@ -9,6 +9,7 @@ use super::vault::{
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
+use loom_keychain::{KeychainError, KeychainErrorKind};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,15 +21,33 @@ struct StubKeychain {
 }
 
 impl KeychainAccess for StubKeychain {
-    fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+    fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         if label == self.label {
             Ok(Zeroizing::new(self.secret.clone()))
         } else {
-            Err(LoomError::new(
-                LoomErrorCode::VaultUnknownLabel,
+            Err(KeychainError::new(
+                KeychainErrorKind::NotFound,
                 "secret unavailable",
             ))
         }
+    }
+    fn set_secret(&self, _label: &str, _secret: Zeroizing<Vec<u8>>) -> Result<(), KeychainError> {
+        Err(KeychainError::new(
+            KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
+    }
+    fn delete_secret(&self, _label: &str) -> Result<(), KeychainError> {
+        Err(KeychainError::new(
+            KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
+    }
+    fn list_labels(&self) -> Result<Vec<String>, KeychainError> {
+        Err(KeychainError::new(
+            KeychainErrorKind::Unavailable,
+            "test stub",
+        ))
     }
 }
 
@@ -193,7 +212,7 @@ fn revoke_signature_returns_unit_or_loomerror() {
 fn keychain_access_returns_zeroizing_buffer() {
     // Compile-time enforcement: the trait return type is Zeroizing<Vec<u8>>,
     // which guarantees zeroize-on-drop semantics.
-    fn _ck<K: KeychainAccess>(k: &K, label: &str) -> Result<Zeroizing<Vec<u8>>, LoomError> {
+    fn _ck<K: KeychainAccess>(k: &K, label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
         k.get_secret(label)
     }
     let _ = _ck::<StubKeychain>;
