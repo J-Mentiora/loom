@@ -219,9 +219,9 @@ references and known gaps. Auditors reading this should treat the
 | **ISO 27001 A.9.4.1** (secret authentication info management) | Tokens never appear in any persisted file: G1 invariant. `vault diagnose` exposes init status + label count without leaking secret bytes. | `loom-keychain/src/{macos,linux}.rs` delegate to OS keychain; `loom-cli/tests/keychain_e2e_hermetic.rs` byte-scans the data_root for a canary to enforce G1; `loom-rpc/src/core_service_adapter/core_service_adapter.rs::VaultDiagnoseInfo`. | Cross-DE Linux Secret Service (KDE kwallet, KeePassXC) not supported in v0.9.4 (D36) — documented as a known gap, not a control failure. |
 | **ISO 27001 A.12.4.1** (event logging) | Audit chain is append-only and hash-chained — selective deletion of credential entries would break chain integrity. Audit entries can be validated post-hoc via `loom session verify <id>`. | `loom-core/src/manifest_writer/impl_local.rs::validate`; manifest WAL is fsynced on every append. | Session-level erasure (PRIVACY-doc-grade GDPR support) loses the audit trail by design — audit-entry-level erasure is incompatible with the hash-chain model (D35 / FND-0036). |
 
-## Cookie credentials (v0.9.6 web-cookie-injection)
+## Cookie credentials (v0.9.7 web-cookie-injection)
 
-The v0.9.6 release ships first-class support for storing browser
+The v0.9.7 release ships first-class support for storing browser
 cookies in the vault and substituting them at action-dispatch time.
 This section enumerates the threat model amendments that apply to the
 cookie credential type, which are additive to the OAuth-token mitigations
@@ -240,7 +240,7 @@ the CLI reads it, does not write it back, and does not delete it
 
 ### Retention (D6 / FND-0011)
 
-v0.9.6 ships **no automatic expiry** on cookie grants. The TTL passed
+v0.9.7 ships **no automatic expiry** on cookie grants. The TTL passed
 to `vault.grant` (default 30 days from the CLI cookie flow) only gates
 *grant validity*, not *secret deletion*; deleting the underlying cookie
 blob is the operator's responsibility via
@@ -318,7 +318,7 @@ Two intentional limitations operators should be aware of:
 
 `Vault::substitute_cookies` returns `Zeroizing<Vec<u8>>` (shipped
 v0.9.5) — the keychain blob bytes are wiped on drop in daemon memory.
-v0.9.6 closes the v0.9.5 D12 deferral by adding the surface-side
+v0.9.7 closes the v0.9.5 D12 deferral by adding the surface-side
 companion: when `SetCookiesVerb::execute` is about to drop the
 `Vec<NetworkCookieParam>` after dispatching CDP `Network.setCookies`,
 it iterates over each cookie's value `Redacted<String>` and calls

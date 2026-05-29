@@ -149,6 +149,51 @@ fn cookie_source_deserialize_inline_round_trip() {
     matches!(s, CookieSource::Inline { .. });
 }
 
+/// v0.9.7 follow-up — the daemon dispatcher relies on `CookieSource`
+/// failing closed when the payload omits the `source` tag. If this
+/// test breaks, the dispatcher would silently fall through to its
+/// `other => other` arm and reach `build_chromium_args` with an
+/// empty cookies array — a soundness regression.
+#[test]
+fn cookie_source_deserialize_rejects_missing_source_tag() {
+    let j = json!({"cookies": []});
+    serde_json::from_value::<CookieSource>(j).expect_err("missing tag must reject");
+}
+
+/// Same contract for an empty object — protects the
+/// `web.set_cookies({})` payload from silently dispatching.
+#[test]
+fn cookie_source_deserialize_rejects_empty_object() {
+    let j = json!({});
+    serde_json::from_value::<CookieSource>(j).expect_err("empty object must reject");
+}
+
+/// And for an unknown variant tag — defends against typos in
+/// frontmatter (`source: "Grant"`, `source: "GRANT"`, etc.)
+/// silently no-op-ing instead of rejecting.
+#[test]
+fn cookie_source_deserialize_rejects_unknown_source_tag() {
+    let j = json!({"source": "foo", "cookies": []});
+    serde_json::from_value::<CookieSource>(j).expect_err("unknown tag must reject");
+}
+
+/// Grant variant requires `grant_id` — a `{"source":"grant"}` with
+/// no id must reject rather than reaching `Vault::substitute_cookies`
+/// with an empty grant id.
+#[test]
+fn cookie_source_deserialize_rejects_grant_without_grant_id() {
+    let j = json!({"source": "grant"});
+    serde_json::from_value::<CookieSource>(j).expect_err("grant w/o id must reject");
+}
+
+/// Inline variant requires `cookies` — a `{"source":"inline"}` with
+/// no array must reject rather than dispatching an empty cookie set.
+#[test]
+fn cookie_source_deserialize_rejects_inline_without_cookies() {
+    let j = json!({"source": "inline"});
+    serde_json::from_value::<CookieSource>(j).expect_err("inline w/o cookies must reject");
+}
+
 #[test]
 fn validate_empty_array_ok() {
     assert!(validate_cookie_params(&[]).is_ok());

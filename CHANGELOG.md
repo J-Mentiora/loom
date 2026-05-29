@@ -6,13 +6,22 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.9.6] — 2026-05-29 — Cookie Injection (ship milestone)
+## [0.9.7] — 2026-05-29 — Cookie Injection (ship milestone)
 
 Closes the **web-cookie-injection** deferral list from v0.9.5. The four
 MCP cookie verbs are now reachable end-to-end (`tools/list` →
 `tools/call` → daemon → WASM verb → CDP → chromium). Downstream
 consumers (notably `mentiora-ai/agentic-test-studio`) can pin
-`loom-mcp@0.9.6` and ship the `auth_cookie:` frontmatter feature.
+`loom-mcp@0.9.7` and ship the `auth_cookie:` frontmatter feature.
+
+> NOTE — **v0.9.6 was never tagged.** The v0.9.6 cookie-injection
+> milestone work + the three v0.9.7 follow-ups (grant resolution
+> daemon-side, per-cookie validation taxonomy daemon-side, parallel
+> startup sweep) shipped together as v0.9.7 after pre-release
+> adversarial review surfaced shape-rejection gaps in the dispatcher
+> that wanted closing before tag. In-code comments still reference
+> "v0.9.6 web-cookie-injection" as the development-cycle name; the
+> public release tag is v0.9.7.
 
 ### Added
 
@@ -116,8 +125,8 @@ consumers (notably `mentiora-ai/agentic-test-studio`) can pin
 
 - `loom.web.*` MCP tool naming was established in v0.9.5 (dropped
   the redundant `loom.` prefix that earlier versions had).
-  v0.9.6 changes nothing here, but downstream consumers pinning
-  `loom-mcp@0.9.5` and migrating to `0.9.6` SHOULD double-check
+  v0.9.7 changes nothing here, but downstream consumers pinning
+  `loom-mcp@0.9.5` and migrating to `0.9.7` SHOULD double-check
   any string literals referencing the four cookie verb names —
   they MUST be `loom.web.set_cookies`, `loom.web.get_cookies`,
   `loom.web.clear_cookies`, `loom.web.delete_cookies` (full MCP
@@ -134,10 +143,11 @@ consumers (notably `mentiora-ai/agentic-test-studio`) can pin
 - **`docs/loom-vault-audit.md`** documents `CookiesSubstituted` +
   `CookiesCleared` audit kinds with canonical-bytes shapes.
 
-### Follow-ups landed before release
+### Added (post-adversarial-review hardening)
 
-These three items were tracked as v0.9.7 follow-ups during the v0.9.6
-build but landed on the same PR before merge.
+These three items were tracked as v0.9.7 follow-ups during the
+v0.9.6 build; they shipped together with the cookie-injection
+milestone in v0.9.7.
 
 - **Daemon-side grant resolution for `web.set_cookies`** — the
   dispatcher now resolves `CookieSource::Grant` to `Inline` by
@@ -145,22 +155,32 @@ build but landed on the same PR before merge.
   the WASM verb runs. Previously the daemon's `build_chromium_args`
   emitted an empty Network.setCookies envelope for grant sources;
   now it sees a fully-resolved cookie array exactly as if the
-  operator had passed `CookieSource::Inline` directly.
+  operator had passed `CookieSource::Inline` directly. The
+  dispatcher uses a **typed `CookieSource` deserialize** so
+  malformed `source` payloads (missing tag, unknown variant,
+  missing required field) fail closed with `SchemaViolation`
+  rather than silently emitting an empty no-op envelope. The
+  vault blob is similarly typed (`{cookies: Vec<NetworkCookieParam>}`),
+  so a corrupt keychain blob surfaces `InternalError` instead of
+  succeeding with zero cookies.
 - **Per-cookie validation taxonomy daemon-side** — validation
-  failures (`name_empty`, `name_invalid`, `value_too_large`,
-  `invalid_same_site`, `invalid_expires`, `too_many_cookies`) now
-  short-circuit to a typed `cookie_validation_error` receipt with
-  `detail.code = <snake_case taxonomy string>` *before* the
-  chromium shim is touched. Operators can group validation failures
-  by code in dashboards rather than parsing free-text error
-  messages.
+  failures from `validate_cookie_params` short-circuit to a typed
+  `cookie_validation_error` receipt with `detail.code` carrying
+  one of the six snake_case taxonomy strings (`name_empty`,
+  `name_invalid`, `value_too_large`, `invalid_same_site`,
+  `invalid_expires`, `too_many_cookies`) *before* the chromium
+  shim is touched. The wire kind matches the existing WASM-side
+  `ErrorMapper` so the two layers produce consistent receipt
+  shapes. Operators can group validation failures by code in
+  dashboards rather than parsing free-text error messages.
 - **Daemon-startup parallel manifest sweep** — `StartupManager::
   sweep_manifests` now fans out per-session WAL processing across
   up to 16 worker threads via `std::thread::scope` (capped by
   `available_parallelism`). Per-session isolation is already a
   design property of the sweep, so concurrent processing is safe.
-  Single-threaded fast path retained for corpora < 8 sessions to
-  avoid `thread::scope` overhead. Recovered/crashed counters
+  Single-threaded fast path retained for corpora < 8 sessions or
+  when `available_parallelism` reports a single core (avoids
+  `thread::scope`'s setup cost). Recovered/crashed counters
   aggregate via atomics; failures via a single Mutex (rare path).
 
 ### Deferred (still) to a future release
@@ -172,7 +192,7 @@ build but landed on the same PR before merge.
 - **CHIPS partition cookies** (CDP-pass-through; browser arbitrates).
 - **RFC 6265 edge cases** (Domain leading-dot, IP-host cookies).
   CDP-pass-through.
-- **Retention TTL on cookie grants** (no auto-expiry in v0.9.6;
+- **Retention TTL on cookie grants** (no auto-expiry in v0.9.7;
   operator manages via `loom vault delete <label>`).
 - **RBAC, admin tooling, multi-operator workflows.**
 

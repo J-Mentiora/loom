@@ -180,6 +180,14 @@ impl StartupManager {
         let workers = worker_target
             .min(candidates.len().div_ceil(SWEEP_MIN_BATCH))
             .max(1);
+        // If we'd only spawn one worker anyway (constrained sandbox
+        // where `available_parallelism` returned 1, or a corpus
+        // barely above the parallel threshold), fall back to the
+        // sequential path so we don't pay `thread::scope`'s setup
+        // cost just to run one thread.
+        if workers == 1 {
+            return Ok(self.sweep_sequential(candidates));
+        }
         let chunk_size = candidates.len().div_ceil(workers);
 
         let recovered = AtomicU64::new(0);

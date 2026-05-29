@@ -1099,90 +1099,91 @@ impl WasmHostBridge for WasmBridge {
         //   - Per-cookie validation (`validate_cookie_params`: 64-cap,
         //     name/value/expires) runs BEFORE the CDP envelope is
         //     built. Validation failures short-circuit to a typed
-        //     `cookie_validation_error` receipt without ever touching
-        //     the chromium shim.
+        //     `cookie_validation_error` receipt (matching the
+        //     existing WASM-side ErrorMapper wire kind and the
+        //     action_registry --help docstring) without ever
+        //     touching the chromium shim.
+        //
+        // Shape errors (malformed `source` JSON, missing `cookies` key
+        // in the vault blob) flow through the existing
+        // `SchemaViolation` / `InternalError` codes — only typed
+        // `CookieValidationError` variants flow through the
+        // taxonomy-coded `cookie_validation_error` receipt. This split
+        // keeps the wire taxonomy a closed set the operator can
+        // group dashboards on.
         let action = match action {
             Action::WebSetCookies { session_id, source } => {
                 use loom_core::manifest_writer::SessionId;
                 use loom_core::vault::GrantId;
+                use loom_surfaces::cookie_types::CookieSource;
 
-                // Step 1: resolve a `Grant` source to an `Inline` source by
-                // calling `Vault::substitute_cookies`. After this step the
-                // source is uniformly `inline` regardless of how the
-                // operator framed the request.
-                let resolved_source = if source.get("source").and_then(|v| v.as_str())
-                    == Some("grant")
-                {
-                    let grant_id = source
-                        .get("grant_id")
-                        .and_then(|v| v.as_str())
-                        .ok_or(LoomErrorCode::SchemaViolation)?;
-                    let bytes = self
-                        .core
-                        .vault
-                        .substitute_cookies(
-                            GrantId(grant_id.to_string()),
-                            SessionId(session_id.clone()),
-                        )
-                        .map_err(|e| map_loom_error(&e))?;
-                    // The vault returns `{"schema_version":1, "cookies":[...]}`.
-                    // Lift the cookies array out, drop everything else.
-                    let blob: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
-                        tracing::error!("vault.substitute_cookies blob deserialise failed: {e}");
-                        LoomErrorCode::InternalError
-                    })?;
-                    serde_json::json!({
-                        "source": "inline",
-                        "cookies": blob
-                            .get("cookies")
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Array(vec![])),
-                    })
-                } else {
-                    source
-                };
+                // Step 1: parse the `source` payload into the typed
+                // `CookieSource` enum so malformed shapes (missing
+                // `source` tag, unknown variants, wrong-typed fields)
+                // fail closed via `SchemaViolation` rather than
+                // silently falling through to the no-op chromium-args
+                // branch with an empty cookies array.
+                let typed_source: CookieSource =
+                    serde_json::from_value(source).map_err(|_| LoomErrorCode::SchemaViolation)?;
 
-                // Step 2: per-cookie validation against the resolved inline
-                // cookies array. Mirrors loom_surfaces::cookie_types::
-                // validate_cookie_params but operates on the daemon-side
-                // serde_json::Value before the CDP envelope is built.
-                if let Some(cookies_arr) = resolved_source.get("cookies").and_then(|v| v.as_array())
-                {
-                    // Deserialise into typed NetworkCookieParam so we can
-                    // use the canonical validator + propagate the typed
-                    // CookieValidationError variant to the wire receipt.
-                    let parse_result: Result<
-                        Vec<loom_surfaces::cookie_types::NetworkCookieParam>,
-                        _,
-                    > = serde_json::from_value(serde_json::Value::Array(cookies_arr.clone()));
-                    match parse_result {
-                        Ok(typed) => {
-                            if let Err(e) =
-                                loom_surfaces::cookie_types::validate_cookie_params(&typed)
-                            {
-                                return Ok(cookie_validation_error_receipt(
-                                    session.allocate_action_id(),
-                                    session_id_str,
-                                    cookie_validation_code(&e),
-                                    e.to_string(),
-                                ));
+                // Step 2: resolve a `Grant` to its cookies array by
+                // calling `Vault::substitute_cookies`. The vault blob
+                // schema is the canonical
+                // `{"schema_version":1,"cookies":[NetworkCookieParam...]}`
+                // produced by `loom vault add --credential-type cookie`;
+                // a missing or non-array `cookies` field means the
+                // keychain blob is corrupt and we fail closed with
+                // `InternalError` rather than silently emitting an
+                // empty Network.setCookies envelope.
+                let cookies: Vec<loom_surfaces::cookie_types::NetworkCookieParam> =
+                    match typed_source {
+                        CookieSource::Inline { cookies } => cookies,
+                        CookieSource::Grant { grant_id } => {
+                            let bytes = self
+                                .core
+                                .vault
+                                .substitute_cookies(
+                                    GrantId(grant_id),
+                                    SessionId(session_id.clone()),
+                                )
+                                .map_err(|e| map_loom_error(&e))?;
+
+                            #[derive(serde::Deserialize)]
+                            struct VaultCookieBlob {
+                                cookies: Vec<loom_surfaces::cookie_types::NetworkCookieParam>,
                             }
+
+                            serde_json::from_slice::<VaultCookieBlob>(&bytes)
+                                .map_err(|e| {
+                                    tracing::error!(
+                                        "vault.substitute_cookies blob deserialise failed: {e}"
+                                    );
+                                    LoomErrorCode::InternalError
+                                })?
+                                .cookies
                         }
-                        Err(e) => {
-                            // Malformed cookie shape (e.g. a `value` field
-                            // that isn't a string). Surface as a validation
-                            // error rather than dispatching a broken
-                            // envelope to the shim.
-                            return Ok(cookie_validation_error_receipt(
-                                session.allocate_action_id(),
-                                session_id_str,
-                                "invalid_shape",
-                                format!("cookie payload shape error: {e}"),
-                            ));
-                        }
-                    }
+                    };
+
+                // Step 3: per-cookie validation. Failures short-circuit
+                // to a typed `cookie_validation` receipt with the
+                // snake_case taxonomy code from `cookie_validation_code`.
+                if let Err(e) = loom_surfaces::cookie_types::validate_cookie_params(&cookies) {
+                    return Ok(cookie_validation_error_receipt(
+                        session.allocate_action_id(),
+                        session_id_str,
+                        cookie_validation_code(&e),
+                        e.to_string(),
+                    ));
                 }
 
+                // Step 4: rebuild the action with a uniform `inline`
+                // source so the downstream `build_chromium_args` path
+                // sees a single shape regardless of how the operator
+                // framed the request.
+                let resolved_source = serde_json::json!({
+                    "source": "inline",
+                    "cookies": cookies,
+                });
                 Action::WebSetCookies {
                     session_id,
                     source: resolved_source,
