@@ -284,6 +284,14 @@ pub struct GrantParams {
     pub scopes: Vec<String>,
     pub ttl_seconds: u64,
     pub label: String,
+    /// v0.9.6 web-cookie-injection: optional credential-type override.
+    /// Default `None` preserves the v0.9.5 OAuth-only contract; set
+    /// to `"cookie"` for the `loom vault add --credential-type cookie`
+    /// flow to bind a Cookie grant rather than an OAuth grant.
+    /// Daemon-side mapping in `vault_grant` translates the string to
+    /// `loom_core::vault::CredentialType::{OAuth,Cookie}`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credential_type: Option<String>,
 }
 
 /// Wire params for `vault.add` — session-less.

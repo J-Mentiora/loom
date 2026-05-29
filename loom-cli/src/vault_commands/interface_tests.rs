@@ -4,6 +4,7 @@
 use super::vault_commands::{
     VaultAddArgs, VaultGrantArgs, VaultListArgs, VaultRevokeArgs, SUBCOMMAND_RPC_MAP,
 };
+use crate::CliError;
 
 // === Subcommand coverage ===
 #[test]
@@ -51,6 +52,7 @@ fn vault_add_args_have_yes_flag() {
         overwrite: false,
         session: None,
         yes: true,
+        credential_type: "oauth".into(),
     };
     assert!(a.yes);
 }
@@ -65,6 +67,7 @@ fn vault_add_provider_is_required_positional() {
         overwrite: false,
         session: None,
         yes: false,
+        credential_type: "oauth".into(),
     };
     assert_eq!(a.provider.as_deref(), Some("github"));
 }
@@ -137,4 +140,144 @@ fn parse_ttl_rejects_empty_string() {
         err.contains("invalid"),
         "error must mention 'invalid'; got: {err}"
     );
+}
+
+// === v0.9.6 web-cookie-injection: validate_cookie_blob_json ===
+
+use super::vault_commands::validate_cookie_blob_json;
+
+#[test]
+fn validate_cookie_blob_json_accepts_minimal_well_formed_blob() {
+    let blob = br#"{"schema_version":1,"cookies":[{"name":"sid","value":"v","domain":"x"}]}"#;
+    validate_cookie_blob_json(blob).expect("minimal cookie blob is valid");
+}
+
+#[test]
+fn validate_cookie_blob_json_accepts_empty_cookies_array() {
+    let blob = br#"{"schema_version":1,"cookies":[]}"#;
+    validate_cookie_blob_json(blob).expect("empty cookie array is valid");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_malformed_json() {
+    let blob = b"not actually json at all";
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("invalid cookie blob JSON"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_missing_schema_version() {
+    let blob = br#"{"cookies":[{"name":"sid","value":"v"}]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("schema_version"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_schema_version_mismatch() {
+    let blob = br#"{"schema_version":2,"cookies":[]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(
+        reason.contains("schema_version") && reason.contains("expected 1"),
+        "got: {reason}"
+    );
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_missing_cookies_field() {
+    let blob = br#"{"schema_version":1}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("cookies"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_cookies_as_non_array() {
+    let blob = br#"{"schema_version":1,"cookies":"not an array"}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("array"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_entry_missing_name_field() {
+    let blob = br#"{"schema_version":1,"cookies":[{"value":"v","domain":"x"}]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("name"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_non_object_entry() {
+    let blob = br#"{"schema_version":1,"cookies":["just a string"]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("not a JSON object"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_error_locates_bad_entry_by_index() {
+    let blob = br#"{"schema_version":1,"cookies":[{"name":"ok"},{"missing_name":true}]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected CliError::Usage")
+    };
+    assert!(reason.contains("entry 1"), "got: {reason}");
+}
+
+#[test]
+fn vault_add_args_default_credential_type_is_oauth() {
+    use clap::Parser;
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[clap(flatten)]
+        add: super::vault_commands::VaultAddArgs,
+    }
+    let cli = TestCli::try_parse_from([
+        "test",
+        "--label",
+        "L",
+        "--from-stdin",
+    ])
+    .expect("parse");
+    assert_eq!(cli.add.credential_type, "oauth");
+}
+
+#[test]
+fn vault_add_args_credential_type_cookie_parses() {
+    use clap::Parser;
+    #[derive(clap::Parser)]
+    struct TestCli {
+        #[clap(flatten)]
+        add: super::vault_commands::VaultAddArgs,
+    }
+    let cli = TestCli::try_parse_from([
+        "test",
+        "--label",
+        "auth_session",
+        "--credential-type",
+        "cookie",
+        "--from-file",
+        "/tmp/cookies.json",
+    ])
+    .expect("parse");
+    assert_eq!(cli.add.credential_type, "cookie");
+    assert_eq!(cli.add.label.as_deref(), Some("auth_session"));
+    assert_eq!(cli.add.from_file.as_deref(), Some("/tmp/cookies.json"));
 }

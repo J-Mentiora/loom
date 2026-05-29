@@ -471,8 +471,17 @@ impl CoreFacadeBridge for CoreBridge {
     fn vault_grant(&self, p: GrantParams) -> Result<GrantInfo, AdapterError> {
         use loom_core::manifest_writer::SessionId;
         use loom_core::vault::{CredentialType, GrantOpts};
+        // v0.9.6: map the optional credential_type string to the typed
+        // enum. Default OAuth preserves the v0.9.5 contract.
+        let credential_type = match p.credential_type.as_deref() {
+            None | Some("oauth") => CredentialType::OAuth,
+            Some("cookie") => CredentialType::Cookie,
+            Some(_other) => {
+                return Err(loom_rpc::error_translator::error_translator::LoomErrorCode::SchemaViolation);
+            }
+        };
         let opts = GrantOpts {
-            credential_type: CredentialType::OAuth,
+            credential_type,
             label: p.label.clone(),
             origin: p.origin.clone(),
             scopes: p.scopes.clone(),
