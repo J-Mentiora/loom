@@ -402,28 +402,37 @@ pub fn plist_step(writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> 
 /// Schemas are derived from the WIT surface interface (`wit/loom-surface.wit`)
 /// and embedded as compile-time const data (WIT is source of truth).
 pub fn schema_step(schemas_dir: &std::path::Path) -> Result<SchemaStepOutcome, CliError> {
-    // Idempotence guard: if schemas dir already has .json files, skip.
-    if schemas_dir.exists() {
-        let has_json = std::fs::read_dir(schemas_dir)
-            .map_err(|e| CliError::Internal(e.to_string()))?
-            .flatten()
-            .any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"));
-        if has_json {
-            return Ok(SchemaStepOutcome::Skipped);
-        }
-    }
-
     std::fs::create_dir_all(schemas_dir).map_err(|e| CliError::Internal(e.to_string()))?;
 
-    let mut count = 0usize;
+    // v0.9.6: per-method idempotence. The previous "skip entire dir
+    // if any *.json present" guard prevented schema upgrades — a
+    // v0.9.5 install populated 11 web verb schemas; a v0.9.6 upgrade
+    // would skip and the 4 new cookie verb schemas would never land,
+    // making the daemon reject `web.set_cookies` etc. as unknown
+    // methods. Write any missing schema, leave existing ones alone
+    // (preserves operator hand-edits where applicable).
+    let mut populated = 0usize;
+    let mut skipped = 0usize;
     for (method, json_str) in BUILTIN_SCHEMAS {
         let file_path = schemas_dir.join(format!("{}.json", method));
+        if file_path.exists() {
+            skipped += 1;
+            continue;
+        }
         std::fs::write(&file_path, json_str.as_bytes())
             .map_err(|e| CliError::Internal(format!("schema write {}: {}", method, e)))?;
-        count += 1;
+        populated += 1;
     }
 
-    Ok(SchemaStepOutcome::Populated(count))
+    if populated == 0 {
+        // Every schema was already present — preserve the prior
+        // "Skipped" wire-receipt value so callers that match on it
+        // still see the same outcome.
+        Ok(SchemaStepOutcome::Skipped)
+    } else {
+        let _ = skipped;
+        Ok(SchemaStepOutcome::Populated(populated))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +505,30 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
     (
         "rpc.schemas",
         r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#,
+    ),
+    // v0.9.6 web-cookie-injection: 4 cookie verbs. Request shapes
+    // mirror the `parse_action` arms in
+    // `loom-rpc::request_router::parse_action` and the `ActionMeta`
+    // entries in `action_registry`. `source` for set_cookies is the
+    // typed XOR `CookieSource` JSON object (validated daemon-side);
+    // the JSON-Schema here accepts an object loosely so the wire
+    // contract isn't over-tight. Response shape is the standard
+    // hash-only triple plus the verb-specific result field.
+    (
+        "web.set_cookies",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"source":{"type":"object"}},"required":["session","source"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"set_cookies_result":{"type":"array"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.get_cookies",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"urls":{"type":"array","items":{"type":"string"}}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"get_cookies_result":{"type":"array"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.clear_cookies",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"clear_cookies_result":{"type":"object","properties":{"cleared_count":{"type":"integer"}}}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.delete_cookies",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"name":{"type":"string"},"url":{"type":"string"},"domain":{"type":"string"},"path":{"type":"string"}},"required":["session","name"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"delete_cookies_result":{"type":"object","properties":{"name":{"type":"string"},"matched":{"type":"boolean"}}}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
     ),
 ];
 

@@ -17,6 +17,13 @@ pub enum ParamType {
     String,
     I64,
     U64,
+    /// v0.9.6 web-cookie-injection. JSON object value (validated
+    /// against the per-action JSON-Schema daemon-side). The CLI
+    /// JSON-parses the raw `--flag '{...}'` value before sending.
+    Object,
+    /// v0.9.6. JSON array value (e.g. `web.get_cookies` `urls`).
+    /// Same coercion + validation flow as `Object`.
+    Array,
 }
 
 impl fmt::Display for ParamType {
@@ -25,6 +32,8 @@ impl fmt::Display for ParamType {
             ParamType::String => "string",
             ParamType::I64 => "i64",
             ParamType::U64 => "u64",
+            ParamType::Object => "object",
+            ParamType::Array => "array",
         })
     }
 }
@@ -242,7 +251,7 @@ registry; the receipt JSON returned to the caller is NOT scrubbed.",
             },
             ParamMeta {
                 name: "urls",
-                ty: ParamType::String,
+                ty: ParamType::Array,
                 doc: "Optional JSON array of URLs to restrict the cookie read. Maps to CDP `Network.getCookies({urls})`. Omit for all cookies in the active jar.",
                 required: false,
             },
@@ -448,7 +457,7 @@ entry when the grant path resolves (D5 / FND-0050).",
             },
             ParamMeta {
                 name: "source",
-                ty: ParamType::String,
+                ty: ParamType::Object,
                 doc: "JSON-encoded `CookieSource`. Inline: `{\"source\":\"inline\",\"cookies\":[{\"name\":\"sid\",\"value\":\"...\",\"domain\":\"...\"}]}`. Grant: `{\"source\":\"grant\",\"grant_id\":\"<id>\"}`.",
                 required: true,
             },

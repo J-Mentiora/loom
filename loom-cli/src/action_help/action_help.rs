@@ -199,6 +199,8 @@ pub fn validate_against_registry(
                         .map(|s| s.parse::<u64>().is_ok())
                         .unwrap_or(false)
             }
+            ParamType::Object => value.is_object(),
+            ParamType::Array => value.is_array(),
         };
         if !ty_ok {
             problems.push(format!(
@@ -282,5 +284,7 @@ fn _paramtype_exhaustiveness_proof(t: ParamType) -> &'static str {
         ParamType::String => "string",
         ParamType::I64 => "i64",
         ParamType::U64 => "u64",
+        ParamType::Object => "object",
+        ParamType::Array => "array",
     }
 }

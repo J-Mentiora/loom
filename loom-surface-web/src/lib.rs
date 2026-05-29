@@ -73,6 +73,10 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
         network_summary_json: Some(result.network_summary_json),
         return_value_json: None,
         return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     })
 }
 
@@ -129,6 +133,10 @@ fn evaluate_verb(a: Action) -> Result<Receipt, HostError> {
         network_summary_json: None,
         return_value_json: result.return_value_json,
         return_value_blob_ref: result.return_value_blob_ref,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     })
 }
 
@@ -215,6 +223,10 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
         network_summary_json: None,
         return_value_json: None,
         return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     })
 }
 
@@ -323,6 +335,25 @@ impl exports::loom::surface::web_surface::Guest for SurfaceWebImpl {
     }
     fn snapshot(a: Action) -> Result<Receipt, HostError> {
         dispatch("snapshot", a)
+    }
+    // v0.9.6 web-cookie-injection. Routed through the same `dispatch`
+    // path as click/type/etc. — the WIT-side action payload carries the
+    // JCS-encoded Action enum, and the host's verb-dispatch table runs
+    // the appropriate verb's `execute()`. Cookie verbs do not have
+    // surface-side custom routing (no `navigate_verb`-style helper)
+    // because they live entirely in loom-surfaces with no host-side
+    // typed-helper variant.
+    fn set_cookies(a: Action) -> Result<Receipt, HostError> {
+        dispatch("set_cookies", a)
+    }
+    fn get_cookies(a: Action) -> Result<Receipt, HostError> {
+        dispatch("get_cookies", a)
+    }
+    fn clear_cookies(a: Action) -> Result<Receipt, HostError> {
+        dispatch("clear_cookies", a)
+    }
+    fn delete_cookies(a: Action) -> Result<Receipt, HostError> {
+        dispatch("delete_cookies", a)
     }
 }
 
