@@ -1018,7 +1018,11 @@ impl WasmHostBridge for WasmBridge {
         use loom_host::session_executor::{Action as HostAction, ActionOutcome, SessionHandle};
         use loom_rpc::error_translator::error_translator::LoomErrorCode;
 
-        let session_id_str = action_session_id(&action);
+        // Owned copy so the borrow doesn't outlive the move-out of
+        // `action` further down (v0.9.7 follow-up rewrites action
+        // mid-dispatch for cookie grant resolution).
+        let session_id_str_owned = action_session_id(&action).to_string();
+        let session_id_str = session_id_str_owned.as_str();
 
         // Resolve the session from core.
         let session = self
@@ -1081,6 +1085,111 @@ impl WasmHostBridge for WasmBridge {
             }
             _ => {}
         }
+
+        // v0.9.7 follow-up A — Grant resolution + Follow-up B — per-cookie
+        // validation, both wired daemon-side because loom-surface-web
+        // (the WASM) doesn't yet depend on loom-surfaces. Together they
+        // bring the cookie verbs up to the user-facing contract
+        // documented in the v0.9.6 task spec:
+        //
+        //   - `set_cookies` with `CookieSource::Grant` resolves through
+        //     `core.vault.substitute_cookies(grant_id, session_id)` and
+        //     dispatches with the resolved cookie array as if the
+        //     operator had supplied `CookieSource::Inline { cookies }`.
+        //   - Per-cookie validation (`validate_cookie_params`: 64-cap,
+        //     name/value/expires) runs BEFORE the CDP envelope is
+        //     built. Validation failures short-circuit to a typed
+        //     `cookie_validation_error` receipt without ever touching
+        //     the chromium shim.
+        let action = match action {
+            Action::WebSetCookies { session_id, source } => {
+                use loom_core::manifest_writer::SessionId;
+                use loom_core::vault::GrantId;
+
+                // Step 1: resolve a `Grant` source to an `Inline` source by
+                // calling `Vault::substitute_cookies`. After this step the
+                // source is uniformly `inline` regardless of how the
+                // operator framed the request.
+                let resolved_source = if source.get("source").and_then(|v| v.as_str())
+                    == Some("grant")
+                {
+                    let grant_id = source
+                        .get("grant_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or(LoomErrorCode::SchemaViolation)?;
+                    let bytes = self
+                        .core
+                        .vault
+                        .substitute_cookies(
+                            GrantId(grant_id.to_string()),
+                            SessionId(session_id.clone()),
+                        )
+                        .map_err(|e| map_loom_error(&e))?;
+                    // The vault returns `{"schema_version":1, "cookies":[...]}`.
+                    // Lift the cookies array out, drop everything else.
+                    let blob: serde_json::Value = serde_json::from_slice(&bytes).map_err(|e| {
+                        tracing::error!("vault.substitute_cookies blob deserialise failed: {e}");
+                        LoomErrorCode::InternalError
+                    })?;
+                    serde_json::json!({
+                        "source": "inline",
+                        "cookies": blob
+                            .get("cookies")
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Array(vec![])),
+                    })
+                } else {
+                    source
+                };
+
+                // Step 2: per-cookie validation against the resolved inline
+                // cookies array. Mirrors loom_surfaces::cookie_types::
+                // validate_cookie_params but operates on the daemon-side
+                // serde_json::Value before the CDP envelope is built.
+                if let Some(cookies_arr) = resolved_source.get("cookies").and_then(|v| v.as_array())
+                {
+                    // Deserialise into typed NetworkCookieParam so we can
+                    // use the canonical validator + propagate the typed
+                    // CookieValidationError variant to the wire receipt.
+                    let parse_result: Result<
+                        Vec<loom_surfaces::cookie_types::NetworkCookieParam>,
+                        _,
+                    > = serde_json::from_value(serde_json::Value::Array(cookies_arr.clone()));
+                    match parse_result {
+                        Ok(typed) => {
+                            if let Err(e) =
+                                loom_surfaces::cookie_types::validate_cookie_params(&typed)
+                            {
+                                return Ok(cookie_validation_error_receipt(
+                                    session.allocate_action_id(),
+                                    session_id_str,
+                                    cookie_validation_code(&e),
+                                    e.to_string(),
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            // Malformed cookie shape (e.g. a `value` field
+                            // that isn't a string). Surface as a validation
+                            // error rather than dispatching a broken
+                            // envelope to the shim.
+                            return Ok(cookie_validation_error_receipt(
+                                session.allocate_action_id(),
+                                session_id_str,
+                                "invalid_shape",
+                                format!("cookie payload shape error: {e}"),
+                            ));
+                        }
+                    }
+                }
+
+                Action::WebSetCookies {
+                    session_id,
+                    source: resolved_source,
+                }
+            }
+            other => other,
+        };
 
         let handle = tokio::runtime::Handle::current();
         let session_handle = SessionHandle {
@@ -1256,6 +1365,73 @@ fn profile_restricted_evaluate_receipt(
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+    }
+}
+
+/// v0.9.7 follow-up: build an error Receipt for a per-cookie validation
+/// rejection in `web.set_cookies`. The typed `CookieValidationError`
+/// taxonomy is surfaced on the receipt's `error.kind` ("cookie_validation_error")
+/// and `error.detail.code` (one of `name_empty` / `name_invalid` /
+/// `value_too_large` / `too_many_cookies` / `invalid_expires`), mirroring
+/// the verb-side error mapper that runs when the
+/// `loom-surface-web ↔ loom-surfaces` wiring closes.
+fn cookie_validation_error_receipt(
+    action_id: u64,
+    session_id: &str,
+    code: &str,
+    message: String,
+) -> Receipt {
+    use loom_rpc::host_service_adapter::host_service_adapter::{ReceiptError, ReceiptStatus};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Receipt {
+        action_id,
+        session_id: session_id.to_string(),
+        status: ReceiptStatus::Error,
+        timing_ticks: 0,
+        side_effects: vec![],
+        error: Some(ReceiptError {
+            kind: "cookie_validation_error".to_string(),
+            detail: Some(serde_json::json!({
+                "code": code,
+                "message": message,
+            })),
+        }),
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: Some(now),
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: vec![],
+        network_summary: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    }
+}
+
+/// v0.9.7 follow-up: map a typed `CookieValidationError` variant to the
+/// snake_case error-code string used on the wire error receipt.
+fn cookie_validation_code(e: &loom_surfaces::cookie_types::CookieValidationError) -> &'static str {
+    use loom_surfaces::cookie_types::CookieValidationError as E;
+    match e {
+        E::NameEmpty => "name_empty",
+        E::NameInvalid { .. } => "name_invalid",
+        E::ValueTooLarge { .. } => "value_too_large",
+        E::InvalidSameSite(_) => "invalid_same_site",
+        E::InvalidExpires(_) => "invalid_expires",
+        E::TooManyCookies(_) => "too_many_cookies",
     }
 }
 
@@ -1467,23 +1643,19 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         // SetCookiesVerb::execute() path is wired (loom-surface-web
         // doesn't currently depend on loom-surfaces).
         //
-        // Grant resolution is similarly out-of-band here for now —
-        // only the Inline source is supported via the direct CDP
-        // path. Grant payloads short-circuit and produce a "not
-        // implemented" error via the WASM path.
+        // Grant resolution is now performed upstream in
+        // `dispatch_action_blocking` (v0.9.7 follow-up A) — by the
+        // time we get here the source should always be `inline`.
+        // The non-inline branch below is defensive: if some other
+        // caller (e.g. tests) hands us a `grant` source we emit an
+        // empty no-op envelope rather than trapping.
         Action::WebSetCookies { source, .. } => {
             // source = {"source":"inline","cookies":[...]} or
             // {"source":"grant","grant_id":"..."}
             let kind = source.get("source").and_then(|v| v.as_str())?;
             if kind != "inline" {
-                // Grant path not yet wired daemon-side; emit a no-op
-                // envelope that chromium will accept (empty cookies
-                // array) so the verb at least returns a receipt rather
-                // than trapping. Operators see a successful receipt
-                // with no cookies set; production grant-path lands
-                // when loom-surface-web ↔ loom-surfaces is wired.
                 tracing::warn!(
-                    "set_cookies grant path not supported daemon-side; emitting empty Network.setCookies",
+                    "build_chromium_args saw set_cookies with non-inline source after dispatcher should have resolved it; emitting empty Network.setCookies",
                 );
                 return Some({
                     let v = Value::Map(vec![
@@ -2426,6 +2598,117 @@ mod tests {
             LoomErrorCode::ProfileRestricted.as_wire(),
             "profile_restricted"
         );
+    }
+
+    // ─── v0.9.7 follow-ups A + B — cookie validation + grant ────────────
+
+    /// Each `CookieValidationError` variant maps to a stable snake_case
+    /// wire string. The operator's `loom action web.set_cookies` failure
+    /// receipt carries `detail.code = <wire string>` so dashboards can
+    /// group by validation reason.
+    #[test]
+    fn cookie_validation_code_covers_all_variants() {
+        use loom_surfaces::cookie_types::CookieValidationError as E;
+        assert_eq!(cookie_validation_code(&E::NameEmpty), "name_empty");
+        assert_eq!(
+            cookie_validation_code(&E::NameInvalid { ch: ';' }),
+            "name_invalid"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::ValueTooLarge { size: 5_000 }),
+            "value_too_large"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::InvalidSameSite("foo".to_string())),
+            "invalid_same_site"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::InvalidExpires(f64::NAN)),
+            "invalid_expires"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::TooManyCookies(65)),
+            "too_many_cookies"
+        );
+    }
+
+    /// Receipt envelope shape returned when daemon-side validation
+    /// rejects a `web.set_cookies` payload. Pins the wire fields the
+    /// CLI reproducer reads (`error.kind` and `error.detail.code`).
+    #[test]
+    fn cookie_validation_error_receipt_carries_required_fields() {
+        let r = cookie_validation_error_receipt(
+            7,
+            "01HZSESSION",
+            "too_many_cookies",
+            "65 cookies provided, max is 64".to_string(),
+        );
+        assert_eq!(r.action_id, 7);
+        assert_eq!(r.session_id, "01HZSESSION");
+        assert!(matches!(
+            r.status,
+            loom_rpc::host_service_adapter::host_service_adapter::ReceiptStatus::Error
+        ));
+        let err = r.error.expect("error envelope present");
+        assert_eq!(err.kind, "cookie_validation_error");
+        let detail = err.detail.expect("detail present");
+        assert_eq!(detail["code"], "too_many_cookies");
+        assert_eq!(detail["message"], "65 cookies provided, max is 64");
+        // Synthesised error — none of the success-path fields populated.
+        assert!(r.set_cookies_result.is_none());
+        assert!(r.url.is_none());
+        assert!(r.dom_snapshot_hash.is_none());
+        assert_eq!(r.timing_ticks, 0);
+    }
+
+    /// `build_chromium_args` defensively emits an empty no-op envelope
+    /// for a `set_cookies` action whose source is still `grant` by the
+    /// time it reaches the CDP encoder — the dispatcher should have
+    /// resolved it upstream, but tests / future callers may bypass
+    /// that path.
+    #[test]
+    fn build_chromium_args_set_cookies_grant_source_emits_empty_no_op() {
+        let action = Action::WebSetCookies {
+            session_id: s("sess"),
+            source: serde_json::json!({
+                "source": "grant",
+                "grant_id": "grn_abc",
+            }),
+        };
+        let msg = decode_cdp(&action).expect("envelope produced");
+        assert_eq!(msg.method, "Network.setCookies");
+        // params.cookies = [] (empty array)
+        let cookies = params_get(&msg, "cookies").expect("cookies param present");
+        match cookies {
+            ciborium::value::Value::Array(arr) => assert!(arr.is_empty()),
+            other => panic!("expected empty array, got {other:?}"),
+        }
+    }
+
+    /// `build_chromium_args` for a resolved inline `set_cookies` passes
+    /// the cookies array through to the CDP envelope. This is the
+    /// shape the dispatcher hands `build_chromium_args` after grant
+    /// resolution.
+    #[test]
+    fn build_chromium_args_set_cookies_inline_passes_through_cookies() {
+        let action = Action::WebSetCookies {
+            session_id: s("sess"),
+            source: serde_json::json!({
+                "source": "inline",
+                "cookies": [
+                    {"name": "sid", "value": "abc", "domain": "example.com", "path": "/"}
+                ],
+            }),
+        };
+        let msg = decode_cdp(&action).expect("envelope produced");
+        assert_eq!(msg.method, "Network.setCookies");
+        let cookies = params_get(&msg, "cookies").expect("cookies param present");
+        match cookies {
+            ciborium::value::Value::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
     }
 
     // ─── existing tests ─────────────────────────────────────────────────

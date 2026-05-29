@@ -363,7 +363,7 @@ pub fn print_error_with_color(result: &Result<(), CliError>, stderr_color_enable
 /// failure variant. Pure function.
 pub fn connection_message(err: &ConnectionError) -> &'static str {
     match err {
-        ConnectionError::DaemonNotRunning => "Error: Loom daemon is not running. Try: loom serve",
+        ConnectionError::DaemonNotRunning => "Error: Loom Daemon is not running. Try: loom serve",
         ConnectionError::ConnectionTimeout => {
             "Error: Daemon unresponsive after 30s. Check `loom doctor`."
         }

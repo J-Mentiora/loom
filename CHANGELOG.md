@@ -134,6 +134,35 @@ consumers (notably `mentiora-ai/agentic-test-studio`) can pin
 - **`docs/loom-vault-audit.md`** documents `CookiesSubstituted` +
   `CookiesCleared` audit kinds with canonical-bytes shapes.
 
+### Follow-ups landed before release
+
+These three items were tracked as v0.9.7 follow-ups during the v0.9.6
+build but landed on the same PR before merge.
+
+- **Daemon-side grant resolution for `web.set_cookies`** — the
+  dispatcher now resolves `CookieSource::Grant` to `Inline` by
+  calling `Vault::substitute_cookies(grant_id, session_id)` before
+  the WASM verb runs. Previously the daemon's `build_chromium_args`
+  emitted an empty Network.setCookies envelope for grant sources;
+  now it sees a fully-resolved cookie array exactly as if the
+  operator had passed `CookieSource::Inline` directly.
+- **Per-cookie validation taxonomy daemon-side** — validation
+  failures (`name_empty`, `name_invalid`, `value_too_large`,
+  `invalid_same_site`, `invalid_expires`, `too_many_cookies`) now
+  short-circuit to a typed `cookie_validation_error` receipt with
+  `detail.code = <snake_case taxonomy string>` *before* the
+  chromium shim is touched. Operators can group validation failures
+  by code in dashboards rather than parsing free-text error
+  messages.
+- **Daemon-startup parallel manifest sweep** — `StartupManager::
+  sweep_manifests` now fans out per-session WAL processing across
+  up to 16 worker threads via `std::thread::scope` (capped by
+  `available_parallelism`). Per-session isolation is already a
+  design property of the sweep, so concurrent processing is safe.
+  Single-threaded fast path retained for corpora < 8 sessions to
+  avoid `thread::scope` overhead. Recovered/crashed counters
+  aggregate via atomics; failures via a single Mutex (rare path).
+
 ### Deferred (still) to a future release
 
 - **Daemon-layer policy gate.** Per D9 / FND-0021, the verb-level

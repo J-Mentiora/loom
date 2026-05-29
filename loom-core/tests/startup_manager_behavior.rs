@@ -434,3 +434,152 @@ fn replay_complete_is_not_aborted() {
         "replay_complete is its own status, not 'aborted:replay_complete'"
     );
 }
+
+// ---------------------------------------------------------------------------
+// v0.9.7 follow-up — parallel sweep for large corpora
+// ---------------------------------------------------------------------------
+
+/// 64 orphaned sessions sweep correctly via the parallel path
+/// (the threshold for parallel fan-out is 8 sessions; 64 exercises
+/// multiple worker chunks across the 16-worker cap).
+/// Verifies recovered/crashed counters AND that every session ends
+/// up with a RuntimeCrash WAL entry — order-independent because
+/// per-session isolation means workers can finish in any order.
+#[test]
+fn parallel_sweep_processes_all_64_orphaned_sessions() {
+    let (sm, tmp) = fixture();
+    let sessions_root = tmp.path().join("sessions");
+    let mw = LocalManifestWriter::new(
+        sessions_root.clone(),
+        Observability::new(tmp.path().join("loom-par.log"), false),
+    );
+
+    let mut session_ids = Vec::with_capacity(64);
+    for _ in 0..64 {
+        let id =
+            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        mw.open_manifest(id.clone(), None).unwrap();
+        session_ids.push(id);
+    }
+
+    let (recovered, crashed, failed) = sm.sweep_manifests().unwrap();
+
+    assert_eq!(
+        crashed, 64,
+        "all 64 orphaned sessions must be marked crashed"
+    );
+    assert_eq!(recovered, 0);
+    assert!(failed.is_empty(), "no sweep failures expected");
+
+    for id in &session_ids {
+        let wal = sessions_root.join(&id.0).join("manifest.wal");
+        let content = fs::read_to_string(&wal)
+            .unwrap_or_else(|_| panic!("manifest.wal missing for {}", id.0));
+        let last = content
+            .lines()
+            .last()
+            .unwrap_or_else(|| panic!("empty WAL for {}", id.0));
+        let entry: serde_json::Value = serde_json::from_str(last).unwrap();
+        assert_eq!(
+            entry["kind"], "runtime_crash",
+            "session {} must have runtime_crash terminal",
+            id.0
+        );
+    }
+}
+
+/// Mixed corpus — 50 healthy (terminal) + 50 orphaned sessions exercise
+/// the parallel path with a heterogeneous workload. The counters MUST
+/// match exactly regardless of worker chunk boundaries, so this also
+/// guards against the atomic-aggregation logic regressing.
+#[test]
+fn parallel_sweep_aggregates_counters_correctly_for_mixed_corpus() {
+    let (sm, tmp) = fixture();
+    let sessions_root = tmp.path().join("sessions");
+    let mw = LocalManifestWriter::new(
+        sessions_root.clone(),
+        Observability::new(tmp.path().join("loom-mix.log"), false),
+    );
+
+    // 50 healthy (closed) sessions.
+    for _ in 0..50 {
+        let id =
+            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        mw.open_manifest(id.clone(), None).unwrap();
+        mw.append(
+            id,
+            ManifestEntry::SessionTerminal {
+                action_id: 0,
+                emitted_at_ms: now_ms(),
+                reason: "close".into(),
+                prev_hash: String::new(),
+            },
+        )
+        .unwrap();
+    }
+
+    // 50 orphaned (no terminal entry) sessions.
+    for _ in 0..50 {
+        let id =
+            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        mw.open_manifest(id, None).unwrap();
+    }
+
+    let (recovered, crashed, failed) = sm.sweep_manifests().unwrap();
+
+    assert_eq!(recovered, 50, "50 healthy sessions accounted for");
+    assert_eq!(crashed, 50, "50 orphaned sessions marked crashed");
+    assert!(failed.is_empty(), "no sweep failures expected");
+}
+
+/// Per-session isolation under the parallel path — one corrupt WAL
+/// among many must not stop the rest from being processed. Worker
+/// threads must independently surface their failures via the Mutex
+/// rather than poisoning each other.
+#[test]
+fn parallel_sweep_isolates_failures_per_session() {
+    let (sm, tmp) = fixture();
+    let sessions_root = tmp.path().join("sessions");
+    let mw = LocalManifestWriter::new(
+        sessions_root.clone(),
+        Observability::new(tmp.path().join("loom-iso.log"), false),
+    );
+
+    // 30 healthy orphaned sessions — should all get RuntimeCrash.
+    for _ in 0..30 {
+        let id =
+            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        mw.open_manifest(id, None).unwrap();
+    }
+
+    // 5 corrupt-WAL sessions — written by hand, not via open_manifest,
+    // so they hit the JSON-parse error path inside process_session.
+    for i in 0..5 {
+        let bad_id = format!("01corruptedwal{i:0<22}");
+        let bad_dir = sessions_root.join(&bad_id);
+        fs::create_dir_all(&bad_dir).unwrap();
+        fs::write(bad_dir.join("manifest.wal"), b"not valid json\n").unwrap();
+    }
+
+    let (recovered, crashed, failed) = sm.sweep_manifests().unwrap();
+
+    assert_eq!(crashed, 30, "30 orphaned sessions still recovered");
+    assert_eq!(recovered, 0);
+    assert_eq!(
+        failed.len(),
+        5,
+        "all 5 corrupt sessions surface as failures, none lost"
+    );
+    for f in &failed {
+        assert_eq!(f.error_code, "sweep_error");
+    }
+}
+
+/// Empty corpus — the sweep returns (0, 0, []) without panicking.
+/// Guards the early-return in the parallel impl.
+#[test]
+fn sweep_manifests_returns_zeros_for_empty_sessions_dir() {
+    let (sm, _tmp) = fixture();
+    let (recovered, crashed, failed) = sm.sweep_manifests().unwrap();
+    assert_eq!((recovered, crashed, failed.len()), (0, 0, 0));
+}
