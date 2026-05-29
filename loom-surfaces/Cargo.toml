@@ -25,6 +25,7 @@ serde_json = { workspace = true }
 serde_jcs = { workspace = true }
 ciborium = { workspace = true }
 thiserror = { workspace = true }
+zeroize = { workspace = true }
 
 # wit-bindgen guest bindings — declared at compile time from
 # ../wit/loom-surface.wit. The build.rs + wit_bindgen! macro invocation

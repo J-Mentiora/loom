@@ -68,7 +68,13 @@ pub struct NetResp {
     pub body: Vec<u8>,
 }
 
-/// Supported credential types. Only `OAuth` is allowed at v1.
+/// Supported credential types. v0.9.4 allowed only `OAuth`; v0.9.5 adds
+/// `Cookie` for the vault-mediated web-cookie-injection feature. `ApiKey`,
+/// `Saml`, `Basic` are reserved enum slots — `grant()` still rejects them
+/// with `VaultCredentialTypeUnsupported` until a future release adds their
+/// gating logic. (D3 simplification: rather than a separate `VaultPolicy`
+/// struct, the `match` block in `LocalVault::grant()` IS the per-
+/// CredentialType policy table — same behavior, less ceremony.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialType {
@@ -76,6 +82,7 @@ pub enum CredentialType {
     ApiKey,
     Saml,
     Basic,
+    Cookie,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -187,6 +194,31 @@ pub trait Vault: Send + Sync {
     /// Post: req.headers["Authorization"] mutated; GrantConsumed audit
     /// entry appended; secret bytes zeroized on function exit.
     fn substitute(&self, grant: GrantId, req: &mut NetRequest) -> Result<(), LoomError>;
+
+    /// Cookie-specific substitution path (v0.9.5 / D5). Parallel to
+    /// `substitute()` but for the web-cookie-injection feature: resolves
+    /// a `Cookie`-typed grant, validates session binding, fetches the
+    /// keychain blob (JSON `{"schema_version":1, "cookies":[...]}`), and
+    /// returns the deserialized `Vec<NetworkCookieParam>` for the daemon
+    /// to encode into a CDP `Network.setCookies` envelope. Raw cookie
+    /// values appear here in `Zeroizing<Vec<u8>>` and are dropped at
+    /// function exit; they never cross MCP/WASM.
+    ///
+    /// Pre: grant alive ∧ stored session_id matches `session` ∧ ttl OK.
+    /// Post: `CookiesSubstituted{grant_id, session_id, cookie_names}`
+    /// audit appended; cookie *names* in the audit chain (deterministic,
+    /// replay-equal); cookie *values* are NEVER in audit / receipt / logs.
+    ///
+    /// Returns: a `Vec<u8>` of the raw keychain blob bytes (JSON-encoded
+    /// cookie array). The caller (daemon) deserializes into the typed
+    /// `NetworkCookieParam` struct living in `loom-surfaces::cookie_types`;
+    /// keeping the byte-level boundary here avoids a `loom-core →
+    /// loom-surfaces` dep edge.
+    fn substitute_cookies(
+        &self,
+        grant: GrantId,
+        session: SessionId,
+    ) -> Result<Zeroizing<Vec<u8>>, LoomError>;
 
     /// Revoke a grant. Subsequent `substitute` returns VaultGrantRevoked.
     fn revoke(&self, grant: GrantId, reason: RevokeReason) -> Result<(), LoomError>;

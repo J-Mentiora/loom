@@ -12,11 +12,15 @@ pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (17) ----
+// ---- Module declarations (22) ----
 pub mod cdp_message_encoder;
+pub mod clear_cookies_verb;
 pub mod click_verb;
+pub mod cookie_types;
+pub mod delete_cookies_verb;
 pub mod error_mapper;
 pub mod evaluate_verb;
+pub mod get_cookies_verb;
 pub mod guest_bindings;
 pub mod hit_test;
 pub mod host_bindings;
@@ -27,6 +31,7 @@ pub mod safety;
 pub mod screenshot_verb;
 pub mod scroll_verb;
 pub mod select_verb;
+pub mod set_cookies_verb;
 pub mod snapshot_verb;
 pub mod type_text_verb;
 pub mod wait_verb;

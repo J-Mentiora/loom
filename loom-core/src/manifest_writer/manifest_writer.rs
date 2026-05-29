@@ -123,6 +123,14 @@ pub enum AuditKind {
     /// (A-W3.1). Canonical bytes: `{pinned_owner, current_owner}`. The
     /// daemon must be restarted to re-pin.
     SecretServiceOwnerChanged,
+    /// v0.9.5 — cookie credentials substituted via `Vault::substitute_cookies`.
+    /// Canonical bytes: `{grant_id, session_id, cookie_names}` — cookie
+    /// names land in the audit chain for replay determinism; values NEVER
+    /// appear in audit / receipts / logs. Per D5 / FND-0048.
+    CookiesSubstituted,
+    /// v0.9.5 — `web.clear_cookies` issued. Canonical bytes:
+    /// `{target_id, session_id, count_before}`. Per D9 FND-0050.
+    CookiesCleared,
     /// Forward-compatibility (D39). Older daemons reading a manifest
     /// written by a newer daemon with an `AuditKind` they don't know
     /// see this variant via `#[serde(other)]`. Validators MUST treat
