@@ -314,3 +314,180 @@ mod tests {
         assert_eq!(out, "[]");
     }
 }
+
+#[cfg(test)]
+mod cookie_replay_edge_case_tests {
+    use super::*;
+
+    fn val_map(entries: &[(&str, &str, &str, &str)]) -> ReplayCookieValues {
+        entries
+            .iter()
+            .map(|(n, d, p, v)| ((n.to_string(), d.to_string(), p.to_string()), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn substitute_cookies_array_with_no_objects_returns_invalid_payload() {
+        let recorded = r#"[null, 42, "string"]"#;
+        let err = substitute_cookie_values(1, recorded, &val_map(&[])).expect_err("must error");
+        match err {
+            ReplayError::InvalidPayload { reason, .. } => {
+                assert!(reason.contains("JSON object"), "got: {reason}");
+            }
+            other => panic!("expected InvalidPayload, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn substitute_cookies_with_missing_name_field_uses_empty_string_key() {
+        // RFC tolerance: a cookie without `name` defaults to "" in the
+        // tuple key. The values map can supply `("", domain, path)` to
+        // satisfy it.
+        let recorded = r#"[{"domain":"x.com","path":"/","value":"OLD"}]"#;
+        let values = val_map(&[("", "x.com", "/", "NEW")]);
+        let out = substitute_cookie_values(1, recorded, &values).expect("ok");
+        assert!(out.contains("NEW"));
+    }
+
+    #[test]
+    fn substitute_cookies_with_null_path_uses_empty_string_default() {
+        // Path = null in JSON should be treated as empty (same as
+        // missing). The marshaller's D13 sort uses the same convention,
+        // so this matches the canonical-bytes side.
+        let recorded = r#"[{"name":"sid","domain":"x.com","path":null,"value":"OLD"}]"#;
+        let values = val_map(&[("sid", "x.com", "", "NEW")]);
+        let out = substitute_cookie_values(1, recorded, &values).expect("ok");
+        assert!(out.contains("NEW"));
+    }
+
+    #[test]
+    fn substitute_preserves_extra_fields_on_cookies_forward_compat() {
+        // Extra fields on cookie objects (e.g. `partition_key`,
+        // `same_site`, future additions) must survive substitution.
+        let recorded = r#"[{"name":"sid","domain":"x.com","path":"/","value":"OLD","same_site":"Lax","secure":true,"partition_key":{"top":"x"}}]"#;
+        let values = val_map(&[("sid", "x.com", "/", "NEW")]);
+        let out = substitute_cookie_values(1, recorded, &values).expect("ok");
+        assert!(out.contains("\"value\":\"NEW\""));
+        assert!(out.contains("\"same_site\":\"Lax\""));
+        assert!(out.contains("\"secure\":true"));
+        assert!(out.contains("\"partition_key\""));
+    }
+
+    #[test]
+    fn substitute_with_excess_values_map_entries_only_uses_matching_tuples() {
+        // The values map can have extra entries that don't match any
+        // cookie in the recorded receipt. They're ignored.
+        let recorded = r#"[{"name":"sid","domain":"x.com","path":"/","value":"OLD"}]"#;
+        let values = val_map(&[
+            ("sid", "x.com", "/", "NEW"),
+            ("unused1", "y.com", "/", "ignored"),
+            ("unused2", "z.com", "/", "ignored"),
+        ]);
+        let out = substitute_cookie_values(1, recorded, &values).expect("ok");
+        assert!(out.contains("NEW"));
+        assert!(!out.contains("ignored"));
+    }
+
+    #[test]
+    fn substitute_empty_array_succeeds_regardless_of_values_map() {
+        let values = val_map(&[("sid", "x.com", "/", "v")]);
+        let out = substitute_cookie_values(1, "[]", &values).expect("ok");
+        assert_eq!(out, "[]");
+    }
+
+    #[test]
+    fn substitute_non_array_recorded_payload_returns_invalid_payload() {
+        let recorded = r#"{"not": "an array"}"#;
+        let err = substitute_cookie_values(7, recorded, &val_map(&[])).expect_err("must error");
+        match err {
+            ReplayError::InvalidPayload { action_id, reason } => {
+                assert_eq!(action_id, 7);
+                assert!(reason.contains("array"));
+            }
+            other => panic!("expected InvalidPayload, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn substitute_malformed_recorded_json_returns_invalid_payload() {
+        let recorded = r#"[{"name":"sid","domain":"x.com","#; // truncated
+        let err = substitute_cookie_values(7, recorded, &val_map(&[])).expect_err("must error");
+        match err {
+            ReplayError::InvalidPayload { action_id, reason } => {
+                assert_eq!(action_id, 7);
+                assert!(reason.contains("parse"));
+            }
+            other => panic!("expected InvalidPayload, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn substitute_with_unicode_in_tuple_key_round_trips() {
+        let recorded =
+            "[{\"name\":\"séss\",\"domain\":\"münchen.de\",\"path\":\"/à\",\"value\":\"OLD\"}]";
+        let values = val_map(&[("séss", "münchen.de", "/à", "NEW")]);
+        let out = substitute_cookie_values(1, recorded, &values).expect("ok");
+        assert!(out.contains("NEW"));
+        assert!(out.contains("séss"));
+        assert!(out.contains("münchen.de"));
+    }
+
+    #[test]
+    fn substitute_action_id_zero_is_legitimate_not_treated_as_sentinel() {
+        // action_id 0 is a valid action ID and must propagate into the
+        // error variant, not be treated as a missing-id sentinel.
+        let recorded = r#"[{"name":"sid","domain":"x.com","path":"/","value":"OLD"}]"#;
+        let err = substitute_cookie_values(0, recorded, &val_map(&[])).expect_err("must error");
+        if let ReplayError::MissingCookieValue { action_id, .. } = err {
+            assert_eq!(action_id, 0);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn parse_replay_cookie_values_object_with_pipe_in_value_round_trips() {
+        // The pipe character is the key delimiter, but it's allowed
+        // INSIDE the value. The parser splits the KEY on '|' but the
+        // value is a plain string.
+        let json = r#"{"sid|x.com|/": "value|with|pipes"}"#;
+        let map = parse_replay_cookie_values(json).expect("ok");
+        assert_eq!(
+            map.get(&("sid".into(), "x.com".into(), "/".into())),
+            Some(&"value|with|pipes".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_replay_cookie_values_with_empty_string_in_key_components() {
+        // Empty name / domain / path components are allowed (e.g.
+        // a cookie with default-empty path).
+        let json = r#"{"|x.com|": "v1", "sid||": "v2", "||": "v3"}"#;
+        let map = parse_replay_cookie_values(json).expect("ok");
+        assert_eq!(map.len(), 3);
+        assert_eq!(
+            map.get(&("".into(), "x.com".into(), "".into())),
+            Some(&"v1".to_string())
+        );
+        assert_eq!(
+            map.get(&("sid".into(), "".into(), "".into())),
+            Some(&"v2".to_string())
+        );
+        assert_eq!(
+            map.get(&("".into(), "".into(), "".into())),
+            Some(&"v3".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_replay_cookie_values_with_more_than_three_pipe_segments_treats_extras_as_path() {
+        // Only the first two '|' split. Extras become part of the path.
+        // This is the documented contract (splitn(3, '|')); pin it.
+        let json = r#"{"sid|x.com|/a|b|c": "v"}"#;
+        let map = parse_replay_cookie_values(json).expect("ok");
+        assert_eq!(
+            map.get(&("sid".into(), "x.com".into(), "/a|b|c".into())),
+            Some(&"v".to_string())
+        );
+    }
+}

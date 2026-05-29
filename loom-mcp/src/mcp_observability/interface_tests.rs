@@ -222,3 +222,167 @@ fn request_span_holds_request_id_and_mcp_method() {
     }
     let _ = _ck;
 }
+
+// === v0.9.6 follow-up: redact_cookie_paths_in_place edge cases ===
+
+#[test]
+fn redact_cookie_paths_handles_deeply_nested_cookies_arrays() {
+    // The walker recurses into nested objects; cookies inside several
+    // levels of nesting (e.g. wrapped in audit/diagnostic envelopes)
+    // still get scrubbed.
+    let mut v = serde_json::json!({
+        "outer": {
+            "middle": {
+                "inner": {
+                    "params": {
+                        "source": {
+                            "cookies": [
+                                {"name": "deep_sid", "value": "DEEPLY_HIDDEN", "domain": "x"}
+                            ]
+                        }
+                    }
+                }
+            }
+        }
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("DEEPLY_HIDDEN"));
+    assert!(s.contains("[REDACTED]"));
+    assert!(s.contains("\"name\":\"deep_sid\""));
+}
+
+#[test]
+fn redact_cookie_paths_handles_cookies_array_inside_array() {
+    // The walker recurses into arrays-of-objects too. A non-cookies
+    // wrapper array containing objects with cookies arrays must scrub.
+    let mut v = serde_json::json!({
+        "batch": [
+            {"cookies": [{"name": "a", "value": "AAAA", "domain": "x"}]},
+            {"cookies": [{"name": "b", "value": "BBBB", "domain": "y"}]}
+        ]
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("AAAA"));
+    assert!(!s.contains("BBBB"));
+    let redacted = s.matches("[REDACTED]").count();
+    assert_eq!(redacted, 2);
+}
+
+#[test]
+fn redact_cookie_paths_no_op_when_no_cookies_anywhere() {
+    let mut v = serde_json::json!({
+        "params": {"session_id": "S", "url": "https://x.com", "selector": "#submit"}
+    });
+    let snapshot = v.clone();
+    redact_cookie_paths_in_place(&mut v);
+    assert_eq!(v, snapshot, "non-cookie tool payload must pass through");
+}
+
+#[test]
+fn redact_cookie_paths_no_op_on_empty_cookies_array() {
+    let mut v = serde_json::json!({
+        "params": {"cookies": []}
+    });
+    let snapshot = v.clone();
+    redact_cookie_paths_in_place(&mut v);
+    assert_eq!(v, snapshot);
+}
+
+#[test]
+fn redact_cookie_paths_handles_cookies_array_at_root() {
+    // The walker recurses into root-level cookies arrays too.
+    let mut v = serde_json::json!({
+        "cookies": [{"name": "sid", "value": "TOP_LEVEL_SECRET", "domain": "x"}]
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("TOP_LEVEL_SECRET"));
+    assert!(s.contains("[REDACTED]"));
+}
+
+#[test]
+fn redact_cookie_paths_cookies_result_with_partial_value_redacts() {
+    let mut v = serde_json::json!({
+        "result": {
+            "get_cookies_result": [
+                {"name": "sid", "value": "SECRET1", "domain": "x"},
+                {"name": "uid"}  // no value field — no-op
+            ]
+        }
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("SECRET1"));
+    let redacted = s.matches("[REDACTED]").count();
+    assert_eq!(redacted, 1);
+}
+
+#[test]
+fn redact_cookie_paths_with_cookies_array_containing_non_object_entries() {
+    // Array entries that aren't objects are skipped (no redaction
+    // possible, no panic).
+    let mut v = serde_json::json!({
+        "cookies": [
+            {"name": "sid", "value": "S1"},
+            "string_entry_skipped",
+            42,
+            null
+        ]
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("S1"));
+    assert!(s.contains("[REDACTED]"));
+    // Non-object entries survive untouched.
+    assert!(s.contains("string_entry_skipped"));
+    assert!(s.contains("42"));
+}
+
+#[test]
+fn redact_cookie_paths_replaces_value_even_if_value_is_object() {
+    // A `value` field that's an object (not a string) would normally
+    // be preserved by the JSON, but the redactor overwrites it with
+    // "[REDACTED]" regardless of type. This is conservative: the
+    // operator who put a non-string in `value` likely intended to
+    // hide it.
+    let mut v = serde_json::json!({
+        "cookies": [{"name": "sid", "value": {"weird_nested": "secret"}}]
+    });
+    redact_cookie_paths_in_place(&mut v);
+    let s = v.to_string();
+    assert!(!s.contains("weird_nested"));
+    assert!(s.contains("[REDACTED]"));
+}
+
+#[test]
+fn redact_arguments_with_non_existing_cookie_tool_passes_through_unchanged() {
+    let obs = McpObservability::new(true);
+    let args = serde_json::json!({"foo": "bar"});
+    let out = obs.redact_arguments("loom.web.set_cookies_typo", args.clone());
+    // Not in COOKIE_REDACTED_TOOL_NAMES → no redaction.
+    assert_eq!(out, args);
+}
+
+#[test]
+fn redact_arguments_cookie_tool_with_redact_vault_false_passes_through() {
+    let obs = McpObservability::new(false);
+    let args = serde_json::json!({
+        "source": {"source": "inline", "cookies": [{"name": "sid", "value": "S"}]}
+    });
+    let out = obs.redact_arguments("loom.web.set_cookies", args.clone());
+    // redact_vault is OFF → values pass through.
+    let s = out.to_string();
+    assert!(s.contains("\"value\":\"S\""));
+}
+
+#[test]
+fn cookie_redacted_tool_names_does_not_include_non_cookie_loom_web_tools() {
+    // Sanity: random web tools must NOT be in the cookie redaction
+    // list. Their redaction (if any) is handled by other paths.
+    assert!(!COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.navigate"));
+    assert!(!COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.click"));
+    assert!(!COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.web.evaluate"));
+    assert!(!COOKIE_REDACTED_TOOL_NAMES.contains(&"loom.session.create"));
+}

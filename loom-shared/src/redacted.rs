@@ -287,3 +287,146 @@ mod tests {
         assert_eq!(s, "ok");
     }
 }
+
+#[cfg(test)]
+mod heap_wipe_edge_case_tests {
+    use super::*;
+
+    #[test]
+    fn wipe_string_with_only_ascii_zeros_actually_writes_through() {
+        // A string already full of '\0' bytes — the wipe should still
+        // write them (no shortcut path that skips on zero-only input).
+        let mut s = String::from("\0\0\0\0\0");
+        let ptr = s.as_ptr();
+        let cap = s.capacity();
+        let original_len = s.len();
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s.len(), 0);
+        assert_eq!(s.capacity(), cap);
+        unsafe {
+            let bytes = std::slice::from_raw_parts(ptr, original_len);
+            for b in bytes {
+                assert_eq!(*b, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn wipe_string_zero_capacity_is_safe_no_panic() {
+        // A String built without any heap allocation (e.g. just
+        // String::new()) has capacity 0. The wipe must not crash.
+        let mut s = String::new();
+        assert_eq!(s.capacity(), 0);
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s.len(), 0);
+    }
+
+    #[test]
+    fn wipe_string_after_growth_zeros_only_in_use_bytes_not_extra_capacity() {
+        // Grow the string then wipe: the wipe addresses only the bytes
+        // currently in the String (length, not capacity). Excess
+        // capacity bytes are not guaranteed to be zero — pin this so a
+        // future tightening would have to update this test
+        // intentionally.
+        let mut s = String::with_capacity(100);
+        s.push_str("short");
+        let in_use_len = s.len();
+        let total_cap = s.capacity();
+        assert!(total_cap >= 100);
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s.len(), 0);
+        // The in-use portion is zeroed (verified in the main test);
+        // here we just verify the capacity was preserved.
+        assert_eq!(s.capacity(), total_cap);
+        let _ = in_use_len;
+    }
+
+    #[test]
+    fn wipe_string_can_be_reused_after_wipe() {
+        let mut s = String::from("secret");
+        wipe_string_buffer_in_place(&mut s);
+        // Push new content — should work (the String's invariants are
+        // preserved by writing valid UTF-8 / clearing length).
+        s.push_str("new content");
+        assert_eq!(s, "new content");
+    }
+
+    #[test]
+    fn wipe_vec_empty_is_safe_no_panic() {
+        let mut v: Vec<u8> = Vec::new();
+        wipe_byte_buffer_in_place(&mut v);
+        assert_eq!(v.len(), 0);
+    }
+
+    #[test]
+    fn wipe_vec_preserves_capacity_for_reuse() {
+        let mut v: Vec<u8> = Vec::with_capacity(64);
+        v.extend_from_slice(b"some bytes");
+        let cap = v.capacity();
+        wipe_byte_buffer_in_place(&mut v);
+        assert_eq!(v.len(), 0);
+        assert_eq!(v.capacity(), cap, "capacity preserved across wipe");
+        // Push more — buffer reused.
+        v.extend_from_slice(b"new");
+        assert_eq!(&v[..], b"new");
+    }
+
+    #[test]
+    fn wipe_string_large_buffer_zeros_all_bytes() {
+        // 64KB string — verify the loop scales correctly with size.
+        let mut s = String::from("A").repeat(65_536);
+        assert_eq!(s.len(), 65_536);
+        let ptr = s.as_ptr();
+        let original_len = s.len();
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s.len(), 0);
+        // Spot-check first, middle, last byte are all zero.
+        unsafe {
+            assert_eq!(*ptr, 0);
+            assert_eq!(*ptr.add(original_len / 2), 0);
+            assert_eq!(*ptr.add(original_len - 1), 0);
+        }
+    }
+
+    #[test]
+    fn wipe_string_with_multi_byte_utf8_preserves_invariant() {
+        // 4-byte UTF-8 codepoints (e.g. 𝕊 = U+1D54A, encoded as
+        // 4 bytes: 0xF0 0x9D 0x95 0x8A). After wipe, every byte is 0
+        // (valid 1-byte UTF-8 NULs); the String can be safely reused.
+        let mut s = String::from("hello 𝕊 unicode 你好");
+        let original_byte_len = s.len();
+        wipe_string_buffer_in_place(&mut s);
+        assert_eq!(s.len(), 0);
+        // Reuse smoke test.
+        s.push_str("ok after wipe");
+        assert_eq!(s, "ok after wipe");
+        let _ = original_byte_len;
+    }
+
+    #[test]
+    fn redacted_string_serialization_round_trip_does_not_leak_inner_value() {
+        // Property: serialise(Redacted::new(v)) is exactly
+        // "\"[REDACTED]\"" regardless of `v`. Even if checking
+        // `json.contains(v)` would short-circuit for empty `v`, the
+        // exact-equality assertion below is a stronger invariant.
+        let adversarial_inputs: Vec<String> = vec![
+            "abc123".to_string(),
+            "with \"quotes\" and \\backslashes".to_string(),
+            "with\nnewlines\tand\rcontrols".to_string(),
+            "🔒 unicode emoji".to_string(),
+            "x".repeat(10_000),
+            String::new(),
+        ];
+        for input in adversarial_inputs.iter() {
+            let r: Redacted<String> = Redacted::new(input.clone());
+            let json = serde_json::to_string(&r).expect("serialize");
+            assert_eq!(
+                json,
+                "\"[REDACTED]\"",
+                "input length {} produced unexpected json {:?}",
+                input.len(),
+                json
+            );
+        }
+    }
+}

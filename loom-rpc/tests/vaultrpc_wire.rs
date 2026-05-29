@@ -274,10 +274,10 @@ impl WasmHostBridge for NoopHostBridge {
             network_summary: None,
             return_value_json: None,
             return_value_blob_ref: None,
-        set_cookies_result: None,
-        get_cookies_result: None,
-        clear_cookies_result: None,
-        delete_cookies_result: None,
+            set_cookies_result: None,
+            get_cookies_result: None,
+            clear_cookies_result: None,
+            delete_cookies_result: None,
         })
     }
 }

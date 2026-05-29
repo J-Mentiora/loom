@@ -275,3 +275,181 @@ fn vault_add_args_credential_type_cookie_parses() {
     assert_eq!(cli.add.label.as_deref(), Some("auth_session"));
     assert_eq!(cli.add.from_file.as_deref(), Some("/tmp/cookies.json"));
 }
+
+// === v0.9.6 follow-up: --credential-type value validation (ad-hoc-test
+// finding: prior to this fix, --credential-type "bogus" silently fell
+// through to the legacy direct-injection or OAuth path rather than
+// erroring upfront, which was confusing to operators).
+
+use super::vault_commands::validate_credential_type;
+
+#[test]
+fn validate_credential_type_accepts_oauth() {
+    assert_eq!(validate_credential_type("oauth").unwrap(), "oauth");
+}
+
+#[test]
+fn validate_credential_type_accepts_cookie() {
+    assert_eq!(validate_credential_type("cookie").unwrap(), "cookie");
+}
+
+#[test]
+fn validate_credential_type_rejects_unknown_string() {
+    let err = validate_credential_type("bogus").expect_err("must reject");
+    assert!(err.contains("bogus"));
+    assert!(err.contains("oauth"));
+    assert!(err.contains("cookie"));
+}
+
+#[test]
+fn validate_credential_type_rejects_empty_string() {
+    let err = validate_credential_type("").expect_err("must reject");
+    assert!(err.contains("accepted values: oauth, cookie"));
+}
+
+#[test]
+fn validate_credential_type_is_case_sensitive_oauth() {
+    // "OAuth" (capital O) must be rejected — exact-match per the
+    // clap value parser. Keeps wire/CLI naming consistent.
+    assert!(validate_credential_type("OAuth").is_err());
+    assert!(validate_credential_type("Oauth").is_err());
+}
+
+#[test]
+fn validate_credential_type_is_case_sensitive_cookie() {
+    assert!(validate_credential_type("Cookie").is_err());
+    assert!(validate_credential_type("COOKIE").is_err());
+}
+
+#[test]
+fn validate_credential_type_rejects_substring_matches() {
+    // "oauthish" must not pass because it starts with "oauth" — guard
+    // against eq-vs-starts-with subtle bugs.
+    assert!(validate_credential_type("oauthish").is_err());
+    assert!(validate_credential_type("cookieish").is_err());
+    assert!(validate_credential_type("oauth-extra").is_err());
+}
+
+// === v0.9.6 follow-up: validate_cookie_blob_json hardening from ad-hoc tests ===
+
+#[test]
+fn validate_cookie_blob_json_rejects_schema_version_as_string() {
+    // JSON `"1"` should not be silently accepted as the integer 1.
+    let blob = br#"{"schema_version":"1","cookies":[]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("schema_version"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_schema_version_as_float() {
+    // `1.0` is technically a JSON number but as_u64() returns None;
+    // we reject because the cap is an integer contract.
+    let blob = br#"{"schema_version":1.0,"cookies":[]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("schema_version"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_schema_version_as_negative_number() {
+    let blob = br#"{"schema_version":-1,"cookies":[]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("schema_version"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_schema_version_zero() {
+    let blob = br#"{"schema_version":0,"cookies":[]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("expected 1"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_cookies_as_object_not_array() {
+    let blob = br#"{"schema_version":1,"cookies":{"name":"sid"}}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("must be a JSON array"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_cookies_array_with_null_entry() {
+    let blob = br#"{"schema_version":1,"cookies":[null]}"#;
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("not a JSON object"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_tolerates_extra_top_level_fields_forward_compat() {
+    // Forward-compat: extra top-level fields (e.g., a future
+    // `expires_at` or `provenance` field) must NOT break the
+    // validator. Only the required shape is enforced.
+    let blob =
+        br#"{"schema_version":1,"cookies":[{"name":"sid","value":"v","domain":"x"}],"some_future_field":42,"another":"string"}"#;
+    validate_cookie_blob_json(blob).expect("extra top-level fields tolerated");
+}
+
+#[test]
+fn validate_cookie_blob_json_tolerates_extra_per_cookie_fields_forward_compat() {
+    // Forward-compat: extra per-cookie fields must NOT break the
+    // validator. Daemon-side validate_cookie_params is the
+    // authoritative shape check.
+    let blob = br#"{"schema_version":1,"cookies":[{"name":"sid","value":"v","domain":"x","future_attr":42,"more":true}]}"#;
+    validate_cookie_blob_json(blob).expect("extra per-cookie fields tolerated");
+}
+
+#[test]
+fn validate_cookie_blob_json_accepts_utf8_in_names_and_values() {
+    // Non-ASCII names + values pass validation; daemon-side
+    // RFC 6265 token-char check on names will further restrict.
+    let blob =
+        "{\"schema_version\":1,\"cookies\":[{\"name\":\"séssion\",\"value\":\"über-token-vál\",\"domain\":\"example.com\"}]}"
+            .as_bytes();
+    validate_cookie_blob_json(blob).expect("utf-8 tolerated at CLI layer");
+}
+
+#[test]
+fn validate_cookie_blob_json_rejects_trailing_garbage() {
+    let blob = b"{\"schema_version\":1,\"cookies\":[]}garbage";
+    let err = validate_cookie_blob_json(blob).expect_err("must reject");
+    let CliError::Usage(reason) = err else {
+        panic!("expected Usage")
+    };
+    assert!(reason.contains("trailing"), "got: {reason}");
+}
+
+#[test]
+fn validate_cookie_blob_json_accepts_100_cookies_cli_side_no_64_cap() {
+    // The CLI deliberately does NOT enforce the 64-cookie cap that
+    // `validate_cookie_params` enforces daemon-side. The CLI passes the
+    // blob through; the cap kicks in when `web.set_cookies` is
+    // ultimately called against the grant. Documented behaviour:
+    // late-failure-by-design, not a bug. This test pins that the CLI
+    // accepts more than 64 cookies in the blob.
+    use std::fmt::Write;
+    let mut s = String::from(r#"{"schema_version":1,"cookies":["#);
+    for i in 0..100 {
+        if i > 0 {
+            s.push(',');
+        }
+        write!(s, r#"{{"name":"c{i}","value":"v","domain":"x.com"}}"#).unwrap();
+    }
+    s.push_str("]}");
+    validate_cookie_blob_json(s.as_bytes()).expect("CLI accepts 100 cookies; daemon enforces cap");
+}

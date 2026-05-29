@@ -20,6 +20,21 @@ use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
+/// v0.9.6: validate the `--credential-type` value at clap-parse time.
+/// Restricts to the two known credential families; rejects everything
+/// else upfront so an unknown value can't silently fall through to the
+/// legacy direct-injection or OAuth paths (caught by the
+/// ad-hoc test suite — the previous unguarded version treated any
+/// non-"cookie" string as "oauth-or-direct" depending on other flags).
+pub(crate) fn validate_credential_type(s: &str) -> Result<String, String> {
+    match s {
+        "oauth" | "cookie" => Ok(s.to_string()),
+        other => Err(format!(
+            "invalid --credential-type {other:?}; accepted values: oauth, cookie"
+        )),
+    }
+}
+
 /// Parse a TTL value. Accepts either a bare integer (interpreted as seconds)
 /// or a humantime duration like "1h", "30m", "45s", "1h30m". This is the
 /// `clap::value_parser` for the `--ttl` flag.
@@ -120,7 +135,7 @@ pub struct VaultAddArgs {
     /// grant via `vault.grant`. Prints the resulting GrantId to stdout
     /// so the operator can paste it into MCP `set_cookies({grant_id})`
     /// calls.
-    #[arg(long, value_name = "TYPE", default_value = "oauth")]
+    #[arg(long, value_name = "TYPE", default_value = "oauth", value_parser = validate_credential_type)]
     pub credential_type: String,
 }
 

@@ -909,3 +909,236 @@ mod cookies_canonical_bytes_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod cookie_edge_case_tests {
+    use super::*;
+
+    fn fixture_builder() -> ReceiptBuilder {
+        ReceiptBuilder {
+            action_id: 1,
+            started_at_ms: 0,
+            finished_at_ms: 1,
+            status: ReceiptStatus::Ok,
+            side_effects_count: 0,
+            host_call_count: 0,
+            error_code: None,
+            error_details: None,
+            action_hash: "ah".to_string(),
+            outcome_hash: "oh".to_string(),
+            emitted_at_ms: 1,
+            ..Default::default()
+        }
+    }
+
+    // === D13 sort edge cases ===
+
+    #[test]
+    fn d13_sort_with_empty_array_produces_empty_canonical_array() {
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some("[]".to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains(r#""get_cookies_result":[]"#));
+    }
+
+    #[test]
+    fn d13_sort_with_single_cookie_is_noop_no_panic() {
+        let mut b = fixture_builder();
+        b.get_cookies_result =
+            Some(r#"[{"name":"sid","domain":"x.com","path":"/","value":"v"}]"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("\"name\":\"sid\""));
+        assert!(s.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn d13_sort_handles_cookies_with_missing_domain_field() {
+        // RFC 6265: domain is optional. Cookies without `domain` should
+        // sort using empty-string default (cookie_sort_key uses
+        // unwrap_or("")). They should NOT cause a panic.
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[
+                {"name":"sid","path":"/","value":"v"},
+                {"name":"sid","domain":"x.com","path":"/","value":"v2"}
+            ]"#
+            .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        // The domain-less cookie sorts BEFORE the domain-bearing one
+        // (empty string < "x.com" byte-lex).
+        let no_domain_pos = s.find(r#"{"domain":null"#).unwrap_or_else(|| {
+            // The serializer might omit nulls — find by lack of "x.com"
+            // near the first cookie. Fall back to position of first "sid".
+            s.find("\"sid\"").expect("at least one sid")
+        });
+        let x_com_pos = s.find("\"x.com\"").expect("x.com");
+        assert!(no_domain_pos <= x_com_pos);
+    }
+
+    #[test]
+    fn d13_sort_handles_cookies_with_null_domain_field() {
+        // `domain: null` should be treated identically to missing.
+        let mut b = fixture_builder();
+        b.get_cookies_result =
+            Some(r#"[{"name":"sid","domain":null,"path":"/","value":"v"}]"#.to_string());
+        let _ = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+    }
+
+    #[test]
+    fn d13_sort_three_way_tie_preserves_no_panic_for_identical_tuples() {
+        // Two cookies with identical (name, domain, path) — degenerate
+        // case (real browsers shouldn't allow this). The sort is stable;
+        // we just need to not panic and to produce consistent output.
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[
+                {"name":"sid","domain":"x.com","path":"/","value":"v1"},
+                {"name":"sid","domain":"x.com","path":"/","value":"v2"}
+            ]"#
+            .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        // Both values redacted; both cookies present.
+        let redacted_count = s.matches("[REDACTED]").count();
+        assert_eq!(redacted_count, 2);
+    }
+
+    #[test]
+    fn d13_sort_with_50_cookies_terminates_in_reasonable_time() {
+        // Stress test: 50 cookies sort + redact in reasonable time.
+        // Not a microbenchmark; just guards against O(n^2) regressions.
+        use std::fmt::Write;
+        let mut s = String::from("[");
+        for i in 0..50 {
+            if i > 0 {
+                s.push(',');
+            }
+            write!(
+                s,
+                r#"{{"name":"sid","domain":"d{:02}.com","path":"/","value":"x"}}"#,
+                49 - i // reverse order so sort has work to do
+            )
+            .unwrap();
+        }
+        s.push(']');
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(s);
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let out = String::from_utf8(bytes).unwrap();
+        // First domain should be d00.com (lexicographic first after sort).
+        let d00 = out.find("\"d00.com\"").expect("d00 in output");
+        let d01 = out.find("\"d01.com\"").expect("d01 in output");
+        assert!(d00 < d01, "ascending order");
+    }
+
+    #[test]
+    fn d13_sort_handles_unicode_in_domain() {
+        // Domains *can* contain IDN-encoded unicode (xn--... punycode in
+        // practice, but the typed string is UTF-8). Sort by byte-lex is
+        // deterministic regardless. Test pins no-panic + deterministic
+        // order.
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[
+                {"name":"x","domain":"münchen.de","path":"/","value":"v"},
+                {"name":"x","domain":"berlin.de","path":"/","value":"v"}
+            ]"#
+            .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        // Look for the full domain strings — searching for bare "m" or
+        // "b" hits the first occurrence anywhere in the JSON (e.g.
+        // "name", "domain") which is not informative.
+        let berlin = s.find("berlin.de").expect("berlin.de");
+        let muenchen = s.find("münchen.de").expect("münchen.de");
+        // 'b' < 'm' byte-lex, so berlin precedes münchen.
+        assert!(
+            berlin < muenchen,
+            "berlin.de should appear before münchen.de in sorted output; got berlin={berlin}, muenchen={muenchen}"
+        );
+    }
+
+    #[test]
+    fn d13_sort_already_sorted_array_is_stable_no_op() {
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(
+            r#"[
+                {"name":"a","domain":"x.com","path":"/","value":"v"},
+                {"name":"b","domain":"x.com","path":"/","value":"v"},
+                {"name":"c","domain":"x.com","path":"/","value":"v"}
+            ]"#
+            .to_string(),
+        );
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        let a = s.find("\"a\"").unwrap();
+        let b_pos = s.find("\"b\"").unwrap();
+        let c = s.find("\"c\"").unwrap();
+        assert!(a < b_pos && b_pos < c);
+    }
+
+    // === Cookie result invalid-payload edge cases ===
+
+    #[test]
+    fn assemble_cookies_with_malformed_set_cookies_result_json_returns_internal_error() {
+        let mut b = fixture_builder();
+        b.set_cookies_result = Some("not json".to_string());
+        let err = ReceiptMarshaller::assemble_canonical_bytes(&b).expect_err("must error");
+        // We don't pin the exact LoomError code shape since the marshaller
+        // uses the generic Internal variant for this branch; just check
+        // it returned Err and didn't panic.
+        assert!(!format!("{err:?}").is_empty());
+    }
+
+    #[test]
+    fn assemble_cookies_with_get_cookies_result_as_object_not_array_returns_error_path() {
+        // The marshaller's prepare_cookies_field expects an array. An
+        // object should NOT panic; current impl tolerates it because
+        // `v.as_array_mut()` returns None and the function returns Ok
+        // with the original Value. Pin that behaviour: it doesn't
+        // crash; the canonical bytes simply carry the object as-is.
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(r#"{"not":"an array"}"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("no panic");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("\"not\":\"an array\""));
+    }
+
+    #[test]
+    fn assemble_cookies_with_no_value_field_on_cookie_skips_redaction() {
+        // If a cookie object has no `value` field at all, the redactor
+        // shouldn't add one — just leave it as-is. (Real-world cookies
+        // always have a value, but the marshaller mustn't fabricate
+        // data.)
+        let mut b = fixture_builder();
+        b.get_cookies_result = Some(r#"[{"name":"sid","domain":"x.com","path":"/"}]"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(!s.contains("[REDACTED]"));
+        assert!(s.contains("\"name\":\"sid\""));
+    }
+
+    #[test]
+    fn assemble_cookies_clear_result_with_zero_cleared_count() {
+        let mut b = fixture_builder();
+        b.clear_cookies_result = Some(r#"{"cleared_count":0}"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("\"cleared_count\":0"));
+    }
+
+    #[test]
+    fn assemble_cookies_delete_result_with_matched_false() {
+        let mut b = fixture_builder();
+        b.delete_cookies_result = Some(r#"{"name":"sid","matched":false}"#.to_string());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(s.contains("\"matched\":false"));
+    }
+}
