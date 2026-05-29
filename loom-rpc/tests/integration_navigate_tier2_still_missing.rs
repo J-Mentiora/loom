@@ -155,6 +155,10 @@ fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
         network_summary: Some(summary),
         return_value_json: None,
         return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     }
 }
 

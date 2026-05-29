@@ -63,13 +63,21 @@ impl McpObservability {
     pub fn redact_arguments(
         &self,
         tool_name: &str,
-        arguments: serde_json::Value,
+        mut arguments: serde_json::Value,
     ) -> serde_json::Value {
         if self.redact_vault && REDACTED_TOOL_NAMES.contains(&tool_name) {
-            serde_json::Value::String("[REDACTED]".to_string())
-        } else {
-            arguments
+            return serde_json::Value::String("[REDACTED]".to_string());
         }
+        // v0.9.6: path-level redaction for cookie tools. Cookie names
+        // + structure stay visible (auditability) but `value` fields
+        // are stripped from any cookies array nested anywhere in the
+        // payload — covers both the `set_cookies(source: inline)`
+        // input path and the `get_cookies_result` response path
+        // (callers route results through this method too).
+        if self.redact_vault && COOKIE_REDACTED_TOOL_NAMES.contains(&tool_name) {
+            redact_cookie_paths_in_place(&mut arguments);
+        }
+        arguments
     }
 }
 

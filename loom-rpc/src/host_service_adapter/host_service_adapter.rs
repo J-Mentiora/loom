@@ -96,6 +96,29 @@ pub enum Action {
     WebSnapshot {
         session_id: String,
     },
+    // v0.9.6 web-cookie-injection: 4 cookie verbs. `source` for set_cookies
+    // is the typed `CookieSource` JSON shape — `{"source":"inline","cookies":[...]}`
+    // or `{"source":"grant","grant_id":"..."}`. Typed deserialization to
+    // `loom_surfaces::cookie_types::CookieSource` happens on the daemon
+    // side; `loom-rpc` does not depend on `loom-surfaces`.
+    WebSetCookies {
+        session_id: String,
+        source: serde_json::Value,
+    },
+    WebGetCookies {
+        session_id: String,
+        urls: Option<Vec<String>>,
+    },
+    WebClearCookies {
+        session_id: String,
+    },
+    WebDeleteCookies {
+        session_id: String,
+        name: String,
+        url: Option<String>,
+        domain: Option<String>,
+        path: Option<String>,
+    },
     // Additional surface.verb pairs added as the WIT grows. The match
     // arm in `RpcHandlers` is exhaustive — adding a verb forces a
     // handler addition (compile-time evidence).
@@ -168,6 +191,24 @@ pub struct Receipt {
     /// inline-sized results.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub return_value_blob_ref: Option<String>,
+    // ---- Cookie tier fields (v0.9.6 web-cookie-injection) ----
+    /// `Vec<SetCookieResult>` from `web.set_cookies`. Each entry is shape
+    /// `{"name":..., "success":bool, "error_code":Option<String>}` per the
+    /// `loom_surfaces::cookie_types::SetCookieResult` struct. Untyped here
+    /// because `loom-rpc` does not depend on `loom-surfaces`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_cookies_result: Option<serde_json::Value>,
+    /// `Vec<NetworkCookie>` from `web.get_cookies`. Cookie values arrive
+    /// here RAW per D7 (operator-facing receipts include values).
+    /// Structured logs are scrubbed via `mcp_observability` JSONPaths.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub get_cookies_result: Option<serde_json::Value>,
+    /// `{"cleared_count": u32}` from `web.clear_cookies`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clear_cookies_result: Option<serde_json::Value>,
+    /// `{"name": String, "matched": bool}` from `web.delete_cookies`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_cookies_result: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -115,3 +115,72 @@ fn dropped_events_uses_relaxed_atomic() {
     let obs = HostObservability::new(false);
     let _: u64 = obs.dropped_events();
 }
+
+// === v0.9.6 web-cookie-injection: Redacted<T> serialisation invariant ===
+// The verb-emitted receipts carry cookie values inside `Redacted<String>`
+// (loom-shared::Redacted). When a structured tracing event is generated
+// for `loom.web.set_cookies`, the cookie `value` field MUST serialise as
+// "[REDACTED]" rather than the raw value. This pins the structural
+// invariant: cookie values cannot leak via serde_json::to_string of a
+// cookie struct (which is what structured tracing fields go through).
+
+use loom_shared::Redacted;
+use serde::Serialize;
+
+#[derive(Serialize)]
+struct StructuredCookieEvent {
+    name: String,
+    value: Redacted<String>,
+    domain: String,
+}
+
+#[test]
+fn redacted_string_emits_redacted_token_in_serde_json_output_for_cookie_event() {
+    let event = StructuredCookieEvent {
+        name: "sid".to_string(),
+        value: Redacted::new("secret-session-token".to_string()),
+        domain: "example.com".to_string(),
+    };
+    let json = serde_json::to_string(&event).expect("serialise");
+    assert!(
+        !json.contains("secret-session-token"),
+        "raw cookie value must not appear in serialised structured tracing output; got: {json}"
+    );
+    assert!(
+        json.contains("[REDACTED]"),
+        "structured output must carry [REDACTED] marker; got: {json}"
+    );
+    // Non-secret fields remain visible.
+    assert!(json.contains("\"name\":\"sid\""));
+    assert!(json.contains("\"domain\":\"example.com\""));
+}
+
+#[test]
+fn redacted_string_emits_redacted_token_in_debug_format_for_tracing_event_fields() {
+    // tracing events using `?value` (Debug formatter) on a Redacted
+    // field also produce "[REDACTED]" — verifies the second emit path.
+    let redacted: Redacted<String> = Redacted::new("ULTRA_SECRET_SESSION".to_string());
+    let debug_str = format!("{:?}", redacted);
+    assert!(
+        !debug_str.contains("ULTRA_SECRET_SESSION"),
+        "Debug formatter must not leak raw value; got: {debug_str}"
+    );
+    assert!(
+        debug_str.contains("[REDACTED]"),
+        "Debug formatter must emit [REDACTED]; got: {debug_str}"
+    );
+}
+
+#[test]
+fn redacted_string_emits_redacted_token_in_display_format() {
+    let redacted: Redacted<String> = Redacted::new("DISPLAY_LEAK_PROBE".to_string());
+    let display_str = format!("{}", redacted);
+    assert!(
+        !display_str.contains("DISPLAY_LEAK_PROBE"),
+        "Display formatter must not leak raw value; got: {display_str}"
+    );
+    assert!(
+        display_str.contains("[REDACTED]"),
+        "Display formatter must emit [REDACTED]; got: {display_str}"
+    );
+}

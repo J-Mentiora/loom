@@ -149,6 +149,51 @@ fn cookie_source_deserialize_inline_round_trip() {
     matches!(s, CookieSource::Inline { .. });
 }
 
+/// v0.9.7 follow-up — the daemon dispatcher relies on `CookieSource`
+/// failing closed when the payload omits the `source` tag. If this
+/// test breaks, the dispatcher would silently fall through to its
+/// `other => other` arm and reach `build_chromium_args` with an
+/// empty cookies array — a soundness regression.
+#[test]
+fn cookie_source_deserialize_rejects_missing_source_tag() {
+    let j = json!({"cookies": []});
+    serde_json::from_value::<CookieSource>(j).expect_err("missing tag must reject");
+}
+
+/// Same contract for an empty object — protects the
+/// `web.set_cookies({})` payload from silently dispatching.
+#[test]
+fn cookie_source_deserialize_rejects_empty_object() {
+    let j = json!({});
+    serde_json::from_value::<CookieSource>(j).expect_err("empty object must reject");
+}
+
+/// And for an unknown variant tag — defends against typos in
+/// frontmatter (`source: "Grant"`, `source: "GRANT"`, etc.)
+/// silently no-op-ing instead of rejecting.
+#[test]
+fn cookie_source_deserialize_rejects_unknown_source_tag() {
+    let j = json!({"source": "foo", "cookies": []});
+    serde_json::from_value::<CookieSource>(j).expect_err("unknown tag must reject");
+}
+
+/// Grant variant requires `grant_id` — a `{"source":"grant"}` with
+/// no id must reject rather than reaching `Vault::substitute_cookies`
+/// with an empty grant id.
+#[test]
+fn cookie_source_deserialize_rejects_grant_without_grant_id() {
+    let j = json!({"source": "grant"});
+    serde_json::from_value::<CookieSource>(j).expect_err("grant w/o id must reject");
+}
+
+/// Inline variant requires `cookies` — a `{"source":"inline"}` with
+/// no array must reject rather than dispatching an empty cookie set.
+#[test]
+fn cookie_source_deserialize_rejects_inline_without_cookies() {
+    let j = json!({"source": "inline"});
+    serde_json::from_value::<CookieSource>(j).expect_err("inline w/o cookies must reject");
+}
+
 #[test]
 fn validate_empty_array_ok() {
     assert!(validate_cookie_params(&[]).is_ok());
@@ -230,4 +275,112 @@ fn validation_error_serialize_tag() {
     let e = CookieValidationError::NameEmpty;
     let j = serde_json::to_value(&e).expect("serialize");
     assert_eq!(j["code"], "name_empty");
+}
+
+// === v0.9.6 follow-up: CookieKeychainBlob daemon-side deserialization
+// edge cases (the schema_version 1 invariant + forward-compat shape).
+// These mirror the CLI's validate_cookie_blob_json but at the daemon
+// side — defense-in-depth for the keychain blob shape that crosses
+// the host-fn boundary.
+
+#[test]
+fn cookie_keychain_blob_deserialises_minimal_well_formed_shape() {
+    let json = r#"{"schema_version":1,"cookies":[]}"#;
+    let blob: CookieKeychainBlob = serde_json::from_str(json).expect("ok");
+    assert_eq!(blob.schema_version, 1);
+    assert!(blob.cookies.is_empty());
+}
+
+#[test]
+fn cookie_keychain_blob_tolerates_extra_top_level_fields_forward_compat() {
+    // Future schema additions (e.g. a `ttl_ms` or `creator` field at
+    // the blob level) MUST NOT prevent v0.9.6 daemons from deserialising
+    // — serde's default is to ignore unknown fields. Pin this so a
+    // future #[serde(deny_unknown_fields)] addition is caught and
+    // intentional.
+    let json = r#"{"schema_version":1,"cookies":[],"future_field":42,"another":"x"}"#;
+    let blob: CookieKeychainBlob = serde_json::from_str(json).expect("ok");
+    assert_eq!(blob.schema_version, 1);
+}
+
+#[test]
+fn cookie_keychain_blob_rejects_missing_schema_version_field() {
+    // No default for schema_version — missing → deserialise error.
+    let json = r#"{"cookies":[]}"#;
+    serde_json::from_str::<CookieKeychainBlob>(json).expect_err("must reject");
+}
+
+#[test]
+fn cookie_keychain_blob_rejects_missing_cookies_field() {
+    let json = r#"{"schema_version":1}"#;
+    serde_json::from_str::<CookieKeychainBlob>(json).expect_err("must reject");
+}
+
+#[test]
+fn cookie_keychain_blob_rejects_cookies_as_object_not_array() {
+    let json = r#"{"schema_version":1,"cookies":{"not":"an array"}}"#;
+    serde_json::from_str::<CookieKeychainBlob>(json).expect_err("must reject");
+}
+
+#[test]
+fn cookie_keychain_blob_round_trips_through_serde() {
+    let original = CookieKeychainBlob {
+        schema_version: 1,
+        cookies: vec![NetworkCookieParam {
+            name: "sid".to_string(),
+            value: loom_shared::Redacted::new("v".to_string()),
+            url: None,
+            domain: Some("x.com".to_string()),
+            path: None,
+            secure: None,
+            http_only: None,
+            same_site: None,
+            expires: None,
+            priority: None,
+            source_scheme: None,
+            source_port: None,
+            partition_key: None,
+        }],
+    };
+    let json = serde_json::to_string(&original).expect("serialize");
+    // Round-trip is asymmetric due to Redacted's serialize-as-[REDACTED]:
+    // the deserialised blob will have value = "[REDACTED]". This is
+    // the intended security invariant — pin it so future "transparent
+    // round-trip" refactors are caught.
+    let back: CookieKeychainBlob = serde_json::from_str(&json).expect("deserialize");
+    assert_eq!(back.schema_version, 1);
+    assert_eq!(back.cookies.len(), 1);
+    assert_eq!(back.cookies[0].name, "sid");
+    // Asymmetric round-trip: value field is "[REDACTED]" not "v".
+    assert_eq!(back.cookies[0].value.expose(), "[REDACTED]");
+}
+
+#[test]
+fn cookie_keychain_blob_deserialises_blob_with_per_cookie_extra_fields() {
+    // NetworkCookieParam already tolerates unknown fields (serde
+    // default), and Redacted<String> deserialises as a String. Pin
+    // the forward-compat invariant for the wrapping blob too.
+    let json = r#"{"schema_version":1,"cookies":[
+        {"name":"sid","value":"v","domain":"x","future_attr":42,"another":"yes"}
+    ]}"#;
+    let blob: CookieKeychainBlob = serde_json::from_str(json).expect("ok");
+    assert_eq!(blob.cookies.len(), 1);
+}
+
+#[test]
+fn cookie_keychain_blob_with_100_cookies_deserialises() {
+    // No size limit on the deserialise path; the validator
+    // (validate_cookie_params) enforces the 64-cookie cap at the
+    // verb-execute level. Pin that the deserialiser handles a blob
+    // that exceeds the cap.
+    let mut s = String::from(r#"{"schema_version":1,"cookies":["#);
+    for i in 0..100 {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&format!(r#"{{"name":"c{i}","value":"v","domain":"x"}}"#));
+    }
+    s.push_str("]}");
+    let blob: CookieKeychainBlob = serde_json::from_str(&s).expect("ok");
+    assert_eq!(blob.cookies.len(), 100);
 }

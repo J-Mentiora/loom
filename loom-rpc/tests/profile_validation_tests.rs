@@ -147,6 +147,15 @@ impl CoreFacadeBridge for NoopCoreBridge {
     > {
         Err(LoomErrorCode::InternalError)
     }
+
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo,
+        loom_rpc::error_translator::error_translator::LoomErrorCode,
+    > {
+        Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
+    }
     fn gc_run(
         &self,
         _: Option<u64>,

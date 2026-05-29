@@ -33,6 +33,11 @@ fn action_enum_has_typed_variants_no_cdp_shaped_value() {
             Action::WebScroll { .. } => {}
             Action::WebWait { .. } => {}
             Action::WebSnapshot { .. } => {}
+            // v0.9.6 cookie verbs.
+            Action::WebSetCookies { .. } => {}
+            Action::WebGetCookies { .. } => {}
+            Action::WebClearCookies { .. } => {}
+            Action::WebDeleteCookies { .. } => {}
         }
     }
     let _ = _audit_variants;
@@ -90,4 +95,232 @@ fn adapter_has_no_session_or_vault_methods_per_ic_rpc_09_split() {
         > = |a, ac| Box::pin(a.dispatch_action(ac));
     }
     let _ = _audit::<HostServiceAdapter>;
+}
+
+// === v0.9.6 cookie verb serde round-trips ===
+// Wire format invariants. The Action enum crosses the JSON-RPC boundary;
+// any change to the serde tag/format would break downstream pinning.
+
+#[test]
+fn action_web_set_cookies_serializes_to_kind_web_set_cookies_with_source_value() {
+    let a = Action::WebSetCookies {
+        session_id: "S01".to_string(),
+        source: serde_json::json!({"source": "inline", "cookies": []}),
+    };
+    let json = serde_json::to_value(&a).expect("serialize");
+    assert_eq!(json["kind"], "web_set_cookies");
+    assert_eq!(json["session_id"], "S01");
+    assert!(json["source"].is_object());
+}
+
+#[test]
+fn action_web_set_cookies_round_trips_through_serde() {
+    let a = Action::WebSetCookies {
+        session_id: "S".to_string(),
+        source: serde_json::json!({
+            "source": "inline",
+            "cookies": [{"name": "sid", "value": "v", "domain": "x.com"}]
+        }),
+    };
+    let json = serde_json::to_string(&a).unwrap();
+    let back: Action = serde_json::from_str(&json).unwrap();
+    match back {
+        Action::WebSetCookies { session_id, source } => {
+            assert_eq!(session_id, "S");
+            assert_eq!(source["cookies"][0]["name"], "sid");
+        }
+        other => panic!("wrong variant: {other:?}"),
+    }
+}
+
+#[test]
+fn action_web_set_cookies_round_trips_grant_source() {
+    let a = Action::WebSetCookies {
+        session_id: "S".to_string(),
+        source: serde_json::json!({"source": "grant", "grant_id": "GRANT_42"}),
+    };
+    let back: Action = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+    if let Action::WebSetCookies { source, .. } = back {
+        assert_eq!(source["source"], "grant");
+        assert_eq!(source["grant_id"], "GRANT_42");
+    } else {
+        panic!("wrong variant");
+    }
+}
+
+#[test]
+fn action_web_get_cookies_round_trips_with_urls_filter() {
+    let a = Action::WebGetCookies {
+        session_id: "S".to_string(),
+        urls: Some(vec![
+            "http://x.com/".to_string(),
+            "http://y.com/".to_string(),
+        ]),
+    };
+    let back: Action = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+    if let Action::WebGetCookies { urls, .. } = back {
+        assert_eq!(urls.as_ref().unwrap().len(), 2);
+    } else {
+        panic!("wrong variant");
+    }
+}
+
+#[test]
+fn action_web_get_cookies_round_trips_without_urls_filter() {
+    let a = Action::WebGetCookies {
+        session_id: "S".to_string(),
+        urls: None,
+    };
+    let back: Action = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+    if let Action::WebGetCookies { urls, .. } = back {
+        assert!(urls.is_none());
+    } else {
+        panic!("wrong variant");
+    }
+}
+
+#[test]
+fn action_web_clear_cookies_round_trips() {
+    let a = Action::WebClearCookies {
+        session_id: "S".to_string(),
+    };
+    let back: Action = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+    assert!(matches!(back, Action::WebClearCookies { .. }));
+}
+
+#[test]
+fn action_web_delete_cookies_round_trips_with_full_scoping() {
+    let a = Action::WebDeleteCookies {
+        session_id: "S".to_string(),
+        name: "sid".to_string(),
+        url: Some("http://x.com".to_string()),
+        domain: Some("x.com".to_string()),
+        path: Some("/api".to_string()),
+    };
+    let back: Action = serde_json::from_str(&serde_json::to_string(&a).unwrap()).unwrap();
+    if let Action::WebDeleteCookies {
+        name, domain, path, ..
+    } = back
+    {
+        assert_eq!(name, "sid");
+        assert_eq!(domain.as_deref(), Some("x.com"));
+        assert_eq!(path.as_deref(), Some("/api"));
+    } else {
+        panic!("wrong variant");
+    }
+}
+
+#[test]
+fn action_web_delete_cookies_round_trips_name_only() {
+    let a = Action::WebDeleteCookies {
+        session_id: "S".to_string(),
+        name: "sid".to_string(),
+        url: None,
+        domain: None,
+        path: None,
+    };
+    let json = serde_json::to_string(&a).unwrap();
+    // url/domain/path are Option<String>; not annotated skip_if_none on
+    // the Action enum, so they serialise as null.
+    assert!(json.contains("\"name\":\"sid\""));
+    let back: Action = serde_json::from_str(&json).unwrap();
+    assert!(matches!(back, Action::WebDeleteCookies { .. }));
+}
+
+// === Receipt cookie-result field serde ===
+
+#[test]
+fn receipt_with_set_cookies_result_populated_round_trips() {
+    use loom_shared::navigate_outcome::ShimConsoleLine;
+    let r = Receipt {
+        action_id: 7,
+        session_id: "S".into(),
+        status: ReceiptStatus::Success,
+        timing_ticks: 1,
+        side_effects: vec![],
+        error: None,
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: None,
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: Vec::<ShimConsoleLine>::new(),
+        network_summary: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: Some(serde_json::json!([
+            {"name": "sid", "success": true}
+        ])),
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    };
+    let json = serde_json::to_string(&r).unwrap();
+    assert!(json.contains("set_cookies_result"));
+    let back: Receipt = serde_json::from_str(&json).unwrap();
+    let arr = back.set_cookies_result.unwrap();
+    assert_eq!(arr[0]["name"], "sid");
+}
+
+#[test]
+fn receipt_with_no_cookie_fields_skips_them_in_serialization() {
+    use loom_shared::navigate_outcome::ShimConsoleLine;
+    let r = Receipt {
+        action_id: 7,
+        session_id: "S".into(),
+        status: ReceiptStatus::Success,
+        timing_ticks: 1,
+        side_effects: vec![],
+        error: None,
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: None,
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: Vec::<ShimConsoleLine>::new(),
+        network_summary: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    };
+    let json = serde_json::to_string(&r).unwrap();
+    // skip_serializing_if = "Option::is_none" — these MUST NOT appear.
+    assert!(!json.contains("set_cookies_result"));
+    assert!(!json.contains("get_cookies_result"));
+    assert!(!json.contains("clear_cookies_result"));
+    assert!(!json.contains("delete_cookies_result"));
+}
+
+#[test]
+fn receipt_deserializes_from_wire_without_cookie_fields_legacy_v095_shape() {
+    // A v0.9.5 wire receipt (pre-cookie fields) MUST still deserialise
+    // into the v0.9.6 shape. The new fields default to None.
+    let json = r#"{
+        "action_id": 1,
+        "session_id": "S",
+        "status": "success",
+        "timing_ticks": 100,
+        "side_effects": [],
+        "error": null
+    }"#;
+    let r: Receipt = serde_json::from_str(json).expect("legacy receipt deserialises");
+    assert!(r.set_cookies_result.is_none());
+    assert!(r.get_cookies_result.is_none());
+    assert!(r.clear_cookies_result.is_none());
+    assert!(r.delete_cookies_result.is_none());
 }

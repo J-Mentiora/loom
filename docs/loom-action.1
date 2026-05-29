@@ -25,11 +25,20 @@ Remaining `\-\-key value` pairs gathered as raw strings; validated against the J
 Loom ships with the following registered actions. Run \fBloom action <name> --help\fR for the full per-action signature.
 .SS \fBweb.*\fR
 .TP
+\fBweb.clear_cookies\fR
+Clear ALL cookies in the browser's cookie jar (CDP `Network.clearBrowserCookies`).
+.TP
 \fBweb.click\fR
 Click an element by CSS selector.
 .TP
+\fBweb.delete_cookies\fR
+Delete a single cookie scoped by (name, url?, domain?, path?) — CDP `Network.deleteCookies`.
+.TP
 \fBweb.evaluate\fR
 Run a JavaScript expression in the page and return the value.
+.TP
+\fBweb.get_cookies\fR
+Read cookies from the browser's cookie jar (CDP `Network.getCookies`).
 .TP
 \fBweb.hover\fR
 Dispatch a mouseover event at a CSS selector.
@@ -45,6 +54,9 @@ Scroll an element by a (delta_x, delta_y) offset.
 .TP
 \fBweb.select\fR
 Set the value of a `<select>` element and dispatch `change`.
+.TP
+\fBweb.set_cookies\fR
+Inject cookies into the browser's network stack via CDP `Network.setCookies`.
 .TP
 \fBweb.snapshot\fR
 Capture a full DOM snapshot of the active page.

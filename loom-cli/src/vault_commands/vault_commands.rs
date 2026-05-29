@@ -20,6 +20,21 @@ use crate::output_formatter::emit_to_stdout;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
+/// v0.9.6: validate the `--credential-type` value at clap-parse time.
+/// Restricts to the two known credential families; rejects everything
+/// else upfront so an unknown value can't silently fall through to the
+/// legacy direct-injection or OAuth paths (caught by the
+/// ad-hoc test suite — the previous unguarded version treated any
+/// non-"cookie" string as "oauth-or-direct" depending on other flags).
+pub(crate) fn validate_credential_type(s: &str) -> Result<String, String> {
+    match s {
+        "oauth" | "cookie" => Ok(s.to_string()),
+        other => Err(format!(
+            "invalid --credential-type {other:?}; accepted values: oauth, cookie"
+        )),
+    }
+}
+
 /// Parse a TTL value. Accepts either a bare integer (interpreted as seconds)
 /// or a humantime duration like "1h", "30m", "45s", "1h30m". This is the
 /// `clap::value_parser` for the `--ttl` flag.
@@ -110,6 +125,61 @@ pub struct VaultAddArgs {
     /// Skip interactive confirmation; required in CI / scripts.
     #[arg(long)]
     pub yes: bool,
+    /// v0.9.6 web-cookie-injection: credential type. `oauth` (default,
+    /// backward compatible) goes through the OAuth provider /
+    /// direct-credential flows. `cookie` reads a vault cookie blob
+    /// (JSON `{"schema_version":1, "cookies":[NetworkCookieParam, ...]}`),
+    /// resolves the operator's current session via
+    /// `vault.get_session_context` (or uses --session when provided),
+    /// stores the bytes with `vault.set_secret`, and issues a Cookie
+    /// grant via `vault.grant`. Prints the resulting GrantId to stdout
+    /// so the operator can paste it into MCP `set_cookies({grant_id})`
+    /// calls.
+    #[arg(long, value_name = "TYPE", default_value = "oauth", value_parser = validate_credential_type)]
+    pub credential_type: String,
+}
+
+/// v0.9.6: cookie blob JSON schema validation. Returns a typed CliError
+/// on parse failure or schema-version mismatch. The bytes themselves
+/// are not retained; the caller passes them onward to `vault.set_secret`.
+pub(super) fn validate_cookie_blob_json(bytes: &[u8]) -> Result<(), CliError> {
+    let v: serde_json::Value = serde_json::from_slice(bytes)
+        .map_err(|e| CliError::Usage(format!("invalid cookie blob JSON: {e}")))?;
+    let schema_version = v
+        .get("schema_version")
+        .and_then(|n| n.as_u64())
+        .ok_or_else(|| {
+            CliError::Usage("cookie blob missing `schema_version: <int>` field".to_string())
+        })?;
+    if schema_version != 1 {
+        return Err(CliError::Usage(format!(
+            "unsupported cookie blob schema_version: {schema_version} (expected 1)"
+        )));
+    }
+    let cookies = v
+        .get("cookies")
+        .ok_or_else(|| CliError::Usage("cookie blob missing `cookies: [...]` field".to_string()))?;
+    if !cookies.is_array() {
+        return Err(CliError::Usage(
+            "cookie blob `cookies` field must be a JSON array".to_string(),
+        ));
+    }
+    // Light per-cookie shape check: each item must be an object with
+    // a `name` string. Deeper validation happens daemon-side via
+    // `validate_cookie_params` (cookie_types.rs).
+    for (i, c) in cookies.as_array().unwrap().iter().enumerate() {
+        if !c.is_object() {
+            return Err(CliError::Usage(format!(
+                "cookie blob entry {i} is not a JSON object"
+            )));
+        }
+        if c.get("name").and_then(|n| n.as_str()).is_none() {
+            return Err(CliError::Usage(format!(
+                "cookie blob entry {i} missing `name: \"...\"` field"
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// `loom vault delete <label>` arguments (W6.3).
@@ -269,6 +339,91 @@ fn read_secret_bytes(args: &VaultAddArgs) -> Result<Vec<u8>, CliError> {
 /// device flow (when a positional `provider` is given).
 pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result<(), CliError> {
     let direct = args.from_stdin || args.from_file.is_some();
+
+    // v0.9.6 cookie flow: --credential-type cookie REQUIRES direct
+    // injection (--from-file / --from-stdin); the OAuth-flow positional
+    // `provider` is rejected.
+    if args.credential_type == "cookie" {
+        if args.provider.is_some() {
+            return Err(CliError::Usage(
+                "`vault add <provider>` and --credential-type cookie are mutually exclusive".into(),
+            ));
+        }
+        if !direct {
+            return Err(CliError::Usage(
+                "--credential-type cookie requires --from-file <PATH> or --from-stdin".into(),
+            ));
+        }
+        let label = args
+            .label
+            .clone()
+            .ok_or_else(|| CliError::Usage("--credential-type cookie requires --label".into()))?;
+        validate_label_cli(&label)?;
+
+        let bytes = read_secret_bytes(&args)?;
+        validate_cookie_blob_json(&bytes)?;
+
+        // Resolve session id. Operator may pass --session explicitly;
+        // otherwise call vault.get_session_context for the most recent
+        // active session.
+        let session_id = match args.session.clone() {
+            Some(s) => s,
+            None => {
+                let ctx = rpc
+                    .call("vault.get_session_context", serde_json::Value::Null)
+                    .await?;
+                ctx.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        CliError::Usage(
+                            "vault.get_session_context returned no session_id; \
+                             pass --session <SESSION_ID> explicitly or run \
+                             `loom session create` first"
+                                .to_string(),
+                        )
+                    })?
+                    .to_string()
+            }
+        };
+
+        // Store the cookie blob bytes via vault.set_secret.
+        let secret_hex = hex::encode(&bytes);
+        drop(bytes); // D7: no shred-after-read on the operator-managed
+                     // input file; just drop the in-memory copy here.
+        let _set_resp = rpc
+            .call(
+                "vault.set_secret",
+                serde_json::json!({
+                    "label": label,
+                    "secret_hex": secret_hex,
+                    "overwrite": args.overwrite,
+                    "session_id": session_id,
+                }),
+            )
+            .await?;
+
+        // Issue a Cookie-typed grant. origin is "*" because cookie
+        // grants are scoped by the cookies' own `domain` fields, not
+        // by a single origin URL like OAuth. scopes empty for the same
+        // reason. ttl defaults to 30 days; the operator can revoke
+        // earlier via `loom vault delete <label>` (cascades grants).
+        let grant_resp = rpc
+            .call(
+                "vault.grant",
+                serde_json::json!({
+                    "session_id": session_id,
+                    "origin": "*",
+                    "scopes": [],
+                    "ttl_seconds": 86_400u64 * 30,
+                    "label": label,
+                    "credential_type": "cookie",
+                }),
+            )
+            .await?;
+        emit_to_stdout("vault.grant", &grant_resp, cfg, None)?;
+        return Ok(());
+    }
+
     if direct {
         if args.provider.is_some() {
             return Err(CliError::Usage(

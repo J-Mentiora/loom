@@ -15,10 +15,15 @@
 // ```
 //
 // # Contract semantics
-// - **8 host-fns and only 8** (matching `wit/loom-surface.wit::interface host`):
+// - **11 host-fns** (matching `wit/loom-surface.wit::interface host`):
 //   `clock_now`, `rng_next_u64`, `blob_put`, `blob_get`, `net_request`,
-//   `shim_call`, `log_emit`, `receipt_emit`. Adding a 9th host-fn requires
-//   a WIT change and a regen.
+//   `shim_call`, `navigate_execute`, `evaluate_execute`,
+//   `vault_substitute_cookies`, `log_emit`, `receipt_emit`. The
+//   shim-call variants (`navigate_execute`, `evaluate_execute`) and
+//   `vault_substitute_cookies` (v0.9.6) live host-side; the hand-written
+//   shadow below carries only the prod stubs the guest-side verbs
+//   actually import. Adding a 12th host-fn requires a WIT change and
+//   a regen.
 // - **No hand-rolled `extern "C"` declarations.** Surface
 //   crate has zero `unsafe extern "C"` blocks; CI lint
 //   `tools/lint-surface-bindings.py` greps and fails on any match.
@@ -122,6 +127,18 @@ pub mod host {
     pub fn shim_call(_shim_id: &str, _msg: &[u8]) -> Result<Vec<u8>, HostError> {
         panic!("wit-bindgen trampoline — replaced at build time")
     }
+    /// v0.9.6 web-cookie-injection. Resolves a `Cookie`-typed vault
+    /// grant against the active session and returns the keychain blob
+    /// bytes (JSON `{"schema_version":1,"cookies":[NetworkCookieParam,...]}`).
+    /// The verb deserialises into `Vec<NetworkCookieParam>` and forwards
+    /// to CDP via `shim_call`. Host-side impl uses `Zeroizing<Vec<u8>>`
+    /// so raw values are wiped on drop in daemon memory.
+    pub fn vault_substitute_cookies(
+        _grant_id: &str,
+        _session_id: &str,
+    ) -> Result<Vec<u8>, HostError> {
+        panic!("wit-bindgen trampoline — replaced at build time")
+    }
     /// Sole logging path.
     pub fn log_emit(_level: LogLevel, _msg: &str, _fields: &[(String, String)]) {
         // no-op trampoline; replaced at build time
@@ -146,10 +163,20 @@ pub mod mock_host {
     #[derive(Debug, Clone, PartialEq)]
     pub enum HostCall {
         ClockNow,
-        BlobPut { size: usize },
-        ShimCall { shim_id: String, msg_len: usize },
+        BlobPut {
+            size: usize,
+        },
+        ShimCall {
+            shim_id: String,
+            msg_len: usize,
+        },
         ReceiptEmit,
         LogEmit,
+        /// v0.9.6 web-cookie-injection grant-resolution invocation.
+        VaultSubstituteCookies {
+            grant_id: String,
+            session_id: String,
+        },
     }
 
     thread_local! {
@@ -173,6 +200,11 @@ pub mod mock_host {
         static MOUSE_DISPATCHES: RefCell<Vec<MouseDispatch>> = const { RefCell::new(Vec::new()) };
         /// Emitted receipt captured by receipt_emit.
         static EMITTED: RefCell<Option<Receipt>> = const { RefCell::new(None) };
+        /// v0.9.6: programmed response for the next
+        /// `vault_substitute_cookies` invocation. `None` = return empty
+        /// `Vec` (legacy default); set via `setup_vault_substitute_cookies`
+        /// for tests that exercise the grant path.
+        static VAULT_COOKIES_RESP: RefCell<Option<Result<Vec<u8>, HostError>>> = const { RefCell::new(None) };
     }
 
     /// One decoded `Input.dispatchMouseEvent` request.
@@ -197,6 +229,15 @@ pub mod mock_host {
         SHIM_RESP_BY_METHOD.with(|m| m.borrow_mut().clear());
         MOUSE_DISPATCHES.with(|m| m.borrow_mut().clear());
         EMITTED.with(|e| *e.borrow_mut() = None);
+        VAULT_COOKIES_RESP.with(|r| *r.borrow_mut() = None);
+    }
+
+    /// Program the next `vault_substitute_cookies` call's return value.
+    /// Pass `Ok(json_bytes)` to mock a successful grant resolution; pass
+    /// `Err(HostError::VaultRejection { reason: ... })` to exercise the
+    /// session-mismatch / revoked / expired paths.
+    pub fn setup_vault_substitute_cookies(resp: Result<Vec<u8>, HostError>) {
+        VAULT_COOKIES_RESP.with(|r| *r.borrow_mut() = Some(resp));
     }
 
     /// Set per-method CBOR responses. Call AFTER `setup`. Each entry maps
@@ -380,6 +421,19 @@ pub mod mock_host {
         EMITTED.with(|e| *e.borrow_mut() = Some(r.clone()));
     }
 
+    pub fn vault_substitute_cookies_impl(
+        grant_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<u8>, HostError> {
+        CALLS.with(|c| {
+            c.borrow_mut().push(HostCall::VaultSubstituteCookies {
+                grant_id: grant_id.to_string(),
+                session_id: session_id.to_string(),
+            })
+        });
+        VAULT_COOKIES_RESP.with(|r| r.borrow().clone().unwrap_or_else(|| Ok(Vec::new())))
+    }
+
     fn hex_encode(bytes: &[u8]) -> String {
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let mut out = String::with_capacity(bytes.len() * 2);
@@ -421,6 +475,13 @@ pub mod host {
 
     pub fn shim_call(shim_id: &str, msg: &[u8]) -> Result<Vec<u8>, HostError> {
         mock_host::shim_call_impl(shim_id, msg)
+    }
+
+    pub fn vault_substitute_cookies(
+        grant_id: &str,
+        session_id: &str,
+    ) -> Result<Vec<u8>, HostError> {
+        mock_host::vault_substitute_cookies_impl(grant_id, session_id)
     }
 
     pub fn log_emit(_level: LogLevel, _msg: &str, _fields: &[(String, String)]) {}

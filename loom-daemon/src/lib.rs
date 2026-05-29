@@ -471,8 +471,19 @@ impl CoreFacadeBridge for CoreBridge {
     fn vault_grant(&self, p: GrantParams) -> Result<GrantInfo, AdapterError> {
         use loom_core::manifest_writer::SessionId;
         use loom_core::vault::{CredentialType, GrantOpts};
+        // v0.9.6: map the optional credential_type string to the typed
+        // enum. Default OAuth preserves the v0.9.5 contract.
+        let credential_type = match p.credential_type.as_deref() {
+            None | Some("oauth") => CredentialType::OAuth,
+            Some("cookie") => CredentialType::Cookie,
+            Some(_other) => {
+                return Err(
+                    loom_rpc::error_translator::error_translator::LoomErrorCode::SchemaViolation,
+                );
+            }
+        };
         let opts = GrantOpts {
-            credential_type: CredentialType::OAuth,
+            credential_type,
             label: p.label.clone(),
             origin: p.origin.clone(),
             scopes: p.scopes.clone(),
@@ -671,6 +682,41 @@ impl CoreFacadeBridge for CoreBridge {
             .map_err(|e| map_loom_error(&e))?;
         let count = u32::try_from(labels.len()).unwrap_or(u32::MAX);
         Ok(VaultListLabelsInfo { labels, count })
+    }
+
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo,
+        AdapterError,
+    > {
+        use loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo;
+        use loom_rpc::error_translator::error_translator::LoomErrorCode;
+        // Enumerate sessions; pick the most recently created Active one.
+        // Returns SessionNotFound when no active sessions exist.
+        let infos = self
+            .core
+            .list_sessions_info()
+            .map_err(|e| map_loom_error(&e))?;
+        let mut active: Vec<&(String, String, u64)> = infos
+            .iter()
+            .filter(|(_id, status, _ts)| {
+                // The status string from list_sessions_info is the
+                // session's snake_case status; "active" indicates a
+                // live session ready to accept actions.
+                status == "active"
+            })
+            .collect();
+        if active.is_empty() {
+            return Err(LoomErrorCode::SessionNotFound);
+        }
+        active.sort_by_key(|(_id, _status, ts)| *ts);
+        let unambiguous = active.len() == 1;
+        let (session_id, _, _) = active.last().unwrap();
+        Ok(VaultGetSessionContextInfo {
+            session_id: session_id.clone(),
+            unambiguous,
+        })
     }
 
     fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError> {
@@ -972,7 +1018,11 @@ impl WasmHostBridge for WasmBridge {
         use loom_host::session_executor::{Action as HostAction, ActionOutcome, SessionHandle};
         use loom_rpc::error_translator::error_translator::LoomErrorCode;
 
-        let session_id_str = action_session_id(&action);
+        // Owned copy so the borrow doesn't outlive the move-out of
+        // `action` further down (v0.9.7 follow-up rewrites action
+        // mid-dispatch for cookie grant resolution).
+        let session_id_str_owned = action_session_id(&action).to_string();
+        let session_id_str = session_id_str_owned.as_str();
 
         // Resolve the session from core.
         let session = self
@@ -1035,6 +1085,112 @@ impl WasmHostBridge for WasmBridge {
             }
             _ => {}
         }
+
+        // v0.9.7 follow-up A — Grant resolution + Follow-up B — per-cookie
+        // validation, both wired daemon-side because loom-surface-web
+        // (the WASM) doesn't yet depend on loom-surfaces. Together they
+        // bring the cookie verbs up to the user-facing contract
+        // documented in the v0.9.6 task spec:
+        //
+        //   - `set_cookies` with `CookieSource::Grant` resolves through
+        //     `core.vault.substitute_cookies(grant_id, session_id)` and
+        //     dispatches with the resolved cookie array as if the
+        //     operator had supplied `CookieSource::Inline { cookies }`.
+        //   - Per-cookie validation (`validate_cookie_params`: 64-cap,
+        //     name/value/expires) runs BEFORE the CDP envelope is
+        //     built. Validation failures short-circuit to a typed
+        //     `cookie_validation_error` receipt (matching the
+        //     existing WASM-side ErrorMapper wire kind and the
+        //     action_registry --help docstring) without ever
+        //     touching the chromium shim.
+        //
+        // Shape errors (malformed `source` JSON, missing `cookies` key
+        // in the vault blob) flow through the existing
+        // `SchemaViolation` / `InternalError` codes — only typed
+        // `CookieValidationError` variants flow through the
+        // taxonomy-coded `cookie_validation_error` receipt. This split
+        // keeps the wire taxonomy a closed set the operator can
+        // group dashboards on.
+        let action = match action {
+            Action::WebSetCookies { session_id, source } => {
+                use loom_core::manifest_writer::SessionId;
+                use loom_core::vault::GrantId;
+                use loom_surfaces::cookie_types::CookieSource;
+
+                // Step 1: parse the `source` payload into the typed
+                // `CookieSource` enum so malformed shapes (missing
+                // `source` tag, unknown variants, wrong-typed fields)
+                // fail closed via `SchemaViolation` rather than
+                // silently falling through to the no-op chromium-args
+                // branch with an empty cookies array.
+                let typed_source: CookieSource =
+                    serde_json::from_value(source).map_err(|_| LoomErrorCode::SchemaViolation)?;
+
+                // Step 2: resolve a `Grant` to its cookies array by
+                // calling `Vault::substitute_cookies`. The vault blob
+                // schema is the canonical
+                // `{"schema_version":1,"cookies":[NetworkCookieParam...]}`
+                // produced by `loom vault add --credential-type cookie`;
+                // a missing or non-array `cookies` field means the
+                // keychain blob is corrupt and we fail closed with
+                // `InternalError` rather than silently emitting an
+                // empty Network.setCookies envelope.
+                let cookies: Vec<loom_surfaces::cookie_types::NetworkCookieParam> =
+                    match typed_source {
+                        CookieSource::Inline { cookies } => cookies,
+                        CookieSource::Grant { grant_id } => {
+                            let bytes = self
+                                .core
+                                .vault
+                                .substitute_cookies(
+                                    GrantId(grant_id),
+                                    SessionId(session_id.clone()),
+                                )
+                                .map_err(|e| map_loom_error(&e))?;
+
+                            #[derive(serde::Deserialize)]
+                            struct VaultCookieBlob {
+                                cookies: Vec<loom_surfaces::cookie_types::NetworkCookieParam>,
+                            }
+
+                            serde_json::from_slice::<VaultCookieBlob>(&bytes)
+                                .map_err(|e| {
+                                    tracing::error!(
+                                        "vault.substitute_cookies blob deserialise failed: {e}"
+                                    );
+                                    LoomErrorCode::InternalError
+                                })?
+                                .cookies
+                        }
+                    };
+
+                // Step 3: per-cookie validation. Failures short-circuit
+                // to a typed `cookie_validation` receipt with the
+                // snake_case taxonomy code from `cookie_validation_code`.
+                if let Err(e) = loom_surfaces::cookie_types::validate_cookie_params(&cookies) {
+                    return Ok(cookie_validation_error_receipt(
+                        session.allocate_action_id(),
+                        session_id_str,
+                        cookie_validation_code(&e),
+                        e.to_string(),
+                    ));
+                }
+
+                // Step 4: rebuild the action with a uniform `inline`
+                // source so the downstream `build_chromium_args` path
+                // sees a single shape regardless of how the operator
+                // framed the request.
+                let resolved_source = serde_json::json!({
+                    "source": "inline",
+                    "cookies": cookies,
+                });
+                Action::WebSetCookies {
+                    session_id,
+                    source: resolved_source,
+                }
+            }
+            other => other,
+        };
 
         let handle = tokio::runtime::Handle::current();
         let session_handle = SessionHandle {
@@ -1204,6 +1360,79 @@ fn profile_restricted_evaluate_receipt(
         network_summary: None,
         return_value_json: None,
         return_value_blob_ref: None,
+        // v0.9.6 cookie-result fields — not applicable to a
+        // profile-restricted evaluate.
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    }
+}
+
+/// v0.9.7 follow-up: build an error Receipt for a per-cookie validation
+/// rejection in `web.set_cookies`. The typed `CookieValidationError`
+/// taxonomy is surfaced on the receipt's `error.kind` ("cookie_validation_error")
+/// and `error.detail.code` (one of `name_empty` / `name_invalid` /
+/// `value_too_large` / `too_many_cookies` / `invalid_expires`), mirroring
+/// the verb-side error mapper that runs when the
+/// `loom-surface-web ↔ loom-surfaces` wiring closes.
+fn cookie_validation_error_receipt(
+    action_id: u64,
+    session_id: &str,
+    code: &str,
+    message: String,
+) -> Receipt {
+    use loom_rpc::host_service_adapter::host_service_adapter::{ReceiptError, ReceiptStatus};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Receipt {
+        action_id,
+        session_id: session_id.to_string(),
+        status: ReceiptStatus::Error,
+        timing_ticks: 0,
+        side_effects: vec![],
+        error: Some(ReceiptError {
+            kind: "cookie_validation_error".to_string(),
+            detail: Some(serde_json::json!({
+                "code": code,
+                "message": message,
+            })),
+        }),
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: Some(now),
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: vec![],
+        network_summary: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    }
+}
+
+/// v0.9.7 follow-up: map a typed `CookieValidationError` variant to the
+/// snake_case error-code string used on the wire error receipt.
+fn cookie_validation_code(e: &loom_surfaces::cookie_types::CookieValidationError) -> &'static str {
+    use loom_surfaces::cookie_types::CookieValidationError as E;
+    match e {
+        E::NameEmpty => "name_empty",
+        E::NameInvalid { .. } => "name_invalid",
+        E::ValueTooLarge { .. } => "value_too_large",
+        E::InvalidSameSite(_) => "invalid_same_site",
+        E::InvalidExpires(_) => "invalid_expires",
+        E::TooManyCookies(_) => "too_many_cookies",
     }
 }
 
@@ -1213,6 +1442,41 @@ fn profile_restricted_evaluate_receipt(
 ///
 /// This shape MUST match `loom_shared::shim_protocol::CdpMessage` so
 /// `ShimManager::send` can decode the bytes via `ciborium_from_slice`.
+/// v0.9.6 helper: convert a `serde_json::Value` (typically a cookie object
+/// in `web.set_cookies`'s `source.cookies[]`) into a `ciborium::value::Value`
+/// for direct embedding in the CDP CBOR envelope. Returns None for shapes
+/// the CDP wire can't represent (e.g. arbitrary nested arrays in places
+/// chromium expects scalars) — caller drops the entry rather than the
+/// whole batch.
+fn serde_json_value_to_cbor(v: serde_json::Value) -> Option<ciborium::value::Value> {
+    use ciborium::value::Value;
+    use serde_json::Value as J;
+    match v {
+        J::Null => Some(Value::Null),
+        J::Bool(b) => Some(Value::Bool(b)),
+        J::String(s) => Some(Value::Text(s)),
+        J::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Some(Value::Integer(i.into()))
+            } else if let Some(u) = n.as_u64() {
+                Some(Value::Integer((u as i128).try_into().ok()?))
+            } else {
+                n.as_f64().map(Value::Float)
+            }
+        }
+        J::Array(arr) => Some(Value::Array(
+            arr.into_iter()
+                .filter_map(serde_json_value_to_cbor)
+                .collect(),
+        )),
+        J::Object(obj) => Some(Value::Map(
+            obj.into_iter()
+                .filter_map(|(k, v)| Some((Value::Text(k), serde_json_value_to_cbor(v)?)))
+                .collect(),
+        )),
+    }
+}
+
 fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
     use ciborium::value::Value;
 
@@ -1363,6 +1627,122 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
                 ]),
             ),
         ]),
+
+        // v0.9.6 web-cookie-injection: build CDP envelopes daemon-side
+        // (the WASM verbs in loom-surface-web forward whatever
+        // action.payload they receive via host::shim_call, so we need
+        // the payload to be a valid CDP CBOR envelope by the time it
+        // reaches the chromium shim).
+        //
+        // Per-cookie validation (validate_cookie_params) is intentionally
+        // NOT performed here — daemon-side validation would require
+        // converting the raw JSON `source` into typed cookie_types
+        // structs, which adds a loom-surfaces dep to loom-daemon
+        // (currently absent). The chromium shim's
+        // Network.setCookies response surfaces individual cookie
+        // rejections; surface-side validation lands when the
+        // SetCookiesVerb::execute() path is wired (loom-surface-web
+        // doesn't currently depend on loom-surfaces).
+        //
+        // Grant resolution is now performed upstream in
+        // `dispatch_action_blocking` (v0.9.7 follow-up A) — by the
+        // time we get here the source should always be `inline`.
+        // The non-inline branch below is defensive: if some other
+        // caller (e.g. tests) hands us a `grant` source we emit an
+        // empty no-op envelope rather than trapping.
+        Action::WebSetCookies { source, .. } => {
+            // source = {"source":"inline","cookies":[...]} or
+            // {"source":"grant","grant_id":"..."}
+            let kind = source.get("source").and_then(|v| v.as_str())?;
+            if kind != "inline" {
+                tracing::warn!(
+                    "build_chromium_args saw set_cookies with non-inline source after dispatcher should have resolved it; emitting empty Network.setCookies",
+                );
+                return Some({
+                    let v = Value::Map(vec![
+                        (
+                            Value::Text("method".into()),
+                            Value::Text("Network.setCookies".into()),
+                        ),
+                        (
+                            Value::Text("params".into()),
+                            Value::Map(vec![(Value::Text("cookies".into()), Value::Array(vec![]))]),
+                        ),
+                    ]);
+                    let mut bytes = Vec::new();
+                    ciborium::ser::into_writer(&v, &mut bytes).ok()?;
+                    bytes
+                });
+            }
+            let cookies = source
+                .get("cookies")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|c| serde_json_value_to_cbor(c.clone()))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Value::Map(vec![
+                (
+                    Value::Text("method".into()),
+                    Value::Text("Network.setCookies".into()),
+                ),
+                (
+                    Value::Text("params".into()),
+                    Value::Map(vec![(Value::Text("cookies".into()), Value::Array(cookies))]),
+                ),
+            ])
+        }
+        Action::WebGetCookies { urls, .. } => {
+            let mut params: Vec<(Value, Value)> = vec![];
+            if let Some(u) = urls {
+                params.push((
+                    Value::Text("urls".into()),
+                    Value::Array(u.iter().map(|s| Value::Text(s.clone())).collect()),
+                ));
+            }
+            Value::Map(vec![
+                (
+                    Value::Text("method".into()),
+                    Value::Text("Network.getCookies".into()),
+                ),
+                (Value::Text("params".into()), Value::Map(params)),
+            ])
+        }
+        Action::WebClearCookies { .. } => Value::Map(vec![
+            (
+                Value::Text("method".into()),
+                Value::Text("Network.clearBrowserCookies".into()),
+            ),
+            (Value::Text("params".into()), Value::Map(vec![])),
+        ]),
+        Action::WebDeleteCookies {
+            name,
+            url,
+            domain,
+            path,
+            ..
+        } => {
+            let mut params: Vec<(Value, Value)> =
+                vec![(Value::Text("name".into()), Value::Text(name.clone()))];
+            if let Some(u) = url {
+                params.push((Value::Text("url".into()), Value::Text(u.clone())));
+            }
+            if let Some(d) = domain {
+                params.push((Value::Text("domain".into()), Value::Text(d.clone())));
+            }
+            if let Some(p) = path {
+                params.push((Value::Text("path".into()), Value::Text(p.clone())));
+            }
+            Value::Map(vec![
+                (
+                    Value::Text("method".into()),
+                    Value::Text("Network.deleteCookies".into()),
+                ),
+                (Value::Text("params".into()), Value::Map(params)),
+            ])
+        }
     };
 
     let mut bytes = Vec::new();
@@ -1491,6 +1871,15 @@ fn build_navigate_wire_receipt(
         network_summary,
         return_value_json,
         return_value_blob_ref,
+        // v0.9.6 cookie-result wire fields. Populated by Tier 4
+        // (ReceiptMarshaller cookie fields + D13 tuple-identity sort);
+        // for now stay `None` so non-cookie verbs serialise unchanged
+        // and cookie verbs' result data lands on the receipt once the
+        // marshaller exposes it.
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     };
 
     // apply per-session capture-policy at the wire
@@ -1568,6 +1957,11 @@ fn action_session_id(action: &Action) -> &str {
         | Action::WebScroll { session_id, .. }
         | Action::WebWait { session_id, .. }
         | Action::WebSnapshot { session_id } => session_id,
+        // v0.9.6 web-cookie-injection.
+        Action::WebSetCookies { session_id, .. }
+        | Action::WebGetCookies { session_id, .. }
+        | Action::WebClearCookies { session_id }
+        | Action::WebDeleteCookies { session_id, .. } => session_id,
     }
 }
 
@@ -1580,9 +1974,10 @@ fn action_surface(_action: &Action) -> &str {
 }
 
 fn action_verb(action: &Action) -> &str {
-    // Must match the WIT export name in `wit/loom-surface.wit:78-90`
-    // verbatim. `web.type-text` is the only kebab-cased verb (Rust
-    // identifier `type` is reserved, hence the WIT split).
+    // Must match the WIT export name in `wit/loom-surface.wit` verbatim.
+    // `web.type-text` and the v0.9.6 cookie verbs (`set-cookies`,
+    // `get-cookies`, `clear-cookies`, `delete-cookies`) are the
+    // kebab-cased verbs.
     match action {
         Action::WebNavigate { .. } => "navigate",
         Action::WebClick { .. } => "click",
@@ -1594,6 +1989,11 @@ fn action_verb(action: &Action) -> &str {
         Action::WebScroll { .. } => "scroll",
         Action::WebWait { .. } => "wait",
         Action::WebSnapshot { .. } => "snapshot",
+        // v0.9.6 web-cookie-injection.
+        Action::WebSetCookies { .. } => "set-cookies",
+        Action::WebGetCookies { .. } => "get-cookies",
+        Action::WebClearCookies { .. } => "clear-cookies",
+        Action::WebDeleteCookies { .. } => "delete-cookies",
     }
 }
 
@@ -2199,6 +2599,117 @@ mod tests {
             LoomErrorCode::ProfileRestricted.as_wire(),
             "profile_restricted"
         );
+    }
+
+    // ─── v0.9.7 follow-ups A + B — cookie validation + grant ────────────
+
+    /// Each `CookieValidationError` variant maps to a stable snake_case
+    /// wire string. The operator's `loom action web.set_cookies` failure
+    /// receipt carries `detail.code = <wire string>` so dashboards can
+    /// group by validation reason.
+    #[test]
+    fn cookie_validation_code_covers_all_variants() {
+        use loom_surfaces::cookie_types::CookieValidationError as E;
+        assert_eq!(cookie_validation_code(&E::NameEmpty), "name_empty");
+        assert_eq!(
+            cookie_validation_code(&E::NameInvalid { ch: ';' }),
+            "name_invalid"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::ValueTooLarge { size: 5_000 }),
+            "value_too_large"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::InvalidSameSite("foo".to_string())),
+            "invalid_same_site"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::InvalidExpires(f64::NAN)),
+            "invalid_expires"
+        );
+        assert_eq!(
+            cookie_validation_code(&E::TooManyCookies(65)),
+            "too_many_cookies"
+        );
+    }
+
+    /// Receipt envelope shape returned when daemon-side validation
+    /// rejects a `web.set_cookies` payload. Pins the wire fields the
+    /// CLI reproducer reads (`error.kind` and `error.detail.code`).
+    #[test]
+    fn cookie_validation_error_receipt_carries_required_fields() {
+        let r = cookie_validation_error_receipt(
+            7,
+            "01HZSESSION",
+            "too_many_cookies",
+            "65 cookies provided, max is 64".to_string(),
+        );
+        assert_eq!(r.action_id, 7);
+        assert_eq!(r.session_id, "01HZSESSION");
+        assert!(matches!(
+            r.status,
+            loom_rpc::host_service_adapter::host_service_adapter::ReceiptStatus::Error
+        ));
+        let err = r.error.expect("error envelope present");
+        assert_eq!(err.kind, "cookie_validation_error");
+        let detail = err.detail.expect("detail present");
+        assert_eq!(detail["code"], "too_many_cookies");
+        assert_eq!(detail["message"], "65 cookies provided, max is 64");
+        // Synthesised error — none of the success-path fields populated.
+        assert!(r.set_cookies_result.is_none());
+        assert!(r.url.is_none());
+        assert!(r.dom_snapshot_hash.is_none());
+        assert_eq!(r.timing_ticks, 0);
+    }
+
+    /// `build_chromium_args` defensively emits an empty no-op envelope
+    /// for a `set_cookies` action whose source is still `grant` by the
+    /// time it reaches the CDP encoder — the dispatcher should have
+    /// resolved it upstream, but tests / future callers may bypass
+    /// that path.
+    #[test]
+    fn build_chromium_args_set_cookies_grant_source_emits_empty_no_op() {
+        let action = Action::WebSetCookies {
+            session_id: s("sess"),
+            source: serde_json::json!({
+                "source": "grant",
+                "grant_id": "grn_abc",
+            }),
+        };
+        let msg = decode_cdp(&action).expect("envelope produced");
+        assert_eq!(msg.method, "Network.setCookies");
+        // params.cookies = [] (empty array)
+        let cookies = params_get(&msg, "cookies").expect("cookies param present");
+        match cookies {
+            ciborium::value::Value::Array(arr) => assert!(arr.is_empty()),
+            other => panic!("expected empty array, got {other:?}"),
+        }
+    }
+
+    /// `build_chromium_args` for a resolved inline `set_cookies` passes
+    /// the cookies array through to the CDP envelope. This is the
+    /// shape the dispatcher hands `build_chromium_args` after grant
+    /// resolution.
+    #[test]
+    fn build_chromium_args_set_cookies_inline_passes_through_cookies() {
+        let action = Action::WebSetCookies {
+            session_id: s("sess"),
+            source: serde_json::json!({
+                "source": "inline",
+                "cookies": [
+                    {"name": "sid", "value": "abc", "domain": "example.com", "path": "/"}
+                ],
+            }),
+        };
+        let msg = decode_cdp(&action).expect("envelope produced");
+        assert_eq!(msg.method, "Network.setCookies");
+        let cookies = params_get(&msg, "cookies").expect("cookies param present");
+        match cookies {
+            ciborium::value::Value::Array(arr) => {
+                assert_eq!(arr.len(), 1);
+            }
+            other => panic!("expected array, got {other:?}"),
+        }
     }
 
     // ─── existing tests ─────────────────────────────────────────────────

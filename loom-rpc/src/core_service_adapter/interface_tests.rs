@@ -208,3 +208,40 @@ fn adapter_does_not_expose_action_dispatch() {
     }
     let _ = _audit_methods_returns_no_receipt::<CoreServiceAdapter>;
 }
+
+// === v0.9.6 web-cookie-injection: vault.get_session_context types ===
+
+#[test]
+fn vault_get_session_context_info_round_trips_serde() {
+    use super::core_service_adapter::VaultGetSessionContextInfo;
+    let info = VaultGetSessionContextInfo {
+        session_id: "S01HZABCDEF".to_string(),
+        unambiguous: true,
+    };
+    let json = serde_json::to_string(&info).expect("serialise");
+    let back: VaultGetSessionContextInfo = serde_json::from_str(&json).expect("deserialise");
+    assert_eq!(back.session_id, "S01HZABCDEF");
+    assert!(back.unambiguous);
+}
+
+#[test]
+fn vault_get_session_context_info_carries_unambiguous_flag_as_false_for_multi_active() {
+    use super::core_service_adapter::VaultGetSessionContextInfo;
+    let info = VaultGetSessionContextInfo {
+        session_id: "S2".to_string(),
+        unambiguous: false, // multiple active → caller may want to confirm
+    };
+    let json = serde_json::to_string(&info).unwrap();
+    assert!(json.contains("\"unambiguous\":false"));
+}
+
+#[test]
+fn vault_get_session_context_trait_method_signature() {
+    use super::core_service_adapter::{
+        AdapterError, CoreServiceAdapterApi, VaultGetSessionContextInfo,
+    };
+    fn _ck(c: &dyn CoreServiceAdapterApi) -> Result<VaultGetSessionContextInfo, AdapterError> {
+        c.vault_get_session_context()
+    }
+    let _ = _ck;
+}

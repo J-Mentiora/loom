@@ -409,6 +409,19 @@ pub(crate) fn decode_typed_receipt(
                         ("return-value-blob-ref", Val::Option(opt)) => {
                             builder.evaluate_return_value_blob_ref = extract_opt_content_ref(opt);
                         }
+                        // ---- v0.9.6 cookie tier optional fields ----
+                        ("set-cookies-result", Val::Option(opt)) => {
+                            builder.set_cookies_result = extract_opt_string(opt);
+                        }
+                        ("get-cookies-result", Val::Option(opt)) => {
+                            builder.get_cookies_result = extract_opt_string(opt);
+                        }
+                        ("clear-cookies-result", Val::Option(opt)) => {
+                            builder.clear_cookies_result = extract_opt_string(opt);
+                        }
+                        ("delete-cookies-result", Val::Option(opt)) => {
+                            builder.delete_cookies_result = extract_opt_string(opt);
+                        }
                         _ => {}
                     }
                 }

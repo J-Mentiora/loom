@@ -207,6 +207,18 @@ fn coerce_with_hint(raw: &str, hint: Option<&str>) -> serde_json::Value {
             "false" => serde_json::Value::Bool(false),
             other => serde_json::Value::String(other.to_string()),
         },
+        // v0.9.6 web-cookie-injection: when the schema declares the field
+        // as `object` or `array` (e.g. `web.set_cookies.source`,
+        // `web.get_cookies.urls`), parse the raw CLI value as JSON so
+        // the schema validator sees a structured payload, not the
+        // literal string. Pre-fix, `--source '{"source":"inline",...}'`
+        // arrived at the daemon as a string and the validator rejected
+        // it with `"{...}" is not of type "object"`. Falls back to a
+        // string on parse failure so a malformed input still surfaces
+        // through the validator (vs producing a confusing CLI panic).
+        Some("object") | Some("array") => {
+            serde_json::from_str(raw).unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+        }
         // No hint → legacy auto-coerce ladder.
         _ => {
             if let Ok(n) = raw.parse::<i64>() {

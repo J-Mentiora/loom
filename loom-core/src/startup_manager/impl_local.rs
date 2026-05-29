@@ -12,7 +12,21 @@
 use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::{ManifestEntry, SessionId};
 use crate::startup_manager::{FailedSession, RecoveryReport, StartupManager};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use walkdir::WalkDir;
+
+/// v0.9.7 follow-up — cap parallel workers for the manifest sweep.
+/// Larger fan-out helps for IO-bound work over hundreds of session
+/// dirs, but more than ~16 workers stops paying for itself on typical
+/// SSDs and starts contending on the manifest_writer's internal locks.
+const SWEEP_MAX_WORKERS: usize = 16;
+
+/// Per-worker minimum batch — sessions are cheap individually
+/// (a few file reads + a JCS-canonical hash chain validation) so
+/// spinning up a thread per session loses to the thread setup
+/// overhead. Keep workers fed at least this many.
+const SWEEP_MIN_BATCH: usize = 4;
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -76,10 +90,6 @@ impl StartupManager {
     }
 
     pub fn sweep_manifests(&self) -> Result<(u64, u64, Vec<FailedSession>), LoomError> {
-        let mut recovered = 0u64;
-        let mut crashed = 0u64;
-        let mut failed: Vec<FailedSession> = Vec::new();
-
         let dir = match std::fs::read_dir(&self.sessions_root) {
             Ok(d) => d,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -88,46 +98,140 @@ impl StartupManager {
             Err(e) => return Err(LoomError::from(e)),
         };
 
+        // Collect candidate session IDs first so the parallel fan-out
+        // gets a deterministic, indexable input. Filtering is done up
+        // front so each worker only sees real work — no wasted thread
+        // wake-ups for sessions whose WAL was already truncated.
+        let mut candidates: Vec<SessionId> = Vec::new();
         for entry in dir {
             let entry = match entry {
                 Ok(e) => e,
                 Err(_) => continue,
             };
-
             let path = entry.path();
             if !path.is_dir() {
                 continue;
             }
-
             let session_id = match path.file_name().and_then(|n| n.to_str()) {
                 Some(s) => SessionId(s.to_string()),
                 None => continue,
             };
-
-            let wal_path = path.join("manifest.wal");
-            if !wal_path.exists() {
+            if !path.join("manifest.wal").exists() {
                 continue;
             }
-
-            match self.process_session(session_id.clone()) {
-                Ok(was_crashed) => {
-                    if was_crashed {
-                        crashed += 1;
-                    } else {
-                        recovered += 1;
-                    }
-                }
-                Err(e) => {
-                    failed.push(FailedSession {
-                        session_id,
-                        error_code: "sweep_error".to_string(),
-                        details: e.to_string(),
-                    });
-                }
-            }
+            candidates.push(session_id);
         }
 
-        Ok((recovered, crashed, failed))
+        if candidates.is_empty() {
+            return Ok((0, 0, vec![]));
+        }
+
+        // For small corpora the single-threaded fast path skips
+        // thread::scope's overhead. The threshold is twice the min
+        // batch — below that, the fan-out wouldn't even produce a
+        // second worker.
+        if candidates.len() < SWEEP_MIN_BATCH * 2 {
+            return Ok(self.sweep_sequential(&candidates));
+        }
+
+        self.sweep_parallel(&candidates)
+    }
+
+    /// Single-threaded sweep — used for small corpora where parallel
+    /// fan-out doesn't pay back the std::thread::scope overhead.
+    fn sweep_sequential(&self, candidates: &[SessionId]) -> (u64, u64, Vec<FailedSession>) {
+        let mut recovered = 0u64;
+        let mut crashed = 0u64;
+        let mut failed: Vec<FailedSession> = Vec::new();
+        for session_id in candidates {
+            match self.process_session(session_id.clone()) {
+                Ok(true) => crashed += 1,
+                Ok(false) => recovered += 1,
+                Err(e) => failed.push(FailedSession {
+                    session_id: session_id.clone(),
+                    error_code: "sweep_error".to_string(),
+                    details: e.to_string(),
+                }),
+            }
+        }
+        (recovered, crashed, failed)
+    }
+
+    /// Parallel sweep — partition candidates across N workers and
+    /// run `process_session` in parallel. Per-session isolation is
+    /// already a design property (each session has its own WAL +
+    /// manifest_writer mutates only that session's dir), so the
+    /// concurrent processing is safe.
+    ///
+    /// The recovered/crashed/failed counters are aggregated across
+    /// worker threads via atomics + a single Mutex on the failed
+    /// list — contention is low because failed entries are rare and
+    /// the happy path only touches the atomics.
+    fn sweep_parallel(
+        &self,
+        candidates: &[SessionId],
+    ) -> Result<(u64, u64, Vec<FailedSession>), LoomError> {
+        let worker_target = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(SWEEP_MAX_WORKERS);
+        // Also cap workers so each one gets at least SWEEP_MIN_BATCH
+        // sessions — fewer-but-busier threads beat lots-of-idle ones.
+        let workers = worker_target
+            .min(candidates.len().div_ceil(SWEEP_MIN_BATCH))
+            .max(1);
+        // If we'd only spawn one worker anyway (constrained sandbox
+        // where `available_parallelism` returned 1, or a corpus
+        // barely above the parallel threshold), fall back to the
+        // sequential path so we don't pay `thread::scope`'s setup
+        // cost just to run one thread.
+        if workers == 1 {
+            return Ok(self.sweep_sequential(candidates));
+        }
+        let chunk_size = candidates.len().div_ceil(workers);
+
+        let recovered = AtomicU64::new(0);
+        let crashed = AtomicU64::new(0);
+        let failed: Mutex<Vec<FailedSession>> = Mutex::new(Vec::new());
+
+        std::thread::scope(|scope| {
+            for chunk in candidates.chunks(chunk_size) {
+                let recovered_ref = &recovered;
+                let crashed_ref = &crashed;
+                let failed_ref = &failed;
+                let me = self;
+                scope.spawn(move || {
+                    for session_id in chunk {
+                        match me.process_session(session_id.clone()) {
+                            Ok(true) => {
+                                crashed_ref.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Ok(false) => {
+                                recovered_ref.fetch_add(1, Ordering::Relaxed);
+                            }
+                            Err(e) => {
+                                // Mutex is only taken on the rare
+                                // failure path — happy-path threads
+                                // never block on each other.
+                                if let Ok(mut g) = failed_ref.lock() {
+                                    g.push(FailedSession {
+                                        session_id: session_id.clone(),
+                                        error_code: "sweep_error".to_string(),
+                                        details: e.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+
+        Ok((
+            recovered.load(Ordering::Relaxed),
+            crashed.load(Ordering::Relaxed),
+            failed.into_inner().unwrap_or_default(),
+        ))
     }
 
     /// Process one session. Returns Ok(true) if a RuntimeCrash was appended

@@ -31,6 +31,10 @@ fn fixture_inputs() -> ReceiptInputs {
         network_events: Vec::new(),
         console_lines: Vec::new(),
         evaluate_return_value: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
         tags: BTreeMap::new(),
     }
 }

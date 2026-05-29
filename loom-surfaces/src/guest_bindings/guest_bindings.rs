@@ -18,11 +18,12 @@
 // - **Sole WASM export.** `web-surface` interface is the only export
 //   from `loom-surface-web.wasm`. v1.5 surface crates each export their
 //   own world (shell-surface, fs-surface, api-surface, native-surface).
-// - **10 verb methods.** One method per WIT-defined verb on
-//   `web-surface`. `WebSurfaceImpl::<verb>` delegates to the
-//   corresponding verb module's `execute` function.
+// - **14 verb methods.** One method per WIT-defined verb on
+//   `web-surface` (10 original + 4 cookie verbs added in v0.9.6).
+//   `WebSurfaceImpl::<verb>` delegates to the corresponding verb
+//   module's `execute` function.
 // - **No business logic.** Pure delegation; the trait body is the only
-//   place where the verb dispatch table lives. Adding an 11th verb
+//   place where the verb dispatch table lives. Adding a 15th verb
 //   requires a WIT change + regen.
 // - **No mode awareness .** The bytecode this file produces
 //   is identical between live and replay; the host swaps the linker.
@@ -33,15 +34,19 @@
 
 extern crate alloc;
 
+use crate::clear_cookies_verb::clear_cookies_verb::{ClearCookiesAction, ClearCookiesVerb};
 use crate::click_verb::click_verb::{ClickAction, ClickVerb};
+use crate::delete_cookies_verb::delete_cookies_verb::{DeleteCookiesAction, DeleteCookiesVerb};
 use crate::error_mapper::error_mapper::HostError;
 use crate::evaluate_verb::evaluate_verb::{EvaluateAction, EvaluateVerb};
+use crate::get_cookies_verb::get_cookies_verb::{GetCookiesAction, GetCookiesVerb};
 use crate::hover_verb::hover_verb::{HoverAction, HoverVerb};
 use crate::navigate_verb::navigate_verb::{NavigateAction, NavigateVerb};
 use crate::receipt_builder::receipt_builder::Receipt;
 use crate::screenshot_verb::screenshot_verb::{ScreenshotAction, ScreenshotVerb};
 use crate::scroll_verb::scroll_verb::{ScrollAction, ScrollVerb};
 use crate::select_verb::select_verb::{SelectAction, SelectVerb};
+use crate::set_cookies_verb::set_cookies_verb::{SetCookiesAction, SetCookiesVerb};
 use crate::snapshot_verb::snapshot_verb::{SnapshotAction, SnapshotVerb};
 use crate::type_text_verb::type_text_verb::{TypeTextAction, TypeTextVerb};
 use crate::wait_verb::wait_verb::{WaitAction, WaitVerb};
@@ -59,6 +64,11 @@ pub trait WebSurface {
     fn evaluate(a: EvaluateAction) -> Result<Receipt, HostError>;
     fn screenshot(a: ScreenshotAction) -> Result<Receipt, HostError>;
     fn snapshot(a: SnapshotAction) -> Result<Receipt, HostError>;
+    // v0.9.6 web-cookie-injection.
+    fn set_cookies(a: SetCookiesAction) -> Result<Receipt, HostError>;
+    fn get_cookies(a: GetCookiesAction) -> Result<Receipt, HostError>;
+    fn clear_cookies(a: ClearCookiesAction) -> Result<Receipt, HostError>;
+    fn delete_cookies(a: DeleteCookiesAction) -> Result<Receipt, HostError>;
 }
 
 /// The unit struct that implements `WebSurface`. Each method delegates
@@ -97,10 +107,24 @@ impl WebSurface for WebSurfaceImpl {
     fn snapshot(a: SnapshotAction) -> Result<Receipt, HostError> {
         SnapshotVerb::execute(a)
     }
+    // v0.9.6 web-cookie-injection.
+    fn set_cookies(a: SetCookiesAction) -> Result<Receipt, HostError> {
+        SetCookiesVerb::execute(a)
+    }
+    fn get_cookies(a: GetCookiesAction) -> Result<Receipt, HostError> {
+        GetCookiesVerb::execute(a)
+    }
+    fn clear_cookies(a: ClearCookiesAction) -> Result<Receipt, HostError> {
+        ClearCookiesVerb::execute(a)
+    }
+    fn delete_cookies(a: DeleteCookiesAction) -> Result<Receipt, HostError> {
+        DeleteCookiesVerb::execute(a)
+    }
 }
 
-/// Compile-time enumeration of the 10 verb names exported from the
-/// `web-surface` WIT interface. Used by integration tests +
+/// Compile-time enumeration of the 14 verb names exported from the
+/// `web-surface` WIT interface (10 original + 4 cookie verbs added
+/// in v0.9.6). Used by integration tests +
 /// `tools/lint-surface-bindings.py` to assert WIT-vs-impl agreement.
 pub const WEB_SURFACE_VERBS: &[&str] = &[
     "navigate",
@@ -113,4 +137,9 @@ pub const WEB_SURFACE_VERBS: &[&str] = &[
     "evaluate",
     "screenshot",
     "snapshot",
+    // v0.9.6 cookie verbs.
+    "set-cookies",
+    "get-cookies",
+    "clear-cookies",
+    "delete-cookies",
 ];

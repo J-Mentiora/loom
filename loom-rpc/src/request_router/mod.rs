@@ -339,6 +339,14 @@ impl RequestRouterApi for RequestRouter {
                 Ok(v) => canonical_bytes(&v),
                 Err(e) => error_bytes(&e),
             },
+            // v0.9.6 web-cookie-injection: session-context lookup for
+            // `loom vault add --credential-type cookie` binding (D5).
+            "vault.get_session_context" => {
+                match self.ctx.handlers.vault_get_session_context().await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
             "content.get" => {
                 let artifact_ref = params
                     .get("artifact_ref")
@@ -474,6 +482,11 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.evaluate" => &["session_id", "expression"],
         "web.screenshot" => &["session_id"],
         "web.snapshot" => &["session_id"],
+        // v0.9.6 web-cookie-injection.
+        "web.set_cookies" => &["session_id", "source"],
+        "web.get_cookies" => &["session_id"],
+        "web.clear_cookies" => &["session_id"],
+        "web.delete_cookies" => &["session_id", "name"],
         _ => return None,
     })
 }
@@ -481,13 +494,17 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
 /// All known router method names — the set parsable by [`parse_action`].
 pub fn known_router_methods() -> &'static [&'static str] {
     &[
+        "web.clear_cookies",
         "web.click",
+        "web.delete_cookies",
         "web.evaluate",
+        "web.get_cookies",
         "web.hover",
         "web.navigate",
         "web.screenshot",
         "web.scroll",
         "web.select",
+        "web.set_cookies",
         "web.snapshot",
         "web.type",
         "web.wait",
@@ -591,6 +608,52 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         "web.snapshot" => {
             let session_id = session_id_from_params(&params)?;
             Ok(Action::WebSnapshot { session_id })
+        }
+        // v0.9.6 web-cookie-injection.
+        "web.set_cookies" => {
+            let session_id = session_id_from_params(&params)?;
+            let source = params.get("source").cloned().ok_or_else(|| JsonRpcError {
+                code: LoomErrorCode::SchemaViolation,
+                message: "missing field: source".to_string(),
+                data: None,
+            })?;
+            Ok(Action::WebSetCookies { session_id, source })
+        }
+        "web.get_cookies" => {
+            let session_id = session_id_from_params(&params)?;
+            let urls = params.get("urls").and_then(|v| v.as_array()).map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            });
+            Ok(Action::WebGetCookies { session_id, urls })
+        }
+        "web.clear_cookies" => {
+            let session_id = session_id_from_params(&params)?;
+            Ok(Action::WebClearCookies { session_id })
+        }
+        "web.delete_cookies" => {
+            let session_id = session_id_from_params(&params)?;
+            let name = required_str(&params, "name")?;
+            let url = params
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let domain = params
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let path = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            Ok(Action::WebDeleteCookies {
+                session_id,
+                name,
+                url,
+                domain,
+                path,
+            })
         }
         other => Err(JsonRpcError {
             code: LoomErrorCode::MethodNotFound,

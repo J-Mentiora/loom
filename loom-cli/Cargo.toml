@@ -75,6 +75,13 @@ default = ["postinstall", "vendored-wasm"]
 mock = []
 postinstall = ["dep:loom-host"]
 vendored-wasm = []
+# v0.9.6 web-cookie-injection: opt-in end-to-end stdio MCP acceptance
+# test. Spawns the loom-mcp binary as a subprocess, drives JSON-RPC
+# over its stdio, and exercises the cookie verb chain. Browser-
+# requiring sub-tests further check LOOM_TEST_CHROMIUM_AVAILABLE=1
+# in the environment; non-browser sub-tests run under
+# `cargo test --features e2e -p loom-cli --test cookie_injection_acceptance`.
+e2e = []
 
 # Binary crate that also exposes a library facade for integration tests
 # (`fn main()` plus a library-style `run` helper).
