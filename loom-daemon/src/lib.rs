@@ -1204,6 +1204,12 @@ fn profile_restricted_evaluate_receipt(
         network_summary: None,
         return_value_json: None,
         return_value_blob_ref: None,
+        // v0.9.6 cookie-result fields — not applicable to a
+        // profile-restricted evaluate.
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     }
 }
 
@@ -1363,6 +1369,20 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
                 ]),
             ),
         ]),
+
+        // v0.9.6 web-cookie-injection: cookie verbs do not use the
+        // direct-shim path. They route through the WASM guest's
+        // `SetCookiesVerb::execute()` (etc.), which builds the CDP
+        // envelope itself via `CdpMessageEncoder` and dispatches via
+        // `host::shim_call("chromium", ...)`. The grant-resolution path
+        // for `set_cookies` goes through `host::vault_substitute_cookies`
+        // on the way in. Returning `None` here signals to the caller
+        // ("no direct chromium-args bytes for this action") so the
+        // dispatcher uses the WASM verb route instead.
+        Action::WebSetCookies { .. }
+        | Action::WebGetCookies { .. }
+        | Action::WebClearCookies { .. }
+        | Action::WebDeleteCookies { .. } => return None,
     };
 
     let mut bytes = Vec::new();
@@ -1491,6 +1511,15 @@ fn build_navigate_wire_receipt(
         network_summary,
         return_value_json,
         return_value_blob_ref,
+        // v0.9.6 cookie-result wire fields. Populated by Tier 4
+        // (ReceiptMarshaller cookie fields + D13 tuple-identity sort);
+        // for now stay `None` so non-cookie verbs serialise unchanged
+        // and cookie verbs' result data lands on the receipt once the
+        // marshaller exposes it.
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
     };
 
     // apply per-session capture-policy at the wire
@@ -1568,6 +1597,11 @@ fn action_session_id(action: &Action) -> &str {
         | Action::WebScroll { session_id, .. }
         | Action::WebWait { session_id, .. }
         | Action::WebSnapshot { session_id } => session_id,
+        // v0.9.6 web-cookie-injection.
+        Action::WebSetCookies { session_id, .. }
+        | Action::WebGetCookies { session_id, .. }
+        | Action::WebClearCookies { session_id }
+        | Action::WebDeleteCookies { session_id, .. } => session_id,
     }
 }
 
@@ -1580,9 +1614,10 @@ fn action_surface(_action: &Action) -> &str {
 }
 
 fn action_verb(action: &Action) -> &str {
-    // Must match the WIT export name in `wit/loom-surface.wit:78-90`
-    // verbatim. `web.type-text` is the only kebab-cased verb (Rust
-    // identifier `type` is reserved, hence the WIT split).
+    // Must match the WIT export name in `wit/loom-surface.wit` verbatim.
+    // `web.type-text` and the v0.9.6 cookie verbs (`set-cookies`,
+    // `get-cookies`, `clear-cookies`, `delete-cookies`) are the
+    // kebab-cased verbs.
     match action {
         Action::WebNavigate { .. } => "navigate",
         Action::WebClick { .. } => "click",
@@ -1594,6 +1629,11 @@ fn action_verb(action: &Action) -> &str {
         Action::WebScroll { .. } => "scroll",
         Action::WebWait { .. } => "wait",
         Action::WebSnapshot { .. } => "snapshot",
+        // v0.9.6 web-cookie-injection.
+        Action::WebSetCookies { .. } => "set-cookies",
+        Action::WebGetCookies { .. } => "get-cookies",
+        Action::WebClearCookies { .. } => "clear-cookies",
+        Action::WebDeleteCookies { .. } => "delete-cookies",
     }
 }
 

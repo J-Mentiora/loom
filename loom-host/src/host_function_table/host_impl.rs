@@ -177,6 +177,41 @@ impl Host for HostState {
         }
     }
 
+    // --- Vault (v0.9.6 web-cookie-injection grant resolution) ---
+
+    fn vault_substitute_cookies(
+        &mut self,
+        grant_id: String,
+        session_id: String,
+    ) -> impl ::core::future::Future<Output = Result<Vec<u8>, HostError>> + Send {
+        use loom_core::manifest_writer::manifest_writer::SessionId;
+        use loom_core::vault::GrantId;
+        // Replay mode: refuse. Cookie values in replay must be supplied
+        // externally via `replay_cookie_values` (§5), not pulled from the
+        // live vault. This keeps replay self-contained.
+        let result = if self.mode == Mode::Replay {
+            Err(HostError::Internal(
+                "vault_substitute_cookies not allowed in replay mode".to_owned(),
+            ))
+        } else {
+            match self.core.vault.substitute_cookies(
+                GrantId(grant_id),
+                SessionId(session_id),
+            ) {
+                // Zeroizing<Vec<u8>> → Vec<u8>. The original Zeroizing
+                // wrapper drops here, wiping its backing buffer (per the
+                // v0.9.5 contract that raw cookie values are wiped in
+                // daemon memory). The non-zeroizing copy below crosses
+                // the WIT boundary into the WASM guest. The proper
+                // through-boundary heap-wipe path is the §10 hardening
+                // (separate tier).
+                Ok(zeroized) => Ok(zeroized.to_vec()),
+                Err(e) => Err(loom_to_wit_error(e)),
+            }
+        };
+        async move { result }
+    }
+
     // --- Out-of-process shim bridge ---
 
     fn shim_call(

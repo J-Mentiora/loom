@@ -101,7 +101,13 @@ pub enum VerbKind {
 /// The Receipt struct emitted via `host::receipt_emit`. Mirrors WIT
 /// `types.receipt`. Integer fields only. Field order is
 /// canonical-JSON-ready when serialized via `serde_jcs` host-side.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **Note:** `Eq` is intentionally NOT derived because the v0.9.6
+/// `LoomErrorCode::CookieValidationError(CookieValidationError)`
+/// transitively carries `f64` through `CookieValidationError::InvalidExpires`,
+/// which is not `Eq` per Rust's float-Eq disallow. `PartialEq` remains,
+/// which covers every existing `assert_eq!` test on receipts.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Receipt {
     pub verb: VerbKind,
     pub action_id: String,
@@ -127,12 +133,26 @@ pub struct Receipt {
     pub console_lines: Vec<ConsoleLine>,
     /// Evaluate-only: serialized return value (canonical-JSON shape).
     pub evaluate_return_value: Option<String>,
+    /// v0.9.6 web-cookie-injection: per-cookie set results.
+    /// JSON-serialised `Vec<SetCookieResult>` (kept as a String so this
+    /// crate's `Eq` derive survives — cookie types carry `serde_json::Value`
+    /// for the CDP `partition_key` passthrough, which is not `Eq`).
+    /// `loom-host::ReceiptMarshaller` deserialises to typed shapes when
+    /// rebuilding the wire receipt for MCP.
+    pub set_cookies_result: Option<String>,
+    /// v0.9.6: `Vec<NetworkCookie>` returned by `web.get_cookies`. Same
+    /// JSON-string contract as `set_cookies_result`.
+    pub get_cookies_result: Option<String>,
+    /// v0.9.6: `ClearCookiesResult { cleared_count }`.
+    pub clear_cookies_result: Option<String>,
+    /// v0.9.6: `DeleteCookiesResult { name, matched }`.
+    pub delete_cookies_result: Option<String>,
     /// Action-level tags for the manifest (key/value strings only).
     pub tags: BTreeMap<String, String>,
 }
 
 /// Inputs assembled by a verb before the build call.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ReceiptInputs {
     pub action_id: String,
     pub timing_ticks: u64,
@@ -143,6 +163,12 @@ pub struct ReceiptInputs {
     pub network_events: Vec<NetworkEvent>,
     pub console_lines: Vec<ConsoleLine>,
     pub evaluate_return_value: Option<String>,
+    /// v0.9.6 cookie result fields (see Receipt for the JSON-string
+    /// rationale). All default to `None`.
+    pub set_cookies_result: Option<String>,
+    pub get_cookies_result: Option<String>,
+    pub clear_cookies_result: Option<String>,
+    pub delete_cookies_result: Option<String>,
     pub tags: BTreeMap<String, String>,
 }
 
@@ -168,6 +194,10 @@ impl ReceiptBuilder {
             network_events: i.network_events,
             console_lines: i.console_lines,
             evaluate_return_value: None,
+            set_cookies_result: None,
+            get_cookies_result: None,
+            clear_cookies_result: None,
+            delete_cookies_result: None,
             tags: i.tags,
         }
     }
@@ -201,6 +231,10 @@ impl ReceiptBuilder {
             network_events: i.network_events,
             console_lines: i.console_lines,
             evaluate_return_value: None,
+            set_cookies_result: None,
+            get_cookies_result: None,
+            clear_cookies_result: None,
+            delete_cookies_result: None,
             tags: i.tags,
         }
     }
@@ -222,6 +256,10 @@ impl ReceiptBuilder {
             network_events: Vec::new(),
             console_lines: Vec::new(),
             evaluate_return_value: None,
+            set_cookies_result: None,
+            get_cookies_result: None,
+            clear_cookies_result: None,
+            delete_cookies_result: None,
             tags: i.tags,
         }
     }
@@ -243,6 +281,49 @@ impl ReceiptBuilder {
             network_events: Vec::new(),
             console_lines: i.console_lines,
             evaluate_return_value: i.evaluate_return_value,
+            set_cookies_result: None,
+            get_cookies_result: None,
+            clear_cookies_result: None,
+            delete_cookies_result: None,
+            tags: i.tags,
+        }
+    }
+
+    /// v0.9.6 web-cookie-injection tier: cookie-result fields only (no
+    /// DOM, no screenshot, no network, no console). Verbs:
+    /// `set_cookies`, `get_cookies`, `clear_cookies`, `delete_cookies`.
+    ///
+    /// Exactly one of the four cookie-result fields on `ReceiptInputs`
+    /// should be `Some(json)`; the rest stay `None`. The verb is
+    /// responsible for putting its result on the matching slot — the
+    /// builder doesn't enforce verb↔field correspondence at the type
+    /// level because the WIT receipt shape is flat.
+    pub fn build_cookies_receipt(verb: VerbKind, i: ReceiptInputs) -> Receipt {
+        debug_assert!(matches!(
+            verb,
+            VerbKind::SetCookies
+                | VerbKind::GetCookies
+                | VerbKind::ClearCookies
+                | VerbKind::DeleteCookies
+        ));
+        Receipt {
+            verb,
+            action_id: i.action_id,
+            status: ReceiptStatus::Ok,
+            error_code: None,
+            error_details: None,
+            timing_ticks: i.timing_ticks,
+            dom_before_ref: None,
+            dom_after_ref: None,
+            screenshot_before_ref: None,
+            screenshot_after_ref: None,
+            network_events: Vec::new(),
+            console_lines: Vec::new(),
+            evaluate_return_value: None,
+            set_cookies_result: i.set_cookies_result,
+            get_cookies_result: i.get_cookies_result,
+            clear_cookies_result: i.clear_cookies_result,
+            delete_cookies_result: i.delete_cookies_result,
             tags: i.tags,
         }
     }
@@ -273,6 +354,10 @@ impl ReceiptBuilder {
             network_events: Vec::new(),
             console_lines: Vec::new(),
             evaluate_return_value: None,
+            set_cookies_result: None,
+            get_cookies_result: None,
+            clear_cookies_result: None,
+            delete_cookies_result: None,
             tags,
         }
     }

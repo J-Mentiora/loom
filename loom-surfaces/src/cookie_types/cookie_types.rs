@@ -198,13 +198,38 @@ pub fn validate_cookie_params(cookies: &[NetworkCookieParam]) -> Result<(), Cook
 }
 
 /// Per-cookie result reported on the receipt for `set_cookies` (D9 /
-/// PROMPT FND-0023). For v0.9.5 every entry that survives validation has
+/// PROMPT FND-0023). For v0.9.6 every entry that survives validation has
 /// `success: true`; on validation failure we short-circuit before populating
 /// the result vector.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetCookieResult {
     pub name: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
+}
+
+/// Per-receipt aggregate result for `clear_cookies` (v0.9.6).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClearCookiesResult {
+    pub cleared_count: u32,
+}
+
+/// Per-receipt aggregate result for `delete_cookies` (v0.9.6). `matched`
+/// is determined by a `getCookies` peek before and after the CDP call;
+/// `true` iff a cookie with the given `(name, domain, path)` triple was
+/// present before and is absent after.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DeleteCookiesResult {
+    pub name: String,
+    pub matched: bool,
+}
+
+/// Schema for the vault-stored cookie blob produced by `loom vault add
+/// --credential-type cookie` and consumed by `Vault::substitute_cookies`
+/// → `host::vault_substitute_cookies`. v0.9.6 schema_version = 1.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CookieKeychainBlob {
+    pub schema_version: u32,
+    pub cookies: Vec<NetworkCookieParam>,
 }

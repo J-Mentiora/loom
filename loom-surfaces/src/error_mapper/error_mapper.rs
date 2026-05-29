@@ -22,6 +22,8 @@ extern crate alloc;
 
 use alloc::string::String;
 
+use crate::cookie_types::cookie_types::CookieValidationError;
+
 // `host-error` and `LoomErrorCode` are normally `wit-bindgen`-generated.
 // We declare matching shapes here so the public contract is reviewable
 // from this single file. The real surface crate uses the generated
@@ -70,19 +72,34 @@ pub enum BudgetKind {
 }
 
 /// WIT `host-error` variant (mirrors `wit/loom-surface.wit::types.host-error`).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **Note:** `Eq` is intentionally NOT derived because the v0.9.6
+/// `CookieValidationError` variant carries `InvalidExpires(f64)` per
+/// the CDP cookie-expires spec, and `f64` is not `Eq`. `PartialEq`
+/// remains, which covers all existing test assertions.
+#[derive(Debug, Clone, PartialEq)]
 pub enum HostError {
     BudgetExceeded { kind: BudgetKind },
     VaultRejection { reason: VaultRejectionReason },
     ShimFailure { kind: ShimFailureKind },
     StoreIntegrityFailed,
     Internal { reason: String },
+    /// v0.9.6 web-cookie-injection. Surface-side validation rejection
+    /// raised by `validate_cookie_params` in the `set_cookies` verb
+    /// before any CDP call is made. Carries the typed `CookieValidationError`
+    /// so the wire-level `error_code` discriminator and per-cookie
+    /// `error_details` survive to the receipt.
+    CookieValidationError(CookieValidationError),
 }
 
 /// Stable `LoomErrorCode` enum carried in the Receipt's `error_code` field.
 /// Mirrors the variants defined in `errors.json` (the cross-system
 /// stable enum).
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// **Note:** `Eq` is intentionally NOT derived (see `HostError`); the
+/// `CookieValidationError(CookieValidationError)` variant transitively
+/// carries `f64` through `CookieValidationError::InvalidExpires`.
+#[derive(Debug, Clone, PartialEq)]
 pub enum LoomErrorCode {
     BudgetWallClockExceeded,
     BudgetNetworkBytesExceeded,
@@ -116,6 +133,13 @@ pub enum LoomErrorCode {
     /// Download target path outside session-scoped downloads dir.
     /// Wire string: "safe_profile_download_blocked".
     SafeProfileDownloadBlocked,
+    /// v0.9.6 web-cookie-injection. Surface-side validation rejection
+    /// from `validate_cookie_params` in `set_cookies`. Wire string:
+    /// `"cookie_validation_error"`. The inner `CookieValidationError`
+    /// carries the per-cookie discriminator and detail
+    /// (`name_empty` / `name_invalid` / `value_too_large` /
+    /// `too_many_cookies` / `invalid_expires` / `invalid_same_site`).
+    CookieValidationError(CookieValidationError),
 }
 
 /// `SurfaceContext` lets `ErrorMapper` choose between web-specific and
@@ -165,6 +189,7 @@ impl ErrorMapper {
             },
             HostError::StoreIntegrityFailed => LoomErrorCode::StoreIntegrityFailed,
             HostError::Internal { reason } => LoomErrorCode::HostInternalError { reason },
+            HostError::CookieValidationError(e) => LoomErrorCode::CookieValidationError(e),
         }
     }
 }
