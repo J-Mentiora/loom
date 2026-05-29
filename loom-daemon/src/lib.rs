@@ -711,13 +711,13 @@ impl CoreFacadeBridge for CoreBridge {
                     .and_then(|c| c.get("internal_hash"))
                     .and_then(|h| h.as_str())
                     .map(str::to_owned);
-                let when_ts =
+                let diagnosed_at_ts =
                     humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
                 (
                         0,
                         Some(loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseLastError {
                             kind: kind.to_string(),
-                            when_ts,
+                            diagnosed_at_ts,
                             internal_hash,
                         }),
                         VaultDiagnoseInitStatus::Error {

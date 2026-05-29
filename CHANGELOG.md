@@ -457,7 +457,8 @@ are stable. Deterministic replay and `web.click` remain Beta — promotion to
   determinism script applied. Fixed by lazy-spawning the
   determinism-injected target on the first evaluate.
 
-[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/mentiora-ai/loom/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.4
 [0.9.3]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.3
 [0.9.2]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.2
 [0.9.1]: https://github.com/mentiora-ai/loom/releases/tag/v0.9.1

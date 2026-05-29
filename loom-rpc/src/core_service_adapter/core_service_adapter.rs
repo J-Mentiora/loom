@@ -388,7 +388,13 @@ pub enum VaultDiagnoseInitStatus {
 pub struct VaultDiagnoseLastError {
     /// Snake_case `KeychainErrorKind` variant string.
     pub kind: String,
-    pub when_ts: String,
+    /// RFC-3339 timestamp captured at the moment `vault diagnose` was
+    /// invoked — **NOT** the original error's timestamp (council
+    /// ship-review M4). v0.9.4 doesn't yet cache the original failure
+    /// time; until the v0.9.5 cached-last-error implementation lands,
+    /// the field name `diagnosed_at_ts` is the operator's signal that
+    /// "this is when you looked, not when it broke."
+    pub diagnosed_at_ts: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub internal_hash: Option<String>,
 }

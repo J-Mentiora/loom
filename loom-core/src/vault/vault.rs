@@ -35,6 +35,12 @@ use zeroize::Zeroizing;
 // in loom-keychain) — `loom_core::vault::KeychainAccess` now resolves to
 // the loom-keychain trait so backends, the daemon, and vault tests all
 // reference the same surface.
+//
+// TODO(v0.10): delete this re-export and migrate the remaining loom-core
+// callers (test files + a few internal vault helpers) to import from
+// `loom_keychain` directly. The re-export exists to keep the W1 unification
+// PR (this PR) surgically minimal; council ship-review Min-1 flagged the
+// dual-import-path drift risk as something to clean up next major.
 pub use loom_keychain::KeychainAccess;
 
 /// Opaque grant token visible to WASM. ULID-shaped string; carries no

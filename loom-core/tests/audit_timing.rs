@@ -21,8 +21,15 @@ use std::time::Instant;
 use zeroize::Zeroizing;
 
 const N: usize = 1000;
-const P95_MAX_MS: u128 = 100;
-const HARD_MAX_MS: u128 = 500;
+// Limits expressed in MICROSECONDS to match `start.elapsed().as_micros()`
+// below. Council ship-review M11: previously named `_MS` (100 / 500) with
+// a `* 1000` multiplication at the assertion site, which would silently
+// become vacuous if someone refactored `as_micros()` → `as_millis()` and
+// dropped the multiplication. Unit suffix now matches the samples vector
+// (`samples_us`); the only place "ms" appears is the human-readable
+// eprintln, which divides explicitly.
+const P95_MAX_US: u128 = 100_000;
+const HARD_MAX_US: u128 = 500_000;
 
 #[test]
 #[ignore]
@@ -61,21 +68,25 @@ fn vault_set_secret_audit_latency_p95_under_100ms() {
 
     eprintln!(
         "audit_timing: N={N} p50={}us p95={}us max={}us (limits p95<{}ms hard<{}ms)",
-        p50, p95, max, P95_MAX_MS, HARD_MAX_MS
+        p50,
+        p95,
+        max,
+        P95_MAX_US / 1000,
+        HARD_MAX_US / 1000
     );
 
     let _ = std::fs::remove_dir_all(&tmp);
 
     assert!(
-        p95 < P95_MAX_MS * 1000,
-        "G5a regression: p95 {}us ≥ {}ms",
+        p95 < P95_MAX_US,
+        "G5a regression: p95 {}us ≥ {}us",
         p95,
-        P95_MAX_MS
+        P95_MAX_US
     );
     assert!(
-        max < HARD_MAX_MS * 1000,
-        "G5a hard ceiling: max {}us ≥ {}ms",
+        max < HARD_MAX_US,
+        "G5a hard ceiling: max {}us ≥ {}us",
         max,
-        HARD_MAX_MS
+        HARD_MAX_US
     );
 }

@@ -128,6 +128,19 @@ pub enum AuditKind {
     /// see this variant via `#[serde(other)]`. Validators MUST treat
     /// `Unknown` entries as opaque-but-valid (do not break the hash
     /// chain). Round-trip test in `interface_tests.rs`.
+    ///
+    /// **Hash-chain bit-equality concern (council ship-review C4).**
+    /// `#[serde(other)]` is a DESERIALIZE-ONLY hook: it turns a
+    /// future unknown variant tag into `Unknown` when an older daemon
+    /// reads it. The reverse direction (serializing `Unknown` back to
+    /// the wire) is NOT triggered because **canonical writes always
+    /// emit a known variant** — `Unknown` is never constructed by the
+    /// writer side; it only ever materializes on the reader side. Hash
+    /// chains are built and verified within a single writer's lifetime
+    /// against entries it itself emitted; cross-version round-trips
+    /// (read on old → re-serialize) are NOT a supported operation.
+    /// The forward-compat contract is "old readers don't panic", not
+    /// "old readers can re-emit byte-identical entries".
     #[serde(other)]
     Unknown,
 }

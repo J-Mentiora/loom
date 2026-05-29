@@ -171,6 +171,13 @@ impl ModuleLibrary {
         self.inner.read().contains_key(name)
     }
 
+    /// Count of successfully-loaded surfaces. Used by `WasmHost::new` for
+    /// startup observability — distinguishes "no .cwasm files on disk"
+    /// from "files were there but all failed to load".
+    pub fn loaded_count(&self) -> usize {
+        self.inner.read().len()
+    }
+
     /// Snapshot of failed-load records.
     pub fn failures(&self) -> Vec<LoadFailure> {
         self.failed.read().clone()

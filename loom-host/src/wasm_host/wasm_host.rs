@@ -105,7 +105,39 @@ impl WasmHost {
     pub fn new(core: Arc<CoreApiFacade>, config: HostConfig) -> Result<Arc<Self>, LoomError> {
         let runtime = WasmRuntime::new(config.runtime.clone())?;
         let library = ModuleLibrary::new(runtime.clone(), config.surfaces_dir.clone());
-        library.load_all()?;
+        let load_failures = library.load_all()?;
+        // Per-surface load failures are NOT propagated as Err (design §3.3
+        // — one bad artifact doesn't block the rest). But they must not be
+        // silent: every failure gets a tracing::warn! so operators see the
+        // surface-not-loaded story BEFORE the first action dispatch trips
+        // on it. (Was a debug-via-CI-artifact-only signal before; raised
+        // post-#93 ship review.) Also log the surfaces_dir + the resolved
+        // file list so the "is postinstall writing to the right place"
+        // question can be answered from the log alone.
+        let cwasm_paths: Vec<String> = std::fs::read_dir(&config.surfaces_dir)
+            .map(|d| {
+                d.flatten()
+                    .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("cwasm"))
+                    .map(|e| e.path().display().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        tracing::info!(
+            surfaces_dir = %config.surfaces_dir.display(),
+            cwasm_files = ?cwasm_paths,
+            loaded_count = library.loaded_count(),
+            failure_count = load_failures.len(),
+            "WasmHost::new: ModuleLibrary::load_all completed"
+        );
+        for f in &load_failures {
+            tracing::warn!(
+                surface = %f.surface.0,
+                artifact_path = %f.artifact_path.display(),
+                error_code = %f.error_code,
+                details = %f.details,
+                "WasmHost::new: surface failed to load (will trap on first dispatch)"
+            );
+        }
         let obs = HostObservability::new(config.redaction_enabled);
         let receipts = ReceiptMarshaller::new(core.manifest_writer(), core.budget_enforcer());
         let trap_handler = TrapHandler::new(obs.clone(), receipts.clone());

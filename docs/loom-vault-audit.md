@@ -154,12 +154,28 @@ jq -r '
 
 ```bash
 HASH=<paste from `vault diagnose`>
-grep "$HASH" ~/.local/share/loom/daemon.log
+# loom-daemon writes to STDERR by default. The grep target depends on
+# how the daemon was started; the four common cases:
+grep "$HASH" /tmp/loom-daemon.log                  # `loom serve` default redirect
+grep "$HASH" ~/.local/share/loom/daemon.log        # if you redirected stderr there
+journalctl -u loom-daemon | grep "$HASH"           # systemd-managed install
+launchctl list | grep loom-daemon                  # macOS — find the LaunchAgent
+                                                   # stderr path in the .plist
 ```
 
-Daemon emits `tracing::error!(internal_hash = ..., original_message =
-..., ...)` events at the failure site; the structured log carries the
-plaintext message, which never reaches any session manifest.
+Daemon emits a structured `tracing::error!(internal_hash = ...)` event
+at the failure site. Per council ship-review R2-#2, the original message
+itself is **NOT** included in the log (D30: the hash IS the correlation
+handle; the plaintext message never reaches a persistent surface,
+audit chain OR daemon log). To map a hash back to the original message,
+the OS keychain backend's own diagnostic channel is the source of truth:
+- macOS: Console.app, filter `subsystem:com.apple.security`
+- Linux: `journalctl _COMM=gnome-keyring-daemon` or `--user-unit`
+
+**Retention.** Daemon stderr is **not** rotated by loom; if the operator
+hasn't configured logrotate / journald retention, older `internal_hash`
+entries may be unrecoverable. Production deployments should snapshot
+stderr to a rotating sink (or use the `journalctl`/`launchd` paths above).
 
 ### "I want to see grant revokes that were cascaded by a `vault delete`"
 
