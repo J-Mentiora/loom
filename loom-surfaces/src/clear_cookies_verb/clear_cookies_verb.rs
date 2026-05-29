@@ -79,11 +79,12 @@ impl ClearCookiesVerb {
                     NetworkGetCookies::default(),
                 )),
             )?;
-            let peek: PeekResponse = ciborium::de::from_reader(peek_bytes.as_slice()).map_err(
-                |e| HostError::Internal {
-                    reason: alloc::format!("Network.getCookies pre-clear peek decode: {e}"),
-                },
-            )?;
+            let peek: PeekResponse =
+                ciborium::de::from_reader(peek_bytes.as_slice()).map_err(|e| {
+                    HostError::Internal {
+                        reason: alloc::format!("Network.getCookies pre-clear peek decode: {e}"),
+                    }
+                })?;
             let count_before = peek.cookies.len() as u32;
 
             // STEP 2: audit log BEFORE the destructive CDP call (D9 / FND-0050).

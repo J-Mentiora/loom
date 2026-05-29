@@ -477,7 +477,9 @@ impl CoreFacadeBridge for CoreBridge {
             None | Some("oauth") => CredentialType::OAuth,
             Some("cookie") => CredentialType::Cookie,
             Some(_other) => {
-                return Err(loom_rpc::error_translator::error_translator::LoomErrorCode::SchemaViolation);
+                return Err(
+                    loom_rpc::error_translator::error_translator::LoomErrorCode::SchemaViolation,
+                );
             }
         };
         let opts = GrantOpts {
@@ -684,7 +686,10 @@ impl CoreFacadeBridge for CoreBridge {
 
     fn vault_get_session_context(
         &self,
-    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo, AdapterError> {
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo,
+        AdapterError,
+    > {
         use loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo;
         use loom_rpc::error_translator::error_translator::LoomErrorCode;
         // Enumerate sessions; pick the most recently created Active one.

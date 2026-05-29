@@ -154,9 +154,7 @@ pub trait CoreFacadeBridge: Send + Sync {
     /// first) or when ambiguity demands explicit `--session` (multiple
     /// active sessions — the most-recent heuristic is fine but the
     /// caller can override).
-    fn vault_get_session_context(
-        &self,
-    ) -> Result<VaultGetSessionContextInfo, AdapterError>;
+    fn vault_get_session_context(&self) -> Result<VaultGetSessionContextInfo, AdapterError>;
 
     /// Run garbage collection on the content store (`gc.run`). `ttl_days`
     /// is the maximum age (in days) of unreferenced blobs to retain;
@@ -509,9 +507,7 @@ pub trait CoreServiceAdapterApi: Send + Sync {
     fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError>;
 
     /// v0.9.6 — see other `vault_get_session_context` doc.
-    fn vault_get_session_context(
-        &self,
-    ) -> Result<VaultGetSessionContextInfo, AdapterError>;
+    fn vault_get_session_context(&self) -> Result<VaultGetSessionContextInfo, AdapterError>;
 
     /// Run GC on the content store. Returns scanned/collected/bytes-freed.
     fn gc_run(

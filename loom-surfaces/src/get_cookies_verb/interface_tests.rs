@@ -124,7 +124,9 @@ fn execute_dispatches_exactly_one_cdp_shim_call() {
     let _ = GetCookiesVerb::execute(act(None));
     let chromium_calls = mock_host::calls()
         .into_iter()
-        .filter(|c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"))
+        .filter(
+            |c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"),
+        )
         .count();
     assert_eq!(chromium_calls, 1);
 }

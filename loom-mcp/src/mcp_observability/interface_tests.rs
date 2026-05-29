@@ -81,9 +81,7 @@ fn redact_arguments_signature() {
 
 // === v0.9.6 cookie redaction (path-level) ===
 
-use super::mcp_observability::{
-    redact_cookie_paths_in_place, COOKIE_REDACTED_TOOL_NAMES,
-};
+use super::mcp_observability::{redact_cookie_paths_in_place, COOKIE_REDACTED_TOOL_NAMES};
 
 #[test]
 fn cookie_redacted_tool_names_includes_four_cookie_verbs() {

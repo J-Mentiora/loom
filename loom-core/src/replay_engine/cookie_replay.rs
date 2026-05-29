@@ -102,20 +102,16 @@ pub fn substitute_cookie_values(
             .unwrap_or("")
             .to_string();
         let key = (name.clone(), domain.clone(), path.clone());
-        let new_value =
-            values
-                .get(&key)
-                .cloned()
-                .ok_or_else(|| ReplayError::MissingCookieValue {
-                    action_id,
-                    name,
-                    domain,
-                    path,
-                })?;
-        obj.insert(
-            "value".to_string(),
-            serde_json::Value::String(new_value),
-        );
+        let new_value = values
+            .get(&key)
+            .cloned()
+            .ok_or(ReplayError::MissingCookieValue {
+                action_id,
+                name,
+                domain,
+                path,
+            })?;
+        obj.insert("value".to_string(), serde_json::Value::String(new_value));
     }
     serde_json::to_string(&v).map_err(|e| ReplayError::InvalidPayload {
         action_id,
@@ -129,9 +125,7 @@ pub fn substitute_cookie_values(
 ///      for hand-authored fixtures).
 ///   2. JSON array of `[name, domain, path, value]` tuples (also
 ///      accepted for tools that emit array shape).
-pub fn parse_replay_cookie_values(
-    json_text: &str,
-) -> Result<ReplayCookieValues, ReplayError> {
+pub fn parse_replay_cookie_values(json_text: &str) -> Result<ReplayCookieValues, ReplayError> {
     let v: serde_json::Value =
         serde_json::from_str(json_text).map_err(|e| ReplayError::InvalidPayload {
             action_id: 0,
@@ -144,9 +138,7 @@ pub fn parse_replay_cookie_values(
             if parts.len() != 3 {
                 return Err(ReplayError::InvalidPayload {
                     action_id: 0,
-                    reason: format!(
-                        "replay_cookie_values key not 'name|domain|path': {k:?}"
-                    ),
+                    reason: format!("replay_cookie_values key not 'name|domain|path': {k:?}"),
                 });
             }
             let value = val
@@ -204,12 +196,7 @@ mod tests {
     fn val_map(entries: &[(&str, &str, &str, &str)]) -> ReplayCookieValues {
         entries
             .iter()
-            .map(|(n, d, p, v)| {
-                (
-                    (n.to_string(), d.to_string(), p.to_string()),
-                    v.to_string(),
-                )
-            })
+            .map(|(n, d, p, v)| ((n.to_string(), d.to_string(), p.to_string()), v.to_string()))
             .collect()
     }
 

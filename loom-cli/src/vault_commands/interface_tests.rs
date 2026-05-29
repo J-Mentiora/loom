@@ -249,13 +249,7 @@ fn vault_add_args_default_credential_type_is_oauth() {
         #[clap(flatten)]
         add: super::vault_commands::VaultAddArgs,
     }
-    let cli = TestCli::try_parse_from([
-        "test",
-        "--label",
-        "L",
-        "--from-stdin",
-    ])
-    .expect("parse");
+    let cli = TestCli::try_parse_from(["test", "--label", "L", "--from-stdin"]).expect("parse");
     assert_eq!(cli.add.credential_type, "oauth");
 }
 

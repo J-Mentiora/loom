@@ -187,6 +187,11 @@ impl WasmHostBridge for CannedHostBridge {
             | Action::WebScroll { session_id, .. }
             | Action::WebWait { session_id, .. }
             | Action::WebSnapshot { session_id } => session_id.clone(),
+            // v0.9.6 cookie verbs.
+            Action::WebSetCookies { session_id, .. }
+            | Action::WebGetCookies { session_id, .. }
+            | Action::WebClearCookies { session_id }
+            | Action::WebDeleteCookies { session_id, .. } => session_id.clone(),
         };
         Ok(Receipt {
             action_id: 42,
@@ -210,6 +215,10 @@ impl WasmHostBridge for CannedHostBridge {
             network_summary: None,
             return_value_json: None,
             return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
         })
     }
 }
@@ -379,6 +388,15 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
     ) -> Result<
         loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseInfo,
         loom_rpc::core_service_adapter::core_service_adapter::AdapterError,
+    > {
+        Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
+    }
+
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo,
+        loom_rpc::error_translator::error_translator::LoomErrorCode,
     > {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
     }

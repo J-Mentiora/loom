@@ -52,10 +52,11 @@ pub const COOKIE_REDACTED_TOOL_NAMES: &[&str] = &[
 ///   - `$.params.source.cookies[*].value`  — set_cookies inline source
 ///   - `$.params.cookies[*].value`          — set_cookies legacy flat
 ///   - `$.result.get_cookies_result[*].value` — get_cookies response
+///
 /// Intentionally NOT redacted:
 ///   - `$.result.set_cookies_result[*].error_code` (taxonomy strings only)
 pub fn redact_cookie_paths_in_place(v: &mut serde_json::Value) {
-    fn redact_value_field_in_array(arr: &mut Vec<serde_json::Value>) {
+    fn redact_value_field_in_array(arr: &mut [serde_json::Value]) {
         for item in arr.iter_mut() {
             if let Some(obj) = item.as_object_mut() {
                 if obj.contains_key("value") {
@@ -75,9 +76,7 @@ pub fn redact_cookie_paths_in_place(v: &mut serde_json::Value) {
                 // Cookie-bearing arrays: "cookies" (set_cookies input),
                 // "*_cookies_result" (verb output arrays). For
                 // simplicity, match by suffix/keyword.
-                if (k == "cookies" || k.ends_with("_cookies_result"))
-                    && sub.is_array()
-                {
+                if (k == "cookies" || k.ends_with("_cookies_result")) && sub.is_array() {
                     if let Some(arr) = sub.as_array_mut() {
                         redact_value_field_in_array(arr);
                     }

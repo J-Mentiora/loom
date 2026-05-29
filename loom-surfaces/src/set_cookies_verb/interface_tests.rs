@@ -47,7 +47,10 @@ fn action_deserialises_without_session_id_for_legacy_v095_payloads() {
         "profile": "default"
     }"#;
     let back: SetCookiesAction = serde_json::from_str(json).expect("deserialise legacy shape");
-    assert_eq!(back.session_id, "", "legacy actions default to empty session_id");
+    assert_eq!(
+        back.session_id, "",
+        "legacy actions default to empty session_id"
+    );
 }
 
 // ===== execute() tests =====
@@ -134,7 +137,9 @@ fn execute_inline_one_cookie_records_name_and_dispatches_cdp() {
     // Confirm a shim_call to chromium was made (CDP Network.setCookies).
     let chromium_calls: Vec<_> = mock_host::calls()
         .into_iter()
-        .filter(|c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"))
+        .filter(
+            |c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"),
+        )
         .collect();
     assert_eq!(
         chromium_calls.len(),
@@ -191,7 +196,9 @@ fn execute_validation_failure_does_not_call_cdp() {
     // Confirm NO shim_call to chromium happened.
     let chromium_calls: Vec<_> = mock_host::calls()
         .into_iter()
-        .filter(|c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"))
+        .filter(
+            |c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"),
+        )
         .collect();
     assert!(
         chromium_calls.is_empty(),
@@ -211,8 +218,7 @@ fn execute_grant_calls_vault_substitute_cookies_with_grant_and_session_ids() {
     });
     mock_host::setup_vault_substitute_cookies(Ok(serde_json::to_vec(&blob).unwrap()));
 
-    let receipt =
-        SetCookiesVerb::execute(act_grant("GRANT_42", "SESS_99")).expect("Receipt");
+    let receipt = SetCookiesVerb::execute(act_grant("GRANT_42", "SESS_99")).expect("Receipt");
 
     assert_eq!(receipt.status, ReceiptStatus::Ok);
 
@@ -232,10 +238,8 @@ fn execute_grant_calls_vault_substitute_cookies_with_grant_and_session_ids() {
     assert_eq!(vault_calls[0].1, "SESS_99");
 
     // The resolved cookie's name surfaces on the receipt; the value does NOT.
-    let results: Vec<SetCookieResult> = serde_json::from_str(
-        receipt.set_cookies_result.as_deref().unwrap(),
-    )
-    .unwrap();
+    let results: Vec<SetCookieResult> =
+        serde_json::from_str(receipt.set_cookies_result.as_deref().unwrap()).unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].name, "sid");
     // grant-resolved-value never appears in the receipt — only the name is recorded.
@@ -255,8 +259,7 @@ fn execute_grant_with_session_mismatch_surfaces_vault_rejection() {
         reason: VaultRejectionReason::Origin,
     }));
 
-    let receipt =
-        SetCookiesVerb::execute(act_grant("GRANT_X", "SESS_WRONG")).expect("Receipt");
+    let receipt = SetCookiesVerb::execute(act_grant("GRANT_X", "SESS_WRONG")).expect("Receipt");
 
     assert_eq!(receipt.status, ReceiptStatus::Error);
     assert!(matches!(

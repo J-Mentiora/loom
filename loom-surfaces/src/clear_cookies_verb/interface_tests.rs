@@ -95,7 +95,9 @@ fn execute_emits_audit_log_before_destructive_clear_shim_call() {
 
     let chromium_count = mock_host::calls()
         .iter()
-        .filter(|c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"))
+        .filter(
+            |c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"),
+        )
         .count();
     assert_eq!(chromium_count, 2, "two shim_calls: peek + clear");
 }
@@ -118,7 +120,9 @@ fn execute_with_malformed_peek_response_surfaces_internal_error_and_skips_clear(
     // invariant).
     let chromium_count = mock_host::calls()
         .into_iter()
-        .filter(|c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"))
+        .filter(
+            |c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"),
+        )
         .count();
     assert_eq!(
         chromium_count, 1,

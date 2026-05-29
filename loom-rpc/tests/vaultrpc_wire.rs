@@ -225,6 +225,15 @@ impl CoreFacadeBridge for RecordingCoreBridge {
     > {
         Err(LoomErrorCode::InternalError)
     }
+
+    fn vault_get_session_context(
+        &self,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::VaultGetSessionContextInfo,
+        loom_rpc::error_translator::error_translator::LoomErrorCode,
+    > {
+        Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
+    }
     fn gc_run(
         &self,
         _: Option<u64>,
@@ -265,6 +274,10 @@ impl WasmHostBridge for NoopHostBridge {
             network_summary: None,
             return_value_json: None,
             return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
         })
     }
 }

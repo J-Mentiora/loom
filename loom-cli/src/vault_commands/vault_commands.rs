@@ -134,18 +134,16 @@ pub(super) fn validate_cookie_blob_json(bytes: &[u8]) -> Result<(), CliError> {
         .get("schema_version")
         .and_then(|n| n.as_u64())
         .ok_or_else(|| {
-            CliError::Usage(
-                "cookie blob missing `schema_version: <int>` field".to_string(),
-            )
+            CliError::Usage("cookie blob missing `schema_version: <int>` field".to_string())
         })?;
     if schema_version != 1 {
         return Err(CliError::Usage(format!(
             "unsupported cookie blob schema_version: {schema_version} (expected 1)"
         )));
     }
-    let cookies = v.get("cookies").ok_or_else(|| {
-        CliError::Usage("cookie blob missing `cookies: [...]` field".to_string())
-    })?;
+    let cookies = v
+        .get("cookies")
+        .ok_or_else(|| CliError::Usage("cookie blob missing `cookies: [...]` field".to_string()))?;
     if !cookies.is_array() {
         return Err(CliError::Usage(
             "cookie blob `cookies` field must be a JSON array".to_string(),
@@ -341,9 +339,10 @@ pub async fn add(rpc: &RpcClient, cfg: &CliConfig, args: VaultAddArgs) -> Result
                 "--credential-type cookie requires --from-file <PATH> or --from-stdin".into(),
             ));
         }
-        let label = args.label.clone().ok_or_else(|| {
-            CliError::Usage("--credential-type cookie requires --label".into())
-        })?;
+        let label = args
+            .label
+            .clone()
+            .ok_or_else(|| CliError::Usage("--credential-type cookie requires --label".into()))?;
         validate_label_cli(&label)?;
 
         let bytes = read_secret_bytes(&args)?;

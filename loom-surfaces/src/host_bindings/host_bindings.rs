@@ -163,12 +163,20 @@ pub mod mock_host {
     #[derive(Debug, Clone, PartialEq)]
     pub enum HostCall {
         ClockNow,
-        BlobPut { size: usize },
-        ShimCall { shim_id: String, msg_len: usize },
+        BlobPut {
+            size: usize,
+        },
+        ShimCall {
+            shim_id: String,
+            msg_len: usize,
+        },
         ReceiptEmit,
         LogEmit,
         /// v0.9.6 web-cookie-injection grant-resolution invocation.
-        VaultSubstituteCookies { grant_id: String, session_id: String },
+        VaultSubstituteCookies {
+            grant_id: String,
+            session_id: String,
+        },
     }
 
     thread_local! {

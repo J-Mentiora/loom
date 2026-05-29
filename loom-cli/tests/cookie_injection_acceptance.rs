@@ -195,8 +195,7 @@ fn test_initialize_protocol_negotiation() {
     let result = &resp["result"];
     assert!(result["serverInfo"]["name"].is_string());
     assert!(
-        result["capabilities"]["tools"].is_object()
-            || result["capabilities"]["tools"].is_null(),
+        result["capabilities"]["tools"].is_object() || result["capabilities"]["tools"].is_null(),
         "result has unexpected shape: {result}"
     );
     shutdown_child(child);
@@ -384,9 +383,19 @@ fn test_set_cookies_inline_then_navigate_echoes() {
     // echo server capture the `Cookie:` request header.
     let echo = spawn_echo_server();
     let (mut child, mut reader) = spawn_loom_mcp();
-    send_rpc(&mut child, "initialize", serde_json::json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}), 1);
+    send_rpc(
+        &mut child,
+        "initialize",
+        serde_json::json!({"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"1"}}),
+        1,
+    );
     let _init = read_or_skip!(reader, child, "init");
-    send_rpc(&mut child, "tools/call", serde_json::json!({"name":"loom.session.create","arguments":{"profile":"safe","network_mode":"deterministic"}}), 2);
+    send_rpc(
+        &mut child,
+        "tools/call",
+        serde_json::json!({"name":"loom.session.create","arguments":{"profile":"safe","network_mode":"deterministic"}}),
+        2,
+    );
     let sess_resp = read_or_skip!(reader, child, "session check");
     let session_id = sess_resp["result"]["content"][0]["text"]
         .as_str()
@@ -395,19 +404,29 @@ fn test_set_cookies_inline_then_navigate_echoes() {
         .expect("session_id");
 
     let echo_url = format!("http://{}/echo", echo.addr);
-    send_rpc(&mut child, "tools/call", serde_json::json!({
-        "name": "loom.web.set_cookies",
-        "arguments": {
-            "session_id": session_id,
-            "source": {"source":"inline","cookies":[{"name":"sid","value":"abc123","domain": echo.addr.ip().to_string(), "path":"/"}]}
-        }
-    }), 3);
+    send_rpc(
+        &mut child,
+        "tools/call",
+        serde_json::json!({
+            "name": "loom.web.set_cookies",
+            "arguments": {
+                "session_id": session_id,
+                "source": {"source":"inline","cookies":[{"name":"sid","value":"abc123","domain": echo.addr.ip().to_string(), "path":"/"}]}
+            }
+        }),
+        3,
+    );
     let _set_resp = read_or_skip!(reader, child, "set");
 
-    send_rpc(&mut child, "tools/call", serde_json::json!({
-        "name": "loom.web.navigate",
-        "arguments": {"session_id": session_id, "url": echo_url}
-    }), 4);
+    send_rpc(
+        &mut child,
+        "tools/call",
+        serde_json::json!({
+            "name": "loom.web.navigate",
+            "arguments": {"session_id": session_id, "url": echo_url}
+        }),
+        4,
+    );
     let _nav_resp = read_or_skip!(reader, child, "nav");
 
     std::thread::sleep(Duration::from_millis(500));
@@ -429,7 +448,9 @@ fn test_set_cookies_evaluate_returns_document_cookie() {
     // Exercises that the cookie made it into the page context (not just
     // network), since document.cookie is read from the page's
     // JS-visible cookie jar.
-    eprintln!("test placeholder — requires chromium + page context to assert document.cookie shape");
+    eprintln!(
+        "test placeholder — requires chromium + page context to assert document.cookie shape"
+    );
 }
 
 #[test]
@@ -470,18 +491,18 @@ fn test_replay_byte_identity_sub_test() {
     // Pure replay byte-identity. No browser needed — exercises the
     // host's ReceiptMarshaller cookie path against a synthesised
     // record/replay receipt pair.
-    use loom_core::replay_engine::cookie_replay::{
-        substitute_cookie_values, ReplayCookieValues,
-    };
-    let recorded =
-        r#"[{"name":"sid","domain":"example.com","path":"/","value":"REAL"}]"#;
+    use loom_core::replay_engine::cookie_replay::{substitute_cookie_values, ReplayCookieValues};
+    let recorded = r#"[{"name":"sid","domain":"example.com","path":"/","value":"REAL"}]"#;
     let mut values: ReplayCookieValues = std::collections::BTreeMap::new();
     values.insert(
-        ("sid".to_string(), "example.com".to_string(), "/".to_string()),
+        (
+            "sid".to_string(),
+            "example.com".to_string(),
+            "/".to_string(),
+        ),
         "PLACEHOLDER".to_string(),
     );
-    let replayed =
-        substitute_cookie_values(42, recorded, &values).expect("substitute");
+    let replayed = substitute_cookie_values(42, recorded, &values).expect("substitute");
     assert!(replayed.contains("PLACEHOLDER"));
     assert!(!replayed.contains("REAL"));
     // Both record and replay receipts produce the same canonical

@@ -419,9 +419,7 @@ impl RpcHandlers {
         })
     }
 
-    pub async fn vault_get_session_context(
-        &self,
-    ) -> HandlerResult<VaultGetSessionContextInfo> {
+    pub async fn vault_get_session_context(&self) -> HandlerResult<VaultGetSessionContextInfo> {
         self.core
             .vault_get_session_context()
             .map_err(|code| JsonRpcError {

@@ -79,11 +79,19 @@ pub enum BudgetKind {
 /// remains, which covers all existing test assertions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum HostError {
-    BudgetExceeded { kind: BudgetKind },
-    VaultRejection { reason: VaultRejectionReason },
-    ShimFailure { kind: ShimFailureKind },
+    BudgetExceeded {
+        kind: BudgetKind,
+    },
+    VaultRejection {
+        reason: VaultRejectionReason,
+    },
+    ShimFailure {
+        kind: ShimFailureKind,
+    },
     StoreIntegrityFailed,
-    Internal { reason: String },
+    Internal {
+        reason: String,
+    },
     /// v0.9.6 web-cookie-injection. Surface-side validation rejection
     /// raised by `validate_cookie_params` in the `set_cookies` verb
     /// before any CDP call is made. Carries the typed `CookieValidationError`

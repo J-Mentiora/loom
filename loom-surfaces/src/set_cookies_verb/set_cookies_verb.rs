@@ -126,8 +126,7 @@ impl SetCookiesVerb {
             let mut cookies: Vec<NetworkCookieParam> = match action.source.clone() {
                 CS::Inline { cookies } => cookies,
                 CS::Grant { grant_id } => {
-                    let bytes =
-                        host::vault_substitute_cookies(&grant_id, &action.session_id)?;
+                    let bytes = host::vault_substitute_cookies(&grant_id, &action.session_id)?;
                     let blob: CookieKeychainBlob =
                         serde_json::from_slice(&bytes).map_err(|e| HostError::Internal {
                             reason: alloc::format!("vault cookie blob deserialise: {e}"),

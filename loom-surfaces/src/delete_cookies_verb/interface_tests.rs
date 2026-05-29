@@ -148,8 +148,7 @@ fn execute_target_absent_before_records_matched_false() {
     map.insert("Network.deleteCookies".to_string(), Vec::new());
     mock_host::setup_method_responses(map);
 
-    let r = DeleteCookiesVerb::execute(act("sid", Some("example.com"), None))
-        .expect("Receipt");
+    let r = DeleteCookiesVerb::execute(act("sid", Some("example.com"), None)).expect("Receipt");
     assert_eq!(r.verb, VerbKind::DeleteCookies);
     assert_eq!(r.status, ReceiptStatus::Ok);
     let result: DeleteCookiesResult =
@@ -176,8 +175,7 @@ fn execute_target_present_in_both_peeks_records_matched_false_when_delete_didnt_
     map.insert("Network.deleteCookies".to_string(), Vec::new());
     mock_host::setup_method_responses(map);
 
-    let r = DeleteCookiesVerb::execute(act("sid", Some("example.com"), None))
-        .expect("Receipt");
+    let r = DeleteCookiesVerb::execute(act("sid", Some("example.com"), None)).expect("Receipt");
     assert_eq!(r.status, ReceiptStatus::Ok);
     let result: DeleteCookiesResult =
         serde_json::from_str(r.delete_cookies_result.as_deref().unwrap()).unwrap();
@@ -212,16 +210,13 @@ fn execute_matches_only_when_domain_matches_too() {
     // Two cookies named "sid", but with different domains.
     map.insert(
         "Network.getCookies".to_string(),
-        encode_peek(&[
-            serde_json::json!({"name": "sid", "domain": "OTHER.com", "path": "/"}),
-        ]),
+        encode_peek(&[serde_json::json!({"name": "sid", "domain": "OTHER.com", "path": "/"})]),
     );
     map.insert("Network.deleteCookies".to_string(), Vec::new());
     mock_host::setup_method_responses(map);
 
     // Targeting (sid, example.com) — domain mismatch, so present_before = false.
-    let r = DeleteCookiesVerb::execute(act("sid", Some("example.com"), None))
-        .expect("Receipt");
+    let r = DeleteCookiesVerb::execute(act("sid", Some("example.com"), None)).expect("Receipt");
     let result: DeleteCookiesResult =
         serde_json::from_str(r.delete_cookies_result.as_deref().unwrap()).unwrap();
     assert!(!result.matched);
@@ -238,7 +233,9 @@ fn execute_dispatches_3_chromium_calls_peek_delete_peek() {
 
     let chromium_count = mock_host::calls()
         .into_iter()
-        .filter(|c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"))
+        .filter(
+            |c| matches!(c, mock_host::HostCall::ShimCall { shim_id, .. } if shim_id == "chromium"),
+        )
         .count();
     // Exactly 3: peek + delete + peek.
     assert_eq!(chromium_count, 3);

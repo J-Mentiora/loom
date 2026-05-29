@@ -656,7 +656,7 @@ fn prepare_cookies_field(raw: Option<&str>) -> Result<serde_json::Value, LoomErr
         )
     })?;
     if let Some(arr) = v.as_array_mut() {
-        arr.sort_by(|a, b| cookie_sort_key(a).cmp(&cookie_sort_key(b)));
+        arr.sort_by_key(cookie_sort_key);
         for item in arr.iter_mut() {
             if let Some(obj) = item.as_object_mut() {
                 if obj.contains_key("value") {
@@ -689,12 +689,7 @@ fn prepare_passthrough_field(raw: Option<&str>) -> Result<serde_json::Value, Loo
 }
 
 fn cookie_sort_key(c: &serde_json::Value) -> (String, String, String) {
-    let s = |k: &str| {
-        c.get(k)
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string()
-    };
+    let s = |k: &str| c.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
     (s("name"), s("domain"), s("path"))
 }
 
@@ -765,10 +760,7 @@ mod cookies_canonical_bytes_tests {
         let s = String::from_utf8(bytes).unwrap();
         let root_pos = s.find("\"/\"").expect("/ path");
         let api_pos = s.find("\"/api\"").expect("/api path");
-        assert!(
-            root_pos < api_pos,
-            "/ should precede /api byte-lex"
-        );
+        assert!(root_pos < api_pos, "/ should precede /api byte-lex");
     }
 
     #[test]
@@ -796,10 +788,8 @@ mod cookies_canonical_bytes_tests {
         // (name, domain, path) but different cookie *values* must
         // produce IDENTICAL canonical bytes.
         let mut b1 = fixture_builder();
-        b1.get_cookies_result = Some(
-            r#"[{"name":"sid","domain":"x.com","path":"/","value":"VALUE_A"}]"#
-                .to_string(),
-        );
+        b1.get_cookies_result =
+            Some(r#"[{"name":"sid","domain":"x.com","path":"/","value":"VALUE_A"}]"#.to_string());
         let mut b2 = fixture_builder();
         b2.get_cookies_result = Some(
             r#"[{"name":"sid","domain":"x.com","path":"/","value":"DIFFERENT_VALUE_B"}]"#
@@ -854,7 +844,11 @@ mod cookies_canonical_bytes_tests {
         // STEP 2: Replay receipt — substitute via cookie_replay.
         let mut replay_values: ReplayCookieValues = std::collections::BTreeMap::new();
         replay_values.insert(
-            ("sid".to_string(), "example.com".to_string(), "/".to_string()),
+            (
+                "sid".to_string(),
+                "example.com".to_string(),
+                "/".to_string(),
+            ),
             "REPLAY_PLACEHOLDER_VALUE".to_string(),
         );
         let replayed_payload =
@@ -890,7 +884,11 @@ mod cookies_canonical_bytes_tests {
         // Supply value for "/" but the recorded path is "/api" — tuple mismatch.
         let mut replay_values: ReplayCookieValues = std::collections::BTreeMap::new();
         replay_values.insert(
-            ("sid".to_string(), "example.com".to_string(), "/".to_string()),
+            (
+                "sid".to_string(),
+                "example.com".to_string(),
+                "/".to_string(),
+            ),
             "P".to_string(),
         );
         let err = substitute_cookie_values(123, recorded_payload, &replay_values)

@@ -194,10 +194,11 @@ impl Host for HostState {
                 "vault_substitute_cookies not allowed in replay mode".to_owned(),
             ))
         } else {
-            match self.core.vault.substitute_cookies(
-                GrantId(grant_id),
-                SessionId(session_id),
-            ) {
+            match self
+                .core
+                .vault
+                .substitute_cookies(GrantId(grant_id), SessionId(session_id))
+            {
                 // Zeroizing<Vec<u8>> → Vec<u8>. The original Zeroizing
                 // wrapper drops here, wiping its backing buffer (per the
                 // v0.9.5 contract that raw cookie values are wiped in

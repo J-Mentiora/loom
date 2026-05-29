@@ -186,9 +186,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
         self.core.vault_diagnose()
     }
 
-    fn vault_get_session_context(
-        &self,
-    ) -> Result<VaultGetSessionContextInfo, AdapterError> {
+    fn vault_get_session_context(&self) -> Result<VaultGetSessionContextInfo, AdapterError> {
         self.core.vault_get_session_context()
     }
 
