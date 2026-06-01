@@ -13,3 +13,15 @@ target/
 
 # cargo-dist intermediates
 dist-manifest.json
+
+# event-log substrate (loom is a public repo — keep internal infra config + any
+# telemetry/runtime artifacts OUT of git). Internal users configure the hosted
+# backend via a LOCAL .feature-workflow/event-log.yaml (ignored below); the
+# fallback queue can contain sensitive text and must never be committed.
+.feature-workflow/event-log.yaml
+.feature-workflow/event-log-fallback.jsonl
+.feature-workflow/event-log-fallback.jsonl.lock
+.feature-workflow/event-log.off
+.feature-workflow/events/
+.feature-workflow/backfill-checkpoint.json
+.feature-workflow/backfill-checkpoint.json.tmp
