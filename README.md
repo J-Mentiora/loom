@@ -322,7 +322,7 @@ tool call and reuses it across the conversation.
 | `web.screenshot`| Capture a PNG screenshot of the page or a selected element.             |
 | `web.scroll`    | Scroll an element by a (delta_x, delta_y) offset.                       |
 | `web.select`    | Set the value of a `<select>` element and dispatch `change`.            |
-| `web.set_input_files` | Upload local files into an `<input type=file>` via CDP `DOM.setFileInputFiles`. Paths gated by the `LOOM_UPLOAD_ROOT` allow-list (fail-closed, canonicalized, ≤20 files / ≤100 MiB). |
+| `web.set_input_files` | Upload local files into an `<input type=file>` via CDP `DOM.setFileInputFiles`. Paths gated by the `LOOM_UPLOAD_ROOT` allow-list (fail-closed, canonicalized, ≤20 files / ≤100 MiB each / ≤200 MiB total). |
 | `web.snapshot`  | Capture a full DOM snapshot of the active page.                         |
 | `web.type`      | Focus an input and type text into it.                                   |
 | `web.wait`      | Wait until a CSS selector resolves (or until timeout).                  |

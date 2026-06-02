@@ -21,6 +21,7 @@ use crate::upload_guard::{validate_upload_paths, UploadError};
 
 const MAX_FILES: usize = 20;
 const MAX_BYTES: u64 = 100 * 1024 * 1024; // 100 MiB
+const MAX_TOTAL: u64 = 200 * 1024 * 1024; // 200 MiB
 
 fn tmp_root(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loom-upload-test-{tag}"));
@@ -40,8 +41,14 @@ fn write_file(dir: &Path, name: &str, contents: &[u8]) -> PathBuf {
 fn unset_root_fails_closed() {
     let root = tmp_root("unset");
     let f = write_file(&root, "a.txt", b"hi");
-    let err = validate_upload_paths(&[f.to_string_lossy().into()], None, MAX_FILES, MAX_BYTES)
-        .unwrap_err();
+    let err = validate_upload_paths(
+        &[f.to_string_lossy().into()],
+        None,
+        MAX_FILES,
+        MAX_BYTES,
+        MAX_TOTAL,
+    )
+    .unwrap_err();
     assert!(matches!(err, UploadError::RootNotConfigured));
     assert_eq!(err.kind(), "upload_root_not_configured");
 }
@@ -56,6 +63,7 @@ fn path_outside_root_is_blocked() {
         Some(&root),
         MAX_FILES,
         MAX_BYTES,
+        MAX_TOTAL,
     )
     .unwrap_err();
     assert!(matches!(err, UploadError::PathBlocked { .. }));
@@ -75,6 +83,7 @@ fn symlink_escape_is_blocked() {
         Some(&root),
         MAX_FILES,
         MAX_BYTES,
+        MAX_TOTAL,
     )
     .unwrap_err();
     // canonicalize() resolves the symlink to `outside/real.txt`, not under root.
@@ -90,6 +99,7 @@ fn nonexistent_path_not_found() {
         Some(&root),
         MAX_FILES,
         MAX_BYTES,
+        MAX_TOTAL,
     )
     .unwrap_err();
     assert!(matches!(err, UploadError::PathNotFound { .. }));
@@ -107,9 +117,29 @@ fn too_many_files_rejected() {
                 .into(),
         );
     }
-    let err = validate_upload_paths(&paths, Some(&root), MAX_FILES, MAX_BYTES).unwrap_err();
+    let err =
+        validate_upload_paths(&paths, Some(&root), MAX_FILES, MAX_BYTES, MAX_TOTAL).unwrap_err();
     assert!(matches!(err, UploadError::TooManyFiles { .. }));
     assert_eq!(err.kind(), "upload_too_many_files");
+}
+
+#[test]
+fn aggregate_size_over_total_cap_rejected() {
+    // Each file is under the per-file cap, but together they exceed the total
+    // cap. Use sparse files so no real bytes are written.
+    let root = tmp_root("total");
+    let per_file = MAX_BYTES; // 100 MiB each; 3 × 100 MiB = 300 MiB > 200 MiB total
+    let mut paths = Vec::new();
+    for i in 0..3 {
+        let p = root.join(format!("big{i}.bin"));
+        let f = fs::File::create(&p).unwrap();
+        f.set_len(per_file).unwrap();
+        paths.push(p.to_string_lossy().into());
+    }
+    let err =
+        validate_upload_paths(&paths, Some(&root), MAX_FILES, MAX_BYTES, MAX_TOTAL).unwrap_err();
+    assert!(matches!(err, UploadError::TotalTooLarge { .. }));
+    assert_eq!(err.kind(), "upload_total_too_large");
 }
 
 #[test]
@@ -123,6 +153,7 @@ fn oversize_file_rejected() {
         Some(&root),
         MAX_FILES,
         MAX_BYTES,
+        MAX_TOTAL,
     )
     .unwrap_err();
     assert!(matches!(err, UploadError::FileTooLarge { .. }));
@@ -138,6 +169,7 @@ fn valid_in_root_file_ok() {
         Some(&root),
         MAX_FILES,
         MAX_BYTES,
+        MAX_TOTAL,
     )
     .unwrap();
     assert_eq!(out.len(), 1);

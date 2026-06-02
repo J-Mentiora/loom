@@ -321,7 +321,7 @@ loom action web.set_cookies --session <SESSION> --source '{"source":"inline","co
 
 Sets one or more local files on a file input element via CDP `DOM.setFileInputFiles`, the only reliable way to drive uploads (typing into a file input is ignored by browsers and `input.files` is read-only to page script). Resolves the selector to a node, then sets the files; the browser fires native `input`/`change` events so reactive pages update.
 
-SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. If `LOOM_UPLOAD_ROOT` is unset the verb fails closed (`kind: "upload_root_not_configured"`). Paths are canonicalized (symlink-escape defense) and must resolve under the root, else `kind: "upload_path_blocked"`. Enforced in ALL profiles. Per-call caps: 20 files, 100 MiB/file (`upload_too_many_files` / `upload_file_too_large`). Non-existent paths → `upload_path_not_found`; selector miss → `selector_not_found`; a non-file input target → `not_a_file_input`. Single-file inputs take `paths[0]`.
+SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. If `LOOM_UPLOAD_ROOT` is unset the verb fails closed (`kind: "upload_root_not_configured"`). Paths are canonicalized (symlink-escape defense) and must resolve under the root, else `kind: "upload_path_blocked"`. Enforced in ALL profiles. Per-call caps: 20 files, 100 MiB/file, 200 MiB total (`upload_too_many_files` / `upload_file_too_large` / `upload_total_too_large`). Non-existent paths → `upload_path_not_found`; selector miss → `selector_not_found`; a non-file input target → `not_a_file_input`. Single-file inputs take `paths[0]`.
 
 **Parameters**
 

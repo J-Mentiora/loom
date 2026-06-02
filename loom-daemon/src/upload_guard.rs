@@ -25,6 +25,10 @@ use std::path::{Path, PathBuf};
 pub const MAX_UPLOAD_FILES: usize = 20;
 /// Max size (bytes) of any single uploaded file. 100 MiB.
 pub const MAX_UPLOAD_FILE_BYTES: u64 = 100 * 1024 * 1024;
+/// Max aggregate size (bytes) across all files in one call. 200 MiB.
+/// Bounds total work even when each file is individually under the per-file cap
+/// (20 × 100 MiB would otherwise be 2 GiB).
+pub const MAX_UPLOAD_TOTAL_BYTES: u64 = 200 * 1024 * 1024;
 
 /// Typed rejection reasons. `kind()` is the stable wire-`kind` string surfaced
 /// on the receipt error (no full host paths in the kind — see L1).
@@ -41,6 +45,8 @@ pub enum UploadError {
     TooManyFiles { count: usize, max: usize },
     /// A file exceeds `MAX_UPLOAD_FILE_BYTES`.
     FileTooLarge { path: String, size: u64, max: u64 },
+    /// The aggregate size of all files exceeds `MAX_UPLOAD_TOTAL_BYTES`.
+    TotalTooLarge { total: u64, max: u64 },
 }
 
 impl UploadError {
@@ -53,6 +59,7 @@ impl UploadError {
             UploadError::PathNotFound { .. } => "upload_path_not_found",
             UploadError::TooManyFiles { .. } => "upload_too_many_files",
             UploadError::FileTooLarge { .. } => "upload_file_too_large",
+            UploadError::TotalTooLarge { .. } => "upload_total_too_large",
         }
     }
 
@@ -81,6 +88,11 @@ impl UploadError {
             UploadError::FileTooLarge { path, size, max } => {
                 format!("file upload denied: {} is {size} bytes, exceeding the {max}-byte per-file limit", basename(path))
             }
+            UploadError::TotalTooLarge { total, max } => {
+                format!(
+                    "file upload denied: {total} total bytes exceeds the {max}-byte per-call limit"
+                )
+            }
         }
     }
 }
@@ -101,6 +113,7 @@ pub fn validate_upload_paths(
     upload_root: Option<&Path>,
     max_files: usize,
     max_bytes: u64,
+    max_total_bytes: u64,
 ) -> Result<Vec<PathBuf>, UploadError> {
     // Fail closed before touching the filesystem.
     let root = upload_root.ok_or(UploadError::RootNotConfigured)?;
@@ -118,6 +131,7 @@ pub fn validate_upload_paths(
     let canon_root = std::fs::canonicalize(root).map_err(|_| UploadError::RootNotConfigured)?;
 
     let mut out = Vec::with_capacity(paths.len());
+    let mut total: u64 = 0;
     for raw in paths {
         // canonicalize resolves symlinks and requires the path to exist.
         let canon = std::fs::canonicalize(raw)
@@ -139,6 +153,14 @@ pub fn validate_upload_paths(
                 path: raw.clone(),
                 size: meta.len(),
                 max: max_bytes,
+            });
+        }
+
+        total = total.saturating_add(meta.len());
+        if total > max_total_bytes {
+            return Err(UploadError::TotalTooLarge {
+                total,
+                max: max_total_bytes,
             });
         }
 

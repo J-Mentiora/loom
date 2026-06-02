@@ -600,19 +600,30 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
             // `paths` is a required JSON array of strings (absolute host paths).
-            let paths = params
+            let paths_arr = params
                 .get("paths")
                 .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
-                        .collect::<Vec<String>>()
-                })
                 .ok_or_else(|| JsonRpcError {
                     code: LoomErrorCode::SchemaViolation,
                     message: "missing field: paths".to_string(),
                     data: None,
                 })?;
+            // Reject (don't silently drop) any non-string entry — a malformed
+            // `paths` array is a schema violation, not "upload the strings I
+            // could parse".
+            let mut paths = Vec::with_capacity(paths_arr.len());
+            for entry in paths_arr {
+                match entry.as_str() {
+                    Some(s) => paths.push(s.to_string()),
+                    None => {
+                        return Err(JsonRpcError {
+                            code: LoomErrorCode::SchemaViolation,
+                            message: "paths entries must be strings".to_string(),
+                            data: None,
+                        })
+                    }
+                }
+            }
             Ok(Action::WebSetInputFiles {
                 session_id,
                 selector,

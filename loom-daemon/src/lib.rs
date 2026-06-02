@@ -1211,6 +1211,7 @@ impl WasmHostBridge for WasmBridge {
                     self.upload_root.as_deref(),
                     upload_guard::MAX_UPLOAD_FILES,
                     upload_guard::MAX_UPLOAD_FILE_BYTES,
+                    upload_guard::MAX_UPLOAD_TOTAL_BYTES,
                 ) {
                     Ok(canon) => Action::WebSetInputFiles {
                         session_id,
@@ -2531,6 +2532,19 @@ fn build_host_bridge(
     upload_root: Option<PathBuf>,
 ) -> (Arc<dyn WasmHostBridge>, Option<Arc<loom_host::WasmHost>>) {
     use loom_host::{HostConfig, ShimChromiumConfig, WasmHost};
+
+    // Surface the upload-root posture at startup so operators aren't left
+    // guessing why web.set_input_files fails closed (it denies all uploads
+    // when LOOM_UPLOAD_ROOT is unset).
+    match &upload_root {
+        Some(root) => tracing::info!(
+            upload_root = %root.display(),
+            "web.set_input_files uploads enabled (LOOM_UPLOAD_ROOT)"
+        ),
+        None => tracing::info!(
+            "web.set_input_files uploads DISABLED — set LOOM_UPLOAD_ROOT to enable (fail-closed)"
+        ),
+    }
 
     // Resolve surfaces dir the same way `loom postinstall` writes them
     // (~/.config/loom/surfaces/) so AOT-compiled .cwasm modules are found.
