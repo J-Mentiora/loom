@@ -22,7 +22,9 @@ UPLOAD_URL="http://127.0.0.1:${FIXTURE_PORT}/upload.html"
 # Absolute fixtures dir — the daemon under test MUST be started with
 # LOOM_UPLOAD_ROOT set to this path for the web.set_input_files happy-path
 # to pass (fail-closed otherwise). The harness asserts that contract.
-FIXTURES_DIR="$(cd "$(dirname "$0")/fixtures" && pwd)"
+# Use $HERE (resolved above) — the script has already `cd "$HERE"`, so a
+# $0-relative recompute would double-nest.
+FIXTURES_DIR="$HERE/fixtures"
 UPLOAD_FILE="$FIXTURES_DIR/sample-upload.txt"
 
 mkdir -p "$RESULTS"
