@@ -21,8 +21,10 @@ budgets, parallel sessions, and the MCP stdio transport.
 # Build the binaries
 cargo build --release
 
-# Start the daemon (one terminal)
-./target/release/loom serve
+# Start the daemon (one terminal). For the web.set_input_files section
+# (run_e2e.sh Section 11b) the daemon MUST be started with LOOM_UPLOAD_ROOT
+# pointing at the fixtures dir — uploads fail closed otherwise.
+LOOM_UPLOAD_ROOT="$PWD/tests/e2e/fixtures" ./target/release/loom serve
 
 # Run the suites (another terminal)
 bash tests/e2e/run_e2e.sh
@@ -41,6 +43,11 @@ since the contents change every run.
 boring — plain HTML, vanilla JS, no framework — so replay equality can
 hold and timing is deterministic. SauceDemo (React) and the-internet
 (plain) cover the framework-aware code paths.
+
+`fixtures/upload.html` (+ `fixtures/sample-upload.txt`) back the
+`web.set_input_files` section — a real `<input type=file>` plus a non-file
+input for the `not_a_file_input` typed-error case. Requires
+`LOOM_UPLOAD_ROOT=$PWD/tests/e2e/fixtures` on the daemon.
 
 ## CI integration
 

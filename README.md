@@ -25,7 +25,7 @@ strings.
                         └──────────────┘
 ```
 
-**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v0.9.4.
+**Platforms.** macOS arm64/x86_64 and Linux x86_64/arm64. Windows is not supported on v0.9.8.
 
 ## If you've hit the vibe-coding testing wall
 
@@ -155,7 +155,7 @@ loom doctor
 ### `cargo install` — any platform with Rust 1.92+
 
 ```bash
-cargo install --git https://github.com/mentiora-ai/loom --tag v0.9.4 loom-cli
+cargo install --git https://github.com/mentiora-ai/loom --tag v0.9.8 loom-cli
 loom postinstall
 loom doctor
 ```
@@ -163,7 +163,7 @@ loom doctor
 `--tag` is required: `loom postinstall` fetches `loom-daemon`, `loom-mcp`, and
 `loom-shim-chromium` from the GitHub Release matching the installed crate
 version, so the tag must point at an existing release. (Substitute the latest
-release version for `v0.9.4`.)
+release version for `v0.9.8`.)
 
 ### Manual download — pre-built tarball
 
@@ -237,7 +237,7 @@ the TypeScript SDK, async-first. It isn't on PyPI yet; for now use a
 git install:
 
 ```bash
-pip install "git+https://github.com/mentiora-ai/loom@v0.9.4#subdirectory=python-sdk"
+pip install "git+https://github.com/mentiora-ai/loom@v0.9.8#subdirectory=python-sdk"
 ```
 
 ```python
@@ -303,6 +303,7 @@ tool call and reuses it across the conversation.
 | `loom.web.scroll`          | `selector: string, delta_y?: int`                               |
 | `loom.web.wait`            | `selector: string, timeout_ms?: int`                            |
 | `loom.web.evaluate`        | `expression: string`                                            |
+| `loom.web.set_input_files` | `selector: string, paths: [string]`                             |
 | `loom.web.screenshot`      | `selector?: string`                                             |
 | `loom.web.snapshot`        | (no args)                                                       |
 | `loom.web.set_cookies`     | `source: CookieSource ({inline,cookies}|{grant,grant_id})`      |
@@ -321,6 +322,7 @@ tool call and reuses it across the conversation.
 | `web.screenshot`| Capture a PNG screenshot of the page or a selected element.             |
 | `web.scroll`    | Scroll an element by a (delta_x, delta_y) offset.                       |
 | `web.select`    | Set the value of a `<select>` element and dispatch `change`.            |
+| `web.set_input_files` | Upload local files into an `<input type=file>` via CDP `DOM.setFileInputFiles`. Paths gated by the `LOOM_UPLOAD_ROOT` allow-list (fail-closed, canonicalized, ≤20 files / ≤100 MiB). |
 | `web.snapshot`  | Capture a full DOM snapshot of the active page.                         |
 | `web.type`      | Focus an input and type text into it.                                   |
 | `web.wait`      | Wait until a CSS selector resolves (or until timeout).                  |
@@ -515,7 +517,7 @@ file, not eleven.
 
 ## Status
 
-loom is **0.9.4** — pre-1.0. The matrix below is the stability
+loom is **0.9.8** — pre-1.0. The matrix below is the stability
 contract: breaking changes to **Stable** rows bump the major version
 when 1.0 ships; **Beta** rows may change without notice.
 
@@ -527,6 +529,7 @@ when 1.0 ships; **Beta** rows may change without notice.
 | Deterministic replay (manifest hash-chain bit-equality src ↔ replay) | **Beta** | Source/replay equality is not yet bulletproof — gated on real-Chromium subprocess wiring. |
 | `web.navigate`, `web.evaluate`, `web.wait`, `web.type` | **Stable** | Covered by replay-equality tests. |
 | `web.click` | **Beta** | DOM coordinate edge cases — gated on the hit-test refinements still in progress. |
+| `web.set_input_files` | **Beta** | New in 0.9.8. CDP `DOM.setFileInputFiles` behind the `LOOM_UPLOAD_ROOT` allow-list (fail-closed). Real-Chromium FileList coverage via the e2e harness. |
 | `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). |
 | CLI surface (`loom session`, `loom action`, `loom export`, `loom import`) | **Stable** | Flags pinned. `--version` format pinned: `loom <ver> (<sha> <date>)`. |
 | `import.playwright` RPC | **Stable** | End-to-end wired through facade, adapter, handlers, router. |

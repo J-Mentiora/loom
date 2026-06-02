@@ -1,0 +1,1 @@
+loom e2e upload fixture — this file is uploaded into <input type=file> by the web.set_input_files test.

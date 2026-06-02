@@ -486,6 +486,13 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
         "web.evaluate",
         r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"expression":{"type":"string"}},"required":["session","expression"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"return_value_json":{"type":"string","description":"Canonical-JSON of the evaluated value. Numerics serialize as JSON strings (1+1 -> \"2\", Math.PI -> \"3.141...\"). Absent when value > 64KB and offloaded to content store; see return_value_blob_ref."},"return_value_blob_ref":{"type":"object","description":"ContentRef when canonical-JSON > 64KB. Truncation discriminator = this field present.","properties":{"sha256":{"type":"string"},"size_bytes":{"type":"integer"}},"required":["sha256","size_bytes"]}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
     ),
+    // web.set_input_files: `paths` is a required array of absolute file-path
+    // strings. Daemon-side `upload_guard` validates them against
+    // LOOM_UPLOAD_ROOT (fail-closed, canonicalized, capped) before dispatch.
+    (
+        "web.set_input_files",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["session","selector","paths"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
     (
         "web.screenshot",
         r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,

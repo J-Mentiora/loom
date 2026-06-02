@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>loom e2e — file upload fixture</title>
+</head>
+<body>
+  <h1>Upload fixture</h1>
+  <!-- Single-file input target for web.set_input_files -->
+  <input type="file" id="upload">
+  <!-- A non-file input, to exercise the not_a_file_input typed error -->
+  <input type="text" id="text-field">
+  <!-- Live readout the e2e harness asserts via web.evaluate -->
+  <pre id="readout">no-file</pre>
+  <script>
+    const input = document.getElementById('upload');
+    const readout = document.getElementById('readout');
+    input.addEventListener('change', () => {
+      const f = input.files;
+      readout.textContent = f && f.length
+        ? `count=${f.length};name=${f[0].name};size=${f[0].size}`
+        : 'no-file';
+    });
+  </script>
+</body>
+</html>

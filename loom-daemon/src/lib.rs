@@ -18,6 +18,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+mod upload_guard;
+
 use anyhow::{Context, Result};
 use loom_core::core_api_facade::{
     CoreApiFacade, CoreConfig, ExportInfo as CoreExportInfo,
@@ -1011,6 +1013,10 @@ struct WasmBridge {
     /// was a `ShimChromiumConfig` registered at host boot?
     /// Set at `build_host_bridge` time from the resolver's outcome.
     has_chromium: bool,
+    /// Allow-list root for `web.set_input_files` (from `LOOM_UPLOAD_ROOT`).
+    /// `None` → uploads fail closed. Daemon-global (all sessions), per
+    /// plan-council FND#4 — not threaded per-session.
+    upload_root: Option<PathBuf>,
 }
 
 impl WasmHostBridge for WasmBridge {
@@ -1189,6 +1195,46 @@ impl WasmHostBridge for WasmBridge {
                     source: resolved_source,
                 }
             }
+            // web.set_input_files: AUTHORITATIVE upload allow-list gate
+            // (plan-council FND#5 — daemon-side, before the wasm guest /
+            // chromium ever see the paths). Enforced in ALL profiles, fail
+            // closed when LOOM_UPLOAD_ROOT is unset. On success the action is
+            // rebuilt with CANONICALIZED paths so chromium opens the validated
+            // file (closing most of the canonicalize→read TOCTOU window).
+            Action::WebSetInputFiles {
+                session_id,
+                selector,
+                paths,
+            } => {
+                match upload_guard::validate_upload_paths(
+                    &paths,
+                    self.upload_root.as_deref(),
+                    upload_guard::MAX_UPLOAD_FILES,
+                    upload_guard::MAX_UPLOAD_FILE_BYTES,
+                ) {
+                    Ok(canon) => Action::WebSetInputFiles {
+                        session_id,
+                        selector,
+                        paths: canon
+                            .into_iter()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .collect(),
+                    },
+                    Err(e) => {
+                        tracing::warn!(
+                            session_id = %session_id_str,
+                            kind = e.kind(),
+                            "blocked file upload (upload allow-list)"
+                        );
+                        return Ok(upload_error_receipt(
+                            session.allocate_action_id(),
+                            session_id_str,
+                            e.kind(),
+                            e.message(),
+                        ));
+                    }
+                }
+            }
             other => other,
         };
 
@@ -1235,6 +1281,18 @@ impl WasmHostBridge for WasmBridge {
             // feature landed.)
             Action::WebNavigate { url, .. } => url.as_bytes().to_vec(),
             Action::WebEvaluate { expression, .. } => expression.as_bytes().to_vec(),
+            // web.set_input_files: the guest's `set_input_files_verb` decodes
+            // {selector, paths} from the payload and calls
+            // `host::set_input_files_execute`. Paths here are already
+            // canonicalized by the upload gate above. action_hash =
+            // sha256(payload) covers selector + canonical paths.
+            Action::WebSetInputFiles {
+                selector, paths, ..
+            } => serde_json::to_vec(&serde_json::json!({
+                "selector": selector,
+                "paths": paths,
+            }))
+            .unwrap_or_default(),
             _ => build_chromium_args(&action).unwrap_or_else(|| {
                 serde_jcs::to_string(&action)
                     .unwrap_or_default()
@@ -1376,6 +1434,48 @@ fn profile_restricted_evaluate_receipt(
 /// `value_too_large` / `too_many_cookies` / `invalid_expires`), mirroring
 /// the verb-side error mapper that runs when the
 /// `loom-surface-web ↔ loom-surfaces` wiring closes.
+/// Typed error receipt for `web.set_input_files` allow-list / cap rejections.
+/// `kind` is the discrete `UploadError::kind()` wire string (e.g.
+/// `upload_path_blocked`) — NOT a `js_throw` JSON blob (plan-council FND#8).
+/// `message` uses basenames, not full host paths (L1).
+fn upload_error_receipt(action_id: u64, session_id: &str, kind: &str, message: String) -> Receipt {
+    use loom_rpc::host_service_adapter::host_service_adapter::{ReceiptError, ReceiptStatus};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Receipt {
+        action_id,
+        session_id: session_id.to_string(),
+        status: ReceiptStatus::Error,
+        timing_ticks: 0,
+        side_effects: vec![],
+        error: Some(ReceiptError {
+            kind: kind.to_string(),
+            detail: Some(serde_json::json!({ "message": message })),
+        }),
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: Some(now),
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: vec![],
+        network_summary: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    }
+}
+
 fn cookie_validation_error_receipt(
     action_id: u64,
     session_id: &str,
@@ -1526,6 +1626,12 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         }
 
         Action::WebEvaluate { expression, .. } => runtime_evaluate(expression.clone()),
+
+        // web.set_input_files uses the typed `set_input_files_execute` host
+        // function (like navigate/evaluate), NOT a single CDP envelope —
+        // `args_canonical_bytes` special-cases it before this fn is called.
+        // This arm exists only to satisfy the exhaustive match.
+        Action::WebSetInputFiles { .. } => return None,
 
         Action::WebType { selector, text, .. } => {
             // Direct `el.value = text` bypasses React/Vue/Angular value
@@ -1957,6 +2063,7 @@ fn action_session_id(action: &Action) -> &str {
         | Action::WebScroll { session_id, .. }
         | Action::WebWait { session_id, .. }
         | Action::WebSnapshot { session_id } => session_id,
+        Action::WebSetInputFiles { session_id, .. } => session_id,
         // v0.9.6 web-cookie-injection.
         Action::WebSetCookies { session_id, .. }
         | Action::WebGetCookies { session_id, .. }
@@ -1989,6 +2096,7 @@ fn action_verb(action: &Action) -> &str {
         Action::WebScroll { .. } => "scroll",
         Action::WebWait { .. } => "wait",
         Action::WebSnapshot { .. } => "snapshot",
+        Action::WebSetInputFiles { .. } => "set-input-files",
         // v0.9.6 web-cookie-injection.
         Action::WebSetCookies { .. } => "set-cookies",
         Action::WebGetCookies { .. } => "get-cookies",
@@ -2007,6 +2115,9 @@ struct DaemonArgs {
     otel_enabled: bool,
     default_seed: u64,
     checkpoint_every_n: u64,
+    /// Allow-list root for `web.set_input_files` (`LOOM_UPLOAD_ROOT`).
+    /// `None` → file uploads fail closed (deny all).
+    upload_root: Option<PathBuf>,
 }
 
 impl Default for DaemonArgs {
@@ -2020,6 +2131,7 @@ impl Default for DaemonArgs {
             otel_enabled: false,
             default_seed: 0,
             checkpoint_every_n: 100,
+            upload_root: None,
         }
     }
 }
@@ -2060,6 +2172,13 @@ fn parse_args(argv: &[String]) -> DaemonArgs {
     }
     if std::env::var("LOOM_OTEL_ENABLED").as_deref() == Ok("1") {
         args.otel_enabled = true;
+    }
+    // Upload allow-list root for web.set_input_files. Unset → uploads fail
+    // closed (deny all). Enforced in ALL profiles, daemon-global.
+    if let Ok(v) = std::env::var("LOOM_UPLOAD_ROOT") {
+        if !v.is_empty() {
+            args.upload_root = Some(PathBuf::from(v));
+        }
     }
 
     // Override socket from `--socket PATH` flag.
@@ -2104,7 +2223,8 @@ fn print_daemon_help() {
              LOOM_SOCKET_PATH     Same as --socket.\n    \
              LOOM_DATA_ROOT       Same as --data-root.\n    \
              LOOM_LOG_PATH        Override the daemon log file path.\n    \
-             LOOM_OTEL_ENABLED    Set to `1` to enable OTEL exports.\n"
+             LOOM_OTEL_ENABLED    Set to `1` to enable OTEL exports.\n    \
+             LOOM_UPLOAD_ROOT     Allow-list root for web.set_input_files. Unset → uploads fail closed.\n"
     );
 }
 
@@ -2247,7 +2367,7 @@ async fn async_main() -> Result<()> {
 
     // 3. Build WasmHost (or stub if surfaces aren't compiled yet).
     let (host_bridge, wasm_host_handle): (Arc<dyn WasmHostBridge>, _) =
-        build_host_bridge(Arc::clone(&core));
+        build_host_bridge(Arc::clone(&core), args.upload_root.clone());
 
     // 4. Build schema provider. The schema directory holds per-method
     //    JSON Schema files emitted at build time .
@@ -2408,6 +2528,7 @@ async fn async_main() -> Result<()> {
 /// second slot is None.
 fn build_host_bridge(
     core: Arc<CoreApiFacade>,
+    upload_root: Option<PathBuf>,
 ) -> (Arc<dyn WasmHostBridge>, Option<Arc<loom_host::WasmHost>>) {
     use loom_host::{HostConfig, ShimChromiumConfig, WasmHost};
 
@@ -2481,6 +2602,7 @@ fn build_host_bridge(
                     host: host_for_bridge,
                     core,
                     has_chromium,
+                    upload_root,
                 }),
                 Some(host),
             )
@@ -2524,6 +2646,9 @@ impl loom_rpc::schema_provider::schema_provider::SchemaProviderApi for EmptySche
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod upload_guard_tests;
 
 #[cfg(test)]
 mod tests {

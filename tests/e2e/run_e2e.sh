@@ -18,6 +18,12 @@ RESULTS=results
 FIXTURE_PORT="${FIXTURE_PORT:-8765}"
 FIXTURE_URL="http://127.0.0.1:${FIXTURE_PORT}/index.html"
 CHECKOUT_URL="http://127.0.0.1:${FIXTURE_PORT}/checkout.html"
+UPLOAD_URL="http://127.0.0.1:${FIXTURE_PORT}/upload.html"
+# Absolute fixtures dir — the daemon under test MUST be started with
+# LOOM_UPLOAD_ROOT set to this path for the web.set_input_files happy-path
+# to pass (fail-closed otherwise). The harness asserts that contract.
+FIXTURES_DIR="$(cd "$(dirname "$0")/fixtures" && pwd)"
+UPLOAD_FILE="$FIXTURES_DIR/sample-upload.txt"
 
 mkdir -p "$RESULTS"
 PASS=0; FAIL=0
@@ -39,6 +45,7 @@ hover()  { $LOOM action web.hover      --session "$1" --selector "$2" 2>&1; }
 scroll() { $LOOM action web.scroll     --session "$1" --selector "$2" --delta_y "${3:-100}" 2>&1; }
 shot()   { $LOOM action web.screenshot --session "$1" 2>&1; }
 snap()   { $LOOM action web.snapshot   --session "$1" 2>&1; }
+upload() { $LOOM action web.set_input_files --session "$1" --selector "$2" --paths "$3" 2>&1; }
 
 # -- Fixture server -----------------------------------------------------
 sect "Booting fixture HTTP server on :${FIXTURE_PORT}"
@@ -193,6 +200,56 @@ if echo "$SN" | jq -e '.action_hash' >/dev/null 2>&1; then
   ok "snapshot-returns-receipt"
 else
   fail "snapshot-returns-receipt" "$SN"
+fi
+
+# -- Section 11b: web.set_input_files -----------------------------------
+# Requires the daemon under test to be started with
+# LOOM_UPLOAD_ROOT="$FIXTURES_DIR" (fail-closed otherwise). The happy path
+# uploads a fixture file into a real <input type=file> and reads back the
+# FileList via web.evaluate; the negative cases assert typed errors.
+sect "Section 11b: web.set_input_files"
+UPSESSION=$($LOOM session create --profile standard 2>&1 | jq -r .session_id 2>/dev/null)
+if [[ "$UPSESSION" =~ ^[a-z0-9]{26}$ ]]; then
+  nav "$UPSESSION" "$UPLOAD_URL" >/dev/null
+  # Happy path: upload the fixture, then read input.files via web.evaluate.
+  UP=$(upload "$UPSESSION" '#upload' "[\"$UPLOAD_FILE\"]")
+  echo "$UP" >"$RESULTS/upload.json"
+  LEN=$(ev "$UPSESSION" 'document.querySelector("#upload").files.length' | jq -r '.return_value_json // empty' | jq -r 'select(. != null)')
+  NAME=$(ev "$UPSESSION" 'document.querySelector("#upload").files[0] && document.querySelector("#upload").files[0].name' | jq -r '.return_value_json // empty' | jq -r 'select(. != null)')
+  if [ "$LEN" = "1" ] && echo "$NAME" | grep -q 'sample-upload.txt'; then
+    ok "set-input-files-filelist-reflects-upload"
+  else
+    fail "set-input-files-filelist-reflects-upload" "len=$LEN name=$NAME (is the daemon started with LOOM_UPLOAD_ROOT=$FIXTURES_DIR? see $RESULTS/upload.json)"
+  fi
+
+  # Negative: a path outside the allow-list root → typed security error.
+  BLK=$(upload "$UPSESSION" '#upload' '["/etc/passwd"]')
+  echo "$BLK" >"$RESULTS/upload-blocked.json"
+  if echo "$BLK" | grep -qiE 'upload_path_blocked|upload_root_not_configured'; then
+    ok "set-input-files-path-outside-root-blocked"
+  else
+    fail "set-input-files-path-outside-root-blocked" "see $RESULTS/upload-blocked.json"
+  fi
+
+  # Selector miss → typed selector_not_found.
+  MISS=$(upload "$UPSESSION" '#no-such-input-zzz' "[\"$UPLOAD_FILE\"]")
+  if echo "$MISS" | grep -qiE 'selector_not_found|selector-not-found'; then
+    ok "set-input-files-selector-miss-typed-error"
+  else
+    fail "set-input-files-selector-miss-typed-error" "$MISS"
+  fi
+
+  # Wrong element type (text input, not a file input) → not_a_file_input.
+  WRONG=$(upload "$UPSESSION" '#text-field' "[\"$UPLOAD_FILE\"]")
+  if echo "$WRONG" | grep -qiE 'not_a_file_input|not-a-file-input'; then
+    ok "set-input-files-wrong-element-typed-error"
+  else
+    fail "set-input-files-wrong-element-typed-error" "$WRONG"
+  fi
+
+  $LOOM session close "$UPSESSION" >/dev/null 2>&1 || true
+else
+  fail "set-input-files-session-create" "could not create upload session"
 fi
 
 # -- Section 12: session inspect/validate -------------------------------

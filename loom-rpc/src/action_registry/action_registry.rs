@@ -72,7 +72,7 @@ pub fn find(name: &str) -> Option<&'static ActionMeta> {
 
 // FUTURE: as more surfaces land (file.*, cloud.*, ...), consider
 // grouping into per-surface registries and re-exporting a flat `ACTIONS`
-// slice for backward compatibility. For 14 web.* actions today, one flat
+// slice for backward compatibility. For 15 web.* actions today, one flat
 // table is the simplest fit — and the `loom action --help` renderer
 // already groups output by surface prefix so the UX scales.
 //
@@ -464,6 +464,46 @@ entry when the grant path resolves (D5 / FND-0050).",
         ],
         returns: "Receipt with `set_cookies_result: Vec<SetCookieResult>` — one entry per validated cookie with `success: true`. Typed validation errors (`name_empty` / `name_invalid` / `value_too_large` / `too_many_cookies` / `invalid_expires`) short-circuit pre-CDP and surface as `error_code: \"cookie_validation_error\"` in the receipt details.",
         example: &["loom", "action", "web.set_cookies", "--session", "<SESSION>", "--source", "{\"source\":\"inline\",\"cookies\":[{\"name\":\"sid\",\"value\":\"abc123\",\"domain\":\"example.com\"}]}"],
+    },
+    ActionMeta {
+        name: "web.set_input_files",
+        summary: "Upload local files into an <input type=file> by CSS selector.",
+        description: "\
+Sets one or more local files on a file input element via CDP \
+`DOM.setFileInputFiles`, the only reliable way to drive uploads (typing \
+into a file input is ignored by browsers and `input.files` is read-only \
+to page script). Resolves the selector to a node, then sets the files; \
+the browser fires native `input`/`change` events so reactive pages update.\n\n\
+SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. \
+If `LOOM_UPLOAD_ROOT` is unset the verb fails closed (`kind: \
+\"upload_root_not_configured\"`). Paths are canonicalized (symlink-escape \
+defense) and must resolve under the root, else `kind: \"upload_path_blocked\"`. \
+Enforced in ALL profiles. Per-call caps: 20 files, 100 MiB/file \
+(`upload_too_many_files` / `upload_file_too_large`). Non-existent paths → \
+`upload_path_not_found`; selector miss → `selector_not_found`; a non-file \
+input target → `not_a_file_input`. Single-file inputs take `paths[0]`.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "selector",
+                ty: ParamType::String,
+                doc: "CSS query selector for the target <input type=file>. Standard CSS Level 3 syntax.",
+                required: true,
+            },
+            ParamMeta {
+                name: "paths",
+                ty: ParamType::Array,
+                doc: "Absolute file paths to upload. Each must resolve under LOOM_UPLOAD_ROOT. Single-file inputs use paths[0].",
+                required: true,
+            },
+        ],
+        returns: "Receipt with `status: \"ok\"`. Security/selector/element errors surface as typed `kind` strings (e.g. `upload_path_blocked`, `selector_not_found`, `not_a_file_input`).",
+        example: &["loom", "action", "web.set_input_files", "--session", "<SESSION>", "--selector", "#upload", "--paths", "[\"/fixtures/a.txt\"]"],
     },
     ActionMeta {
         name: "web.snapshot",

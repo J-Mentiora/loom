@@ -544,6 +544,211 @@ impl ShimManager {
         }
     }
 
+    /// Resolve a CSS selector to a file input and set its files via CDP
+    /// `DOM.setFileInputFiles`. Issues the sequence
+    /// `DOM.getDocument` → `DOM.querySelector` → `DOM.setFileInputFiles`
+    /// against the session's target. Paths are already validated +
+    /// canonicalized daemon-side (upload_guard) before reaching here.
+    ///
+    /// Outcomes:
+    ///   - `Ok(SetInputFilesOutcome::Ok { file_count })` on success.
+    ///   - `Ok(SelectorNotFound)` when querySelector returns nodeId == 0.
+    ///   - `Ok(NotAFileInput)` when setFileInputFiles errors on a resolved node.
+    ///   - `Err(LoomError)` for transport / breaker / protocol failures.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_set_input_files(
+        &self,
+        id: ShimId,
+        action_id: String,
+        session_id: u64,
+        target_id: u64,
+        selector: String,
+        files: Vec<String>,
+        budget_ms: u64,
+        seed: Seed,
+        epoch_ms: EpochMs,
+    ) -> Result<SetInputFilesOutcome, LoomError> {
+        use ciborium::value::{Integer, Value};
+        let _action_id = action_id;
+
+        if let Some(state) = self.states.get(&id) {
+            if state.breaker == BreakerState::Open {
+                return Err(LoomError::new(
+                    LoomErrorCode::ShimBreakerOpen,
+                    format!("shim {} circuit breaker is open", id.0),
+                ));
+            }
+        }
+
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+
+        let process = self.get_or_spawn(&id, &config).await?;
+        let recv_ms = budget_ms.max(config.recv_timeout_ms);
+
+        // Lazy-spawn the session target (idempotent), same as send_evaluate —
+        // so a set_input_files before an explicit SpawnTarget still resolves
+        // against a real target rather than the bootstrap context.
+        let spawn_request = ShimRequest::SpawnTarget {
+            request_id: 0,
+            session_id,
+            profile: "default".to_string(),
+            seed,
+            epoch_ms,
+        };
+        let _ = send_and_await(
+            &process,
+            spawn_request,
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(config.recv_timeout_ms),
+        )
+        .await;
+
+        // One raw CdpSend round-trip → raw CDP result Value (or Err on a
+        // shim-level error envelope). `step_err_is_app` lets the caller treat
+        // a CDP error at a specific step as an application outcome.
+        let cdp = |method: &'static str, params: Value| {
+            let process = process.clone();
+            let send_to = Duration::from_millis(config.send_timeout_ms);
+            let recv_to = Duration::from_millis(recv_ms);
+            async move {
+                let request = ShimRequest::CdpSend {
+                    request_id: 0,
+                    session_id,
+                    target_id,
+                    message: CdpMessage {
+                        method: method.into(),
+                        params,
+                    },
+                };
+                send_and_await(&process, request, send_to, recv_to).await
+            }
+        };
+
+        // Step 1: DOM.getDocument(depth=0) → root nodeId.
+        let root_resp = cdp(
+            "DOM.getDocument",
+            Value::Map(vec![(
+                Value::Text("depth".into()),
+                Value::Integer(Integer::from(0)),
+            )]),
+        )
+        .await;
+        let root_node_id = match root_resp {
+            Ok(ShimResponse::Ok { payload, .. }) => cbor_get(&payload, "root")
+                .and_then(|r| cbor_get(r, "nodeId"))
+                .and_then(cbor_u64)
+                .ok_or_else(|| {
+                    LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: getDocument: no root.nodeId", id.0),
+                    )
+                })?,
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id);
+                return Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ));
+            }
+            Ok(other) => {
+                self.record_failure(&id);
+                return Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: getDocument unexpected: {other:?}", id.0),
+                ));
+            }
+            Err(e) => {
+                self.record_failure(&id);
+                return Err(e);
+            }
+        };
+
+        // Step 2: DOM.querySelector(root, selector) → nodeId (0 == not found).
+        let qs_resp = cdp(
+            "DOM.querySelector",
+            Value::Map(vec![
+                (
+                    Value::Text("nodeId".into()),
+                    Value::Integer(Integer::from(root_node_id)),
+                ),
+                (Value::Text("selector".into()), Value::Text(selector)),
+            ]),
+        )
+        .await;
+        let node_id = match qs_resp {
+            Ok(ShimResponse::Ok { payload, .. }) => {
+                cbor_get(&payload, "nodeId").and_then(cbor_u64).unwrap_or(0)
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id);
+                return Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ));
+            }
+            Ok(other) => {
+                self.record_failure(&id);
+                return Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: querySelector unexpected: {other:?}", id.0),
+                ));
+            }
+            Err(e) => {
+                self.record_failure(&id);
+                return Err(e);
+            }
+        };
+        if node_id == 0 {
+            // No match — typed application outcome (not a transport failure).
+            self.record_success(&id);
+            return Ok(SetInputFilesOutcome::SelectorNotFound);
+        }
+
+        // Step 3: DOM.setFileInputFiles(nodeId, files). A CDP error on a
+        // RESOLVED node means it isn't a file input (or it rejected the files).
+        let file_count = files.len() as u32;
+        let files_val = Value::Array(files.into_iter().map(Value::Text).collect());
+        let set_resp = cdp(
+            "DOM.setFileInputFiles",
+            Value::Map(vec![
+                (
+                    Value::Text("nodeId".into()),
+                    Value::Integer(Integer::from(node_id)),
+                ),
+                (Value::Text("files".into()), files_val),
+            ]),
+        )
+        .await;
+        match set_resp {
+            Ok(ShimResponse::Ok { .. }) => {
+                self.record_success(&id);
+                Ok(SetInputFilesOutcome::Ok { file_count })
+            }
+            Ok(ShimResponse::Error { .. }) => {
+                // Node resolved but setFileInputFiles rejected it → not a file input.
+                // This is an application outcome, not a shim breaker failure.
+                self.record_success(&id);
+                Ok(SetInputFilesOutcome::NotAFileInput)
+            }
+            Ok(other) => {
+                self.record_failure(&id);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: setFileInputFiles unexpected: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id);
+                Err(e)
+            }
+        }
+    }
+
     /// Cooperatively shut down all shim subprocesses bound to
     /// `session_id` (matched on the `:<session_id>` suffix of the
     /// ShimId). Called by the daemon's session-close handler.
@@ -742,6 +947,39 @@ fn map_shim_code(code: loom_shared::shim_protocol::ShimErrorCode) -> LoomErrorCo
 }
 
 // ─── Evaluate types ─────────────────────────────────────────────────────────
+
+/// Outcome of a `set_input_files` CDP sequence. `SelectorNotFound` /
+/// `NotAFileInput` are application outcomes (the host maps them to typed
+/// wire `kind` strings), distinct from transport `Err(LoomError)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetInputFilesOutcome {
+    Ok { file_count: u32 },
+    SelectorNotFound,
+    NotAFileInput,
+}
+
+/// Fetch a string-keyed field from a CBOR map `Value`.
+fn cbor_get<'a>(v: &'a ciborium::value::Value, key: &str) -> Option<&'a ciborium::value::Value> {
+    if let ciborium::value::Value::Map(entries) = v {
+        for (k, val) in entries {
+            if let ciborium::value::Value::Text(t) = k {
+                if t == key {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Interpret a CBOR `Value` as a non-negative `u64` (CDP nodeIds).
+fn cbor_u64(v: &ciborium::value::Value) -> Option<u64> {
+    if let ciborium::value::Value::Integer(i) = v {
+        u64::try_from(i128::from(*i)).ok()
+    } else {
+        None
+    }
+}
 
 /// Parsed result of a `Runtime.evaluate` CDP call. Exactly one of `result`
 /// / `exception` is `Some` per CDP semantics.

@@ -140,6 +140,46 @@ fn evaluate_verb(a: Action) -> Result<Receipt, HostError> {
     })
 }
 
+/// Set-input-files verb: calls the typed `set_input_files_execute` host
+/// function (mirrors navigate/evaluate). The guest forwards `a.payload` (the
+/// daemon-built canonical JSON `{selector,paths}`) verbatim — it has no JSON
+/// parser; the host parses + runs the CDP sequence + already-validated paths.
+/// No screenshot is captured (matches click/type — D-SCREEN-1); the tamper
+/// chain rides on action_hash + a file-count-derived outcome_hash.
+#[cfg(target_arch = "wasm32")]
+fn set_input_files_verb(a: Action) -> Result<Receipt, HostError> {
+    // action_id == action_hash at this layer (Q5); covers selector + canonical paths.
+    let action_hash = hex_sha256(&a.payload);
+    let result = host::set_input_files_execute(&action_hash, &a.payload, a.deadline_ms)?;
+
+    // Deterministic outcome hash from the file count + action hash.
+    let outcome_hash = hex_sha256(format!("S:{}:{}", result.file_count, action_hash).as_bytes());
+    let now = host::clock_now();
+
+    Ok(Receipt {
+        action_hash,
+        outcome_hash,
+        emitted_at_ms: now.epoch_ms,
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        side_effects_json: None,
+        console_lines_json: None,
+        network_summary_json: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+    })
+}
+
 /// Generic verb dispatcher for non-navigate, non-evaluate verbs. Forwards the action
 /// payload to the chromium shim and builds a minimal receipt from the response.
 #[cfg(target_arch = "wasm32")]
@@ -329,6 +369,9 @@ impl exports::loom::surface::web_surface::Guest for SurfaceWebImpl {
     }
     fn evaluate(a: Action) -> Result<Receipt, HostError> {
         evaluate_verb(a)
+    }
+    fn set_input_files(a: Action) -> Result<Receipt, HostError> {
+        set_input_files_verb(a)
     }
     fn screenshot(a: Action) -> Result<Receipt, HostError> {
         dispatch("screenshot", a)

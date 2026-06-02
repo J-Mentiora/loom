@@ -96,6 +96,14 @@ pub enum Action {
     WebSnapshot {
         session_id: String,
     },
+    // web.set_input_files: upload local files into an <input type=file>.
+    // `paths` are absolute host paths; the daemon validates + canonicalizes
+    // them against LOOM_UPLOAD_ROOT (upload_guard) BEFORE dispatch.
+    WebSetInputFiles {
+        session_id: String,
+        selector: String,
+        paths: Vec<String>,
+    },
     // v0.9.6 web-cookie-injection: 4 cookie verbs. `source` for set_cookies
     // is the typed `CookieSource` JSON shape — `{"source":"inline","cookies":[...]}`
     // or `{"source":"grant","grant_id":"..."}`. Typed deserialization to
