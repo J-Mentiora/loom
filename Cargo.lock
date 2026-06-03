@@ -2288,6 +2288,7 @@ dependencies = [
  "hex",
  "humantime",
  "jsonschema",
+ "libc",
  "loom-core",
  "loom-daemon",
  "loom-host",

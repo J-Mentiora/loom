@@ -44,6 +44,20 @@ impl CuratedRenderer for Doctor {
                     ansi::paint(glyph, code, cfg.stdout_color_enabled),
                     name
                 ));
+                // Surface the failure detail (e.g. the quarantine remediation
+                // command) under a failing check — passing checks carry no
+                // detail. Without this the remediation only reaches `--json`
+                // output, never the default human view.
+                if !matches!(
+                    outcome,
+                    "ok" | "pass" | "passed" | "healthy" | "warn" | "warning"
+                ) {
+                    if let Some(detail) = c.get("detail").and_then(|v| v.as_str()) {
+                        if !detail.is_empty() {
+                            lines.push(format!("      {}", detail));
+                        }
+                    }
+                }
             }
             consumed.insert("checks".to_string());
         }
