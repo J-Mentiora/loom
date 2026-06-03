@@ -162,6 +162,79 @@ impl ChromiumDownloader {
     }
 }
 
+// ── Download progress reporting ──────────────────────────────────────────────
+//
+// The `ProgressReporter` abstraction is the minimal, transport-agnostic
+// mechanism for surfacing download progress (Architecture R5 / AC5). It is a
+// plain synchronous per-chunk callback — deliberately NOT an async task or
+// event channel — so a download loop can invoke it inline with no extra
+// machinery. `ChromiumDownloader::ensure` still downloads via `curl` today; the
+// inline-postinstall slice wires an actual byte source through
+// `copy_with_progress` and renders updates to stderr. This module owns only the
+// read/write/report loop so it can be unit-tested with no network or daemon.
+
+/// Synchronous per-chunk download-progress callback.
+///
+/// `on_progress` is invoked once after each non-empty chunk during a streaming
+/// copy, receiving the cumulative bytes written so far and the total expected
+/// size (`None` when the source does not advertise a length, e.g. a server that
+/// omits `Content-Length`).
+///
+/// A blanket impl lets any `FnMut(u64, Option<u64>)` act as a reporter, so most
+/// callers pass a closure (the CLI renders to stderr; tests record into a vec).
+pub trait ProgressReporter {
+    fn on_progress(&mut self, bytes_done: u64, total: Option<u64>);
+}
+
+impl<F: FnMut(u64, Option<u64>)> ProgressReporter for F {
+    fn on_progress(&mut self, bytes_done: u64, total: Option<u64>) {
+        self(bytes_done, total)
+    }
+}
+
+/// Chunk size for [`copy_with_progress`] reads (64 KiB): large enough to keep
+/// syscall overhead low, small enough that a multi-megabyte Chromium archive
+/// yields many progress callbacks (AC5 requires ≥2 visible updates).
+pub const PROGRESS_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Stream `reader` into `writer` in [`PROGRESS_CHUNK_SIZE`] chunks, invoking
+/// `reporter` once after each non-empty chunk with the cumulative byte count
+/// and the optional `total`. Flushes `writer` at the end and returns the total
+/// number of bytes copied.
+///
+/// This is the transport-agnostic progress primitive: it works over any
+/// `Read`/`Write` pair — an HTTP body, a `curl` stdout pipe, or an in-memory
+/// buffer in tests. The download path supplies the concrete source/sink and the
+/// stderr rendering; this function owns only the read/write/report loop.
+///
+/// The callback is not invoked for the terminal zero-length read, so an empty
+/// source yields zero callbacks and returns `0`.
+pub fn copy_with_progress<R, W, P>(
+    reader: &mut R,
+    writer: &mut W,
+    total: Option<u64>,
+    reporter: &mut P,
+) -> std::io::Result<u64>
+where
+    R: std::io::Read,
+    W: std::io::Write,
+    P: ProgressReporter + ?Sized,
+{
+    let mut buf = vec![0u8; PROGRESS_CHUNK_SIZE];
+    let mut done: u64 = 0;
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n])?;
+        done += n as u64;
+        reporter.on_progress(done, total);
+    }
+    writer.flush()?;
+    Ok(done)
+}
+
 /// Returns the sentinel file path for the given install directory.
 /// The sentinel stores the archive SHA-256 for idempotence checking.
 fn sentinel_path(install_dir: &Path) -> PathBuf {

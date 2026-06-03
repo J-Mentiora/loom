@@ -4,7 +4,8 @@
 // `DoctorRunner`-shared verify-only path.
 
 use super::chromium_downloader::{
-    sha256_of_file, ChromiumDownloader, ChromiumDownloaderConfig, DownloadOutcome,
+    copy_with_progress, sha256_of_file, ChromiumDownloader, ChromiumDownloaderConfig,
+    DownloadOutcome, ProgressReporter, PROGRESS_CHUNK_SIZE,
 };
 use crate::CliError;
 
@@ -345,4 +346,119 @@ async fn verify_fails_when_no_executable_in_parent() {
         matches!(result, Err(CliError::Internal(_))),
         "must return Internal when no executable in parent dir; got: {result:?}"
     );
+}
+
+// ── ProgressReporter / copy_with_progress ────────────────────────────────────
+//
+// The progress primitive is transport-agnostic, so these exercise it over
+// in-memory `Read`/`Write` pairs — no network, no daemon, no flake (FND-0006).
+
+/// Records every `on_progress` call so assertions can inspect the callback
+/// sequence (cumulative bytes + the passed-through total).
+#[derive(Default)]
+struct RecordingReporter {
+    calls: Vec<(u64, Option<u64>)>,
+}
+
+impl ProgressReporter for RecordingReporter {
+    fn on_progress(&mut self, bytes_done: u64, total: Option<u64>) {
+        self.calls.push((bytes_done, total));
+    }
+}
+
+#[test]
+fn copy_with_progress_copies_all_bytes_and_returns_count() {
+    let src = vec![7u8; PROGRESS_CHUNK_SIZE + 123];
+    let mut reader: &[u8] = &src;
+    let mut sink: Vec<u8> = Vec::new();
+    let mut rep = RecordingReporter::default();
+
+    let n = copy_with_progress(&mut reader, &mut sink, Some(src.len() as u64), &mut rep).unwrap();
+
+    assert_eq!(n, src.len() as u64, "returns total bytes copied");
+    assert_eq!(sink, src, "writer receives the exact source bytes");
+}
+
+#[test]
+fn copy_with_progress_emits_multiple_updates_for_multichunk_source() {
+    // > one chunk → ≥2 callbacks (the AC5 "visible progress" proxy).
+    let src = vec![0u8; PROGRESS_CHUNK_SIZE * 3 + 1];
+    let mut reader: &[u8] = &src;
+    let mut sink: Vec<u8> = Vec::new();
+    let mut rep = RecordingReporter::default();
+
+    copy_with_progress(&mut reader, &mut sink, None, &mut rep).unwrap();
+
+    assert!(
+        rep.calls.len() >= 2,
+        "multi-chunk source must yield ≥2 progress updates; got {}",
+        rep.calls.len()
+    );
+}
+
+#[test]
+fn copy_with_progress_reports_monotonic_cumulative_bytes() {
+    let src = vec![1u8; PROGRESS_CHUNK_SIZE * 2 + 50];
+    let mut reader: &[u8] = &src;
+    let mut sink: Vec<u8> = Vec::new();
+    let mut rep = RecordingReporter::default();
+
+    copy_with_progress(&mut reader, &mut sink, Some(src.len() as u64), &mut rep).unwrap();
+
+    // Cumulative byte counts strictly increase and the last equals the total.
+    let mut prev = 0u64;
+    for (done, total) in &rep.calls {
+        assert!(
+            *done > prev,
+            "cumulative bytes must increase: {done} !> {prev}"
+        );
+        assert_eq!(
+            *total,
+            Some(src.len() as u64),
+            "total is passed through unchanged"
+        );
+        prev = *done;
+    }
+    assert_eq!(
+        rep.calls.last().map(|(d, _)| *d),
+        Some(src.len() as u64),
+        "final callback reports the full byte count"
+    );
+}
+
+#[test]
+fn copy_with_progress_empty_source_yields_no_callbacks() {
+    let src: Vec<u8> = Vec::new();
+    let mut reader: &[u8] = &src;
+    let mut sink: Vec<u8> = Vec::new();
+    let mut rep = RecordingReporter::default();
+
+    let n = copy_with_progress(&mut reader, &mut sink, Some(0), &mut rep).unwrap();
+
+    assert_eq!(n, 0);
+    assert!(sink.is_empty());
+    assert!(
+        rep.calls.is_empty(),
+        "no chunk → no callback (terminal zero-length read is not reported)"
+    );
+}
+
+#[test]
+fn closure_satisfies_progress_reporter_via_blanket_impl() {
+    // The blanket impl lets a bare `FnMut(u64, Option<u64>)` act as a reporter.
+    let src = vec![9u8; PROGRESS_CHUNK_SIZE + 1];
+    let mut reader: &[u8] = &src;
+    let mut sink: Vec<u8> = Vec::new();
+    let mut count = 0usize;
+    let mut last_seen = 0u64;
+    let mut closure = |done: u64, _total: Option<u64>| {
+        count += 1;
+        last_seen = done;
+    };
+
+    let n = copy_with_progress(&mut reader, &mut sink, None, &mut closure).unwrap();
+
+    assert_eq!(n, src.len() as u64);
+    assert!(count >= 2, "closure reporter invoked per chunk");
+    assert_eq!(last_seen, src.len() as u64);
 }
