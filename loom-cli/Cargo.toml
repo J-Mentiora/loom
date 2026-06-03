@@ -46,6 +46,11 @@ sha2 = { workspace = true }
 zip = { workspace = true }
 humantime = { workspace = true }
 
+# macOS-only: `loom doctor`'s quarantine probe reads the
+# `com.apple.quarantine` xattr via `libc::getxattr` (no subprocess).
+[target.'cfg(target_os = "macos")'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }
@@ -59,6 +64,12 @@ wasmparser = "0.249"
 # and per-subcommand man pages from the clap derive; not in the
 # production binary.
 clap_mangen = "0.3"
+
+# macOS-only: `integration_doctor_quarantine` sets the
+# `com.apple.quarantine` xattr via `libc::setxattr` to exercise the
+# doctor probe end-to-end.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+libc = { workspace = true }
 
 [features]
 # `postinstall` enabled by default so `cargo build --release --bin loom`

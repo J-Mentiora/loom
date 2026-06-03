@@ -1,17 +1,19 @@
-// DoctorRunner — `loom doctor` 5-check health probe.
+// DoctorRunner — `loom doctor` 6-check health probe.
 //
 // # Contract semantics
-// - **Exactly 5 checks, no more, no fewer:**
+// - **Exactly 6 checks, no more, no fewer:**
 //   1. Socket reachable at platform path (mode 0600).
 //   2. Daemon responsive (single `rpc.ping`).
 //   3. AOT artifacts present (`~/.../surfaces/*.cwasm` non-empty).
 //   4. Chromium binary present + sha256 matches pinned hash.
 //   5. Vault key material accessible (Keychain ACL probe via
 //      `security-framework`'s read-only ACL check).
+//   6. macOS Gatekeeper quarantine clear on the Chromium binary
+//      (`com.apple.quarantine` xattr absent; no-op pass off macOS).
 // - **Exit 0 if all healthy; exit 1 with typed
 //   `DoctorReport { checks, failures }` if any fails.**
 //   Exit-code mapping owned by `ErrorMapper`.
-// - **RPC-free for checks 1, 3, 4, 5.** Check 2 is the SOLE RPC call
+// - **RPC-free for checks 1, 3, 4, 5, 6.** Check 2 is the SOLE RPC call
 //   in this module — uses `RpcClient::ping`.
 
 use clap::Args;
@@ -27,7 +29,8 @@ use crate::CliError;
 #[derive(Debug, Clone, Args, Serialize, Deserialize, Default)]
 pub struct DoctorArgs {}
 
-/// Resolved paths used by the 5 checks.
+/// Resolved paths used by the 6 checks. (`chromium_binary` feeds both the
+/// presence/sha check 4 and the macOS quarantine check 6.)
 #[derive(Debug, Clone)]
 pub struct DoctorPaths {
     pub socket_path: PathBuf,
@@ -37,16 +40,17 @@ pub struct DoctorPaths {
     pub keychain_label: String,
 }
 
-/// The 5 fixed check identifiers in stable order.
+/// The 6 fixed check identifiers in stable order.
 pub const CHECK_NAMES: &[&str] = &[
     "socket_reachable",
     "daemon_responsive",
     "aot_artifacts_present",
     "chromium_present_and_verified",
     "vault_keychain_accessible",
+    "macos_quarantine_clear",
 ];
 
-/// Run the full 5-check probe. Returns `Ok(report)` if all checks
+/// Run the full 6-check probe. Returns `Ok(report)` if all checks
 /// pass; returns `Err(CliError::DoctorFailed(report))` if any fail.
 pub async fn run(
     rpc: &RpcClient,
@@ -67,7 +71,11 @@ pub async fn run(
                 detail: if ok {
                     None
                 } else {
-                    Some(serde_json::json!(format!("{:?}", result.unwrap_err())))
+                    // Display (not Debug): this string is user-facing — it is
+                    // surfaced in the JSON report and printed under a failing
+                    // check in pretty mode. Debug would leak the `Variant("…")`
+                    // wrapper and escape the remediation command.
+                    Some(serde_json::json!(result.unwrap_err().to_string()))
                 },
             });
             if !ok {
@@ -96,6 +104,10 @@ pub async fn run(
     run_check!(
         "vault_keychain_accessible",
         check_keychain_acl(&paths.keychain_label)
+    );
+    run_check!(
+        "macos_quarantine_clear",
+        check_macos_quarantine_clear(&paths.chromium_binary)
     );
 
     let report = DoctorReport {
@@ -181,4 +193,90 @@ pub async fn check_keychain_acl(keychain_label: &str) -> Result<(), CliError> {
 pub async fn check_keychain_acl(keychain_label: &str) -> Result<(), CliError> {
     let _ = keychain_label;
     Ok(())
+}
+
+/// Check 6 — macOS Gatekeeper quarantine clear on the Chromium binary.
+///
+/// macOS tags files that arrive from the internet with the
+/// `com.apple.quarantine` extended attribute; Gatekeeper then blocks or
+/// prompts on first launch, which silently breaks loom's first browser
+/// action. This check reads the attribute on the resolved Chromium binary
+/// via `libc::getxattr` (no subprocess — FND-0012) and, when present, fails
+/// with the exact `xattr -d` removal command (path shell-escaped to prevent
+/// copy-paste injection — FND-0005), a one-line "why", and the notarization
+/// follow-up note.
+///
+/// Notarization (Apple Developer ID) is the committed follow-up that removes
+/// the need for this manual step; the interim probe stands alone.
+#[cfg(target_os = "macos")]
+pub async fn check_macos_quarantine_clear(
+    chromium_binary: &std::path::Path,
+) -> Result<(), CliError> {
+    // Binary presence is check 4's responsibility. If it's absent there's
+    // nothing to un-quarantine, so pass here — a missing-binary failure is
+    // reported once, by the check that owns it.
+    if !chromium_binary.exists() {
+        return Ok(());
+    }
+    if has_quarantine_xattr(chromium_binary) {
+        let escaped = shell_single_quote(&chromium_binary.to_string_lossy());
+        return Err(CliError::Internal(format!(
+            "{path} carries the macOS com.apple.quarantine attribute \
+             (Gatekeeper flags binaries downloaded from the internet and can \
+             block or prompt on first launch); clear it with: \
+             xattr -d com.apple.quarantine {escaped} — notarization is the \
+             committed follow-up that will remove this step.",
+            path = chromium_binary.display(),
+        )));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub async fn check_macos_quarantine_clear(
+    chromium_binary: &std::path::Path,
+) -> Result<(), CliError> {
+    // Quarantine is a macOS-only concept — no-op pass elsewhere.
+    let _ = chromium_binary;
+    Ok(())
+}
+
+/// Probe for the `com.apple.quarantine` xattr via `libc::getxattr` with a
+/// zero-length value buffer — we only care whether the attribute exists, not
+/// its contents. Returns false on any error (ENOATTR, a path that can't be
+/// C-encoded, etc.), i.e. "not quarantined".
+#[cfg(target_os = "macos")]
+fn has_quarantine_xattr(path: &std::path::Path) -> bool {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let Ok(c_path) = CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    let Ok(attr) = CString::new("com.apple.quarantine") else {
+        return false;
+    };
+    // macOS getxattr signature: (path, name, value, size, position, options).
+    // value=null, size=0 → returns the attribute length when present, or -1
+    // (with errno ENOATTR) when absent. options=0 follows symlinks, which is
+    // what we want for a binary inside a possibly-symlinked .app bundle.
+    let ret = unsafe {
+        libc::getxattr(
+            c_path.as_ptr(),
+            attr.as_ptr(),
+            std::ptr::null_mut(),
+            0,
+            0, // position (resource-fork offset; unused for this attr)
+            0, // options
+        )
+    };
+    ret >= 0
+}
+
+/// Wrap a string in single quotes for safe shell paste, escaping any embedded
+/// single quote as `'\''`. Prevents a maliciously- or awkwardly-named path
+/// from breaking out of the `xattr -d ... <path>` command we print.
+#[cfg(target_os = "macos")]
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
