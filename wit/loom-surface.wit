@@ -93,6 +93,14 @@ interface types {
         emitted-at-ms: u64,
     }
 
+    /// Result returned by the set-input-files-execute host function.
+    /// Minimal — the guest computes action_hash + emitted_at_ms itself
+    /// (clock-now) and derives outcome_hash from file-count + selector.
+    record set-input-files-result {
+        /// Number of files set on the input element.
+        file-count: u32,
+    }
+
     record content-ref {
         sha256: string,
         size: u64,
@@ -128,7 +136,8 @@ interface types {
 
 interface host {
     use types.{action, receipt, content-ref, instant, host-error,
-               net-req, net-resp, log-level, navigate-result, evaluate-result};
+               net-req, net-resp, log-level, navigate-result, evaluate-result,
+               set-input-files-result};
 
     // Determinism sources
     clock-now: func() -> instant;
@@ -156,6 +165,16 @@ interface host {
     // dispatch, exceptionDetails handling (→ shim-failure), CBOR→canonical-JSON
     // conversion, and 64KB content-store offload.
     evaluate-execute: func(action-id: string, expression: string, budget-ms: u64) -> result<evaluate-result, host-error>;
+
+    // Set-input-files-execute: typed host function for web.set_input_files.
+    // `payload` is the daemon-built canonical JSON `{"selector":..,"paths":[..]}`
+    // (the guest forwards a.payload verbatim — it has no JSON parser, and the
+    // host owns the logic). The host parses it, resolves the selector
+    // (DOM.getDocument → DOM.querySelector; nodeId==0 → shim-failure
+    // kind=selector_not_found), and issues DOM.setFileInputFiles{nodeId, files}
+    // (error on a resolved node → shim-failure kind=not_a_file_input). Paths are
+    // already validated + canonicalized daemon-side (upload_guard).
+    set-input-files-execute: func(action-id: string, payload: list<u8>, budget-ms: u64) -> result<set-input-files-result, host-error>;
 
     // Vault-substitute-cookies: v0.9.6 web-cookie-injection grant
     // resolution. Wraps `Vault::substitute_cookies(grant, session)`
@@ -190,6 +209,7 @@ interface web-surface {
     scroll:         func(a: action) -> result<receipt, host-error>;
     wait:           func(a: action) -> result<receipt, host-error>;
     evaluate:       func(a: action) -> result<receipt, host-error>;
+    set-input-files: func(a: action) -> result<receipt, host-error>;
     screenshot:     func(a: action) -> result<receipt, host-error>;
     snapshot:       func(a: action) -> result<receipt, host-error>;
     // v0.9.6 web-cookie-injection.

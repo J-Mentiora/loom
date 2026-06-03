@@ -20,7 +20,7 @@ use crate::wit_type_marshaller::loom_surface_bindings::loom::surface::{
     host::Host,
     types::{
         ContentRef, EvaluateResult, HostError, Instant, LogLevel, NavigateResult, NetReq, NetResp,
-        Receipt,
+        Receipt, SetInputFilesResult,
     },
 };
 use crate::wit_type_marshaller::Mode;
@@ -710,6 +710,100 @@ impl Host for HostState {
                     return_value_blob_ref: None,
                     emitted_at_ms,
                 })
+            }
+        }
+    }
+
+    fn set_input_files_execute(
+        &mut self,
+        action_id: String,
+        payload: Vec<u8>,
+        budget_ms: u64,
+    ) -> impl ::core::future::Future<Output = Result<SetInputFilesResult, HostError>> + Send {
+        use crate::shim_manager::{SetInputFilesOutcome, ShimId};
+
+        // The guest forwards the daemon-built canonical JSON
+        // {"selector":..,"paths":[..]} verbatim (it has no JSON parser).
+        // Parse it host-side. Malformed payload → Internal (should never
+        // happen — the daemon builds it).
+        #[derive(serde::Deserialize)]
+        struct SetInputFilesPayload {
+            selector: String,
+            paths: Vec<String>,
+        }
+        let parsed: Result<SetInputFilesPayload, HostError> = serde_json::from_slice(&payload)
+            .map_err(|e| HostError::Internal(format!("set_input_files: payload parse: {e}")));
+
+        let session_id_str = self.session_id.0.clone();
+        let shim_manager = self.shim_manager.clone();
+        let seed = self.seed;
+        let epoch_ms = self.epoch_ms;
+        let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
+
+        // Resolve effective shim ID and lazy-register if needed (same
+        // pattern as navigate_execute / evaluate_execute).
+        let maybe_id: Result<ShimId, HostError> = if self.mode == Mode::Replay {
+            Err(HostError::Internal(
+                "set_input_files_execute not allowed in replay mode".to_owned(),
+            ))
+        } else {
+            let effective_id = ShimId(format!("chromium:{}", session_id_str));
+            if !shim_manager.is_registered(&effective_id) {
+                match shim_manager
+                    .configs
+                    .get(&ShimId("chromium".to_owned()))
+                    .map(|c| c.clone())
+                {
+                    Some(mut config) => {
+                        let dir =
+                            std::env::temp_dir().join(format!("loom-chromium-{}", session_id_str));
+                        config
+                            .env
+                            .push(("LOOM_SHIM_USER_DATA_DIR".into(), dir.display().to_string()));
+                        shim_manager.register(effective_id.clone(), config);
+                        Ok(effective_id)
+                    }
+                    None => Err(HostError::ShimFailure(
+                        "no template config registered for shim chromium".to_owned(),
+                    )),
+                }
+            } else {
+                Ok(effective_id)
+            }
+        };
+
+        async move {
+            let effective_id = maybe_id?;
+            let SetInputFilesPayload { selector, paths } = parsed?;
+            // Paths are already validated + canonicalized daemon-side
+            // (upload_guard). target_id = 0 → resolves to the session target,
+            // same as send_evaluate.
+            let outcome = shim_manager
+                .send_set_input_files(
+                    effective_id,
+                    action_id,
+                    shim_session_id,
+                    0,
+                    selector,
+                    paths,
+                    budget_ms,
+                    seed,
+                    epoch_ms,
+                )
+                .await
+                .map_err(loom_to_wit_error)?;
+
+            match outcome {
+                SetInputFilesOutcome::Ok { file_count } => Ok(SetInputFilesResult { file_count }),
+                // Discrete typed wire kinds (plan-council FND#8) — NOT panics.
+                SetInputFilesOutcome::SelectorNotFound => Err(HostError::ShimFailure(
+                    serde_json::json!({"kind":"selector_not_found","verb":"set_input_files"})
+                        .to_string(),
+                )),
+                SetInputFilesOutcome::NotAFileInput => Err(HostError::ShimFailure(
+                    serde_json::json!({"kind":"not_a_file_input","verb":"set_input_files"})
+                        .to_string(),
+                )),
             }
         }
     }

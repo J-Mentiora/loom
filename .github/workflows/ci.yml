@@ -413,6 +413,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # LOOM_UPLOAD_ROOT gates web.set_input_files (fail-closed when unset).
+          # Point it at the e2e fixtures dir so run_e2e.sh Section 11b can upload
+          # the committed fixture into a real <input type=file>.
+          export LOOM_UPLOAD_ROOT="${GITHUB_WORKSPACE}/tests/e2e/fixtures"
           ./target/release/loom serve > /tmp/loom-daemon.log 2>&1 &
           # Poll until the daemon's RPC channel is reachable, capped at 30s.
           # `loom serve` spawns the daemon as a subprocess and exits, so we

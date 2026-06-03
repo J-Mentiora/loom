@@ -33,6 +33,7 @@ fn action_enum_has_typed_variants_no_cdp_shaped_value() {
             Action::WebScroll { .. } => {}
             Action::WebWait { .. } => {}
             Action::WebSnapshot { .. } => {}
+            Action::WebSetInputFiles { .. } => {}
             // v0.9.6 cookie verbs.
             Action::WebSetCookies { .. } => {}
             Action::WebGetCookies { .. } => {}
