@@ -261,8 +261,8 @@ loom serve
 
 # In another terminal: drive a real browser
 SESSION=$(loom session create --profile standard | jq -r .session_id)
-loom action web.navigate --session $SESSION -- --session $SESSION --url https://example.com
-loom action web.evaluate --session $SESSION -- --session $SESSION --expression 'document.title'
+loom action web.navigate --session $SESSION --url https://example.com
+loom action web.evaluate --session $SESSION --expression 'document.title'
 loom session close $SESSION
 
 # Inspect what just happened

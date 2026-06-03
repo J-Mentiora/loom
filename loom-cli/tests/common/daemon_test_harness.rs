@@ -166,10 +166,19 @@ impl DaemonTestHarness {
     /// hermetic env. The caller adds args / configures stdio on the returned
     /// [`Command`]. Usable whether or not the daemon is running, though most
     /// verbs require a `start()`ed daemon.
+    ///
+    /// The socket is wired via the `LOOM_SOCKET_PATH` env var, NOT a `--socket`
+    /// CLI flag: `--socket` is only defined on `loom serve` (see
+    /// `command_router::ServeArgs`), so prepending it to an RPC subcommand like
+    /// `session create` makes clap reject the whole invocation. The CLI's
+    /// config resolver honours `LOOM_SOCKET_PATH` for every subcommand
+    /// (`cli_config` env precedence: file → env → flag), so this is the correct
+    /// override that also agrees with the daemon's `--socket` bind on both
+    /// macOS and Linux.
     pub fn loom_command(&self) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_loom"));
-        cmd.arg("--socket").arg(&self.socket_path);
         self.apply_hermetic_env(&mut cmd);
+        cmd.env("LOOM_SOCKET_PATH", &self.socket_path);
         cmd
     }
 
