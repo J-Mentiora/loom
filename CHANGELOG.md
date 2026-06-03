@@ -6,6 +6,41 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.8] — 2026-06-03 — File Uploads
+
+Adds the file-upload web verb. `web.set_input_files` lets agents drive
+`<input type=file>` uploads (the test-studio "upload a knowledge file" flow) —
+previously impossible, since browsers ignore typed text into file inputs and
+page script can't write the read-only `input.files`.
+
+### Added
+
+- **`web.set_input_files` verb / `loom.web.set_input_files` MCP tool (#101).**
+  Uploads one or more local files into an `<input type=file>` via CDP
+  `DOM.setFileInputFiles`, implemented with the typed host-function pattern
+  (the `web.navigate` / `web.evaluate` lineage): the daemon validates paths, the
+  WASM guest calls `set-input-files-execute`, and `loom-host` runs
+  `DOM.getDocument → DOM.querySelector → DOM.setFileInputFiles`. Params:
+  `selector` (CSS Level 3, same semantics as `web.click`) and `paths` (one or
+  more absolute host paths; single-file inputs take `paths[0]`). The receipt
+  matches the other mutating verbs (tamper-chain `action_hash` / `outcome_hash`;
+  no auto-screenshot).
+  - **Security — local file reads are gated by a fail-closed `LOOM_UPLOAD_ROOT`
+    allow-list.** Unset ⇒ deny all (`upload_root_not_configured`). Paths are
+    `std::fs::canonicalize`d (symlink-escape defense) and must resolve under the
+    root, else `upload_path_blocked`. Enforced in ALL profiles (not just Safe).
+    Per-call caps: 20 files, 100 MiB/file, 200 MiB total
+    (`upload_too_many_files` / `upload_file_too_large` / `upload_total_too_large`).
+    Non-existent paths → `upload_path_not_found`; selector miss →
+    `selector_not_found`; non-file-input target → `not_a_file_input` (typed
+    errors, no panics). loom reads only path + metadata, never file content.
+    Verified end-to-end against real Chromium in CI (`e2e pinned-chromium`).
+
+### Changed
+
+- Internal: routed `/feature` telemetry to the hosted event-log then removed the
+  hosted config from the public repo (#98, #99); bumped cargo-dist 0.31 → 0.32 (#97).
+
 ## [0.9.7] — 2026-05-29 — Cookie Injection (ship milestone)
 
 Closes the **web-cookie-injection** deferral list from v0.9.5. The four
