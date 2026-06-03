@@ -48,7 +48,10 @@ impl CuratedRenderer for Doctor {
                 // command) under a failing check — passing checks carry no
                 // detail. Without this the remediation only reaches `--json`
                 // output, never the default human view.
-                if !matches!(outcome, "ok" | "pass" | "passed" | "healthy" | "warn" | "warning") {
+                if !matches!(
+                    outcome,
+                    "ok" | "pass" | "passed" | "healthy" | "warn" | "warning"
+                ) {
                     if let Some(detail) = c.get("detail").and_then(|v| v.as_str()) {
                         if !detail.is_empty() {
                             lines.push(format!("      {}", detail));
