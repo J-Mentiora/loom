@@ -311,6 +311,29 @@ jobs:
             exit 1
           fi
 
+  readme-version:
+    name: README versions match the workspace version
+    runs-on: ubuntu-latest
+    # Standalone, lightweight analogue of gen-docs (fail-on-mismatch). It does
+    # NOT extend gen-docs: gen-docs regenerates docs from code; this compares
+    # README prose against the single source-of-truth version so README version
+    # strings can't silently lag a release. No toolchain/build needed.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Self-test the version checker
+        run: scripts/check-readme-version.test.sh
+      - name: README version strings match Cargo.toml
+        run: |
+          set -euo pipefail
+          # Source of truth: the workspace [workspace.package] version.
+          version="$(awk -F'"' '/^\[workspace\.package\]/{f=1} f&&/^version[[:space:]]*=/{print $2; exit}' Cargo.toml)"
+          if [ -z "$version" ]; then
+            echo "::error::could not parse [workspace.package] version from Cargo.toml"
+            exit 1
+          fi
+          echo "source-of-truth version: $version"
+          scripts/check-readme-version.sh "$version" README.md
+
   e2e:
     # Real-Chromium-pinned end-to-end verification. Runs on
     # stable cells only; beta is best-effort and skips this job.
