@@ -530,7 +530,7 @@ when 1.0 ships; **Beta** rows may change without notice.
 | `web.navigate`, `web.evaluate`, `web.wait`, `web.type` | **Stable** | Covered by replay-equality tests. |
 | `web.click` | **Beta** | DOM coordinate edge cases — gated on the hit-test refinements still in progress. |
 | `web.set_input_files` | **Beta** | New in 0.9.8. CDP `DOM.setFileInputFiles` behind the `LOOM_UPLOAD_ROOT` allow-list (fail-closed). Real-Chromium FileList coverage via the e2e harness. |
-| `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). |
+| `loom-mcp` server (implicit session, tool surface) | **Stable** | Hardened in 0.9.0 (path-traversal-safe IDs, typed errors, lazy session). <!-- version-check-ignore --> |
 | CLI surface (`loom session`, `loom action`, `loom export`, `loom import`) | **Stable** | Flags pinned. `--version` format pinned: `loom <ver> (<sha> <date>)`. |
 | `import.playwright` RPC | **Stable** | End-to-end wired through facade, adapter, handlers, router. |
 | `request.cancel`, `session.kill`, `daemon.health` RPCs | **Beta** | Daemon-stall fix; structured concurrency via `SessionScope` + per-request 30s watchdog (`LOOM_REQUEST_TIMEOUT_MS`). Wire shape may evolve based on consumer feedback. |
