@@ -52,11 +52,50 @@ impl ChromiumDownloader {
     /// the binary exists and `install_dir/.archive_sha256` contains the
     /// expected SHA. Otherwise: download archive → verify SHA → extract
     /// zip → write sentinel.
+    ///
+    /// Progress-silent convenience wrapper over [`ensure_with_progress`] for
+    /// callers that don't render download progress (the verify-only/doctor
+    /// path never downloads, so it stays on `ensure`).
     pub async fn ensure(
         &self,
         url: &str,
         expected_sha256: &str,
     ) -> Result<DownloadOutcome, CliError> {
+        let mut noop = |_: u64, _: Option<u64>| {};
+        self.ensure_with_progress(url, expected_sha256, &mut noop)
+            .await
+    }
+
+    /// Idempotent ensure-present with download progress (AC5).
+    ///
+    /// Identical to [`ensure`](Self::ensure) but invokes `reporter` once per
+    /// streamed chunk during the download so the CLI can render visible
+    /// progress to stderr. The archive is streamed from `curl`'s stdout
+    /// through [`copy_with_progress`] into a temp file, then SHA-verified
+    /// before extraction (verify-before-execute, no TOCTOU window).
+    ///
+    /// Robustness (PRD R5 / FND-0008):
+    /// - **Bounded retry with backoff.** Transport failures (curl non-zero
+    ///   exit — connection reset, timeout, a server that closes before the
+    ///   advertised `Content-Length`) are retried up to
+    ///   [`DOWNLOAD_MAX_ATTEMPTS`] times with exponential backoff.
+    /// - **Partial-download cleanup.** The temp file is removed before every
+    ///   retry and on final failure, so a truncated download never lingers or
+    ///   gets extracted.
+    /// - **SHA mismatch is fatal, not retried.** A corrupt/tampered archive
+    ///   that nonetheless downloaded cleanly returns
+    ///   [`CliError::SupplyChain`] immediately — re-fetching the same pinned
+    ///   URL would only reproduce the mismatch and mask the supply-chain
+    ///   signal.
+    pub async fn ensure_with_progress<P>(
+        &self,
+        url: &str,
+        expected_sha256: &str,
+        reporter: &mut P,
+    ) -> Result<DownloadOutcome, CliError>
+    where
+        P: ProgressReporter + ?Sized,
+    {
         let binary = self.binary_path();
         let sentinel = sentinel_path(&self.config.install_dir);
 
@@ -74,20 +113,33 @@ impl ChromiumDownloader {
             .map_err(|e| CliError::Internal(format!("create dir: {e}")))?;
         let tmp = self.config.install_dir.join(".chromium.download.tmp");
 
-        // Download the archive.
-        let status = std::process::Command::new("curl")
-            .args(["-fsSL", "-L", "-o"])
-            .arg(&tmp)
-            .arg(url)
-            .status()
-            .map_err(|e| CliError::Internal(format!("curl: {e}")))?;
-        if !status.success() {
-            return Err(CliError::Internal(format!(
-                "curl download failed for {url}"
-            )));
+        // Download the archive into `tmp`, streaming with progress, with a
+        // bounded retry + backoff over transport failures. A leftover temp
+        // from a prior interrupted run (or a failed attempt) is always
+        // cleaned up before re-trying so we never extract a partial file.
+        let mut last_err: Option<CliError> = None;
+        for attempt in 0..DOWNLOAD_MAX_ATTEMPTS {
+            if attempt > 0 {
+                let backoff = DOWNLOAD_BACKOFF_BASE_MS * (1u64 << (attempt - 1));
+                tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
+            }
+            match download_streaming(url, &tmp, reporter) {
+                Ok(()) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    last_err = Some(e);
+                }
+            }
+        }
+        if let Some(e) = last_err {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
         }
 
-        // Verify archive SHA-256 before extraction.
+        // Verify archive SHA-256 before extraction (non-retryable on mismatch).
         let actual = sha256_of_file(&tmp).await?;
         if actual != expected_sha256 {
             let _ = std::fs::remove_file(&tmp);
@@ -233,6 +285,139 @@ where
     }
     writer.flush()?;
     Ok(done)
+}
+
+/// Maximum number of download attempts before [`ensure_with_progress`] gives
+/// up on transport failures. The first attempt plus 2 retries = 3 tries.
+pub const DOWNLOAD_MAX_ATTEMPTS: usize = 3;
+
+/// Base backoff (ms) between download retries; doubled each subsequent retry
+/// (250 ms, then 500 ms). Small enough to keep an interactive first-run snappy,
+/// large enough to ride out a transient blip.
+pub const DOWNLOAD_BACKOFF_BASE_MS: u64 = 250;
+
+/// curl connect timeout (seconds) — fail fast on an unreachable host rather
+/// than hanging the CLI.
+const CURL_CONNECT_TIMEOUT_SECS: &str = "30";
+
+/// curl overall transfer timeout (seconds). 30 min is generous for a
+/// ~150 MB archive on a slow link while still bounding a stalled transfer.
+const CURL_MAX_TIME_SECS: &str = "1800";
+
+/// Stream `url` into `tmp` via a `curl` subprocess, reporting per-chunk
+/// progress. Returns `Err` on any transport failure (spawn failure, non-zero
+/// curl exit, or a write error) — the caller cleans up `tmp` and decides
+/// whether to retry.
+///
+/// curl writes the response body to stdout (`-L` follows redirects, the
+/// default https scheme provides TLS); we drain that pipe through
+/// [`copy_with_progress`] so the reporter fires while bytes arrive. The pipe
+/// is fully drained *before* `wait()` to avoid a buffer deadlock, and curl's
+/// exit status is checked afterwards: a server that closes before sending the
+/// promised `Content-Length` makes curl exit non-zero (CURLE_PARTIAL_FILE),
+/// which surfaces here as a retryable error even though the read itself hit a
+/// clean EOF.
+fn download_streaming<P>(url: &str, tmp: &Path, reporter: &mut P) -> Result<(), CliError>
+where
+    P: ProgressReporter + ?Sized,
+{
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("curl")
+        .args([
+            "-fsSL",
+            "-L",
+            "--connect-timeout",
+            CURL_CONNECT_TIMEOUT_SECS,
+            "--max-time",
+            CURL_MAX_TIME_SECS,
+        ])
+        .arg(url)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| CliError::Internal(format!("spawn curl: {e}")))?;
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| CliError::Internal("curl produced no stdout pipe".to_string()))?;
+    let mut file = std::fs::File::create(tmp)
+        .map_err(|e| CliError::Internal(format!("create download temp: {e}")))?;
+
+    // Drain the pipe fully (reports progress per chunk) before reaping curl.
+    let copy_res = copy_with_progress(&mut stdout, &mut file, None, reporter);
+    let status = child
+        .wait()
+        .map_err(|e| CliError::Internal(format!("wait curl: {e}")))?;
+
+    copy_res.map_err(|e| CliError::Internal(format!("write download temp: {e}")))?;
+    if !status.success() {
+        return Err(CliError::Internal(format!(
+            "curl download failed for {url} (exit {})",
+            status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".into())
+        )));
+    }
+    Ok(())
+}
+
+/// A [`ProgressReporter`] that renders coarse download progress to stderr.
+///
+/// Rendering is throttled: a line is emitted on the very first chunk and then
+/// only after each [`STDERR_REPORT_INTERVAL_BYTES`] boundary is crossed, so a
+/// large download produces a handful of `\r`-updated lines rather than
+/// thousands. A final newline is emitted by [`finish`](Self::finish). Total
+/// size is `None` on the streaming path (curl-to-stdout advertises no length),
+/// so progress is shown as a running byte count.
+pub struct StderrProgressReporter {
+    label: String,
+    last_reported: u64,
+    emitted_any: bool,
+}
+
+/// Emit a stderr progress line each time the cumulative byte count crosses a
+/// multiple of this (4 MiB).
+const STDERR_REPORT_INTERVAL_BYTES: u64 = 4 * 1024 * 1024;
+
+impl StderrProgressReporter {
+    pub fn new(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            last_reported: 0,
+            emitted_any: false,
+        }
+    }
+
+    /// Terminate the in-place progress line with a newline if anything was
+    /// rendered. Call once after the download completes.
+    pub fn finish(&self) {
+        if self.emitted_any {
+            eprintln!();
+        }
+    }
+}
+
+impl ProgressReporter for StderrProgressReporter {
+    fn on_progress(&mut self, bytes_done: u64, total: Option<u64>) {
+        let crossed = bytes_done - self.last_reported >= STDERR_REPORT_INTERVAL_BYTES;
+        if self.emitted_any && !crossed {
+            return;
+        }
+        self.last_reported = bytes_done;
+        self.emitted_any = true;
+        let mib = bytes_done as f64 / (1024.0 * 1024.0);
+        match total {
+            Some(t) if t > 0 => {
+                let pct = (bytes_done as f64 / t as f64 * 100.0).min(100.0);
+                eprint!("\r{} {:.1} MiB ({:.0}%)   ", self.label, mib, pct);
+            }
+            _ => eprint!("\r{} {:.1} MiB   ", self.label, mib),
+        }
+        let _ = std::io::Write::flush(&mut std::io::stderr());
+    }
 }
 
 /// Returns the sentinel file path for the given install directory.
