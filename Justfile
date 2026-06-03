@@ -29,12 +29,3 @@ vendor-wasm:
 # so run this whenever you touch loom-rpc/src/action_registry/.
 gen-docs:
     cargo run --example gen-docs -p loom-cli
-
-# Re-render the README demo GIFs from the vhs tapes in scripts/.
-# Requires: vhs + ttyd + ffmpeg (brew install vhs); loom on PATH with
-# `loom doctor` green (Chromium present); jq; outbound network. The tapes
-# run the real loom binary, so this also re-verifies the demo still works.
-record-demo:
-    vhs scripts/session-diff-demo.tape
-    vhs scripts/session-diff-divergence.tape
-    @echo "✓ rendered docs/assets/session-diff-demo.gif + session-diff-divergence.gif"

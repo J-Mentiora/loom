@@ -256,14 +256,14 @@ to `loom action ...` from your Rust code. The crate layout under
 ## 5-minute quickstart
 
 <p align="center">
-  <img src="docs/assets/session-diff-demo.gif" width="800"
-       alt="loom session diff: replay a flow and diff it — field_diffs is empty, exit 0" />
+  <img src="docs/assets/session-diff-demo.gif" width="820"
+       alt="Determinism you can diff: a plain browser returns different Math.random() each run; under loom a run and its replay are identical, so loom session diff is empty and exits 0" />
 </p>
 
-> *Determinism you can diff:* the same flow, replayed, produces an empty
-> `loom session diff` (exit 0). Per-verb determinism (`Math.random`, `Date.now`)
-> is Stable; full manifest src↔replay equality is Beta. Re-render this demo with
-> `just record-demo`.
+> *Determinism you can diff:* a plain browser returns a different `Math.random()`
+> every run; under loom a run and its replay reuse the same seed + epoch, so
+> `loom session diff` is empty and exits 0. Per-verb determinism (`Math.random`,
+> `Date.now`) is Stable; full manifest src↔replay equality is Beta.
 
 ```bash
 # Start the daemon (foreground; ^C to stop)
