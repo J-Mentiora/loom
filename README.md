@@ -255,14 +255,24 @@ to `loom action ...` from your Rust code. The crate layout under
 
 ## 5-minute quickstart
 
+<p align="center">
+  <img src="docs/assets/session-diff-demo.gif" width="800"
+       alt="loom session diff: replay a flow and diff it — field_diffs is empty, exit 0" />
+</p>
+
+> *Determinism you can diff:* the same flow, replayed, produces an empty
+> `loom session diff` (exit 0). Per-verb determinism (`Math.random`, `Date.now`)
+> is Stable; full manifest src↔replay equality is Beta. Re-render this demo with
+> `just record-demo`.
+
 ```bash
 # Start the daemon (foreground; ^C to stop)
 loom serve
 
 # In another terminal: drive a real browser
 SESSION=$(loom session create --profile standard | jq -r .session_id)
-loom action web.navigate --session $SESSION -- --session $SESSION --url https://example.com
-loom action web.evaluate --session $SESSION -- --session $SESSION --expression 'document.title'
+loom action web.navigate --session $SESSION --url https://example.com
+loom action web.evaluate --session $SESSION --expression 'document.title'
 loom session close $SESSION
 
 # Inspect what just happened
