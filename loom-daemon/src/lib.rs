@@ -2730,6 +2730,57 @@ mod tests {
     use super::*;
     use loom_shared::shim_protocol::CdpMessage;
 
+    // ─── Vault label validation (D37) ──────────
+    // Direct coverage for the canonical rule shared by vault_set_secret /
+    // vault_delete_secret via validate_label_or_rpc_err.
+
+    #[test]
+    fn validate_label_canonical_accepts_valid_labels() {
+        for ok in ["gh", "github:token", "my-label_1", &"a".repeat(64)] {
+            assert!(
+                validate_label_canonical(ok).is_ok(),
+                "expected {ok:?} to be accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_label_canonical_rejects_invalid_labels() {
+        assert!(validate_label_canonical("").is_err(), "empty");
+        assert!(
+            validate_label_canonical(&"a".repeat(65)).is_err(),
+            "over 64 chars"
+        );
+        for bad in [
+            "has space",
+            "slash/here",
+            "dot.here",
+            "emoji😀",
+            "tab\there",
+        ] {
+            assert!(
+                validate_label_canonical(bad).is_err(),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_label_or_rpc_err_maps_rejection_to_invalid_argument() {
+        // Valid label passes through.
+        assert!(validate_label_or_rpc_err("gh").is_ok());
+        // Invalid label maps to the same adapter error as InvalidArgument.
+        let err = validate_label_or_rpc_err("bad/label").expect_err("should reject");
+        let expected = map_loom_error(&LoomError::new(
+            loom_core::error::LoomErrorCode::InvalidArgument,
+            "x",
+        ));
+        assert_eq!(
+            err, expected,
+            "rejection must map to the same adapter error code as InvalidArgument"
+        );
+    }
+
     // ─── Daemon-layer evaluate gate (Layer B) ──────────
 
     /// receipt envelope shape after daemon-side rejection.
