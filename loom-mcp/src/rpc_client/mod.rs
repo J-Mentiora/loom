@@ -43,7 +43,10 @@ impl JsonRpcCaller for FramedCaller {
             .send(bytes::Bytes::from(req_bytes))
             .await
             .map_err(|_| {
-                ErrorMapper::from_transport_dropped("connection lost while sending", DispatchPhase::Pre)
+                ErrorMapper::from_transport_dropped(
+                    "connection lost while sending",
+                    DispatchPhase::Pre,
+                )
             })?;
         // The send completed; a read failure here means the request may have
         // been processed → POST dispatch → only idempotent verbs auto-retry.
@@ -315,7 +318,9 @@ impl RpcClient {
     /// Cheap liveness round-trip (`health.ping`) used by the keepalive task to
     /// keep a long-lived connection warm and to detect a drop proactively.
     pub async fn ping(self: &Arc<Self>) -> Result<(), LoomError> {
-        self.call("health.ping", serde_json::json!({})).await.map(|_| ())
+        self.call("health.ping", serde_json::json!({}))
+            .await
+            .map(|_| ())
     }
 
     pub async fn call_as_tool_result(
@@ -383,11 +388,7 @@ fn verb_is_idempotent(method: &str) -> bool {
     // Read-only daemon/session introspection.
     if matches!(
         method,
-        "health.ping"
-            | "daemon.health"
-            | "session.list"
-            | "session.info"
-            | "session.close"
+        "health.ping" | "daemon.health" | "session.list" | "session.info" | "session.close"
     ) {
         return true;
     }

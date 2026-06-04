@@ -137,11 +137,11 @@ impl ConnectionHandler {
 
         // Authenticated: request dispatch loop
         loop {
-            let frame = match tokio::time::timeout(authenticated_idle_timeout(), framed.next()).await
-            {
-                Ok(Some(Ok(f))) => f,
-                _ => break,
-            };
+            let frame =
+                match tokio::time::timeout(authenticated_idle_timeout(), framed.next()).await {
+                    Ok(Some(Ok(f))) => f,
+                    _ => break,
+                };
             let response = handle_request(&frame, &deps, &cancels, &health_limiter).await;
             if framed.send(Bytes::from(response)).await.is_err() {
                 break;

@@ -39,7 +39,9 @@ async fn connected_client(harness: &DaemonTestHarness) -> Arc<RpcClient> {
     cfg.hello_token_path = token_file(harness);
     let obs = loom_mcp::mcp_observability::init_subscriber(false);
     let rpc = RpcClient::new(cfg, obs);
-    rpc.connect().await.expect("initial connect to harness daemon");
+    rpc.connect()
+        .await
+        .expect("initial connect to harness daemon");
     rpc
 }
 
@@ -59,7 +61,10 @@ async fn multiword_error_code_round_trips_not_malformed() {
     let rpc = connected_client(&harness).await;
 
     let err = rpc
-        .call("session.close", json!({ "session_id": "loom-sess-does-not-exist" }))
+        .call(
+            "session.close",
+            json!({ "session_id": "loom-sess-does-not-exist" }),
+        )
         .await
         .expect_err("closing a non-existent session must be an error");
 
@@ -163,7 +168,10 @@ async fn real_chromium_soak_200_sessions_no_transport_errors() {
             .to_string();
 
         for (verb, params) in [
-            ("web.navigate", json!({ "session": sid, "url": "about:blank" })),
+            (
+                "web.navigate",
+                json!({ "session": sid, "url": "about:blank" }),
+            ),
             ("web.screenshot", json!({ "session": sid })),
             ("web.clear_cookies", json!({ "session": sid })),
         ] {

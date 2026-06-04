@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 
 /// Maximum number of concurrently-active sessions a single daemon will hold.
 /// Caps unbounded chromium/context growth (each session spawns a chromium shim
-/// + a `/tmp/loom-chromium-*` profile dir). Overridable via
+/// plus a `/tmp/loom-chromium-*` profile dir). Overridable via
 /// `LOOM_MAX_CONCURRENT_SESSIONS`; default 16. A cap-hit fails fast with
 /// `TooManyRequests` (retryable via back-off — reconnecting can't free a slot).
 fn max_concurrent_sessions() -> usize {

@@ -131,7 +131,9 @@ pub async fn run(
     // of only checking daemon liveness + chromium presence. Skipped (not
     // failed) when a prerequisite check failed, so prerequisite-absent machines
     // aren't falsely red.
-    let prereqs_ok = !failures.iter().any(|f| BROWSER_SMOKE_PREREQS.contains(&f.as_str()));
+    let prereqs_ok = !failures
+        .iter()
+        .any(|f| BROWSER_SMOKE_PREREQS.contains(&f.as_str()));
     if prereqs_ok {
         run_check!("browser_smoke", check_browser_smoke(rpc));
     } else {
@@ -189,7 +191,10 @@ pub async fn check_daemon_responsive(rpc: &RpcClient) -> Result<(), CliError> {
 /// smoke itself never leaks a session/profile dir.
 pub async fn check_browser_smoke(rpc: &RpcClient) -> Result<(), CliError> {
     let created = rpc
-        .call("session.create", serde_json::json!({ "profile": "standard" }))
+        .call(
+            "session.create",
+            serde_json::json!({ "profile": "standard" }),
+        )
         .await?;
     let session_id = created
         .get("session_id")
@@ -204,8 +209,11 @@ pub async fn check_browser_smoke(rpc: &RpcClient) -> Result<(), CliError> {
             serde_json::json!({ "session": session_id, "url": "about:blank" }),
         )
         .await?;
-        rpc.call("web.screenshot", serde_json::json!({ "session": session_id }))
-            .await?;
+        rpc.call(
+            "web.screenshot",
+            serde_json::json!({ "session": session_id }),
+        )
+        .await?;
         rpc.call(
             "web.clear_cookies",
             serde_json::json!({ "session": session_id }),

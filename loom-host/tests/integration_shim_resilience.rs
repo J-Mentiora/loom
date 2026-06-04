@@ -197,8 +197,11 @@ async fn chaos_crashed_chromium_does_not_wedge_new_sessions() {
     let mut b_ok = false;
     let mut last_err = None;
     for _ in 0..5 {
-        match tokio::time::timeout(Duration::from_secs(30), mgr.send(id_b.clone(), navigate_payload()))
-            .await
+        match tokio::time::timeout(
+            Duration::from_secs(30),
+            mgr.send(id_b.clone(), navigate_payload()),
+        )
+        .await
         {
             Ok(Ok(_)) => {
                 b_ok = true;
@@ -219,9 +222,11 @@ async fn chaos_crashed_chromium_does_not_wedge_new_sessions() {
     // error, never a hang. (`get_or_spawn` evicts the crashed handle, WI-5;
     // in-place same-dir respawn may not recover, which is acceptable — it must
     // not hang.)
-    let a_result =
-        tokio::time::timeout(Duration::from_secs(35), mgr.send(id_a.clone(), navigate_payload()))
-            .await;
+    let a_result = tokio::time::timeout(
+        Duration::from_secs(35),
+        mgr.send(id_a.clone(), navigate_payload()),
+    )
+    .await;
     assert!(
         a_result.is_ok(),
         "crashed session's next action must return bounded (not hang)"
@@ -235,7 +240,10 @@ async fn chaos_crashed_chromium_does_not_wedge_new_sessions() {
     // recovery uses fresh per-session dirs).
     mgr.shutdown_session(&sid_a).await;
     mgr.shutdown_session(&sid_b).await;
-    assert!(!dir_b.exists(), "healthy session B profile dir not cleaned (WI-6)");
+    assert!(
+        !dir_b.exists(),
+        "healthy session B profile dir not cleaned (WI-6)"
+    );
     // Best-effort reap of A's dir so the test leaves nothing behind.
     let _ = std::fs::remove_dir_all(&dir_a);
 }

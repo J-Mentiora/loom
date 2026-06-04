@@ -276,10 +276,12 @@ impl LoomErrorCode {
             }
             "profile-restricted" | "profile_restricted" => ProfileRestricted,
             "browser-not-found" | "browser_not_found" => BrowserNotFound,
-            "invalid-argument" | "invalid_argument" | "unknown_profile"
-            | "invalid_network_mode" | "invalid_budget_key" | "invalid_capture_policy" => {
-                InvalidArgument
-            }
+            "invalid-argument"
+            | "invalid_argument"
+            | "unknown_profile"
+            | "invalid_network_mode"
+            | "invalid_budget_key"
+            | "invalid_capture_policy" => InvalidArgument,
             "unsupported" | "method_not_found" | "vault_credential_type_unsupported" => Unsupported,
             "internal" | "internal_error" => Internal,
             _ => Internal,
@@ -448,7 +450,8 @@ mod tests {
             LoomErrorCode::Internal
         );
         // Through serde (the path the MCP client actually uses): never errors.
-        let decoded: LoomErrorCode = serde_json::from_value(serde_json::json!("brand_new")).unwrap();
+        let decoded: LoomErrorCode =
+            serde_json::from_value(serde_json::json!("brand_new")).unwrap();
         assert_eq!(decoded, LoomErrorCode::Internal);
     }
 
