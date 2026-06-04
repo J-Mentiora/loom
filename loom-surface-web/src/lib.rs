@@ -245,18 +245,22 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
     // `snapshot` keeps the response-hash identifier (no content-store offload).
     let (screenshot_after_hash, dom_snapshot_hash) = match verb {
         "screenshot" => {
+            // On a record failure, leave screenshot_after_hash absent rather
+            // than emitting the response hash — a hash that resolves to nothing
+            // in the content store is worse than no hash (the client would fetch
+            // a 404). The verb still returns a successful receipt.
             let hash = match host::record_screenshot(&response) {
-                Ok(r) => r.sha256,
+                Ok(r) => Some(r.sha256),
                 Err(e) => {
                     host::log_emit(
                         host::LogLevel::Warn,
                         &format!("record_screenshot failed; screenshot not stored: {e:?}"),
                         &[],
                     );
-                    response_hash.clone()
+                    None
                 }
             };
-            (Some(hash), None)
+            (hash, None)
         }
         "snapshot" => (None, Some(response_hash.clone())),
         _ => (None, None),

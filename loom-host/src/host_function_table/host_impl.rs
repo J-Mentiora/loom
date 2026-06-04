@@ -133,6 +133,15 @@ impl Host for HostState {
         // the content store holds a renderable image and the returned hash
         // resolves to an actual `image/png`.
         let result = match loom_shared::screenshot_decode::decode_cdp_screenshot(&cdp_response) {
+            Ok(png) if !loom_shared::screenshot_decode::is_png(&png) => {
+                // Decoded to something that isn't a PNG (empty/truncated/garbage).
+                // Refuse to store it — a 0-byte or non-image blob would only
+                // produce a dangling, unrenderable screenshot_after_hash.
+                Err(HostError::ShimFailure(
+                    "{\"kind\":\"screenshot_decode_failed\",\"reason\":\"decoded bytes are not a PNG\"}"
+                        .to_string(),
+                ))
+            }
             Ok(png) => {
                 if self.mode == Mode::Replay {
                     // Replay must NOT write to the content store, but must return
