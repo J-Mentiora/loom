@@ -34,6 +34,18 @@ fn daemon_not_running_message_names_loom_serve() {
     );
 }
 
+// AC4 / FND-0001: the dead-daemon message must carry the stable substring
+// `no daemon` so the integration assertion can pin on it. Locking it here keeps
+// the wording from drifting out from under the integration test.
+#[test]
+fn daemon_not_running_message_contains_no_daemon_substring() {
+    let m = connection_message(&ConnectionError::DaemonNotRunning);
+    assert!(
+        m.contains("no daemon"),
+        "DaemonNotRunning message must contain the stable `no daemon` substring (AC4/FND-0001); got: {m}"
+    );
+}
+
 #[test]
 fn timeout_message_names_loom_doctor() {
     let m = connection_message(&ConnectionError::ConnectionTimeout);
