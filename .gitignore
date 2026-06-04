@@ -14,6 +14,13 @@ target/
 # cargo-dist intermediates
 dist-manifest.json
 
+# Python SDK build artifacts (`python -m build`, used by publish-pypi.yml)
+python-sdk/dist/
+python-sdk/*.egg-info/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+
 # event-log substrate (loom is a public repo — keep internal infra config + any
 # telemetry/runtime artifacts OUT of git). Internal users configure the hosted
 # backend via a LOCAL .feature-workflow/event-log.yaml (ignored below); the
