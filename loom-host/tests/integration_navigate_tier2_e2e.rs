@@ -200,6 +200,26 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
         "either screenshot_bytes is populated or screenshot_sha256 is set"
     );
 
+    // REGRESSION (mcp-screenshot-delivery): the bytes navigate stores into the
+    // content store (host_impl.rs `content_store.put(&outcome.screenshot_bytes)`)
+    // MUST be a RAW PNG, not the CBOR `{data:<base64-PNG>}` envelope the shim
+    // returns. Storing the envelope is exactly the "screenshots arrive empty at
+    // MCP clients" bug: the cas blob resolves to unrenderable CBOR. This pins the
+    // `action_executor` decode so the double-encoding can't silently come back.
+    assert!(
+        loom_shared::screenshot_decode::is_png(&outcome.screenshot_bytes),
+        "navigate screenshot_bytes must be a raw PNG (magic 89 50 4E 47); got first bytes {:02x?} \
+         — a CBOR/base64 envelope here means the double-encoding bug regressed",
+        &outcome.screenshot_bytes[..outcome.screenshot_bytes.len().min(8)]
+    );
+    // Belt-and-suspenders: the stored bytes must NOT decode as a CBOR map with a
+    // `data` field (the pre-fix stored form). decode_cdp_screenshot succeeds on
+    // the OLD envelope and fails on a raw PNG, so failure here == correctly fixed.
+    assert!(
+        loom_shared::screenshot_decode::decode_cdp_screenshot(&outcome.screenshot_bytes).is_err(),
+        "navigate screenshot_bytes must NOT be a decodable CBOR{{data:base64}} envelope"
+    );
+
     mgr.shutdown_session("tier2-spine-200").await;
 }
 
