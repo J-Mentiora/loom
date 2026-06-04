@@ -55,7 +55,6 @@ fn cli_config_rejects_unknown_fields() {
         "surfaces_dir": "/tmp/sf",
         "chromium_dir": "/tmp/c",
         "pretty": false,
-        "connect_timeout": {"secs": 5, "nanos": 0},
         "request_timeout": {"secs": 30, "nanos": 0},
         "default_profile": null,
         "extraneous_field": "should_fail"
@@ -104,14 +103,35 @@ fn test_zero_config_defaults_have_sensible_values() {
         "auth_dir must not be empty"
     );
     assert!(
-        cfg.connect_timeout.as_secs() > 0,
-        "connect_timeout must be positive"
-    );
-    assert!(
         cfg.request_timeout.as_secs() > 0,
         "request_timeout must be positive"
     );
     assert!(!cfg.pretty, "pretty defaults to false");
+}
+
+// === back-compat: tolerated-but-ignored connect_timeout_secs ===
+
+#[test]
+fn deprecated_connect_timeout_secs_in_file_still_parses() {
+    // connect_timeout was removed as an unwired no-op, but FileConfig denies
+    // unknown fields, so the key must remain tolerated (ignored) to avoid
+    // breaking existing config.toml files.
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let mut f = std::fs::File::create(&config_path).unwrap();
+    writeln!(f, "connect_timeout_secs = 7").unwrap();
+
+    let inputs = ResolveInputs {
+        cli_overrides: vec![],
+        env_vars: vec![],
+        config_path: Some(config_path),
+    };
+    let result = resolve(inputs, None);
+    assert!(
+        result.is_ok(),
+        "config.toml with deprecated connect_timeout_secs must still parse: {:?}",
+        result.err()
+    );
 }
 
 // === CLI flag > env var > config file precedence ===

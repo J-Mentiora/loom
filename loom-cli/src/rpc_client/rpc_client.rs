@@ -29,8 +29,6 @@ use crate::CliError;
 pub struct RpcClientConfig {
     /// Resolved Unix socket path (per `ConfigResolver` precedence).
     pub socket_path: PathBuf,
-    /// Connect timeout. Default 5s.
-    pub connect_timeout: Duration,
     /// Request timeout. Default 30s.
     pub request_timeout: Duration,
 }
