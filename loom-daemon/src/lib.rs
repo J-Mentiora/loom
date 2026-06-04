@@ -391,15 +391,33 @@ impl CoreFacadeBridge for CoreBridge {
         // Concurrency cap: fail fast (retryable) when too many sessions are
         // already active, rather than spawning an unbounded number of chromium
         // shims. Counts the AUTHORITATIVE live-session set (no separate counter
-        // to drift or leak — a closed/aborted session leaves the set, so the
-        // count self-reconciles). Cap-hit → `TooManyRequests` so the caller
-        // backs off and retries when a slot frees (NOT a reconnect).
+        // to drift or leak — a closed/aborted/crashed session leaves the set, so
+        // the count self-reconciles without a reaper). Cap-hit → `TooManyRequests`
+        // so the caller backs off and retries when a slot frees (NOT a reconnect).
+        //
+        // This is a best-effort, eventually-consistent resource valve, not a
+        // hard security boundary (the daemon is single-user/local): a check-then-
+        // create window means N concurrent creates at the boundary can transiently
+        // overshoot by up to N-1, but the cap re-reads authoritative state every
+        // call so it always self-corrects and can't be defeated long-term. A
+        // strict atomic reservation would reintroduce the counter-leak-on-crash
+        // problem the live-set design deliberately avoids — not worth it here.
         let cap = max_concurrent_sessions();
-        let active = self
-            .core
-            .list_sessions_info()
-            .map(|v| v.iter().filter(|(_, status, _)| status == "active").count())
-            .unwrap_or(0);
+        let active = match self.core.list_sessions_info() {
+            Ok(v) => v.iter().filter(|(_, status, _)| status == "active").count(),
+            Err(e) => {
+                // Don't silently disable the cap on a transient read error; log
+                // it. Fail-open (allow) is the lesser evil for a local tool —
+                // blocking the user on a transient introspection glitch is worse
+                // than a momentary overshoot, and the next create re-checks.
+                tracing::warn!(
+                    metric = "loom_daemon_cap_introspect_error",
+                    error = %e,
+                    "session cap: could not read active sessions; allowing create"
+                );
+                0
+            }
+        };
         if active >= cap {
             tracing::warn!(
                 metric = "loom_daemon_cap_reject",

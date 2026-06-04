@@ -792,8 +792,12 @@ impl ShimManager {
         // and accumulates across a long-running daemon (a contributor to the
         // gradual degradation) — and leaves the session's cookies/state on disk.
         // Done AFTER shutdown_process so chromium has released `--user-data-dir`;
-        // NotFound is fine (idempotent / already gone via crash reap).
-        remove_session_profile_dir(session_id);
+        // NotFound is fine (idempotent / already gone via crash reap). Offloaded
+        // to a blocking thread: a recursive `remove_dir_all` of a populated
+        // chromium profile can do real disk I/O and must not stall a Tokio
+        // worker.
+        let sid = session_id.to_string();
+        let _ = tokio::task::spawn_blocking(move || remove_session_profile_dir(&sid)).await;
         // Reap any completed breaker-eviction cleanup tasks. Lock release
         // happens at scope exit; JoinSet::try_join_next is non-blocking.
         let mut set = self.cleanup_tasks.lock();
