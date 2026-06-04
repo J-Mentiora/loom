@@ -1,9 +1,8 @@
-use super::{CuratedRenderer, RenderedReceipt};
+use super::{consumed, CuratedRenderer, RenderedReceipt};
 use crate::cli_config::CliConfig;
 use crate::pretty_renderer::ansi;
 use crate::CliError;
 use serde_json::Value;
-use std::collections::HashSet;
 
 pub struct VaultListLabels;
 
@@ -35,12 +34,9 @@ impl CuratedRenderer for VaultListLabels {
         };
         let text = ansi::paint(&body, ansi::DIM, cfg.stdout_color_enabled);
 
-        let mut consumed = HashSet::new();
-        consumed.insert("labels".to_string());
-        consumed.insert("count".to_string());
         Ok(RenderedReceipt {
             text,
-            consumed_keys: consumed,
+            consumed_keys: consumed(&["labels", "count"]),
         })
     }
 }

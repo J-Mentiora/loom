@@ -64,6 +64,20 @@ pub trait CuratedRenderer: Send + Sync {
     }
 }
 
+/// Build a `consumed_keys` set from a static key list — replaces the repeated
+/// `HashSet::new()` + `.insert(...)` tail shared across curated renderers.
+pub(super) fn consumed(keys: &[&str]) -> HashSet<String> {
+    keys.iter().map(|k| k.to_string()).collect()
+}
+
+/// Standard `quiet_id` for renderers keyed by a `label` receipt field.
+pub(super) fn quiet_id_label(value: &Value) -> Option<String> {
+    value
+        .get("label")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
 type RendererBox = Box<dyn CuratedRenderer>;
 
 fn registry() -> &'static HashMap<&'static str, RendererBox> {
@@ -364,5 +378,100 @@ mod tests {
             let again = dispatch("session.create", &v, &cfg, None).unwrap();
             assert_eq!(first, again, "tail order must be deterministic");
         }
+    }
+
+    // ── Characterization guards for the vault curated renderers ──
+    // These pin the exact output bytes of vault.set_secret / vault.delete_secret /
+    // vault.list_labels so the `consumed()` / `quiet_id_label()` helper extraction
+    // cannot silently change CLI output. (Council require-condition for keeping the
+    // renderer dedup item.)
+
+    #[test]
+    fn vault_set_secret_render_is_stable() {
+        let cfg = cfg_pretty_no_color();
+        // size_bucket is consumed (not shown) → no tail block.
+        let saved = dispatch(
+            "vault.set_secret",
+            &json!({"label": "gh", "replaced": false, "size_bucket": "small"}),
+            &cfg,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            saved,
+            "Saved credential to your keychain (label: gh).\n\
+             Run `loom vault list-labels` to see all stored credentials."
+        );
+        let replaced = dispatch(
+            "vault.set_secret",
+            &json!({"label": "gh", "replaced": true, "size_bucket": "small"}),
+            &cfg,
+            None,
+        )
+        .unwrap();
+        assert!(replaced.starts_with("Replaced credential in your keychain (label: gh)."));
+        assert!(
+            !replaced.contains("── more ──"),
+            "all keys consumed → no tail"
+        );
+    }
+
+    #[test]
+    fn vault_delete_render_is_stable() {
+        let cfg = cfg_pretty_no_color();
+        assert_eq!(
+            dispatch(
+                "vault.delete_secret",
+                &json!({"label": "gh", "cascade_revoked_grants": 0}),
+                &cfg,
+                None
+            )
+            .unwrap(),
+            "Deleted credential 'gh'."
+        );
+        assert_eq!(
+            dispatch(
+                "vault.delete_secret",
+                &json!({"label": "gh", "cascade_revoked_grants": 1}),
+                &cfg,
+                None
+            )
+            .unwrap(),
+            "Deleted credential 'gh' (cascade-revoked 1 active grant)."
+        );
+        assert_eq!(
+            dispatch(
+                "vault.delete_secret",
+                &json!({"label": "gh", "cascade_revoked_grants": 2}),
+                &cfg,
+                None
+            )
+            .unwrap(),
+            "Deleted credential 'gh' (cascade-revoked 2 active grants)."
+        );
+    }
+
+    #[test]
+    fn vault_list_labels_render_is_stable() {
+        let cfg = cfg_pretty_no_color();
+        assert_eq!(
+            dispatch(
+                "vault.list_labels",
+                &json!({"labels": [], "count": 0}),
+                &cfg,
+                None
+            )
+            .unwrap(),
+            "No stored credentials. Use `loom vault add --label <name> --from-stdin` to add one."
+        );
+        // names sorted; count pluralized; both keys consumed → no tail.
+        let out = dispatch(
+            "vault.list_labels",
+            &json!({"labels": ["zeta", "alpha"], "count": 2}),
+            &cfg,
+            None,
+        )
+        .unwrap();
+        assert_eq!(out, "2 stored credentials:\n  • alpha\n  • zeta");
     }
 }

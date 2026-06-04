@@ -637,12 +637,7 @@ impl CoreFacadeBridge for CoreBridge {
 
         // D37 label validation at the wire boundary; the W5.10 manifest-
         // writer gate is the belt-and-suspenders below.
-        validate_label_canonical(&p.label).map_err(|e| {
-            map_loom_error(&LoomError::new(
-                loom_core::error::LoomErrorCode::InvalidArgument,
-                e,
-            ))
-        })?;
+        validate_label_or_rpc_err(&p.label)?;
 
         let bytes = hex::decode(p.secret_hex.as_bytes()).map_err(|e| {
             map_loom_error(&LoomError::new(
@@ -666,13 +661,9 @@ impl CoreFacadeBridge for CoreBridge {
                 ),
             )));
         }
-        let size_bucket = if bytes.len() <= 256 {
-            "small"
-        } else if bytes.len() <= 4096 {
-            "medium"
-        } else {
-            "large"
-        };
+        // Size bucket via the loom-core single source of truth (D24) so this
+        // receipt and the hash-chained audit payload can never disagree.
+        let size_bucket = loom_core::vault::size_bucket(bytes.len()).as_str();
 
         // A-W6.1 overwrite contract: when overwrite=false and the label
         // already exists, reject before the keychain write so the audit
@@ -716,12 +707,7 @@ impl CoreFacadeBridge for CoreBridge {
         p: VaultDeleteSecretParams,
     ) -> Result<VaultDeleteSecretInfo, AdapterError> {
         use loom_core::manifest_writer::SessionId;
-        validate_label_canonical(&p.label).map_err(|e| {
-            map_loom_error(&LoomError::new(
-                loom_core::error::LoomErrorCode::InvalidArgument,
-                e,
-            ))
-        })?;
+        validate_label_or_rpc_err(&p.label)?;
         let session = p.session_id.as_deref().map(|s| SessionId(s.to_string()));
         let outcome = self
             .core
@@ -1022,6 +1008,18 @@ fn validate_label_canonical(label: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Validate a vault label at the wire boundary and map any rejection to the RPC
+/// adapter error (`InvalidArgument`). Shared by `vault_set_secret` /
+/// `vault_delete_secret` (D37) so the error mapping lives in one place.
+fn validate_label_or_rpc_err(label: &str) -> Result<(), AdapterError> {
+    validate_label_canonical(label).map_err(|e| {
+        map_loom_error(&LoomError::new(
+            loom_core::error::LoomErrorCode::InvalidArgument,
+            e,
+        ))
+    })
 }
 
 /// Best-effort backend name for `vault.diagnose` per A-W6.4 schema. The

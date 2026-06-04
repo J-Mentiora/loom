@@ -12,9 +12,9 @@
 use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::manifest_writer::{AuditKind, SessionId};
 use crate::vault::vault::{
-    AddCredentialOpts, AddCredentialReceipt, CredentialType, DeleteSecretOutcome, Grant, GrantId,
-    GrantOpts, GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault,
-    OAUTH_PROVIDER_ALLOWLIST,
+    size_bucket, AddCredentialOpts, AddCredentialReceipt, CredentialType, DeleteSecretOutcome,
+    Grant, GrantId, GrantOpts, GrantSnapshot, LocalVault, NetRequest, RevokeReason, SizeBucket,
+    Vault, OAUTH_PROVIDER_ALLOWLIST,
 };
 use loom_keychain::{KeychainAccess, KeychainError, KeychainErrorKind};
 use serde::{Deserialize, Serialize};
@@ -111,30 +111,10 @@ fn audit_bytes(payload: &VaultAuditPayload<'_>) -> Vec<u8> {
 }
 
 // ─── v0.9.4 credential-lifecycle audit payloads (W5.3) ────────────────
-
-/// Three-tier size category for stored credentials (D24). Eliminates
-/// the exact-byte side-channel that `byte_count` would expose in the
-/// hash-chained audit manifest.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum SizeBucket {
-    /// ≤ 256 bytes (typical for OAuth bearer tokens, API keys).
-    Small,
-    /// ≤ 4096 bytes (long tokens, refresh-token bundles).
-    Medium,
-    /// > 4096 bytes (large session cookies, multi-part credentials).
-    Large,
-}
-
-fn size_bucket(byte_count: usize) -> SizeBucket {
-    if byte_count <= 256 {
-        SizeBucket::Small
-    } else if byte_count <= 4096 {
-        SizeBucket::Medium
-    } else {
-        SizeBucket::Large
-    }
-}
+//
+// `SizeBucket` + `size_bucket()` (D24) now live in `vault.rs` as the single
+// source of truth shared with the daemon RPC receipt — imported above via
+// `use crate::vault::vault::{... SizeBucket, size_bucket ...}`.
 
 /// Wire-stable category of a `KeychainError` for audit-entry payloads
 /// (D30 typed-reason requirement). Mirrors `KeychainErrorKind` but is
