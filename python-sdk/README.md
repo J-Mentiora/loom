@@ -18,10 +18,11 @@ loom serve
 ## Install
 
 ```bash
-pip install loom
+pip install mentiora-loom
 ```
 
-Requires Python ≥ 3.11.
+The distribution is named `mentiora-loom`; it still imports as `loom`
+(`import loom`). Requires Python ≥ 3.11.
 
 ## Quick start (sync)
 
