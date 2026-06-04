@@ -334,6 +334,18 @@ jobs:
           echo "source-of-truth version: $version"
           scripts/check-readme-version.sh "$version" README.md
 
+  uninstall-script:
+    name: uninstall.sh self-test
+    runs-on: ubuntu-latest
+    # Lightweight analogue of readme-version: exercises the destructive
+    # uninstaller hermetically (throwaway $HOME, --dry-run deletes nothing)
+    # so a regression in its path resolution can't ship an rm -rf that wipes
+    # the wrong directory. No toolchain/build needed.
+    steps:
+      - uses: actions/checkout@v6
+      - name: Self-test the uninstaller
+        run: scripts/uninstall.test.sh
+
   e2e:
     # Real-Chromium-pinned end-to-end verification. Runs on
     # stable cells only; beta is best-effort and skips this job.
