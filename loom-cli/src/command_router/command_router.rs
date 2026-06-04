@@ -175,7 +175,19 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
         Command::Session(cmd) => {
             let rpc = make_rpc_client(config);
             match cmd {
-                SessionCmd::Create(a) => crate::session_commands::create(&rpc, config, a).await,
+                SessionCmd::Create(a) => {
+                    // First-run UX (AC5): surface a missing Chromium at session
+                    // create — inline-download it (interactive) or print the
+                    // precise remedy — instead of letting the first action
+                    // cold-fail. No-op when Chromium already resolves.
+                    crate::postinstall_runner::ensure_chromium_inline(
+                        &config.chromium_dir,
+                        chromium_pin::CHROMIUM_URL,
+                        chromium_pin::CHROMIUM_SHA256,
+                    )
+                    .await?;
+                    crate::session_commands::create(&rpc, config, a).await
+                }
                 SessionCmd::Inspect(a) => crate::session_commands::inspect(&rpc, config, a).await,
                 SessionCmd::List(a) => crate::session_commands::list(&rpc, config, a).await,
                 SessionCmd::Close(a) => crate::session_commands::close(&rpc, config, a).await,
@@ -215,6 +227,16 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
 
         // RPC-free local actions.
         Command::Serve(args) => {
+            // First-run UX (AC5): a brand-new user's first command is usually
+            // `loom serve` — make sure Chromium is present (inline-download it
+            // with progress when interactive, else print the precise remedy)
+            // before spawning the daemon. No-op when Chromium already resolves.
+            crate::postinstall_runner::ensure_chromium_inline(
+                &config.chromium_dir,
+                chromium_pin::CHROMIUM_URL,
+                chromium_pin::CHROMIUM_SHA256,
+            )
+            .await?;
             let opts = ServeOptions {
                 socket_path: args.socket.unwrap_or_else(|| config.socket_path.clone()),
                 config_path: args.config,

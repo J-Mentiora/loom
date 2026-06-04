@@ -341,6 +341,84 @@ pub async fn chromium_step(
     }
 }
 
+/// Inline-postinstall pre-flight for `loom serve` / first `loom session create`
+/// (PRD R5 / AC5).
+///
+/// When no Chromium can be resolved (env override → pinned dir → PATH →
+/// `/Applications`), this downloads the pinned build inline with visible
+/// stderr progress so a brand-new user reaches a working browser without a
+/// separate `loom postinstall` round-trip. When Chromium is already present —
+/// the common case, and what every daemon e2e hits via `LOOM_CHROMIUM_PATH` —
+/// it is a cheap no-op.
+///
+/// Gating (so this never surprises automation):
+/// - **Already resolvable** → no-op (also keeps CI/tests from ever fetching).
+/// - **`LOOM_NO_INLINE_CHROMIUM` set** → never fetch; print the `loom
+///   postinstall` remedy and continue.
+/// - **Non-interactive stderr** (no TTY) and not forced → print the remedy and
+///   continue, rather than triggering a surprise ~150 MB download in a script
+///   or CI job. Set `LOOM_INLINE_CHROMIUM=1` to force the inline fetch.
+///
+/// Non-blocking by design: a failed inline fetch prints a precise remedy and
+/// returns `Ok(())` so daemon startup / session creation still proceeds (the
+/// daemon's `loom doctor` path gives the actionable missing-binary error at
+/// first action). The explicit `loom postinstall` command remains the path
+/// that hard-fails on a supply-chain mismatch.
+pub async fn ensure_chromium_inline(
+    chromium_dir: &std::path::Path,
+    url: &str,
+    expected_sha256: &str,
+) -> Result<(), CliError> {
+    use std::io::IsTerminal as _;
+
+    // Already resolvable anywhere on the standard search path → nothing to do.
+    if loom_shared::chromium_resolver::resolve_chromium(chromium_dir).is_ok() {
+        return Ok(());
+    }
+
+    // Hard opt-out: never auto-fetch.
+    if std::env::var_os("LOOM_NO_INLINE_CHROMIUM").is_some() {
+        eprintln!(
+            "Chromium is not installed. Run `loom postinstall` to download the pinned build."
+        );
+        return Ok(());
+    }
+
+    // Only auto-fetch when interactive or explicitly forced.
+    let forced = std::env::var_os("LOOM_INLINE_CHROMIUM").is_some();
+    if !forced && !std::io::stderr().is_terminal() {
+        eprintln!(
+            "Chromium is not installed. Run `loom postinstall` to download the pinned build \
+             (or set LOOM_INLINE_CHROMIUM=1 to fetch it inline)."
+        );
+        return Ok(());
+    }
+
+    eprintln!("Chromium is not installed; downloading the pinned build inline…");
+    let binary_subpath = loom_shared::chromium_resolver::chromium_binary_subpath();
+    let downloader =
+        ChromiumDownloader::new(crate::chromium_downloader::ChromiumDownloaderConfig {
+            install_dir: chromium_dir.to_path_buf(),
+            binary_subpath,
+        });
+    let mut reporter =
+        crate::chromium_downloader::StderrProgressReporter::new("Downloading Chromium…");
+    let outcome = downloader
+        .ensure_with_progress(url, expected_sha256, &mut reporter)
+        .await;
+    reporter.finish();
+    match outcome {
+        Ok(_) => {
+            eprintln!("Chromium ready.");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Inline Chromium download failed: {e}. Run `loom postinstall` to retry.");
+            Ok(())
+        }
+    }
+}
+
 /// Download + extract `loom-daemon`, `loom-mcp`,
 /// `loom-shim-chromium` from the GH Release tagged `v{version}`. Skips
 /// when the 3 siblings are already co-located next to the running `loom`
