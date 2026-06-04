@@ -1,5 +1,15 @@
 [package]
 name = "loom-cli"
+# crates.io decision (onboarding-friction-audit AC7): loom is NOT published to
+# crates.io. `loom` is the tokio-rs concurrency crate and both `loom-cli` and
+# our internal `loom-core` names are already owned by an unrelated third party,
+# so a real publish would require renaming + republishing the whole ~10-crate
+# workspace under a namespace — out of proportion to the benefit when the binary
+# already installs via Homebrew, the release installer script, and
+# `cargo install --git … --tag`. `publish = false` is the guard that encodes
+# that decision: it makes `cargo publish` refuse, so no release can leak a crate
+# to crates.io by accident. See the per-ecosystem install table in README.md.
+publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -117,6 +127,15 @@ path = "src/bin/loom-mcp.rs"
 [[bin]]
 name = "loom-shim-chromium"
 path = "src/bin/loom-shim-chromium.rs"
+
+# `publish = false` (above) hides this package's binaries from cargo-dist, which
+# would leave the workspace with nothing to release (the sibling bin crates all
+# set `dist = false` — their binaries are bundled here). `dist = true` re-opts
+# this package into the release pipeline: cargo-dist still builds + ships the
+# four binaries via the shell installer and Homebrew formula, independent of the
+# crates.io publish decision.
+[package.metadata.dist]
+dist = true
 
 [lints]
 workspace = true
