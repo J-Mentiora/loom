@@ -5,10 +5,25 @@ pub use rpc_client::*;
 mod interface_tests;
 
 use crate::error_mapper::{DispatchPhase, ErrorMapper, McpContent, ToolResult};
+use base64::Engine as _;
 use loom_rpc::error::{LoomError, LoomErrorCode};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+
+/// Max size of a screenshot we will inline as a base64 `image` content block on
+/// a `tools/call` result. Larger images are NOT inlined (to bound the response
+/// size); the client can still resolve them via the `loom://blob/<hash>`
+/// resource. ~5 MiB comfortably covers full-page PNGs while capping the worst
+/// case (council R1).
+pub(crate) const MAX_INLINE_IMAGE_BYTES: usize = 5 * 1024 * 1024;
+
+/// True iff `s` is exactly 64 lowercase/uppercase hex chars (a content-store
+/// sha256). Guards the by-hash fetch + blob-resource URI against arbitrary
+/// strings.
+pub(crate) fn is_64_hex(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
 
 // ---------------------------------------------------------------------------
 // Concrete framed-socket caller
@@ -120,6 +135,24 @@ impl RpcClient {
             inner: Arc::new(tokio::sync::RwLock::new(None)),
             cfg,
             obs,
+            on_connected: Arc::new(tokio::sync::RwLock::new(vec![])),
+            reconnect_task: Arc::new(tokio::sync::Mutex::new(None)),
+        })
+    }
+
+    /// Test-only constructor: build a client already in the `Connected`
+    /// state with `caller` as the injected transport, so unit tests can
+    /// drive `call` / `call_as_tool_result` against canned RPC responses
+    /// without a real Unix socket.
+    #[cfg(test)]
+    pub(crate) fn with_caller_for_test(caller: Box<dyn JsonRpcCaller + Send + Sync>) -> Arc<Self> {
+        Arc::new(Self {
+            state: Arc::new(tokio::sync::RwLock::new(ConnectionState::Connected)),
+            inner: Arc::new(tokio::sync::RwLock::new(Some(RpcClientInner {
+                handle: caller,
+            }))),
+            cfg: RpcClientConfig::defaults(),
+            obs: crate::mcp_observability::McpObservability::new(true),
             on_connected: Arc::new(tokio::sync::RwLock::new(vec![])),
             reconnect_task: Arc::new(tokio::sync::Mutex::new(None)),
         })
@@ -329,11 +362,86 @@ impl RpcClient {
         params: serde_json::Value,
     ) -> ToolResult {
         match self.call(method, params).await {
-            Ok(v) => ToolResult {
-                is_error: false,
-                content: vec![McpContent::from_json(v)],
-            },
+            Ok(v) => {
+                // Text receipt block first (preserves the wire contract incl.
+                // screenshot_after_hash for all consumers), then an inline image
+                // block for screenshot-producing verbs.
+                let mut content = vec![McpContent::from_json(v.clone())];
+                if let Some(img) = self.screenshot_image_block(method, &v).await {
+                    content.push(img);
+                }
+                ToolResult {
+                    is_error: false,
+                    content,
+                }
+            }
             Err(e) => ErrorMapper::to_tool_result(e),
+        }
+    }
+
+    /// Build an inline `McpContent::Image` for a screenshot-producing verb's
+    /// receipt by resolving `screenshot_after_hash` through the content store
+    /// (`content.get`). Returns `None` (and never errors the tool call) when the
+    /// verb isn't a screenshot verb, the hash is absent/invalid, the blob can't
+    /// be fetched, the bytes aren't a PNG, or the image exceeds the inline cap —
+    /// in the oversize case the client can still fetch it via `loom://blob/<hash>`.
+    async fn screenshot_image_block(
+        self: &Arc<Self>,
+        method: &str,
+        value: &serde_json::Value,
+    ) -> Option<McpContent> {
+        if method != "web.screenshot" && method != "web.navigate" {
+            return None;
+        }
+        let hash = value.get("screenshot_after_hash")?.as_str()?;
+        let bytes = self.fetch_blob_by_hash(hash).await?;
+        if bytes.len() > MAX_INLINE_IMAGE_BYTES {
+            self.obs.info(
+                "screenshot_image_skipped_oversize",
+                serde_json::json!({ "hash": hash, "bytes": bytes.len() }),
+            );
+            return None;
+        }
+        if !loom_shared::screenshot_decode::is_png(&bytes) {
+            return None;
+        }
+        Some(McpContent::Image {
+            data: base64::engine::general_purpose::STANDARD.encode(&bytes),
+            mime_type: "image/png".to_string(),
+        })
+    }
+
+    /// Fetch raw bytes from the content store by 64-hex hash via the existing
+    /// `content.get` RPC (which returns hex). Best-effort: logs and returns
+    /// `None` on any failure so screenshot delivery degrades gracefully.
+    pub(crate) async fn fetch_blob_by_hash(self: &Arc<Self>, hash: &str) -> Option<Vec<u8>> {
+        if !is_64_hex(hash) {
+            return None;
+        }
+        match self
+            .call("content.get", serde_json::json!({ "artifact_ref": hash }))
+            .await
+        {
+            Ok(v) => {
+                let data_hex = v.get("data_hex").and_then(|d| d.as_str())?;
+                match hex::decode(data_hex) {
+                    Ok(bytes) => Some(bytes),
+                    Err(_) => {
+                        self.obs.info(
+                            "screenshot_blob_bad_hex",
+                            serde_json::json!({ "hash": hash }),
+                        );
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                self.obs.info(
+                    "screenshot_blob_fetch_failed",
+                    serde_json::json!({ "hash": hash, "error": e.to_string() }),
+                );
+                None
+            }
         }
     }
 

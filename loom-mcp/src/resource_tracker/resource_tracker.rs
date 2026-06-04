@@ -16,13 +16,17 @@ pub struct Resource {
     pub mime_type: String,
 }
 
-/// Body of `resources/read`.
+/// Body of `resources/read`. Per the MCP spec a resource carries EITHER `text`
+/// (text resources) OR `blob` (base64 binary resources), never both.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResourceContents {
     pub uri: String,
     #[serde(rename = "mimeType")]
     pub mime_type: String,
-    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blob: Option<String>,
 }
 
 /// Default cache TTL.
@@ -33,6 +37,12 @@ pub const SESSION_URI_PREFIX: &str = "loom://session/";
 
 /// URI suffix path component.
 pub const SESSION_URI_SUFFIX: &str = "/manifest";
+
+/// URI scheme prefix for a content-store blob addressed by sha256 hex.
+/// `resources/read` of `loom://blob/<hash>` resolves the bytes (e.g. a
+/// screenshot whose `screenshot_after_hash` a client holds) into a base64
+/// `blob` resource.
+pub const BLOB_URI_PREFIX: &str = "loom://blob/";
 
 /// Concrete tracker.
 pub struct ResourceTracker {

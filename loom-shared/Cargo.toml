@@ -19,6 +19,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 zeroize = { workspace = true }
 ciborium = { workspace = true }
+base64 = { workspace = true }
 # binary_resolver locates sibling loom binaries in
 # `dirs::data_local_dir()/loom/bin/` for the cargo-install path.
 dirs = { workspace = true }

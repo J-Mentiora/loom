@@ -16,7 +16,18 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum McpContent {
-    Text { text: String },
+    Text {
+        text: String,
+    },
+    /// Standard MCP `image` content block: base64-encoded bytes + MIME type.
+    /// Emitted alongside the text receipt for screenshot-producing verbs so an
+    /// MCP client receives a renderable image inline (the text block still
+    /// carries `screenshot_after_hash` for wire-contract parity).
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
 }
 
 impl McpContent {

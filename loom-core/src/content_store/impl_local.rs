@@ -5,9 +5,10 @@
 //! CAS identity guarantees that even if two concurrent `put`s race, both
 //! write identical bytes and the last rename wins without data loss.
 
-use super::content_store::{shard_path, ContentRef, ContentStore, GcReport, LocalContentStore};
+use super::content_store::{
+    sha256_hex, shard_path, ContentRef, ContentStore, GcReport, LocalContentStore,
+};
 use crate::error::{LoomError, LoomErrorCode};
-use ring::digest::{digest, SHA256};
 use serde_json::json;
 use std::fs;
 use std::io::ErrorKind;
@@ -18,11 +19,6 @@ use walkdir::WalkDir;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn sha256_hex(data: &[u8]) -> String {
-    let d = digest(&SHA256, data);
-    d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
-}
 
 /// Compute the total byte-size of all blobs under `cas_root`.
 fn cas_total_bytes(cas_root: &std::path::Path) -> u64 {

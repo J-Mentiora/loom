@@ -95,6 +95,16 @@ pub trait ContentStore: Send + Sync {
     fn gc(&self, ttl: Duration) -> Result<GcReport, LoomError>;
 }
 
+/// Compute the lowercase-hex SHA-256 of `data` — the content store's
+/// addressing scheme. Pure helper; no I/O. Exposed so callers can derive a
+/// content hash without writing (e.g. replay-mode screenshot recording, which
+/// must return the same hash live mode would store, without performing a write).
+pub fn sha256_hex(data: &[u8]) -> String {
+    use ring::digest::{digest, SHA256};
+    let d = digest(&SHA256, data);
+    d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Compute the on-disk path for a blob given its sha256 hex and shard depth.
 /// Pure helper; no I/O. Useful for tests and StartupManager sweep.
 pub fn shard_path(root: &std::path::Path, sha256_hex: &str, depth: u8) -> PathBuf {

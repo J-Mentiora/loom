@@ -147,6 +147,14 @@ interface host {
     blob-put: func(bytes: list<u8>) -> result<content-ref, host-error>;
     blob-get: func(ref: content-ref) -> result<list<u8>, host-error>;
 
+    // Record-screenshot: decode a CDP `Page.captureScreenshot` response
+    // (`cdp-response` = the CBOR `{data: <base64-PNG>}` returned by shim-call)
+    // into RAW PNG bytes and store them in the content store, returning the
+    // content-ref of the decoded image. The WASM guest ships without a CBOR /
+    // base64 decoder by design, so the host owns the unwrap; this is what makes
+    // `web.screenshot`'s screenshot-after-hash resolve to a renderable image.
+    record-screenshot: func(cdp-response: list<u8>) -> result<content-ref, host-error>;
+
     // Network (vault-mediated; secrets never enter WASM linear memory)
     net-request: func(req: net-req) -> result<net-resp, host-error>;
 
