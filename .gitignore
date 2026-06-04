@@ -1,7 +1,10 @@
 council/
 specs/
 target/
-.claude/
+# Ignore local Claude settings, but TRACK repo-shared skills (e.g. cut-release).
+# Negation requires excluding .claude/* (not .claude/) so children can be re-included.
+.claude/*
+!.claude/skills/
 .DS_Store
 *.swp
 .idea/
