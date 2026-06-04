@@ -154,6 +154,7 @@ impl From<LoomError> for HostError {
             | LoomErrorCode::SafeProfileDownloadBlocked
             | LoomErrorCode::ProfileRestricted
             | LoomErrorCode::Io
+            | LoomErrorCode::TransportDropped
             | LoomErrorCode::InvalidArgument
             | LoomErrorCode::Unsupported
             | LoomErrorCode::BrowserNotFound

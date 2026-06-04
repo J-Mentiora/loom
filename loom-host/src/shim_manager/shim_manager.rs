@@ -254,8 +254,28 @@ impl ShimManager {
         id: &ShimId,
         config: &ShimConfig,
     ) -> Result<Arc<ShimProcess>, LoomError> {
-        if let Some(p) = self.processes.get(id) {
-            return Ok(p.clone());
+        // Proactive liveness check: only hand back a cached shim if it is still
+        // alive. A crashed chromium/CDP shim that's still in the map would
+        // otherwise be returned as a dead handle, so every session created after
+        // a browser crash inherits the dead browser (the reported "sessions
+        // after a crash get a dead browser" bug). Evict the corpse and fall
+        // through to respawn. The breaker (checked by callers before reaching
+        // here) bounds repeated crash-respawn churn.
+        let cached_dead = {
+            if let Some(p) = self.processes.get(id) {
+                if !p.crashed.load(Ordering::SeqCst) {
+                    return Ok(p.clone());
+                }
+                true
+            } else {
+                false
+            }
+        };
+        if cached_dead {
+            // Drop the dead handle (its watcher already reaped the OS process);
+            // remove() is a no-op if a concurrent caller beat us to it.
+            self.processes.remove(id);
+            tracing::warn!(shim = %id.0, "evicting crashed shim before reuse; respawning");
         }
         let spawn_config = SpawnConfig {
             binary_path: config.binary_path.clone(),
@@ -767,6 +787,17 @@ impl ShimManager {
             self.states.remove(&key);
             self.configs.remove(&key);
         }
+        // Remove the per-session chromium profile dir
+        // (`<tmp>/loom-chromium-<session_id>`). Without this it leaks forever
+        // and accumulates across a long-running daemon (a contributor to the
+        // gradual degradation) — and leaves the session's cookies/state on disk.
+        // Done AFTER shutdown_process so chromium has released `--user-data-dir`;
+        // NotFound is fine (idempotent / already gone via crash reap). Offloaded
+        // to a blocking thread: a recursive `remove_dir_all` of a populated
+        // chromium profile can do real disk I/O and must not stall a Tokio
+        // worker.
+        let sid = session_id.to_string();
+        let _ = tokio::task::spawn_blocking(move || remove_session_profile_dir(&sid)).await;
         // Reap any completed breaker-eviction cleanup tasks. Lock release
         // happens at scope exit; JoinSet::try_join_next is non-blocking.
         let mut set = self.cleanup_tasks.lock();
@@ -935,6 +966,48 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Validate a session id against the canonical safe charset before it is used
+/// to build a filesystem path or a process-match pattern. Guards against path
+/// traversal (`../`) in the profile-dir `remove_dir_all` and against injection
+/// into the watcher's `pkill -f user-data-dir=...` pattern. Session ids are
+/// daemon-generated, but this is defense-in-depth: a malformed id is refused,
+/// never acted on.
+fn is_safe_session_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id.len() <= 64
+        && session_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
+/// The per-session chromium profile dir, mirroring the path the host exports as
+/// `LOOM_SHIM_USER_DATA_DIR` (`<tmp>/loom-chromium-<session_id>`). `None` if the
+/// id fails validation (caller skips cleanup rather than touching an unsafe path).
+fn session_profile_dir(session_id: &str) -> Option<PathBuf> {
+    if !is_safe_session_id(session_id) {
+        return None;
+    }
+    Some(std::env::temp_dir().join(format!("loom-chromium-{session_id}")))
+}
+
+/// Remove the per-session chromium profile dir on session close. Idempotent:
+/// a missing dir (already reaped, or never created for a session that never
+/// navigated) is success; other errors are logged, not propagated.
+fn remove_session_profile_dir(session_id: &str) {
+    let Some(dir) = session_profile_dir(session_id) else {
+        tracing::warn!(
+            session = %session_id,
+            "refusing to clean profile dir for unsafe session id"
+        );
+        return;
+    };
+    match std::fs::remove_dir_all(&dir) {
+        Ok(()) => tracing::debug!(dir = %dir.display(), "removed session profile dir"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(dir = %dir.display(), error = %e, "profile dir cleanup failed"),
+    }
 }
 
 fn map_shim_code(code: loom_shared::shim_protocol::ShimErrorCode) -> LoomErrorCode {

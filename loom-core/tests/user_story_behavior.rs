@@ -485,6 +485,7 @@ fn test_all_documented_error_codes_are_matchable() {
         ("rpc-invalid-request", LoomErrorCode::RpcInvalidRequest),
         ("rpc-auth-failed", LoomErrorCode::RpcAuthFailed),
         ("rpc-schema-violation", LoomErrorCode::RpcSchemaViolation),
+        ("transport-dropped", LoomErrorCode::TransportDropped),
         ("io", LoomErrorCode::Io),
         ("schema_violation", LoomErrorCode::SchemaViolation),
         (

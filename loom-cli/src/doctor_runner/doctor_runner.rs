@@ -40,7 +40,10 @@ pub struct DoctorPaths {
     pub keychain_label: String,
 }
 
-/// The 6 fixed check identifiers in stable order.
+/// The fixed check identifiers in stable order. `browser_smoke` is last so it
+/// runs only after its prerequisites (socket, daemon, AOT, chromium) have been
+/// evaluated — it is SKIPPED (not failed) when a prerequisite is missing, so a
+/// machine without chromium isn't falsely reported red.
 pub const CHECK_NAMES: &[&str] = &[
     "socket_reachable",
     "daemon_responsive",
@@ -48,6 +51,17 @@ pub const CHECK_NAMES: &[&str] = &[
     "chromium_present_and_verified",
     "vault_keychain_accessible",
     "macos_quarantine_clear",
+    "browser_smoke",
+];
+
+/// Prerequisite checks that must be `ok` for `browser_smoke` to be meaningful.
+/// If any failed, the smoke is skipped rather than run against a known-broken
+/// base (a missing-chromium failure is reported once, by the check that owns it).
+const BROWSER_SMOKE_PREREQS: &[&str] = &[
+    "socket_reachable",
+    "daemon_responsive",
+    "aot_artifacts_present",
+    "chromium_present_and_verified",
 ];
 
 /// Run the full 6-check probe. Returns `Ok(report)` if all checks
@@ -110,6 +124,28 @@ pub async fn run(
         check_macos_quarantine_clear(&paths.chromium_binary)
     );
 
+    // browser_smoke: a REAL end-to-end browser round-trip
+    // (session.create → web.navigate(about:blank) → web.screenshot →
+    // web.clear_cookies → session.close). This is what makes `loom doctor`
+    // honest — it flips non-ok when the browser/connection is wedged, instead
+    // of only checking daemon liveness + chromium presence. Skipped (not
+    // failed) when a prerequisite check failed, so prerequisite-absent machines
+    // aren't falsely red.
+    let prereqs_ok = !failures
+        .iter()
+        .any(|f| BROWSER_SMOKE_PREREQS.contains(&f.as_str()));
+    if prereqs_ok {
+        run_check!("browser_smoke", check_browser_smoke(rpc));
+    } else {
+        checks.push(DoctorCheck {
+            name: "browser_smoke".to_string(),
+            status: "skipped".to_string(),
+            detail: Some(serde_json::json!(
+                "skipped: a prerequisite check (socket/daemon/AOT/chromium) failed"
+            )),
+        });
+    }
+
     let report = DoctorReport {
         checks,
         failures: failures.clone(),
@@ -146,6 +182,56 @@ pub async fn check_socket_reachable(socket_path: &std::path::Path) -> Result<(),
 /// Check 2 — daemon responsive (single rpc.ping).
 pub async fn check_daemon_responsive(rpc: &RpcClient) -> Result<(), CliError> {
     rpc.ping().await
+}
+
+/// Check 7 — real browser smoke. Drives a full ephemeral session end-to-end so
+/// a wedged browser/connection (crashed chromium, dead CDP, dropped socket)
+/// fails the check, where the liveness+presence checks alone would stay green.
+/// Always tears the session down (best-effort) even when a step fails, so the
+/// smoke itself never leaks a session/profile dir.
+pub async fn check_browser_smoke(rpc: &RpcClient) -> Result<(), CliError> {
+    let created = rpc
+        .call(
+            "session.create",
+            serde_json::json!({ "profile": "standard" }),
+        )
+        .await?;
+    let session_id = created
+        .get("session_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CliError::Internal("session.create returned no session_id".to_string()))?
+        .to_string();
+
+    // Run the steps, capturing the first failure but always tearing down after.
+    let steps = async {
+        rpc.call(
+            "web.navigate",
+            serde_json::json!({ "session": session_id, "url": "about:blank" }),
+        )
+        .await?;
+        rpc.call(
+            "web.screenshot",
+            serde_json::json!({ "session": session_id }),
+        )
+        .await?;
+        rpc.call(
+            "web.clear_cookies",
+            serde_json::json!({ "session": session_id }),
+        )
+        .await?;
+        Ok::<(), CliError>(())
+    }
+    .await;
+
+    // Teardown regardless of the steps' outcome.
+    let _ = rpc
+        .call(
+            "session.close",
+            serde_json::json!({ "session_id": session_id }),
+        )
+        .await;
+
+    steps
 }
 
 /// Check 3 — AOT artifacts present.

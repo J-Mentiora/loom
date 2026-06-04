@@ -1,14 +1,14 @@
-// Interface tests for `DoctorRunner`. Verifies the exactly-6
+// Interface tests for `DoctorRunner`. Verifies the exactly-7
 // check enumeration in stable order.
 
 use super::doctor_runner::{DoctorArgs, DoctorPaths, CHECK_NAMES};
 
 #[test]
-fn check_names_count_is_exactly_six() {
+fn check_names_count_is_exactly_seven() {
     assert_eq!(
         CHECK_NAMES.len(),
-        6,
-        "expected exactly 6 checks; got {}",
+        7,
+        "expected exactly 7 checks; got {}",
         CHECK_NAMES.len()
     );
 }
@@ -24,6 +24,7 @@ fn check_names_are_in_stable_order() {
             "chromium_present_and_verified",
             "vault_keychain_accessible",
             "macos_quarantine_clear",
+            "browser_smoke",
         ]
     );
 }
@@ -48,15 +49,15 @@ fn doctor_paths_carries_all_5_check_inputs() {
 
 // === missing any check is a KILL ===
 //
-// The 6 individual `check_*` functions below MUST exist; their
+// The 7 individual `check_*` functions below MUST exist; their
 // absence breaks compilation of `interface_tests`, which is the
 // structural enforcement.
 #[test]
-fn six_individual_check_functions_compile() {
+fn seven_individual_check_functions_compile() {
     // Reference each function by signature.
     use super::doctor_runner::{
-        check_aot_artifacts, check_chromium, check_daemon_responsive, check_keychain_acl,
-        check_macos_quarantine_clear, check_socket_reachable,
+        check_aot_artifacts, check_browser_smoke, check_chromium, check_daemon_responsive,
+        check_keychain_acl, check_macos_quarantine_clear, check_socket_reachable,
     };
     let _ = check_socket_reachable;
     let _ = check_daemon_responsive;
@@ -64,4 +65,5 @@ fn six_individual_check_functions_compile() {
     let _ = check_chromium;
     let _ = check_keychain_acl;
     let _ = check_macos_quarantine_clear;
+    let _ = check_browser_smoke;
 }
