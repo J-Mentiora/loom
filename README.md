@@ -144,6 +144,10 @@ Pick whichever fits your environment. All three end at the same `loom postinstal
 step, which downloads + verifies the pinned Chromium build (~150 MB, one-time)
 and AOT-compiles the WASM surfaces.
 
+> **What runs where.** loom runs entirely locally; it adds no telemetry.
+> Chromium is downloaded from GitHub Releases over TLS and SHA-256-verified
+> before execution.
+
 ### Homebrew — macOS arm64/x64, Linux x64
 
 ```bash
@@ -201,6 +205,34 @@ cargo build --release
 Source builds skip the vendored WASM artifact and compile the surface from
 scratch, so they need the `wasm32-wasip2` target installed. The `cargo install`
 path uses the vendored bytes and works without it.
+
+### Uninstall
+
+From a clone, [`scripts/uninstall.sh`](scripts/uninstall.sh) removes everything
+`loom postinstall` put on disk. It prints a plan and asks before deleting:
+
+```bash
+scripts/uninstall.sh --dry-run   # preview; deletes nothing
+scripts/uninstall.sh             # remove (with confirmation)
+```
+
+It clears, in order:
+
+- **Binaries** — `loom` (from `~/.cargo/bin` or `~/.local/bin`) and the three
+  auxiliary binaries (`loom-daemon`, `loom-mcp`, `loom-shim-chromium`).
+- **macOS LaunchDaemon** — stops and removes
+  `/Library/LaunchDaemons/com.loom.daemon.plist` (prompts for `sudo`).
+- **Chromium cache + compiled surfaces** — `~/.config/loom` (the pinned
+  ~150 MB Chromium plus the AOT-compiled WASM surfaces and schemas).
+- **Session + blob store** — `~/Library/Application Support/loom` on macOS, or
+  `~/.local/share/loom` on Linux. Pass `--keep-data` to preserve recorded
+  sessions while removing everything else.
+
+If you installed via Homebrew, also run `brew uninstall loom`. Custom locations
+set through `LOOM_DATA_ROOT` / `LOOM_CHROMIUM_PATH`, and any vault secrets stored
+in the macOS Keychain, are left untouched — the script reports them for manual
+removal. To do it entirely by hand, delete the four binaries, `~/.config/loom`,
+the data dir above, and (macOS) the LaunchDaemon plist.
 
 ## Client SDKs
 
@@ -303,6 +335,14 @@ Add to your MCP client config:
 The server exposes the `loom.web.*` family. The client doesn't need to
 know about session ids — `loom-mcp` lazily creates a session on first
 tool call and reuses it across the conversation.
+
+**One agent, one browser.** Each `loom-mcp` process drives a *single* browser
+session — there is no parallel-browser model over one MCP connection. The
+lazily-created session is reused for every tool call, so concurrent
+`loom.web.*` calls operate on the same page, not separate tabs. If you need
+multiple browsers at once, run multiple `loom-mcp` processes (one per MCP
+server entry) or drive the CLI directly — each `loom session create` is
+independent.
 
 | Tool                       | Args                                                            |
 |----------------------------|-----------------------------------------------------------------|
