@@ -1,16 +1,25 @@
 //! Canonical `LoomError` + `LoomErrorCode` shared across every crate.
 //!
-//! Stable enum (~25 codes). Adding a code is SemVer-minor; removing one
-//! is major. The linter `tools/lint-error-codes.py` walks every
-//! `LoomError::` constructor and asserts every variant is in the
-//! documented `errors.json` schema.
+//! Stable enum. Adding a code is SemVer-minor; removing one is major.
+//!
+//! ## Wire encoding (single source of truth)
+//! `Serialize` emits [`LoomErrorCode::as_wire`] verbatim; `Deserialize` routes
+//! through the tolerant [`LoomErrorCode::from_wire`]. `from_wire` accepts BOTH
+//! the canonical kebab-case spellings AND the daemon translator's snake_case
+//! spellings (`loom-rpc::error_translator`), and maps any unrecognized code to
+//! [`LoomErrorCode::Internal`] instead of failing. This is what fixes the
+//! historic `"malformed error response"` bug: a long-lived MCP client could not
+//! deserialize the daemon's snake_case codes into this kebab-case enum, so every
+//! multi-word error collapsed to opaque `io`. Tolerant decode also makes
+//! old-client ↔ new-daemon version skew safe (unknown → `internal`, never a hard
+//! parse error).
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Stable error code enum exposed across all process boundaries
-/// (RPC, WIT, MCP, SDK).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+/// (RPC, WIT, MCP, SDK). Serde is implemented manually (see module docs) — do
+/// NOT add `#[serde(...)]` attributes here; edit `as_wire`/`from_wire` instead.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LoomErrorCode {
     // ---- Core / lifecycle ----
     SessionNotFound,
@@ -98,6 +107,16 @@ pub enum LoomErrorCode {
     /// (capacity, default 30). The client should back off and retry;
     /// the bucket refills at the configured RPS.
     TooManyRequests,
+    /// Transient transport/connection fault on the MCP↔daemon socket — a
+    /// broken pipe, a connection closed/EOF with no response, or a daemon
+    /// idle-drop of a long-lived connection. **Retryable** via reconnect
+    /// (`RetryDisposition::Reconnect`): a dropped persistent connection must
+    /// never fail an action that a fresh connection would satisfy. Classified
+    /// client-side in `loom-mcp::error_mapper`; distinct from `Io` (a genuine,
+    /// non-transient I/O failure) and from `TooManyRequests` (capacity — back
+    /// off, do NOT reconnect). Never used for a malformed/undecodable error
+    /// envelope (that means the request already executed — see `from_wire`).
+    TransportDropped,
     Io,
 
     // ---- Safety profile ----
@@ -114,7 +133,6 @@ pub enum LoomErrorCode {
     /// etc.) — those are unrelated to safe profile and remain valid emit
     /// sites. Do not blanket-deprecate this variant; the safe-profile
     /// emission path is the only deprecated use.
-    #[serde(rename = "schema_violation")]
     SchemaViolation,
     /// download target outside session-scoped downloads directory.
     /// **DEPRECATED in favor of the `Browser.setDownloadBehavior(allowAndName)`
@@ -123,7 +141,6 @@ pub enum LoomErrorCode {
     /// `LoomErrorCode::ProfileRestricted` if the policy gains explicit-reject
     /// semantics later. Schedule for removal alongside `EvaluateVerb::execute`
     /// cleanup.
-    #[serde(rename = "safe_profile_download_blocked")]
     SafeProfileDownloadBlocked,
     /// action rejected because the active session profile
     /// (e.g. `"safe"`) forbids it. Wire string: `"profile_restricted"`.
@@ -135,7 +152,6 @@ pub enum LoomErrorCode {
     /// operator's regex spec (e.g. matches `console.log(window.location)` —
     /// read access — not just write). For safe profile this is intentional
     /// defense-in-depth. See `loom-surfaces::safety::EVALUATE_DENYLIST`.
-    #[serde(rename = "profile_restricted")]
     ProfileRestricted,
 
     // ---- Browser / launch ----
@@ -188,6 +204,7 @@ impl LoomErrorCode {
             LoomErrorCode::RequestTimeout => "request-timeout",
             LoomErrorCode::RequestCancelled => "request-cancelled",
             LoomErrorCode::TooManyRequests => "too-many-requests",
+            LoomErrorCode::TransportDropped => "transport-dropped",
             LoomErrorCode::LlmCacheMiss => "llm-cache-miss",
             LoomErrorCode::Io => "io",
             LoomErrorCode::SchemaViolation => "schema_violation",
@@ -198,6 +215,122 @@ impl LoomErrorCode {
             LoomErrorCode::Unsupported => "unsupported",
             LoomErrorCode::Internal => "internal",
         }
+    }
+
+    /// Tolerant decode of a wire `code` string into a variant. Accepts the
+    /// canonical kebab-case spellings (`as_wire`) AND the daemon translator's
+    /// snake_case spellings (`loom-rpc::error_translator::LoomErrorCode`, whose
+    /// variant names diverge in places). Any unrecognized code maps to
+    /// [`LoomErrorCode::Internal`] — NEVER an error — so a long-lived client can
+    /// always type a daemon error (no more `"malformed error response"`) and
+    /// version skew degrades gracefully. Single source of truth for decode.
+    pub fn from_wire(s: &str) -> LoomErrorCode {
+        use LoomErrorCode::*;
+        match s {
+            "session-not-found" | "session_not_found" => SessionNotFound,
+            "session-already-closed" | "session_already_closed" | "session_closed" => {
+                SessionAlreadyClosed
+            }
+            "session-aborted" | "session_aborted" => SessionAborted,
+            "session-killed" | "session_killed" => SessionKilled,
+            "surface-trap" | "surface_trap" => SurfaceTrap,
+            "vault-rejection" | "vault_rejection" => VaultRejection,
+            "vault-grant-expired" | "vault_grant_expired" => VaultGrantExpired,
+            "vault-grant-revoked" | "vault_grant_revoked" => VaultGrantRevoked,
+            "vault-unknown-label" | "vault_unknown_label" | "vault_grant_not_found" => {
+                VaultUnknownLabel
+            }
+            "vault-permission-denied" | "vault_permission_denied" => VaultPermissionDenied,
+            "vault-backend-unavailable" | "vault_backend_unavailable" => VaultBackendUnavailable,
+            "vault-backend-timeout" | "vault_backend_timeout" => VaultBackendTimeout,
+            "vault-non-interactive-prompt" | "vault_non_interactive_prompt" => {
+                VaultNonInteractivePrompt
+            }
+            "vault-internal" | "vault_internal" => VaultInternal,
+            "vault-invalid-label" | "vault_invalid_label" => VaultInvalidLabel,
+            "budget-exceeded" | "budget_exceeded" => BudgetExceeded,
+            "budget-rate-limited" | "budget_rate_limited" => BudgetRateLimited,
+            "store-integrity-failed" | "store_integrity_failed" => StoreIntegrityFailed,
+            "store-not-found" | "store_not_found" => StoreNotFound,
+            "store-full-no-evictable" | "store_full_no_evictable" => StoreFullNoEvictable,
+            "manifest-corrupt" | "manifest_corrupt" => ManifestCorrupt,
+            "replay-divergence" | "replay_divergence" => ReplayDivergence,
+            "replay-missing-blob" | "replay_missing_blob" => ReplayMissingBlob,
+            "shim-failure" | "shim_failure" | "surface_unavailable" => ShimFailure,
+            "shim-timeout" | "shim_timeout" => ShimTimeout,
+            "shim-breaker-open" | "shim_breaker_open" => ShimBreakerOpen,
+            "rpc-invalid-request" | "rpc_invalid_request" | "protocol_malformed" => {
+                RpcInvalidRequest
+            }
+            "rpc-auth-failed" | "rpc_auth_failed" | "protocol_auth_required" => RpcAuthFailed,
+            "rpc-schema-violation" | "rpc_schema_violation" => RpcSchemaViolation,
+            "request-timeout" | "request_timeout" => RequestTimeout,
+            "request-cancelled" | "request_cancelled" => RequestCancelled,
+            "too-many-requests" | "too_many_requests" => TooManyRequests,
+            "transport-dropped" | "transport_dropped" => TransportDropped,
+            "llm-cache-miss" | "llm_cache_miss" => LlmCacheMiss,
+            "io" => Io,
+            "schema-violation" | "schema_violation" => SchemaViolation,
+            "safe-profile-download-blocked" | "safe_profile_download_blocked" => {
+                SafeProfileDownloadBlocked
+            }
+            "profile-restricted" | "profile_restricted" => ProfileRestricted,
+            "browser-not-found" | "browser_not_found" => BrowserNotFound,
+            "invalid-argument" | "invalid_argument" | "unknown_profile"
+            | "invalid_network_mode" | "invalid_budget_key" | "invalid_capture_policy" => {
+                InvalidArgument
+            }
+            "unsupported" | "method_not_found" | "vault_credential_type_unsupported" => Unsupported,
+            "internal" | "internal_error" => Internal,
+            _ => Internal,
+        }
+    }
+
+    /// How a client should react to this code. Lets callers distinguish a
+    /// reconnect-and-retry transport fault from a back-off-and-retry capacity
+    /// limit from a non-retryable failure — without hard-coding code lists at
+    /// every call site.
+    pub fn retry_disposition(&self) -> RetryDisposition {
+        match self {
+            // A dropped connection: reconnect and retry (bounded, see
+            // loom-mcp::rpc_client). Reconnecting re-establishes a fresh socket.
+            LoomErrorCode::TransportDropped => RetryDisposition::Reconnect,
+            // Capacity: back off and retry later. Reconnecting cannot free a
+            // slot, so do NOT reconnect.
+            LoomErrorCode::TooManyRequests | LoomErrorCode::BudgetRateLimited => {
+                RetryDisposition::Backoff
+            }
+            _ => RetryDisposition::None,
+        }
+    }
+
+    /// Convenience: any retry is worthwhile (transport OR capacity).
+    pub fn is_retryable(&self) -> bool {
+        !matches!(self.retry_disposition(), RetryDisposition::None)
+    }
+}
+
+/// How a client should retry a failed call, derived from its error code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetryDisposition {
+    /// Transport fault — reconnect, then retry (bounded). See `TransportDropped`.
+    Reconnect,
+    /// Capacity/rate limit — back off, then retry on the SAME connection.
+    Backoff,
+    /// Not retryable — surface to the caller.
+    None,
+}
+
+impl Serialize for LoomErrorCode {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_wire())
+    }
+}
+
+impl<'de> Deserialize<'de> for LoomErrorCode {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(LoomErrorCode::from_wire(&s))
     }
 }
 
@@ -251,5 +384,103 @@ impl From<std::io::Error> for LoomError {
 impl From<LoomErrorCode> for LoomError {
     fn from(c: LoomErrorCode) -> Self {
         LoomError::new(c, c.as_wire())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every canonical wire string round-trips kebab → variant → kebab.
+    #[test]
+    fn as_wire_round_trips_via_from_wire() {
+        // Representative spread incl. the intentionally-snake variants.
+        let cases = [
+            LoomErrorCode::SessionNotFound,
+            LoomErrorCode::TooManyRequests,
+            LoomErrorCode::TransportDropped,
+            LoomErrorCode::SchemaViolation,
+            LoomErrorCode::SafeProfileDownloadBlocked,
+            LoomErrorCode::ProfileRestricted,
+            LoomErrorCode::BrowserNotFound,
+            LoomErrorCode::Io,
+            LoomErrorCode::Internal,
+        ];
+        for c in cases {
+            assert_eq!(LoomErrorCode::from_wire(c.as_wire()), c, "{}", c.as_wire());
+        }
+    }
+
+    /// The daemon translator emits snake_case; the canonical decode must accept
+    /// it (this is the historic "malformed error response" bug — multi-word
+    /// snake codes that the kebab-only derive could not parse).
+    #[test]
+    fn from_wire_accepts_daemon_snake_case() {
+        assert_eq!(
+            LoomErrorCode::from_wire("session_not_found"),
+            LoomErrorCode::SessionNotFound
+        );
+        assert_eq!(
+            LoomErrorCode::from_wire("too_many_requests"),
+            LoomErrorCode::TooManyRequests
+        );
+        // Translator-only spellings map to the nearest canonical variant.
+        assert_eq!(
+            LoomErrorCode::from_wire("internal_error"),
+            LoomErrorCode::Internal
+        );
+        assert_eq!(
+            LoomErrorCode::from_wire("protocol_malformed"),
+            LoomErrorCode::RpcInvalidRequest
+        );
+        assert_eq!(
+            LoomErrorCode::from_wire("session_closed"),
+            LoomErrorCode::SessionAlreadyClosed
+        );
+    }
+
+    /// Unknown / future codes degrade to `Internal` — never a hard parse error
+    /// ("malformed"). Makes version skew safe (council C3).
+    #[test]
+    fn unknown_code_falls_back_to_internal_not_error() {
+        assert_eq!(
+            LoomErrorCode::from_wire("some_future_code_v2"),
+            LoomErrorCode::Internal
+        );
+        // Through serde (the path the MCP client actually uses): never errors.
+        let decoded: LoomErrorCode = serde_json::from_value(serde_json::json!("brand_new")).unwrap();
+        assert_eq!(decoded, LoomErrorCode::Internal);
+    }
+
+    /// A full daemon-style error envelope with a snake_case code decodes into a
+    /// typed `LoomError` (the exact thing that produced "malformed error
+    /// response" before the fix).
+    #[test]
+    fn loom_error_decodes_snake_case_envelope() {
+        let envelope = serde_json::json!({
+            "code": "session_not_found",
+            "message": "no such session",
+        });
+        let err: LoomError = serde_json::from_value(envelope).unwrap();
+        assert_eq!(err.code, LoomErrorCode::SessionNotFound);
+        assert_eq!(err.message, "no such session");
+    }
+
+    #[test]
+    fn retry_disposition_distinguishes_reconnect_from_backoff() {
+        assert_eq!(
+            LoomErrorCode::TransportDropped.retry_disposition(),
+            RetryDisposition::Reconnect
+        );
+        assert_eq!(
+            LoomErrorCode::TooManyRequests.retry_disposition(),
+            RetryDisposition::Backoff
+        );
+        assert_eq!(
+            LoomErrorCode::SessionNotFound.retry_disposition(),
+            RetryDisposition::None
+        );
+        assert!(LoomErrorCode::TransportDropped.is_retryable());
+        assert!(!LoomErrorCode::SessionNotFound.is_retryable());
     }
 }

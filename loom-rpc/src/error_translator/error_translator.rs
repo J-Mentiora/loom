@@ -83,6 +83,13 @@ pub enum LoomErrorCode {
     /// `"too_many_requests"` (snake_case via `rename_all` here;
     /// canonical kebab-case is `"too-many-requests"` modulo separator).
     TooManyRequests,
+    /// Transient transport/connection fault (broken pipe, connection
+    /// closed/EOF, idle-drop of a long-lived connection). Mirrors
+    /// `loom_shared::LoomErrorCode::TransportDropped`. Wire string
+    /// `"transport_dropped"`; the canonical loom-shared `from_wire` accepts
+    /// both this and the kebab `"transport-dropped"`. Retryable via reconnect
+    /// on the client. Additive variant; SemVer-compatible.
+    TransportDropped,
 }
 
 /// Structured field detail for a `schema_violation` envelope.

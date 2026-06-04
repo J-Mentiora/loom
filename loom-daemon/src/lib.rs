@@ -17,6 +17,23 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
+
+/// Maximum number of concurrently-active sessions a single daemon will hold.
+/// Caps unbounded chromium/context growth (each session spawns a chromium shim
+/// + a `/tmp/loom-chromium-*` profile dir). Overridable via
+/// `LOOM_MAX_CONCURRENT_SESSIONS`; default 16. A cap-hit fails fast with
+/// `TooManyRequests` (retryable via back-off — reconnecting can't free a slot).
+fn max_concurrent_sessions() -> usize {
+    static CACHED: OnceLock<usize> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("LOOM_MAX_CONCURRENT_SESSIONS")
+            .ok()
+            .and_then(|s| s.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .unwrap_or(16)
+    })
+}
 
 mod upload_guard;
 
@@ -370,6 +387,34 @@ impl CoreFacadeBridge for CoreBridge {
         use loom_core::budget_enforcer::BudgetLimits;
         use loom_core::error::LoomErrorCode;
         use loom_core::session_manager::SessionCreateOpts;
+
+        // Concurrency cap: fail fast (retryable) when too many sessions are
+        // already active, rather than spawning an unbounded number of chromium
+        // shims. Counts the AUTHORITATIVE live-session set (no separate counter
+        // to drift or leak — a closed/aborted session leaves the set, so the
+        // count self-reconciles). Cap-hit → `TooManyRequests` so the caller
+        // backs off and retries when a slot frees (NOT a reconnect).
+        let cap = max_concurrent_sessions();
+        let active = self
+            .core
+            .list_sessions_info()
+            .map(|v| v.iter().filter(|(_, status, _)| status == "active").count())
+            .unwrap_or(0);
+        if active >= cap {
+            tracing::warn!(
+                metric = "loom_daemon_cap_reject",
+                active,
+                cap,
+                "session.create rejected: concurrent session cap reached"
+            );
+            return Err(map_loom_error(&LoomError::new(
+                LoomErrorCode::TooManyRequests,
+                format!(
+                    "concurrent session cap reached ({active}/{cap}); retry after a session closes"
+                ),
+            )));
+        }
+
         let limits: Option<BudgetLimits> = match budget {
             Some(value) => Some(serde_json::from_value(value).map_err(|e| {
                 map_loom_error(&LoomError::new(

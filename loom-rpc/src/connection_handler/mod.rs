@@ -67,6 +67,23 @@ fn request_timeout() -> Duration {
     })
 }
 
+/// Idle timeout for the `Authenticated` state. Defaults to
+/// [`AUTHENTICATED_IDLE_TIMEOUT`] (300 s); overridable via
+/// `LOOM_AUTHENTICATED_IDLE_TIMEOUT_MS`. The override exists so integration
+/// tests can force a fast idle-drop to exercise client reconnect; production
+/// behaviour is unchanged when the env var is unset.
+fn authenticated_idle_timeout() -> Duration {
+    static CACHED: OnceLock<Duration> = OnceLock::new();
+    *CACHED.get_or_init(|| {
+        std::env::var("LOOM_AUTHENTICATED_IDLE_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|&ms| ms > 0)
+            .map(Duration::from_millis)
+            .unwrap_or(AUTHENTICATED_IDLE_TIMEOUT)
+    })
+}
+
 impl ConnectionHandler {
     pub fn new(deps: Arc<ConnectionHandlerDeps>) -> Self {
         Self {
@@ -120,7 +137,7 @@ impl ConnectionHandler {
 
         // Authenticated: request dispatch loop
         loop {
-            let frame = match tokio::time::timeout(AUTHENTICATED_IDLE_TIMEOUT, framed.next()).await
+            let frame = match tokio::time::timeout(authenticated_idle_timeout(), framed.next()).await
             {
                 Ok(Some(Ok(f))) => f,
                 _ => break,

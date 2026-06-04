@@ -36,6 +36,13 @@ pub async fn run(args: ServeArgs) -> Result<(), LoomError> {
     let dispatcher = build_dispatcher(rpc.clone(), obs.clone(), shutdown_flag.clone()).await;
     // Attempt initial connect; proceed even if daemon is down (graceful degradation).
     let _ = rpc.connect().await;
+    // Keepalive: a long-lived MCP server would otherwise sit idle and the daemon
+    // drops authenticated connections after AUTHENTICATED_IDLE_TIMEOUT (default
+    // 300s) — the next web action would then broken-pipe. A periodic cheap
+    // `health.ping` keeps the connection warm and lets `RpcClient::call` notice
+    // a drop proactively (reconnect-first). Failures route through the reconnect
+    // path inside `ping()`; they never tear down the MCP session.
+    install_keepalive(rpc.clone(), obs.clone());
     // prime the tool cache from the daemon's
     // `rpc.schemas` snapshot so `tools/list` returns the real method
     // set. Failure is non-fatal — the dispatcher gracefully degrades
@@ -84,6 +91,39 @@ pub async fn build_dispatcher(
     let tool_cache = ToolCache::new(rpc.clone());
     let resource_tracker = ResourceTracker::new(rpc.clone());
     McpDispatcher::new(tool_cache, resource_tracker, rpc, obs, shutdown_flag)
+}
+
+/// Keepalive interval. Kept well under the daemon's 300s authenticated idle
+/// timeout (≤ ⅓ of the window, so a single missed beat still can't trigger a
+/// drop). Overridable via `LOOM_MCP_KEEPALIVE_SECS` for tests.
+fn keepalive_interval() -> std::time::Duration {
+    let secs = std::env::var("LOOM_MCP_KEEPALIVE_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(60);
+    std::time::Duration::from_secs(secs)
+}
+
+/// Spawn the background keepalive task. Ticks `health.ping` on an interval;
+/// errors are swallowed (the reconnect path inside `ping()`/`call()` handles
+/// recovery) and never affect the stdio request loop.
+pub fn install_keepalive(rpc: Arc<RpcClient>, obs: Arc<McpObservability>) {
+    let interval = keepalive_interval();
+    tokio::spawn(async move {
+        let mut ticker = tokio::time::interval(interval);
+        // Skip the immediate first tick (we just connected).
+        ticker.tick().await;
+        loop {
+            ticker.tick().await;
+            if let Err(e) = rpc.ping().await {
+                obs.info(
+                    "keepalive_miss",
+                    serde_json::json!({ "code": e.code.as_wire() }),
+                );
+            }
+        }
+    });
 }
 
 pub fn install_panic_hook(_obs: Arc<McpObservability>) {

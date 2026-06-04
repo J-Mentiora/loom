@@ -8,7 +8,7 @@
 // `loom_rpc::error` is referenced by loom-mcp; we re-export the
 // canonical types from loom-shared to satisfy that path.
 pub mod error {
-    pub use loom_shared::error_format::{LoomError, LoomErrorCode};
+    pub use loom_shared::error_format::{LoomError, LoomErrorCode, RetryDisposition};
 }
 
 // ---- Module declarations (14) ----
