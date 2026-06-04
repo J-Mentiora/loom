@@ -255,6 +255,17 @@ to `loom action ...` from your Rust code. The crate layout under
 
 ## 5-minute quickstart
 
+<p align="center">
+  <img src="docs/assets/session-diff-demo.gif" width="840"
+       alt="loom in ~30s: a real agent browser flow, then what loom adds over a plain browser — deterministic replay you can diff (field_diffs empty, exit 0), a scoped credential vault, WASM isolation, per-session budgets, and typed errors" />
+</p>
+
+> loom in ~30s — a real agent browser flow, then what loom gives you that a plain
+> browser can't: **deterministic replay** you can `diff` (`field_diffs: []`, exit 0),
+> a **scoped credential vault** (the agent never sees your token), **WASM isolation**,
+> **per-session budgets**, and **typed errors**. Per-verb determinism (`Math.random`,
+> `Date.now`) is Stable; full manifest src↔replay equality is Beta.
+
 ```bash
 # Start the daemon (foreground; ^C to stop)
 loom serve

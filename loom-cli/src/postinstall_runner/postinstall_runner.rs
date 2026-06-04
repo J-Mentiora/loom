@@ -99,8 +99,49 @@ pub struct PostinstallReceipt {
     pub manpages: StepOutcome,
 }
 
+/// Decide whether to warn that this `loom` was installed from a non-release
+/// commit (AC6 / R6).
+///
+/// `release_marker` is the `build.rs`-stamped `LOOM_RELEASE_BUILD`:
+/// - `"1"` — HEAD was on a `v*` release tag → a real release build.
+/// - `"0"` — git present but off-tag → a non-release commit (the tagless
+///   `cargo install --git ... loom-cli` path).
+/// - `"unknown"` — no `.git` at build time (cargo-dist source tarball) → treated
+///   as a release install; we do NOT warn (avoids false positives on legitimate
+///   tarball releases).
+///
+/// Also warns when `version` carries a SemVer pre-release segment (e.g.
+/// `0.10.0-dev`), so the warning still fires under a future `-dev`-on-`main`
+/// convention even on builds without git.
+///
+/// The returned message intentionally contains the stable substrings
+/// `non-release` and `--tag` (FND-0001) so a test can lock the contract without
+/// pinning the full wording.
+pub fn tagless_install_warning(version: &str, release_marker: &str) -> Option<String> {
+    let pre_release_version = version.contains('-');
+    let non_release_commit = release_marker == "0";
+    if !(pre_release_version || non_release_commit) {
+        return None;
+    }
+    Some(format!(
+        "warning: this `loom` ({version}) was installed from a non-release commit. \
+         Installs from a moving branch are not reproducible — pin a tagged release by \
+         passing `--tag vX.Y.Z`, e.g. \
+         `cargo install --git https://github.com/mentiora-ai/loom --tag vX.Y.Z loom-cli`."
+    ))
+}
+
 /// Runs the full postinstall pipeline. Idempotent — safe to re-run.
 pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliError> {
+    // Up front, before any work: warn if this binary came from a non-release
+    // commit (tagless `cargo install --git`). Advisory only — stderr, never
+    // blocks the install (AC6 / R6).
+    if let Some(warning) =
+        tagless_install_warning(env!("CARGO_PKG_VERSION"), env!("LOOM_RELEASE_BUILD"))
+    {
+        eprintln!("{warning}");
+    }
+
     let compile_outcomes = compile_step(&opts.surfaces_dir)?;
 
     let schemas = schema_step(&opts.schemas_dir)?;
@@ -338,6 +379,84 @@ pub async fn chromium_step(
     match downloader.ensure(url, expected_sha256).await? {
         crate::chromium_downloader::DownloadOutcome::Skipped => Ok(StepOutcome::Skipped),
         crate::chromium_downloader::DownloadOutcome::Downloaded(_p) => Ok(StepOutcome::Downloaded),
+    }
+}
+
+/// Inline-postinstall pre-flight for `loom serve` / first `loom session create`
+/// (PRD R5 / AC5).
+///
+/// When no Chromium can be resolved (env override → pinned dir → PATH →
+/// `/Applications`), this downloads the pinned build inline with visible
+/// stderr progress so a brand-new user reaches a working browser without a
+/// separate `loom postinstall` round-trip. When Chromium is already present —
+/// the common case, and what every daemon e2e hits via `LOOM_CHROMIUM_PATH` —
+/// it is a cheap no-op.
+///
+/// Gating (so this never surprises automation):
+/// - **Already resolvable** → no-op (also keeps CI/tests from ever fetching).
+/// - **`LOOM_NO_INLINE_CHROMIUM` set** → never fetch; print the `loom
+///   postinstall` remedy and continue.
+/// - **Non-interactive stderr** (no TTY) and not forced → print the remedy and
+///   continue, rather than triggering a surprise ~150 MB download in a script
+///   or CI job. Set `LOOM_INLINE_CHROMIUM=1` to force the inline fetch.
+///
+/// Non-blocking by design: a failed inline fetch prints a precise remedy and
+/// returns `Ok(())` so daemon startup / session creation still proceeds (the
+/// daemon's `loom doctor` path gives the actionable missing-binary error at
+/// first action). The explicit `loom postinstall` command remains the path
+/// that hard-fails on a supply-chain mismatch.
+pub async fn ensure_chromium_inline(
+    chromium_dir: &std::path::Path,
+    url: &str,
+    expected_sha256: &str,
+) -> Result<(), CliError> {
+    use std::io::IsTerminal as _;
+
+    // Already resolvable anywhere on the standard search path → nothing to do.
+    if loom_shared::chromium_resolver::resolve_chromium(chromium_dir).is_ok() {
+        return Ok(());
+    }
+
+    // Hard opt-out: never auto-fetch.
+    if std::env::var_os("LOOM_NO_INLINE_CHROMIUM").is_some() {
+        eprintln!(
+            "Chromium is not installed. Run `loom postinstall` to download the pinned build."
+        );
+        return Ok(());
+    }
+
+    // Only auto-fetch when interactive or explicitly forced.
+    let forced = std::env::var_os("LOOM_INLINE_CHROMIUM").is_some();
+    if !forced && !std::io::stderr().is_terminal() {
+        eprintln!(
+            "Chromium is not installed. Run `loom postinstall` to download the pinned build \
+             (or set LOOM_INLINE_CHROMIUM=1 to fetch it inline)."
+        );
+        return Ok(());
+    }
+
+    eprintln!("Chromium is not installed; downloading the pinned build inline…");
+    let binary_subpath = loom_shared::chromium_resolver::chromium_binary_subpath();
+    let downloader =
+        ChromiumDownloader::new(crate::chromium_downloader::ChromiumDownloaderConfig {
+            install_dir: chromium_dir.to_path_buf(),
+            binary_subpath,
+        });
+    let mut reporter =
+        crate::chromium_downloader::StderrProgressReporter::new("Downloading Chromium…");
+    let outcome = downloader
+        .ensure_with_progress(url, expected_sha256, &mut reporter)
+        .await;
+    reporter.finish();
+    match outcome {
+        Ok(_) => {
+            eprintln!("Chromium ready.");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("Inline Chromium download failed: {e}. Run `loom postinstall` to retry.");
+            Ok(())
+        }
     }
 }
 

@@ -233,10 +233,50 @@ fn emit_build_provenance() {
     println!("cargo:rustc-env=LOOM_GIT_SHA={sha}");
     println!("cargo:rustc-env=LOOM_BUILD_DATE={date}");
 
+    // Release-build marker for the tagless-install warning (AC6 / R6). The
+    // installed binary has no git access at runtime, so the on-tag-ness of the
+    // build commit must be captured here:
+    //   "1"        HEAD is exactly on a `v*` release tag → a real release build.
+    //   "0"        git present but HEAD is off-tag → a non-release commit (a
+    //              tagless `cargo install --git ... loom-cli` lands here).
+    //   "unknown"  no `.git` (cargo-dist source tarball) → suppress the warning
+    //              so legitimate release-tarball installs aren't false-flagged.
+    let in_git_repo = Command::new("git")
+        .args(["rev-parse", "--git-dir"])
+        .output()
+        .ok()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let release_build = if in_git_repo {
+        let on_release_tag = Command::new("git")
+            .args([
+                "describe",
+                "--tags",
+                "--exact-match",
+                "--match",
+                "v[0-9]*",
+                "HEAD",
+            ])
+            .output()
+            .ok()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if on_release_tag {
+            "1"
+        } else {
+            "0"
+        }
+    } else {
+        "unknown"
+    };
+    println!("cargo:rustc-env=LOOM_RELEASE_BUILD={release_build}");
+
     // Re-run when HEAD moves so the SHA stays fresh on `cargo build`.
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/refs/heads");
+    // Re-run when tags change so the release marker tracks (re-)tagging.
+    println!("cargo:rerun-if-changed=../.git/refs/tags");
 }
 
 /// Format a unix timestamp as YYYY-MM-DD in UTC. Civil-from-days algorithm

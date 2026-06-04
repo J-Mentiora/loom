@@ -1,7 +1,9 @@
 // Interface tests for `PostinstallRunner`. Verifies step
 // enumeration, pre-warm flow, and the cfg-feature gating.
 
-use super::postinstall_runner::{PostinstallOptions, PostinstallReceipt, StepOutcome, STEP_LABELS};
+use super::postinstall_runner::{
+    tagless_install_warning, PostinstallOptions, PostinstallReceipt, StepOutcome, STEP_LABELS,
+};
 
 #[test]
 fn step_labels_are_compile_chromium_loom_binaries_launchd_manpages_in_order() {
@@ -68,6 +70,42 @@ fn postinstall_receipt_carries_steps_and_outcomes() {
         manpages: StepOutcome::Skipped,
     };
     assert_eq!(r.steps.len(), 5);
+}
+
+// === Tagless install warning (AC6 / R6) ===
+//
+// The warning must contain the stable substrings `non-release` and `--tag`
+// (FND-0001), fire on a non-release commit (`"0"`) or a pre-release version,
+// and stay silent for a tagged release (`"1"`) or a no-git tarball (`"unknown"`).
+
+#[test]
+fn tagless_warning_fires_on_non_release_commit() {
+    let w = tagless_install_warning("0.9.8", "0").expect("a non-release commit build must warn");
+    assert!(w.contains("non-release"), "missing `non-release`: {w}");
+    assert!(w.contains("--tag"), "missing `--tag`: {w}");
+}
+
+#[test]
+fn tagless_warning_fires_on_prerelease_version() {
+    // Even on a tagged build, a pre-release semver is itself non-release.
+    let w = tagless_install_warning("0.10.0-dev", "1").expect("a pre-release version must warn");
+    assert!(w.contains("non-release") && w.contains("--tag"));
+}
+
+#[test]
+fn tagless_warning_silent_on_tagged_release() {
+    assert!(
+        tagless_install_warning("0.9.8", "1").is_none(),
+        "a tagged release build must not warn"
+    );
+}
+
+#[test]
+fn tagless_warning_silent_on_unknown_tarball_build() {
+    assert!(
+        tagless_install_warning("0.9.8", "unknown").is_none(),
+        "a no-git source-tarball release install must not warn"
+    );
 }
 
 // === loom-host gated behind cfg(feature = "postinstall") ===
