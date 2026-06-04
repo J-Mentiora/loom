@@ -128,5 +128,14 @@ path = "src/bin/loom-mcp.rs"
 name = "loom-shim-chromium"
 path = "src/bin/loom-shim-chromium.rs"
 
+# `publish = false` (above) hides this package's binaries from cargo-dist, which
+# would leave the workspace with nothing to release (the sibling bin crates all
+# set `dist = false` — their binaries are bundled here). `dist = true` re-opts
+# this package into the release pipeline: cargo-dist still builds + ships the
+# four binaries via the shell installer and Homebrew formula, independent of the
+# crates.io publish decision.
+[package.metadata.dist]
+dist = true
+
 [lints]
 workspace = true
