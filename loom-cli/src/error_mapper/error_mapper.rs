@@ -249,7 +249,7 @@ impl std::fmt::Display for CliError {
 /// message via `connection_message`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ConnectionError {
-    /// → "Try: loom serve"
+    /// → "no daemon running — ... loom serve" (AC4 substrings: `no daemon` + `loom serve`)
     DaemonNotRunning,
     /// → "Daemon unresponsive after 30s. Check `loom doctor`."
     ConnectionTimeout,
@@ -363,7 +363,12 @@ pub fn print_error_with_color(result: &Result<(), CliError>, stderr_color_enable
 /// failure variant. Pure function.
 pub fn connection_message(err: &ConnectionError) -> &'static str {
     match err {
-        ConnectionError::DaemonNotRunning => "Error: Loom Daemon is not running. Try: loom serve",
+        // Substrings `no daemon`, `Daemon`, and `loom serve` are load-bearing:
+        // AC4/FND-0001 asserts `no daemon` + `loom serve`; the hermetic
+        // subprocess exit-code test pins on `Daemon`. Keep all three when editing.
+        ConnectionError::DaemonNotRunning => {
+            "Error: no daemon running — start the Loom Daemon with: loom serve"
+        }
         ConnectionError::ConnectionTimeout => {
             "Error: Daemon unresponsive after 30s. Check `loom doctor`."
         }
