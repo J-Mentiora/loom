@@ -37,8 +37,8 @@ serde_json = { version = "1", features = ["preserve_order"] }
 serde_jcs = "0.2"
 
 # WASM (loom-host only)
-wasmtime = { version = "44", features = ["component-model", "async"] }
-wasmtime-wasi = "44"
+wasmtime = { version = "45", features = ["component-model", "async"] }
+wasmtime-wasi = "45"
 wit-bindgen = "0.57"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 gimli = "0.33"
