@@ -233,16 +233,35 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
 
     let now = host::clock_now();
     let response_hash = hex_sha256(&response);
-    // Surface the CDP response hash on the receipt for screenshot +
-    // snapshot verbs. This is a deterministic identifier of the captured
-    // artifact (bytes →
-    // SHA-256). NOTE: at this layer we don't push the bytes into the
-    // content store — that's a future host-side enhancement (a typed
-    // `record_blob` host function). Today the hash gives agents
-    // something to compare/diff against without needing to fetch the
-    // raw bytes; full content-store-backed retrieval is followup work.
+    // For `screenshot`, persist the decoded PNG host-side via the typed
+    // `record-screenshot` host import and surface the CONTENT-STORE hash of the
+    // raw PNG as screenshot_after_hash, so an MCP/CLI consumer can resolve it to
+    // a renderable `image/png`. The guest ships without a CBOR/base64 decoder by
+    // design, so the host owns the unwrap+store. On a record failure we fall
+    // back to the response hash so the verb still returns a receipt (graceful);
+    // both live and replay take the same branch for identical bytes, so the
+    // receipt stays deterministic.
+    //
+    // `snapshot` keeps the response-hash identifier (no content-store offload).
     let (screenshot_after_hash, dom_snapshot_hash) = match verb {
-        "screenshot" => (Some(response_hash.clone()), None),
+        "screenshot" => {
+            // On a record failure, leave screenshot_after_hash absent rather
+            // than emitting the response hash — a hash that resolves to nothing
+            // in the content store is worse than no hash (the client would fetch
+            // a 404). The verb still returns a successful receipt.
+            let hash = match host::record_screenshot(&response) {
+                Ok(r) => Some(r.sha256),
+                Err(e) => {
+                    host::log_emit(
+                        host::LogLevel::Warn,
+                        &format!("record_screenshot failed; screenshot not stored: {e:?}"),
+                        &[],
+                    );
+                    None
+                }
+            };
+            (hash, None)
+        }
         "snapshot" => (None, Some(response_hash.clone())),
         _ => (None, None),
     };

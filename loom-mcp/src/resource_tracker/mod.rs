@@ -59,6 +59,9 @@ impl ResourceTracker {
     }
 
     pub async fn read(self: &Arc<Self>, uri: &str) -> Result<ResourceContents, LoomError> {
+        if let Some(hash) = Self::hash_from_blob_uri(uri) {
+            return self.read_blob(uri, hash).await;
+        }
         let ulid = Self::ulid_from_uri(uri).ok_or_else(|| {
             loom_rpc::error::LoomError::new(
                 loom_rpc::error::LoomErrorCode::InvalidArgument,
@@ -73,8 +76,53 @@ impl ResourceTracker {
         Ok(ResourceContents {
             uri: uri.to_string(),
             mime_type: "application/json".to_string(),
-            text,
+            text: Some(text),
+            blob: None,
         })
+    }
+
+    /// Resolve a `loom://blob/<hash>` URI into a base64 binary resource by
+    /// reading the content store (via `content.get`). The MIME type is sniffed
+    /// from the bytes — `image/png` for a PNG, else `application/octet-stream`
+    /// (a blob URI accepts any 64-hex hash, so we never assume it's an image).
+    async fn read_blob(
+        self: &Arc<Self>,
+        uri: &str,
+        hash: &str,
+    ) -> Result<ResourceContents, LoomError> {
+        let bytes = self.rpc.fetch_blob_by_hash(hash).await.ok_or_else(|| {
+            loom_rpc::error::LoomError::new(
+                loom_rpc::error::LoomErrorCode::StoreNotFound,
+                format!("blob not found for hash: {hash}"),
+            )
+        })?;
+        let mime_type = if loom_shared::screenshot_decode::is_png(&bytes) {
+            "image/png"
+        } else {
+            "application/octet-stream"
+        };
+        let blob = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes);
+        Ok(ResourceContents {
+            uri: uri.to_string(),
+            mime_type: mime_type.to_string(),
+            text: None,
+            blob: Some(blob),
+        })
+    }
+
+    /// Extract a validated 64-hex hash from a `loom://blob/<hash>` URI.
+    pub fn hash_from_blob_uri(uri: &str) -> Option<&str> {
+        let h = uri.strip_prefix(BLOB_URI_PREFIX)?;
+        if crate::rpc_client::is_64_hex(h) {
+            Some(h)
+        } else {
+            None
+        }
+    }
+
+    /// Build a `loom://blob/<hash>` URI for a content-store hash.
+    pub fn uri_for_blob(hash: &str) -> String {
+        format!("{BLOB_URI_PREFIX}{hash}")
     }
 
     pub fn uri_for_session(ulid: &str) -> String {

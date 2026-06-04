@@ -125,6 +125,47 @@ impl Host for HostState {
         async move { result }
     }
 
+    fn record_screenshot(
+        &mut self,
+        cdp_response: Vec<u8>,
+    ) -> impl ::core::future::Future<Output = Result<ContentRef, HostError>> + Send {
+        // Decode the CDP `{data: <base64-PNG>}` envelope into raw PNG bytes so
+        // the content store holds a renderable image and the returned hash
+        // resolves to an actual `image/png`.
+        let result = match loom_shared::screenshot_decode::decode_cdp_screenshot(&cdp_response) {
+            Ok(png) if !loom_shared::screenshot_decode::is_png(&png) => {
+                // Decoded to something that isn't a PNG (empty/truncated/garbage).
+                // Refuse to store it — a 0-byte or non-image blob would only
+                // produce a dangling, unrenderable screenshot_after_hash.
+                Err(HostError::ShimFailure(
+                    "{\"kind\":\"screenshot_decode_failed\",\"reason\":\"decoded bytes are not a PNG\"}"
+                        .to_string(),
+                ))
+            }
+            Ok(png) => {
+                if self.mode == Mode::Replay {
+                    // Replay must NOT write to the content store, but must return
+                    // the SAME hash live mode stored so the receipt's
+                    // screenshot_after_hash is byte-identical. Derive it from the
+                    // decoded bytes (the blob already exists in CAS from live).
+                    Ok(ContentRef {
+                        sha256: loom_core::content_store::sha256_hex(&png),
+                        size: png.len() as u64,
+                    })
+                } else {
+                    match self.core.content_store.put(&png) {
+                        Ok(r) => Ok(core_ref_to_wit(r)),
+                        Err(e) => Err(loom_to_wit_error(e)),
+                    }
+                }
+            }
+            Err(e) => Err(HostError::ShimFailure(format!(
+                "{{\"kind\":\"screenshot_decode_failed\",\"reason\":\"{e}\"}}"
+            ))),
+        };
+        async move { result }
+    }
+
     // --- Network (vault-mediated; HARD invariant) ---
 
     fn net_request(

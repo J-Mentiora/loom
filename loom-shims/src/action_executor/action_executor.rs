@@ -338,8 +338,22 @@ impl ActionExecutor for ChromiumActionExecutor {
             .command(target_id, shot_msg, Some(timeout))
             .await
             .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
-        let screenshot_sha256 = sha256_hex_of_cbor(&shot_result);
-        let screenshot_bytes = cbor_to_bytes(&shot_result);
+        // Decode the CDP screenshot envelope (CBOR `{data: <base64-PNG>}`)
+        // into raw PNG bytes so the content store holds a renderable image
+        // rather than a double-encoded envelope. On the rare decode failure
+        // fall back to the raw CBOR bytes (pre-fix behaviour) so navigate
+        // never breaks on an unexpected response shape.
+        let raw_cbor = cbor_to_bytes(&shot_result);
+        let screenshot_bytes = match loom_shared::screenshot_decode::decode_cdp_screenshot(
+            &raw_cbor,
+        ) {
+            Ok(png) => png,
+            Err(e) => {
+                tracing::warn!(error = %e, "screenshot decode failed; storing raw CDP envelope");
+                raw_cbor
+            }
+        };
+        let screenshot_sha256 = sha256_hex_of_bytes(&screenshot_bytes);
 
         // STEP 6a: extract document.title and final_url via a single
         // Runtime.evaluate roundtrip. This replaces the earlier stubs
@@ -612,6 +626,20 @@ fn cbor_to_bytes(value: &CborValue) -> Vec<u8> {
     let mut bytes = Vec::new();
     let _ = ciborium::ser::into_writer(value, &mut bytes);
     bytes
+}
+
+/// Compute SHA-256 (lowercase hex) of raw bytes. Used for `screenshot_sha256`
+/// now that the screenshot is stored as a decoded PNG rather than its CBOR
+/// envelope.
+fn sha256_hex_of_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity(64);
+    for b in digest.iter() {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
 }
 
 /// Compute SHA-256 (lowercase hex) of the CBOR-encoded form of a value.

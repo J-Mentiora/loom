@@ -286,3 +286,95 @@ async fn host_to_shim_to_fake_chromium_round_trip_per_verb() {
     mgr.shutdown_session("test-session-verbs").await;
     drop(user_data_dir);
 }
+
+/// Parse PNG IHDR width/height (big-endian u32 at byte offsets 16 and 20).
+fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 {
+        return None;
+    }
+    let w = u32::from_be_bytes([png[16], png[17], png[18], png[19]]);
+    let h = u32::from_be_bytes([png[20], png[21], png[22], png[23]]);
+    Some((w, h))
+}
+
+/// e2e (mcp-screenshot-delivery): a real shim + fake-chromium
+/// `Page.captureScreenshot` round-trip, decoded through the SAME helper the
+/// host/shim use before storing, must yield a valid raw PNG — proving the
+/// content store will hold renderable bytes, not a CBOR{data:base64} envelope.
+#[tokio::test]
+#[ignore = "requires fake-chromium binary; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first"]
+async fn screenshot_capture_decodes_to_valid_png() {
+    use loom_shared::screenshot_decode::{decode_cdp_screenshot, is_png};
+
+    let fake_path = fake_chromium_bin();
+    let shim_path = shim_bin();
+    if !std::path::Path::new(&fake_path).exists() {
+        panic!(
+            "fake-chromium binary not built at {fake_path}; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first"
+        );
+    }
+    if !std::path::Path::new(&shim_path).exists() {
+        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-cli --bin loom-shim-chromium` first");
+    }
+    let user_data_dir = tempfile::tempdir().expect("tempdir");
+
+    let obs = HostObservability::new(true);
+    let mgr = ShimManager::new(obs);
+    let id = ShimId("chromium:test-session-shot".into());
+    mgr.register(
+        id.clone(),
+        ShimConfig {
+            binary_path: shim_path.into(),
+            args: vec![],
+            env: vec![
+                ("LOOM_SHIM_CHROMIUM_PATH".into(), fake_chromium_bin()),
+                (
+                    "LOOM_SHIM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+            ],
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 10_000,
+            recv_timeout_ms: 30_000,
+        },
+    );
+
+    let shot = CdpMessage {
+        method: "Page.captureScreenshot".into(),
+        params: ciborium::value::Value::Map(vec![(
+            ciborium::value::Value::Text("format".into()),
+            ciborium::value::Value::Text("png".into()),
+        )]),
+    };
+    let payload = ciborium_to_vec(&shot).expect("encode CdpMessage");
+    let response = tokio::time::timeout(Duration::from_secs(30), mgr.send(id.clone(), payload))
+        .await
+        .expect("screenshot did not return in 30s")
+        .expect("screenshot errored");
+
+    // The raw shim response is the CBOR `{data: base64}` envelope — NOT a PNG.
+    assert!(
+        !is_png(&response),
+        "raw shim response must be the CBOR envelope, not a bare PNG"
+    );
+
+    // Decoding it (what the host/shim do before content_store.put) yields a
+    // valid raw PNG with sane dimensions.
+    let png = decode_cdp_screenshot(&response).expect("decode CDP screenshot to PNG");
+    assert!(is_png(&png), "decoded bytes must start with PNG magic");
+    assert!(png.len() >= 8, "decoded PNG must be non-trivial");
+    let (w, h) = png_dimensions(&png).expect("decoded PNG must have an IHDR with dimensions");
+    assert!(
+        w >= 1 && h >= 1 && w <= 100_000 && h <= 100_000,
+        "decoded PNG dimensions must be sane, got {w}x{h}"
+    );
+
+    mgr.shutdown_session("test-session-shot").await;
+    drop(user_data_dir);
+}

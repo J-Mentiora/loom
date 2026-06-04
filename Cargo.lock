@@ -2396,10 +2396,12 @@ name = "loom-mcp"
 version = "0.9.8"
 dependencies = [
  "async-trait",
+ "base64",
  "bytes",
  "clap",
  "dirs",
  "futures",
+ "hex",
  "loom-rpc",
  "loom-shared",
  "parking_lot",
@@ -2444,6 +2446,7 @@ dependencies = [
 name = "loom-shared"
 version = "0.9.8"
 dependencies = [
+ "base64",
  "ciborium",
  "dirs",
  "serde",

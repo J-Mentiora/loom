@@ -17,6 +17,7 @@ pub mod llm_types;
 pub mod logging;
 pub mod navigate_outcome;
 pub mod redacted;
+pub mod screenshot_decode;
 pub mod shim_protocol;
 pub mod types;
 
