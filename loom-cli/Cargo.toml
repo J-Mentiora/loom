@@ -1,5 +1,15 @@
 [package]
 name = "loom-cli"
+# crates.io decision (onboarding-friction-audit AC7): loom is NOT published to
+# crates.io. `loom` is the tokio-rs concurrency crate and both `loom-cli` and
+# our internal `loom-core` names are already owned by an unrelated third party,
+# so a real publish would require renaming + republishing the whole ~10-crate
+# workspace under a namespace — out of proportion to the benefit when the binary
+# already installs via Homebrew, the release installer script, and
+# `cargo install --git … --tag`. `publish = false` is the guard that encodes
+# that decision: it makes `cargo publish` refuse, so no release can leak a crate
+# to crates.io by accident. See the per-ecosystem install table in README.md.
+publish = false
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -140,13 +140,40 @@ feature breadth.
 
 ## Install
 
-Pick whichever fits your environment. All three end at the same `loom postinstall`
-step, which downloads + verifies the pinned Chromium build (~150 MB, one-time)
-and AOT-compiles the WASM surfaces.
+Pick whichever fits your environment. The three CLI methods below all end at the
+same `loom postinstall` step, which downloads + verifies the pinned Chromium
+build (~150 MB, one-time) and AOT-compiles the WASM surfaces.
 
 > **What runs where.** loom runs entirely locally; it adds no telemetry.
 > Chromium is downloaded from GitHub Releases over TLS and SHA-256-verified
 > before execution.
+
+### Packages at a glance
+
+| Component | Registry | Package | Install |
+|-----------|----------|---------|---------|
+| CLI + runtime | Homebrew | `mentiora-ai/loom/loom` | `brew install mentiora-ai/loom/loom` |
+| CLI + runtime | Release installer | — | `curl -fsSL …/loom-cli-installer.sh \| sh` |
+| CLI + runtime | Cargo (from git) | `loom-cli` | `cargo install --git … --tag v0.9.8 loom-cli` |
+| CLI + runtime | crates.io | — | **not published** ([why](#why-no-cratesio-package)) — use a method above |
+| TypeScript SDK | npm | [`@mentiora-ai/loom-sdk`](https://www.npmjs.com/package/@mentiora-ai/loom-sdk) | `npm install @mentiora-ai/loom-sdk` |
+| Python SDK | PyPI | `mentiora-loom` | published on the next tagged release ([details](#python)) |
+
+The detailed steps for each CLI method follow; SDK install is under
+[Client SDKs](#client-sdks).
+
+#### Why no crates.io package
+
+loom isn't published to crates.io. `loom` is taken (tokio-rs's concurrency
+crate), and `loom-cli`/`loom-core` are owned by an unrelated project, so a real
+publish would mean renaming and republishing the whole ~10-crate workspace under
+a namespace — out of proportion to the benefit when the binary already installs
+via Homebrew, the release installer, and `cargo install --git`. The decision is
+encoded as `publish = false` in [`loom-cli/Cargo.toml`](loom-cli/Cargo.toml), so
+`cargo publish` refuses and no release can leak a crate by accident. **Rollback:**
+there is no registry artifact to `cargo yank`, so a bad Rust build is recovered by
+a patch-forward release (tag the next version); the npm and PyPI SDK packages
+follow the yank / patch-forward procedure documented in their publish workflows.
 
 ### Homebrew — macOS arm64/x64, Linux x64
 
@@ -265,12 +292,16 @@ Requires Node ≥ 20 and a running `loom serve`. Full surface (every
 ### Python
 
 The Python SDK lives in [python-sdk/](python-sdk/) — same surface as
-the TypeScript SDK, async-first. It isn't on PyPI yet; for now use a
-git install:
+the TypeScript SDK, async-first. It publishes to PyPI as `mentiora-loom`
+on the next tagged release (the publish workflow is wired but hasn't run
+against a tag yet). Until that lands, install from git:
 
 ```bash
 pip install "git+https://github.com/mentiora-ai/loom@v0.9.8#subdirectory=python-sdk"
 ```
+
+Once the next release is out: `pip install mentiora-loom` (the import name
+stays `loom`).
 
 ```python
 import loom
@@ -281,8 +312,9 @@ with loom.Session.create() as session:
 
 ### Rust
 
-There's no separate published crate — call `loom-rpc` directly, or shell out
-to `loom action ...` from your Rust code. The crate layout under
+There's no separate published crate ([loom isn't on crates.io](#why-no-cratesio-package)) —
+call `loom-rpc` directly from a path/git dependency, or shell out to
+`loom action ...` from your Rust code. The crate layout under
 [Architecture → Crate map](#crate-map) tells you which crate provides what.
 
 ## 5-minute quickstart
