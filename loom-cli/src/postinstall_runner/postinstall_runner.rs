@@ -99,8 +99,49 @@ pub struct PostinstallReceipt {
     pub manpages: StepOutcome,
 }
 
+/// Decide whether to warn that this `loom` was installed from a non-release
+/// commit (AC6 / R6).
+///
+/// `release_marker` is the `build.rs`-stamped `LOOM_RELEASE_BUILD`:
+/// - `"1"` — HEAD was on a `v*` release tag → a real release build.
+/// - `"0"` — git present but off-tag → a non-release commit (the tagless
+///   `cargo install --git ... loom-cli` path).
+/// - `"unknown"` — no `.git` at build time (cargo-dist source tarball) → treated
+///   as a release install; we do NOT warn (avoids false positives on legitimate
+///   tarball releases).
+///
+/// Also warns when `version` carries a SemVer pre-release segment (e.g.
+/// `0.10.0-dev`), so the warning still fires under a future `-dev`-on-`main`
+/// convention even on builds without git.
+///
+/// The returned message intentionally contains the stable substrings
+/// `non-release` and `--tag` (FND-0001) so a test can lock the contract without
+/// pinning the full wording.
+pub fn tagless_install_warning(version: &str, release_marker: &str) -> Option<String> {
+    let pre_release_version = version.contains('-');
+    let non_release_commit = release_marker == "0";
+    if !(pre_release_version || non_release_commit) {
+        return None;
+    }
+    Some(format!(
+        "warning: this `loom` ({version}) was installed from a non-release commit. \
+         Installs from a moving branch are not reproducible — pin a tagged release by \
+         passing `--tag vX.Y.Z`, e.g. \
+         `cargo install --git https://github.com/mentiora-ai/loom --tag vX.Y.Z loom-cli`."
+    ))
+}
+
 /// Runs the full postinstall pipeline. Idempotent — safe to re-run.
 pub async fn run(opts: PostinstallOptions) -> Result<PostinstallReceipt, CliError> {
+    // Up front, before any work: warn if this binary came from a non-release
+    // commit (tagless `cargo install --git`). Advisory only — stderr, never
+    // blocks the install (AC6 / R6).
+    if let Some(warning) =
+        tagless_install_warning(env!("CARGO_PKG_VERSION"), env!("LOOM_RELEASE_BUILD"))
+    {
+        eprintln!("{warning}");
+    }
+
     let compile_outcomes = compile_step(&opts.surfaces_dir)?;
 
     let schemas = schema_step(&opts.schemas_dir)?;
