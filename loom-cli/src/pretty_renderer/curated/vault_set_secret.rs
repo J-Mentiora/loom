@@ -1,9 +1,8 @@
-use super::{CuratedRenderer, RenderedReceipt};
+use super::{consumed, quiet_id_label, CuratedRenderer, RenderedReceipt};
 use crate::cli_config::CliConfig;
 use crate::pretty_renderer::ansi;
 use crate::CliError;
 use serde_json::Value;
-use std::collections::HashSet;
 
 pub struct VaultSetSecret;
 
@@ -25,19 +24,12 @@ impl CuratedRenderer for VaultSetSecret {
         let body = format!("{lead}\n{tail}");
         let text = ansi::paint(&body, ansi::GREEN, cfg.stdout_color_enabled);
 
-        let mut consumed = HashSet::new();
-        consumed.insert("label".to_string());
-        consumed.insert("replaced".to_string());
-        consumed.insert("size_bucket".to_string());
         Ok(RenderedReceipt {
             text,
-            consumed_keys: consumed,
+            consumed_keys: consumed(&["label", "replaced", "size_bucket"]),
         })
     }
     fn quiet_id(&self, value: &Value) -> Option<String> {
-        value
-            .get("label")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
+        quiet_id_label(value)
     }
 }

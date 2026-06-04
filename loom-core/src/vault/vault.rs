@@ -136,6 +136,51 @@ pub struct GrantSnapshot {
 /// expansion beyond GitHub belongs to a follow-up feature).
 pub const OAUTH_PROVIDER_ALLOWLIST: &[&str] = &["github"];
 
+/// Three-tier size category for stored credentials (D24). Eliminates
+/// the exact-byte side-channel that `byte_count` would expose in the
+/// hash-chained audit manifest.
+///
+/// Single source of truth for the two forms this bucket takes: the
+/// audit-payload enum (serialised inside `SecretAuditPayload::Stored`)
+/// and the daemon RPC receipt string ([`SizeBucket::as_str`]). The serde
+/// output and `as_str` MUST agree — enforced by
+/// `loom-core/tests/vault_size_bucket_ssot.rs`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SizeBucket {
+    /// ≤ 256 bytes (typical for OAuth bearer tokens, API keys).
+    Small,
+    /// ≤ 4096 bytes (long tokens, refresh-token bundles).
+    Medium,
+    /// > 4096 bytes (large session cookies, multi-part credentials).
+    Large,
+}
+
+impl SizeBucket {
+    /// Wire string for the daemon RPC receipt (`VaultSetSecretInfo.size_bucket`).
+    /// Matches the serde `rename_all = "snake_case"` output above.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SizeBucket::Small => "small",
+            SizeBucket::Medium => "medium",
+            SizeBucket::Large => "large",
+        }
+    }
+}
+
+/// Map a raw secret byte length into its coarse [`SizeBucket`] (D24). The single
+/// place the 256/4096 thresholds are defined — both the core audit payload and the
+/// daemon receipt go through this.
+pub fn size_bucket(byte_count: usize) -> SizeBucket {
+    if byte_count <= 256 {
+        SizeBucket::Small
+    } else if byte_count <= 4096 {
+        SizeBucket::Medium
+    } else {
+        SizeBucket::Large
+    }
+}
+
 /// In-memory grant record. The `secret_ref` is a small handle into the
 /// process-internal secret store (the actual bytes live in a separate
 /// allocation owned by the keychain crate, fetched at substitute time).
