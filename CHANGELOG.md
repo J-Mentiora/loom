@@ -6,6 +6,35 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.9] — 2026-06-04 — MCP Screenshot Delivery
+
+Screenshots captured by `web.screenshot` / `web.navigate` now reach MCP clients
+as usable PNG bytes. Capture always worked, but no renderable image ever reached
+a consumer: the content-store blob was a double-encoded `CBOR{data:base64}`
+envelope, MCP had no image content type, and there was no way to resolve a
+screenshot hash over MCP.
+
+### Fixed
+
+- **Screenshots arrive empty at MCP clients (#116).** The content store now holds
+  a raw PNG — decoded from the CDP `{data:<base64>}` envelope by a shared
+  host-side helper — and `web.screenshot` actually persists its capture via a new
+  typed `record-screenshot` host import (previously it stored nothing and emitted
+  a dangling hash). Determinism (NFR-DET-01 hash-chain exclusion of screenshots),
+  GC reference-walking, and content-addressed dedup are all preserved.
+
+### Added
+
+- **MCP image delivery (#116).** A `tools/call` for `web.screenshot` /
+  `web.navigate` now returns an inline `image` content block (base64 PNG)
+  alongside the text receipt, and a new `loom://blob/<hash>` MCP resource resolves
+  any content hash to its bytes (PNG-sniffed → `image/png`, else
+  `application/octet-stream`). Both reuse the existing `content.get` RPC — no new
+  daemon RPC.
+- **`cut-release` Claude skill + `CLAUDE.md`.** A checklist-driven release runbook
+  (version bump across Cargo/README/SDKs/CHANGELOG, then a tag-triggered
+  cargo-dist + PyPI + npm + Homebrew publish) so cutting a release is reproducible.
+
 ## [0.9.8] — 2026-06-03 — File Uploads
 
 Adds the file-upload web verb. `web.set_input_files` lets agents drive
