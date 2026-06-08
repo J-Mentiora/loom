@@ -72,6 +72,11 @@ pub trait CoreFacadeBridge: Send + Sync {
         session_id: &str,
     ) -> Result<(bool, Vec<String>), AdapterError>;
 
+    /// `session.reap` — quarantine corrupt-WAL orphan sessions that are stuck in
+    /// the on-disk active set (and thus consuming concurrency slots) without a
+    /// daemon restart. `dry_run` previews candidates without moving anything.
+    fn session_reap(&self, dry_run: bool) -> Result<ReapReport, AdapterError>;
+
     /// Import a Playwright trace.zip from raw bytes. Creates a non-replayable
     /// session and returns its id + action count.
     fn import_playwright_from_bytes(
@@ -173,6 +178,18 @@ pub struct GcRunReport {
     pub blobs_scanned: u64,
     pub blobs_collected: u64,
     pub bytes_freed: u64,
+}
+
+/// Wire shape for `session.reap`. `quarantined` holds the corrupt-orphan session
+/// IDs that were (or, when `dry_run`, would be) moved aside; `failed` holds
+/// `"<id>: <reason>"` for sessions that could not be moved (e.g. cross-device).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReapReport {
+    pub quarantined: Vec<String>,
+    pub skipped_live: u64,
+    pub dry_run: bool,
+    pub quarantine_dir: Option<String>,
+    pub failed: Vec<String>,
 }
 
 // === Wire types (WIT-derived; mirrored here for adapter return
@@ -515,6 +532,10 @@ pub trait CoreServiceAdapterApi: Send + Sync {
         ttl_days: Option<u64>,
         store_max_bytes: Option<u64>,
     ) -> Result<GcRunReport, AdapterError>;
+
+    /// `session.reap` — quarantine stuck corrupt-WAL orphan sessions. `dry_run`
+    /// previews without moving anything.
+    fn session_reap(&self, dry_run: bool) -> Result<ReapReport, AdapterError>;
 }
 
 #[allow(dead_code)]

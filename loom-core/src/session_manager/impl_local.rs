@@ -248,6 +248,15 @@ impl LocalSessionManager {
         Ok(())
     }
 
+    /// IDs of every session the daemon currently holds in memory. Used by
+    /// `session.reap` as the skip set: a corrupt-looking WAL that belongs to a
+    /// live session is just mid-write, not an abandoned orphan — never quarantine
+    /// it. (Startup recovery doesn't need this; it runs before any session is
+    /// created, so the live set is empty then.)
+    pub fn live_session_ids(&self) -> std::collections::HashSet<SessionId> {
+        self.sessions.iter().map(|e| e.key().clone()).collect()
+    }
+
     /// Abort all Active sessions. Called by startup_manager on SIGTERM.
     pub fn abort_all(&self, reason: AbortReason) -> Result<(), LoomError> {
         let active_ids: Vec<SessionId> = self

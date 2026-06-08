@@ -392,8 +392,13 @@ impl CoreFacadeBridge for CoreBridge {
         // already active, rather than spawning an unbounded number of chromium
         // shims. Counts the AUTHORITATIVE live-session set (no separate counter
         // to drift or leak — a closed/aborted/crashed session leaves the set, so
-        // the count self-reconciles without a reaper). Cap-hit → `TooManyRequests`
-        // so the caller backs off and retries when a slot frees (NOT a reconnect).
+        // the count self-reconciles for the common case). The one exception is a
+        // corrupt-WAL orphan (torn write from a hard daemon kill): its broken
+        // chain can't be terminal-marked, so it would otherwise read as "active"
+        // forever. That gap is closed by the startup quarantine sweep, the disk
+        // scanner's "corrupt" status (excluded from this count), and the on-demand
+        // `session.reap`. Cap-hit → `TooManyRequests` so the caller backs off and
+        // retries when a slot frees (NOT a reconnect).
         //
         // This is a best-effort, eventually-consistent resource valve, not a
         // hard security boundary (the daemon is single-user/local): a check-then-
@@ -857,6 +862,46 @@ impl CoreFacadeBridge for CoreBridge {
                 blobs_scanned: report.blobs_scanned,
                 blobs_collected: report.blobs_collected,
                 bytes_freed: report.bytes_freed,
+            },
+        )
+    }
+
+    fn session_reap(
+        &self,
+        dry_run: bool,
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::ReapReport, AdapterError>
+    {
+        // Skip set = sessions live in memory, so a session merely mid-WAL-write
+        // is never mistaken for an abandoned corrupt orphan (D4).
+        let skip = self.core.session_manager.live_session_ids();
+        let outcome = self
+            .core
+            .startup_manager
+            .quarantine_corrupt_sessions(dry_run, &skip)
+            .map_err(|e| map_loom_error(&e))?;
+
+        if !outcome.quarantined.is_empty() || !outcome.failed.is_empty() {
+            tracing::warn!(
+                metric = "loom_daemon_session_reap",
+                dry_run,
+                quarantined = outcome.quarantined.len(),
+                skipped_live = outcome.skipped_live,
+                failed = outcome.failed.len(),
+                "session.reap quarantined corrupt orphan session(s)"
+            );
+        }
+
+        Ok(
+            loom_rpc::core_service_adapter::core_service_adapter::ReapReport {
+                quarantined: outcome.quarantined.into_iter().map(|s| s.0).collect(),
+                skipped_live: outcome.skipped_live,
+                dry_run: outcome.dry_run,
+                quarantine_dir: outcome.quarantine_dir.map(|p| p.display().to_string()),
+                failed: outcome
+                    .failed
+                    .into_iter()
+                    .map(|f| format!("{}: {}", f.session_id.0, f.details))
+                    .collect(),
             },
         )
     }
@@ -2423,9 +2468,31 @@ async fn async_main() -> Result<()> {
     };
     let core = CoreApiFacade::new(core_config, keychain).context("CoreApiFacade::new failed")?;
 
-    // 2. Crash-recovery sweep.
-    let _recovery = core.startup_manager.perform_recovery_sweep();
-    // Recovery errors are non-fatal — daemon continues serving.
+    // 2. Crash-recovery sweep. Recovery errors are non-fatal — the daemon
+    //    continues serving — but the report is logged (not discarded) so an
+    //    operator can see crashed/quarantined counts at startup.
+    match core.startup_manager.perform_recovery_sweep() {
+        Ok(report) => {
+            if report.sessions_crashed > 0
+                || report.sessions_quarantined > 0
+                || !report.failed_sessions.is_empty()
+                || report.orphan_tmpfiles_removed > 0
+            {
+                tracing::warn!(
+                    metric = "loom_daemon_recovery_sweep",
+                    sessions_recovered = report.sessions_recovered,
+                    sessions_crashed = report.sessions_crashed,
+                    sessions_quarantined = report.sessions_quarantined,
+                    orphan_tmpfiles_removed = report.orphan_tmpfiles_removed,
+                    failed_sessions = report.failed_sessions.len(),
+                    "startup crash-recovery sweep completed"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "startup crash-recovery sweep failed (non-fatal)");
+        }
+    }
 
     // 3. Build WasmHost (or stub if surfaces aren't compiled yet).
     let (host_bridge, wasm_host_handle): (Arc<dyn WasmHostBridge>, _) =

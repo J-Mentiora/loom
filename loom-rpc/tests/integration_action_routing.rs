@@ -411,6 +411,15 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
     > {
         Ok(loom_rpc::core_service_adapter::core_service_adapter::GcRunReport::default())
     }
+    fn session_reap(
+        &self,
+        _: bool,
+    ) -> Result<
+        loom_rpc::core_service_adapter::core_service_adapter::ReapReport,
+        loom_rpc::core_service_adapter::core_service_adapter::AdapterError,
+    > {
+        Ok(loom_rpc::core_service_adapter::core_service_adapter::ReapReport::default())
+    }
 }
 
 // ─── Test server ──────────────────────────────────────────────────────────────
