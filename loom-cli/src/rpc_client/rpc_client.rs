@@ -56,9 +56,13 @@ impl RpcClient {
         Self { config }
     }
 
-    /// Open the Unix-socket connection and complete the HELLO
-    /// handshake. Single connect retry on `ECONNREFUSED`.
-    pub async fn connect(&self) -> Result<(), CliError> {
+    /// Open the Unix socket (one `ECONNREFUSED` retry) and complete the
+    /// HELLO handshake. Returns the authenticated stream — `connect`
+    /// discards it, `call` reuses it for the request/response exchange.
+    ///
+    /// HELLO semantics: timeout on the read-back = accepted; any frame or
+    /// EOF before the timeout = rejected (`AuthFailed`).
+    async fn open_and_hello(&self) -> Result<tokio::net::UnixStream, CliError> {
         let auth =
             crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
         let token = auth.read_hello_token()?;
@@ -85,12 +89,18 @@ impl RpcClient {
             })?;
         // Timeout = accepted; any frame or EOF before timeout = rejected.
         let hello = tokio::time::timeout(Duration::from_millis(50), recv_frame(&mut stream)).await;
-        match hello {
-            Err(_timeout) => Ok(()),
-            Ok(_) => Err(CliError::Connection(
+        if hello.is_ok() {
+            return Err(CliError::Connection(
                 crate::error_mapper::ConnectionError::AuthFailed,
-            )),
+            ));
         }
+        Ok(stream)
+    }
+
+    /// Open the Unix-socket connection and complete the HELLO
+    /// handshake. Single connect retry on `ECONNREFUSED`.
+    pub async fn connect(&self) -> Result<(), CliError> {
+        self.open_and_hello().await.map(|_| ())
     }
 
     /// Issue exactly one JSON-RPC call. Opens a fresh connection,
@@ -101,36 +111,7 @@ impl RpcClient {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, CliError> {
-        let auth =
-            crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
-        let token = auth.read_hello_token()?;
-        let mut stream = match tokio::net::UnixStream::connect(&self.config.socket_path).await {
-            Ok(s) => s,
-            Err(e) if e.kind() == std::io::ErrorKind::ConnectionRefused => {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                tokio::net::UnixStream::connect(&self.config.socket_path)
-                    .await
-                    .map_err(|_| {
-                        CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
-                    })?
-            }
-            Err(_) => {
-                return Err(CliError::Connection(
-                    crate::error_mapper::ConnectionError::DaemonNotRunning,
-                ))
-            }
-        };
-        send_frame(&mut stream, format!("HELLO {token}").as_bytes())
-            .await
-            .map_err(|_| {
-                CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
-            })?;
-        let hello = tokio::time::timeout(Duration::from_millis(50), recv_frame(&mut stream)).await;
-        if hello.is_ok() {
-            return Err(CliError::Connection(
-                crate::error_mapper::ConnectionError::AuthFailed,
-            ));
-        }
+        let mut stream = self.open_and_hello().await?;
         let request = serde_json::json!({
             "jsonrpc": "2.0",
             "method": method,
