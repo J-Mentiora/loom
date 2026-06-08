@@ -268,6 +268,15 @@ pub struct ValidateArgs {
     pub session_id: String,
 }
 
+/// `loom session reap [--apply]` arguments.
+#[derive(Debug, Clone, Args, Serialize, Deserialize)]
+pub struct ReapArgs {
+    /// Actually quarantine the corrupt orphans. Without this flag, reap only
+    /// previews (dry-run) — nothing on disk is moved.
+    #[arg(long)]
+    pub apply: bool,
+}
+
 /// One handler per subcommand. Each calls exactly one RPC method on
 /// `RpcClient`, then forwards the raw receipt to `OutputFormatter`.
 pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Result<(), CliError> {
@@ -546,6 +555,51 @@ pub async fn validate(
     Ok(())
 }
 
+pub async fn reap(rpc: &RpcClient, _cfg: &CliConfig, args: ReapArgs) -> Result<(), CliError> {
+    let dry_run = !args.apply;
+    let resp = rpc
+        .call("session.reap", serde_json::json!({ "dry_run": dry_run }))
+        .await?;
+
+    #[derive(serde::Deserialize)]
+    struct ReapResult {
+        quarantined: Vec<String>,
+        skipped_live: u64,
+        dry_run: bool,
+        quarantine_dir: Option<String>,
+        failed: Vec<String>,
+    }
+    let result: ReapResult = serde_json::from_value(resp)
+        .map_err(|e| CliError::Internal(format!("reap response parse: {e}")))?;
+
+    let verb = if result.dry_run {
+        "would quarantine"
+    } else {
+        "quarantined"
+    };
+    println!(
+        "{} {} corrupt orphan session(s); {} live session(s) skipped",
+        verb,
+        result.quarantined.len(),
+        result.skipped_live
+    );
+    for id in &result.quarantined {
+        println!("  - {id}");
+    }
+    if let Some(dir) = &result.quarantine_dir {
+        if !result.quarantined.is_empty() {
+            println!("quarantine dir: {dir}");
+        }
+    }
+    for f in &result.failed {
+        println!("  ! failed: {f}");
+    }
+    if result.dry_run && !result.quarantined.is_empty() {
+        println!("(dry-run — re-run with --apply to move them)");
+    }
+    Ok(())
+}
+
 /// Compile-time mapping table — used by `interface_tests` to assert
 /// subcommand coverage.
 pub const SUBCOMMAND_RPC_MAP: &[(&str, &str)] = &[
@@ -558,4 +612,5 @@ pub const SUBCOMMAND_RPC_MAP: &[(&str, &str)] = &[
     ("diff", "session.diff"),
     ("export", "session.export"),
     ("validate", "session.validate"),
+    ("reap", "session.reap"),
 ];

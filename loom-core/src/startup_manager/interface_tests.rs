@@ -32,16 +32,18 @@ fn fixture() -> StartupManager {
 // === Recovery report shape ===
 
 #[test]
-fn recovery_report_has_three_integer_counters_plus_failed_list() {
+fn recovery_report_has_four_integer_counters_plus_failed_list() {
     let r = RecoveryReport {
         sessions_recovered: 3,
         sessions_crashed: 1,
         orphan_tmpfiles_removed: 7,
+        sessions_quarantined: 2,
         failed_sessions: vec![],
     };
     let _u1: u64 = r.sessions_recovered;
     let _u2: u64 = r.sessions_crashed;
     let _u3: u64 = r.orphan_tmpfiles_removed;
+    let _u4: u64 = r.sessions_quarantined;
 }
 
 #[test]
@@ -101,6 +103,7 @@ fn one_session_failure_does_not_block_others_failed_list_is_vec() {
         sessions_recovered: 5,
         sessions_crashed: 2,
         orphan_tmpfiles_removed: 0,
+        sessions_quarantined: 0,
         failed_sessions: vec![
             FailedSession {
                 session_id: SessionId("01HZ-A".into()),

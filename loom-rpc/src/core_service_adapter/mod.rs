@@ -197,6 +197,10 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
     ) -> Result<GcRunReport, AdapterError> {
         self.core.gc_run(ttl_days, store_max_bytes)
     }
+
+    fn session_reap(&self, dry_run: bool) -> Result<ReapReport, AdapterError> {
+        self.core.session_reap(dry_run)
+    }
 }
 
 impl CoreServiceAdapter {

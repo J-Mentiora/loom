@@ -27,8 +27,8 @@ use crate::postinstall_runner::PostinstallOptions;
 use crate::rpc_client::{RpcClient, RpcClientConfig};
 use crate::serve_runner::ServeOptions;
 use crate::session_commands::{
-    AbortArgs, CloseArgs, CreateArgs, DiffArgs, ExportArgs, InspectArgs, ListArgs, ReplayArgs,
-    ValidateArgs,
+    AbortArgs, CloseArgs, CreateArgs, DiffArgs, ExportArgs, InspectArgs, ListArgs, ReapArgs,
+    ReplayArgs, ValidateArgs,
 };
 use crate::vault_commands::{
     VaultAddArgs, VaultDeleteArgs, VaultDiagnoseArgs, VaultGrantArgs, VaultListArgs,
@@ -118,7 +118,7 @@ pub enum ImportCmd {
     Playwright(ImportPlaywrightArgs),
 }
 
-/// Session subcommand — exactly nine RPC-mapped variants.
+/// Session subcommand — exactly ten RPC-mapped variants.
 #[derive(Debug, Subcommand)]
 pub enum SessionCmd {
     Create(CreateArgs),
@@ -130,6 +130,10 @@ pub enum SessionCmd {
     Diff(DiffArgs),
     Export(ExportArgs),
     Validate(ValidateArgs),
+    /// `session reap [--apply]` — quarantine corrupt-WAL orphan sessions that
+    /// are stuck in the active set and consuming concurrency slots. Previews by
+    /// default (dry-run); pass `--apply` to actually move them aside.
+    Reap(ReapArgs),
 }
 
 /// Vault subcommand. The four legacy `Grant/Revoke/List/Add` variants
@@ -195,6 +199,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 SessionCmd::Diff(a) => crate::session_commands::diff(&rpc, config, a).await,
                 SessionCmd::Export(a) => crate::session_commands::export(&rpc, config, a).await,
                 SessionCmd::Validate(a) => crate::session_commands::validate(&rpc, config, a).await,
+                SessionCmd::Reap(a) => crate::session_commands::reap(&rpc, config, a).await,
             }
         }
 

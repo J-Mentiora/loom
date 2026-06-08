@@ -164,6 +164,13 @@ impl CoreFacadeBridge for NoopCoreBridge {
     {
         Ok(loom_rpc::core_service_adapter::core_service_adapter::GcRunReport::default())
     }
+    fn session_reap(
+        &self,
+        _: bool,
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::ReapReport, LoomErrorCode>
+    {
+        Ok(loom_rpc::core_service_adapter::core_service_adapter::ReapReport::default())
+    }
 }
 
 struct StubHostBridge;

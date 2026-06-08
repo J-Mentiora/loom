@@ -53,6 +53,14 @@ pub fn list_sessions_info_from_dir(
 
         let mut created_at_ms: u64 = 0;
         let mut status = "active".to_string();
+        // A torn/partial WAL line (hard daemon kill mid-write) is unparseable.
+        // Such a session has a broken hash chain and cannot be reconciled in
+        // place; until the startup sweep / `session.reap` quarantines it, it
+        // must NOT read as "active" (else it permanently consumes a concurrency
+        // slot — the cap counts this on-disk active set). Note: this catches the
+        // torn-write failure mode (a parse error). A clean-parse-but-broken hash
+        // chain without any parse error is reconciled by the sweep's validate().
+        let mut had_parse_error = false;
 
         for line in content.lines() {
             if line.is_empty() {
@@ -60,7 +68,10 @@ pub fn list_sessions_info_from_dir(
             }
             let entry: ManifestEntry = match serde_json::from_str(line) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(_) => {
+                    had_parse_error = true;
+                    continue;
+                }
             };
             match &entry {
                 ManifestEntry::Header { started_at_ms, .. } => {
@@ -86,6 +97,14 @@ pub fn list_sessions_info_from_dir(
                 }
                 _ => {}
             }
+        }
+
+        // Derived (transient) detection status: a corrupt WAL with no terminal
+        // marker is "corrupt", not "active". This is a scan-time classification,
+        // NOT a persisted lifecycle state — the sweep/reap then reconciles it by
+        // quarantining the dir (detect → reconcile).
+        if had_parse_error && status == "active" {
+            status = "corrupt".to_string();
         }
 
         result.push((session_id, status, created_at_ms));

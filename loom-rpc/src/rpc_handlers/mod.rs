@@ -7,8 +7,8 @@ mod interface_tests;
 
 use crate::core_service_adapter::core_service_adapter::{
     ContentData, CoreServiceAdapterApi, CreateSessionParams, DiffReport, ExportInfo, GcRunReport,
-    GrantInfo, GrantParams, PlaywrightImportInfo, SessionInfo, SessionInspection, ValidationResult,
-    VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo, VaultDeleteSecretParams,
+    GrantInfo, GrantParams, PlaywrightImportInfo, ReapReport, SessionInfo, SessionInspection,
+    ValidationResult, VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo, VaultDeleteSecretParams,
     VaultDiagnoseInfo, VaultGetSessionContextInfo, VaultListLabelsInfo, VaultListLabelsParams,
     VaultSetSecretInfo, VaultSetSecretParams,
 };
@@ -441,6 +441,16 @@ impl RpcHandlers {
             .map_err(|code| JsonRpcError {
                 code,
                 message: "gc.run failed".to_string(),
+                data: None,
+            })
+    }
+
+    pub async fn session_reap(&self, dry_run: bool) -> HandlerResult<ReapReport> {
+        self.core
+            .session_reap(dry_run)
+            .map_err(|code| JsonRpcError {
+                code,
+                message: "session.reap failed".to_string(),
                 data: None,
             })
     }
