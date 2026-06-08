@@ -1,0 +1,224 @@
+// SettleDriver — the CDP I/O layer that feeds the pure [`ReadinessMachine`].
+//
+// It owns the side of the readiness wait that touches the browser: it counts
+// in-flight requests from `Network.*` events (excluding long-lived
+// WebSocket/EventSource streams), polls `document.readyState` + `location.href`
+// + a DOM-mutation counter via a single `Runtime.evaluate` per tick, builds a
+// [`PageObservation`], and steps the machine. The loop paces with a small await
+// to avoid busy-spin (practitioner R-b), but the VERDICT depends only on the
+// per-tick observation sequence + tick count — never elapsed wall-time — so a
+// recorded session replays to the identical outcome (DET-CORE).
+
+use super::readiness_monitor::{
+    PageObservation, ReadinessMachine, SettleConfig, SettleMode, SettleOutcome,
+};
+use crate::cdp_connection::cdp_connection::{CdpConnection, EventFilter, EventHandler};
+use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, TargetId};
+use ciborium::value::Value as CborValue;
+use std::collections::HashSet;
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Pacing between ticks. Bounded await so the loop does not hot-spin; its
+/// DURATION never enters the verdict (which counts ticks, not ms).
+const TICK_PACING: Duration = Duration::from_millis(5);
+
+/// Derive a [`SettleConfig`] whose tick ceiling bounds the wait to roughly the
+/// caller's `timeout` (ceiling = timeout / pacing). The ceiling is a fixed tick
+/// count derived from a recorded input (the budget), so it is replay-stable;
+/// the wall-clock pacing only affects how fast ticks elapse, never the verdict.
+pub fn config_for_timeout(timeout: Duration) -> SettleConfig {
+    let ceiling = (timeout.as_millis() / TICK_PACING.as_millis().max(1)) as u32;
+    SettleConfig::with_ceiling(ceiling)
+}
+
+/// The single JS probe run each tick. Self-installs a `MutationObserver` on
+/// first call (counting childList/characterData/attribute mutations — the
+/// "meaningful mutation" set, R-g), then returns
+/// `[readyState==complete, location.href, mutations-since-last-call]` as a JSON
+/// string. Reading the counter resets it, so each tick sees only the mutations
+/// of that interval.
+const SETTLE_PROBE_JS: &str = r#"(function(){
+  if(!window.__loomSettleObs){
+    window.__loomSettleMut = 0;
+    try {
+      var cb = function(muts){ window.__loomSettleMut += muts.length; };
+      window.__loomSettleObs = new MutationObserver(cb);
+      window.__loomSettleObs.observe(document.documentElement || document, {childList:true, subtree:true, characterData:true, attributes:true});
+    } catch(e) { window.__loomSettleObs = null; }
+  }
+  var m = window.__loomSettleMut|0; window.__loomSettleMut = 0;
+  return JSON.stringify([document.readyState === 'complete', location.href || '', m]);
+})()"#;
+
+/// Outcome of a readiness wait.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettleResult {
+    pub mode: SettleMode,
+    pub outcome: SettleOutcome,
+    /// Number of ticks (poll iterations) the wait took. Mapped to `settle_ms`
+    /// host-side; never enters `outcome_hash`.
+    pub ticks: u32,
+    /// In-flight (non-WS/SSE) request count at the final tick.
+    pub network_count: u32,
+}
+
+/// Run a readiness wait against `target_id` for `mode`, bounded by `config`.
+/// `load_fired` reports whether `Page.loadEventFired` has already been seen by
+/// the caller (the navigate path subscribes to it before issuing the navigate).
+pub async fn wait_for_settle(
+    cdp: &Arc<dyn CdpConnection>,
+    target_id: TargetId,
+    mode: SettleMode,
+    config: SettleConfig,
+    load_fired: bool,
+    cdp_timeout: Duration,
+) -> SettleResult {
+    // In-flight request set: requestId → present means an open, counted
+    // request. WebSocket/EventSource are never inserted, so they never count
+    // (they are long-lived by design and would otherwise block idle forever).
+    let inflight: Arc<parking_lot::Mutex<HashSet<String>>> =
+        Arc::new(parking_lot::Mutex::new(HashSet::new()));
+
+    let inflight_h = inflight.clone();
+    let net_handler: EventHandler = Arc::new(move |_t: TargetId, msg: CdpMessage| {
+        match msg.method.as_str() {
+            "Network.requestWillBeSent" => {
+                // Skip long-lived EventSource streams (WebSocket uses a
+                // separate webSocketCreated event we never subscribe to).
+                if cdp_str(&msg.params, "type").as_deref() == Some("EventSource") {
+                    return;
+                }
+                if let Some(id) = cdp_str(&msg.params, "requestId") {
+                    inflight_h.lock().insert(id);
+                }
+            }
+            "Network.loadingFinished"
+            | "Network.loadingFailed"
+            | "Network.requestServedFromCache" => {
+                if let Some(id) = cdp_str(&msg.params, "requestId") {
+                    inflight_h.lock().remove(&id);
+                }
+            }
+            _ => {}
+        }
+    });
+    let _net_reg = cdp.register_event_handler(EventFilter::new("Network."), net_handler);
+
+    let mut machine = ReadinessMachine::new(mode, config);
+    let mut last_href: Option<String> = None;
+
+    loop {
+        // Poll page state for this tick.
+        let (ready_complete, href, dom_mutations) = probe_page(cdp, target_id, cdp_timeout).await;
+        let in_flight = inflight.lock().len() as u32;
+
+        // URL is "stable" this tick if it has not changed since the previous
+        // observation (client-side redirects have quiesced). The first tick is
+        // treated as not-yet-stable so a redirect that fires immediately after
+        // load is not mistaken for a stable URL.
+        let url_stable = match &last_href {
+            Some(prev) => prev == &href,
+            None => false,
+        };
+        last_href = Some(href);
+
+        let obs = PageObservation {
+            load_fired,
+            in_flight,
+            ready_complete,
+            url_stable,
+            dom_mutations,
+        };
+
+        if let Some(outcome) = machine.step(obs) {
+            return SettleResult {
+                mode,
+                outcome,
+                ticks: machine.ticks(),
+                network_count: in_flight,
+            };
+        }
+
+        tokio::time::sleep(TICK_PACING).await;
+    }
+}
+
+/// Run the settle probe once. On any CDP error returns a conservative
+/// observation (`ready=false`, empty href, 0 mutations) — a transient probe
+/// failure should not be read as "settled".
+async fn probe_page(
+    cdp: &Arc<dyn CdpConnection>,
+    target_id: TargetId,
+    cdp_timeout: Duration,
+) -> (bool, String, u32) {
+    let msg = CdpMessage {
+        method: "Runtime.evaluate".into(),
+        params: CborValue::Map(vec![
+            (
+                CborValue::Text("expression".into()),
+                CborValue::Text(SETTLE_PROBE_JS.into()),
+            ),
+            (
+                CborValue::Text("returnByValue".into()),
+                CborValue::Bool(true),
+            ),
+            (
+                CborValue::Text("awaitPromise".into()),
+                CborValue::Bool(false),
+            ),
+        ]),
+    };
+    match cdp.command(target_id, msg, Some(cdp_timeout)).await {
+        Ok(r) => parse_probe(&r).unwrap_or((false, String::new(), 0)),
+        Err(_) => (false, String::new(), 0),
+    }
+}
+
+/// Pull the string at `key` out of a CDP params CBOR map.
+fn cdp_str(params: &CborValue, key: &str) -> Option<String> {
+    if let CborValue::Map(entries) = params {
+        for (k, v) in entries {
+            if let (CborValue::Text(k), CborValue::Text(v)) = (k, v) {
+                if k == key {
+                    return Some(v.clone());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Parse the `Runtime.evaluate` response for the settle probe — `result.value`
+/// is the JSON string `[bool, "href", mutations]`.
+fn parse_probe(resp: &CborValue) -> Option<(bool, String, u32)> {
+    // Navigate to result.value (a Text holding JSON).
+    let value_text = cbor_get(resp, "result")
+        .and_then(|r| cbor_get(r, "value"))
+        .and_then(|v| match v {
+            CborValue::Text(s) => Some(s.clone()),
+            _ => None,
+        })?;
+    let arr: serde_json::Value = serde_json::from_str(&value_text).ok()?;
+    let ready = arr.get(0).and_then(|v| v.as_bool()).unwrap_or(false);
+    let href = arr
+        .get(1)
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let muts = arr.get(2).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    Some((ready, href, muts))
+}
+
+fn cbor_get<'a>(v: &'a CborValue, key: &str) -> Option<&'a CborValue> {
+    if let CborValue::Map(entries) = v {
+        for (k, val) in entries {
+            if let CborValue::Text(k) = k {
+                if k == key {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    None
+}

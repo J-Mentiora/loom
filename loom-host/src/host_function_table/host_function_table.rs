@@ -84,6 +84,12 @@ pub struct HostState {
     /// to compute `blocklist_enabled = !no_blocklist` for each
     /// `ShimRequest::PageNavigate`.
     pub no_blocklist: bool,
+    /// Operator's `--no-determinism` opt-out (settle-capture 4b). Threaded
+    /// from `Session.no_determinism`. Each typed host fn computes
+    /// `determinism_enabled = !no_determinism` for the ShimRequests that
+    /// create a target (SpawnTarget / PageNavigate); when off, the shim
+    /// SKIPS the determinism freeze-inject.
+    pub no_determinism: bool,
     /// Operator's `--profile` choice. Threaded from `SessionHandle.profile`
     /// for the safe-profile download-confinement path — the lazy-clone
     /// shim-config sites in `host_impl.rs` read this to inject

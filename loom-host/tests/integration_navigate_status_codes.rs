@@ -111,6 +111,8 @@ async fn navigate(
             loom_shared::types::Seed(0),
             loom_shared::types::EpochMs(0),
             true,
+            "settled".to_string(),
+            true,
         ),
     )
     .await

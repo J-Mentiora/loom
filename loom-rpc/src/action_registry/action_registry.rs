@@ -304,7 +304,13 @@ with the integer status code; DNS resolution failures surface as `kind: \
 \"dns_failure\"` with the underlying Chromium error name (e.g. \
 `net::ERR_NAME_NOT_RESOLVED`); other low-level network failures (TLS, \
 timeout) surface as `kind: \"network_failure\"`. None of these are \
-generic 500s.",
+generic 500s.\n\n\
+Readiness: the DOM + screenshot are captured once the page reaches the \
+`until` state (default `settled`), not at navigation commit. `settled` \
+waits for `load`, network-idle, a stable final URL after client-side \
+redirects, and a quiescent DOM, so SPA shells and mid-animation frames \
+are never captured. The receipt records `until` and `settle_outcome` \
+(`reached`|`timeout`|`dom_unstable`).",
         params: &[
             ParamMeta {
                 name: "session_id",
@@ -318,8 +324,20 @@ generic 500s.",
                 doc: "Target URL. Must be `http://`, `https://`, or `about:blank` — other schemes are rejected.",
                 required: true,
             },
+            ParamMeta {
+                name: "until",
+                ty: ParamType::String,
+                doc: "Readiness state to wait for before capture: `load`, `networkidle`, or `settled` (default).",
+                required: false,
+            },
+            ParamMeta {
+                name: "timeout_ms",
+                ty: ParamType::U64,
+                doc: "Maximum time to wait for the readiness state. Optional; defaults to the daemon's settle timeout.",
+                required: false,
+            },
         ],
-        returns: "Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`. Failure modes: `kind: \"http_status\"|\"dns_failure\"|\"network_failure\"|\"url_blocked\"`.",
+        returns: "Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`, `until`, `settle_outcome` (`reached`|`timeout`|`dom_unstable`). Failure modes: `kind: \"http_status\"|\"dns_failure\"|\"network_failure\"|\"url_blocked\"`.",
         example: &["loom", "action", "web.navigate", "--session", "<SESSION>", "--url", "https://example.com"],
     },
     ActionMeta {
@@ -601,5 +619,51 @@ present.",
         ],
         returns: "Receipt with `status: \"ok\"` once the selector resolves. Timeout → `kind: \"wait_predicate_false\"`.",
         example: &["loom", "action", "web.wait", "--session", "<SESSION>", "--selector", "#results", "--timeout_ms", "10000"],
+    },
+    ActionMeta {
+        name: "web.wait_for",
+        summary: "Wait until the current page reaches a readiness state (settle-capture).",
+        description: "\
+Waits for the CURRENT page (no navigation) to reach a readiness state, \
+then returns a typed receipt carrying the settle verdict. Unlike \
+`web.wait` (which polls for a CSS selector), this gates on page-level \
+readiness:\n\n\
+- `load` — the load event has fired.\n\
+- `networkidle` — `load` + no more than a small in-flight trickle held \
+quiet for a quiet window (WebSocket/EventSource excluded, so persistent \
+connections never hang it).\n\
+- `settled` (default) — `networkidle` + `readyState` complete + the \
+final URL stable after client-side redirects + the DOM quiescent.\n\n\
+The verdict is a pure function of the recorded per-tick observation \
+sequence in virtual ticks (NEVER wall-clock), so a recorded session \
+replays to the identical outcome. When readiness is never reached \
+(persistent connection, perpetual animation) the call returns a typed \
+receipt rather than hanging: `settle_outcome` is `timeout` or \
+`dom_unstable` instead of `reached`.\n\n\
+Use after a `web.navigate` (or an interaction that triggers async \
+re-render) to gate a subsequent `web.screenshot` / `web.snapshot` on \
+real readiness instead of a magic sleep.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "until",
+                ty: ParamType::String,
+                doc: "Readiness state to wait for: `load` | `networkidle` | `settled`. Optional; defaults to `settled`.",
+                required: false,
+            },
+            ParamMeta {
+                name: "timeout_ms",
+                ty: ParamType::U64,
+                doc: "Maximum wait time in milliseconds before the bounded fallback returns a typed `timeout`/`dom_unstable` receipt. Optional; defaults to the daemon's navigate budget.",
+                required: false,
+            },
+        ],
+        returns: "Receipt with `settle_until` (the requested mode) and `settle_outcome` (`reached` | `timeout` | `dom_unstable`). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.",
+        example: &["loom", "action", "web.wait_for", "--session", "<SESSION>", "--until", "settled"],
     },
 ];

@@ -153,6 +153,8 @@ fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
         network_count: Some(network_events.len() as u64),
         console_lines,
         network_summary: Some(summary),
+        settle_until: None,
+        settle_outcome: None,
         return_value_json: None,
         return_value_blob_ref: None,
         set_cookies_result: None,

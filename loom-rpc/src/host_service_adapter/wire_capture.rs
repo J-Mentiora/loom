@@ -107,6 +107,8 @@ mod tests {
                 total_bytes: 1024,
                 error_count: 0,
             }),
+            settle_until: Some("settled".into()),
+            settle_outcome: Some("reached".into()),
             return_value_json: None,
             return_value_blob_ref: None,
             set_cookies_result: None,

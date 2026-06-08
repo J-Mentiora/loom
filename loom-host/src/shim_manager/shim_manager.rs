@@ -338,6 +338,8 @@ impl ShimManager {
         seed: Seed,
         epoch_ms: EpochMs,
         blocklist_enabled: bool,
+        until: String,
+        determinism_enabled: bool,
     ) -> Result<NavigateOutcome, LoomError> {
         // action_id is reserved for receipt correlation (Q5 plumbing); not
         // sent to the shim — shim deals only with target_id + CDP frames.
@@ -371,6 +373,10 @@ impl ShimManager {
             // Per-session toggle from `--no-blocklist`. Default `true`
             // (enforce); `false` when the operator opted out.
             blocklist_enabled,
+            // settle-capture: readiness mode gating the capture.
+            until,
+            // settle-capture (4b): per-session determinism toggle.
+            determinism_enabled,
         };
 
         // Use the larger of budget_ms and recv_timeout_ms so callers can
@@ -427,6 +433,123 @@ impl ShimManager {
         }
     }
 
+    /// settle-capture slice 2: run a standalone readiness wait on the session's
+    /// current target via `ShimRequest::WaitFor`, parsing the response into a
+    /// typed `WaitOutcome`. Mirrors `send_evaluate`: an idempotent SpawnTarget
+    /// first so the wait runs against the determinism-injected target (not the
+    /// bootstrap about:blank), then the typed wait request.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn send_wait_for(
+        &self,
+        id: ShimId,
+        action_id: String,
+        session_id: u64,
+        target_id: u64,
+        until: String,
+        budget_ms: u64,
+        seed: Seed,
+        epoch_ms: EpochMs,
+        determinism_enabled: bool,
+    ) -> Result<loom_shared::navigate_outcome::WaitOutcome, LoomError> {
+        // action_id reserved for receipt correlation (Q5 plumbing).
+        let _action_id = action_id;
+
+        if let Some(state) = self.states.get(&id) {
+            if state.breaker == BreakerState::Open {
+                return Err(LoomError::new(
+                    LoomErrorCode::ShimBreakerOpen,
+                    format!("shim {} circuit breaker is open", id.0),
+                ));
+            }
+        }
+
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+
+        let process = self.get_or_spawn(&id, &config).await?;
+
+        // Idempotent lazy-spawn (same rationale as send_evaluate): ensures the
+        // wait runs against the seeded target, never the about:blank bootstrap.
+        let spawn_request = ShimRequest::SpawnTarget {
+            request_id: 0,
+            session_id,
+            profile: "default".to_string(),
+            seed,
+            epoch_ms,
+            // settle-capture (4b): per-session determinism toggle.
+            determinism_enabled,
+        };
+        let _ = send_and_await(
+            &process,
+            spawn_request,
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(config.recv_timeout_ms),
+        )
+        .await;
+
+        let request = ShimRequest::WaitFor {
+            request_id: 0,
+            session_id,
+            target_id,
+            until,
+        };
+
+        let recv_ms = budget_ms.max(config.recv_timeout_ms);
+
+        match send_and_await(
+            &process,
+            request,
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(recv_ms),
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { payload, .. }) => {
+                self.record_success(&id);
+                // Re-encode the ciborium Value, then decode as WaitOutcome.
+                // Field names in ActionResult::Waited match WaitOutcome; the
+                // `kind` tag is ignored by serde.
+                let mut bytes = Vec::new();
+                if let Err(e) = ciborium::ser::into_writer(&payload, &mut bytes) {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: wait_for response re-encode: {e}", id.0),
+                    ));
+                }
+                ciborium_from_slice::<loom_shared::navigate_outcome::WaitOutcome>(&bytes).map_err(
+                    |e| {
+                        LoomError::new(
+                            LoomErrorCode::ShimFailure,
+                            format!("shim {}: wait_for outcome decode: {e}", id.0),
+                        )
+                    },
+                )
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id);
+                Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ))
+            }
+            Ok(other) => {
+                self.record_failure(&id);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id);
+                Err(e)
+            }
+        }
+    }
+
     /// Send `Runtime.evaluate` against `id`'s target via CdpSend and parse
     /// the response into a typed `EvaluateOutcome`.
     /// `action_id` is the WASM-guest-computed action hash — threaded for
@@ -448,6 +571,7 @@ impl ShimManager {
         budget_ms: u64,
         seed: Seed,
         epoch_ms: EpochMs,
+        determinism_enabled: bool,
     ) -> Result<EvaluateOutcome, LoomError> {
         // action_id reserved for receipt correlation (Q5 plumbing).
         let _action_id = action_id;
@@ -483,6 +607,8 @@ impl ShimManager {
             profile: "default".to_string(),
             seed,
             epoch_ms,
+            // settle-capture (4b): per-session determinism toggle.
+            determinism_enabled,
         };
         // Best-effort: if SpawnTarget fails (e.g. unknown shim error),
         // fall through to the eval anyway and surface the eval's own
@@ -587,6 +713,7 @@ impl ShimManager {
         budget_ms: u64,
         seed: Seed,
         epoch_ms: EpochMs,
+        determinism_enabled: bool,
     ) -> Result<SetInputFilesOutcome, LoomError> {
         use ciborium::value::{Integer, Value};
         let _action_id = action_id;
@@ -619,6 +746,8 @@ impl ShimManager {
             profile: "default".to_string(),
             seed,
             epoch_ms,
+            // settle-capture (4b): per-session determinism toggle.
+            determinism_enabled,
         };
         let _ = send_and_await(
             &process,

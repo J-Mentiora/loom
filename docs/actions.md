@@ -24,6 +24,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.snapshot`](#web-snapshot) — Capture a full DOM snapshot of the active page.
 - [`web.type`](#web-type) — Focus an input and type text into it.
 - [`web.wait`](#web-wait) — Wait until a CSS selector resolves (or until timeout).
+- [`web.wait_for`](#web-wait_for) — Wait until the current page reaches a readiness state (settle-capture).
 
 ## Actions
 
@@ -193,14 +194,18 @@ URL allowlist: only `http`, `https`, and `about:blank` are accepted. Other schem
 
 Typed errors: HTTP error responses surface as `kind: "http_status"` with the integer status code; DNS resolution failures surface as `kind: "dns_failure"` with the underlying Chromium error name (e.g. `net::ERR_NAME_NOT_RESOLVED`); other low-level network failures (TLS, timeout) surface as `kind: "network_failure"`. None of these are generic 500s.
 
+Readiness: the DOM + screenshot are captured once the page reaches the `until` state (default `settled`), not at navigation commit. `settled` waits for `load`, network-idle, a stable final URL after client-side redirects, and a quiescent DOM, so SPA shells and mid-animation frames are never captured. The receipt records `until` and `settle_outcome` (`reached`|`timeout`|`dom_unstable`).
+
 **Parameters**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `url` | `string` | required | Target URL. Must be `http://`, `https://`, or `about:blank` — other schemes are rejected. |
+| `until` | `string` | optional | Readiness state to wait for before capture: `load`, `networkidle`, or `settled` (default). |
+| `timeout_ms` | `u64` | optional | Maximum time to wait for the readiness state. Optional; defaults to the daemon's settle timeout. |
 
-**Returns:** Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`. Failure modes: `kind: "http_status"|"dns_failure"|"network_failure"|"url_blocked"`.
+**Returns:** Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`, `until`, `settle_outcome` (`reached`|`timeout`|`dom_unstable`). Failure modes: `kind: "http_status"|"dns_failure"|"network_failure"|"url_blocked"`.
 
 **Example**
 
@@ -417,6 +422,38 @@ Typed error: `kind: "wait_predicate_false"` if the selector never resolves befor
 
 ```sh
 loom action web.wait --session <SESSION> --selector #results --timeout_ms 10000
+```
+
+---
+
+### <a id="web-wait_for"></a>`web.wait_for`
+
+**Wait until the current page reaches a readiness state (settle-capture).**
+
+Waits for the CURRENT page (no navigation) to reach a readiness state, then returns a typed receipt carrying the settle verdict. Unlike `web.wait` (which polls for a CSS selector), this gates on page-level readiness:
+
+- `load` — the load event has fired.
+- `networkidle` — `load` + no more than a small in-flight trickle held quiet for a quiet window (WebSocket/EventSource excluded, so persistent connections never hang it).
+- `settled` (default) — `networkidle` + `readyState` complete + the final URL stable after client-side redirects + the DOM quiescent.
+
+The verdict is a pure function of the recorded per-tick observation sequence in virtual ticks (NEVER wall-clock), so a recorded session replays to the identical outcome. When readiness is never reached (persistent connection, perpetual animation) the call returns a typed receipt rather than hanging: `settle_outcome` is `timeout` or `dom_unstable` instead of `reached`.
+
+Use after a `web.navigate` (or an interaction that triggers async re-render) to gate a subsequent `web.screenshot` / `web.snapshot` on real readiness instead of a magic sleep.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `until` | `string` | optional | Readiness state to wait for: `load` \| `networkidle` \| `settled`. Optional; defaults to `settled`. |
+| `timeout_ms` | `u64` | optional | Maximum wait time in milliseconds before the bounded fallback returns a typed `timeout`/`dom_unstable` receipt. Optional; defaults to the daemon's navigate budget. |
+
+**Returns:** Receipt with `settle_until` (the requested mode) and `settle_outcome` (`reached` | `timeout` | `dom_unstable`). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.
+
+**Example**
+
+```sh
+loom action web.wait_for --session <SESSION> --until settled
 ```
 
 ---

@@ -242,6 +242,8 @@ mod tests {
             seed: loom_shared::types::Seed(0),
             epoch_ms: loom_shared::types::EpochMs(0),
             blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
         };
         // Encode the request as if the host were sending it from the peer:
         // we abuse the response channel to push raw bytes through.

@@ -148,6 +148,15 @@ class Receipt:
     action_hash: str
     outcome_hash: str
     emitted_at_ms: int
+    # settle-capture: readiness mode the capture was gated on
+    # ("load" | "networkidle" | "settled"). Present on navigate receipts;
+    # None for verbs without a readiness gate.
+    settle_until: str | None = None
+    # settle-capture: how the readiness wait ended
+    # ("reached" | "timeout" | "dom_unstable"). "timeout"/"dom_unstable" mean
+    # the bounded fallback fired (persistent connection / perpetual animation)
+    # — the page never reached the requested readiness state.
+    settle_outcome: str | None = None
 
     @classmethod
     def _from_dict(cls, d: dict) -> Receipt:
@@ -155,6 +164,8 @@ class Receipt:
             action_hash=d.get("action_hash", ""),
             outcome_hash=d.get("outcome_hash", ""),
             emitted_at_ms=d.get("emitted_at_ms", 0),
+            settle_until=d.get("settle_until"),
+            settle_outcome=d.get("settle_outcome"),
         )
 
 

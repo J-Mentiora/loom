@@ -178,6 +178,8 @@ fn write_click_session(sessions_root: &Path, session_id: &str, n: u64, dom_hash:
         prev_hash: None,
         budgets: None,
         capture_policy: None,
+        seed: None,
+        determinism_enabled: None,
     };
     let mut lines: Vec<String> = vec![serde_json::to_string(&header).unwrap()];
 
@@ -234,6 +236,8 @@ fn write_navigate_session(sessions_root: &Path, session_id: &str, n: u64) {
         prev_hash: None,
         budgets: None,
         capture_policy: None,
+        seed: None,
+        determinism_enabled: None,
     };
     let mut lines: Vec<String> = vec![serde_json::to_string(&header).unwrap()];
 

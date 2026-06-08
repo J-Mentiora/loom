@@ -478,6 +478,26 @@ fn required_str(params: &serde_json::Value, field: &str) -> Result<String, JsonR
         })
 }
 
+/// settle-capture: the readiness modes accepted by `until`.
+pub const SETTLE_MODES: &[&str] = &["load", "networkidle", "settled"];
+
+/// Validate the optional `until` readiness mode. Absent → `Ok(None)` (the
+/// daemon applies the `settled` default). Present but not one of
+/// [`SETTLE_MODES`] → `SchemaViolation` (fail loud, don't silently coerce).
+fn optional_settle_until(params: &serde_json::Value) -> Result<Option<String>, JsonRpcError> {
+    match params.get("until") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) if SETTLE_MODES.contains(&s.as_str()) => {
+            Ok(Some(s.clone()))
+        }
+        Some(other) => Err(JsonRpcError {
+            code: LoomErrorCode::SchemaViolation,
+            message: format!("invalid `until`: expected one of {SETTLE_MODES:?}, got {other}"),
+            data: None,
+        }),
+    }
+}
+
 /// The set of parameters extracted via `required_str` / `required_*`
 /// for each registered action — i.e. the params the router will reject
 /// the request for if missing.
@@ -495,6 +515,7 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.hover" => &["session_id", "selector"],
         "web.scroll" => &["session_id", "selector"],
         "web.wait" => &["session_id", "selector"],
+        "web.wait_for" => &["session_id"],
         "web.evaluate" => &["session_id", "expression"],
         "web.set_input_files" => &["session_id", "selector", "paths"],
         "web.screenshot" => &["session_id"],
@@ -526,6 +547,7 @@ pub fn known_router_methods() -> &'static [&'static str] {
         "web.snapshot",
         "web.type",
         "web.wait",
+        "web.wait_for",
     ]
 }
 
@@ -541,7 +563,15 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         "web.navigate" => {
             let session_id = session_id_from_params(&params)?;
             let url = required_str(&params, "url")?;
-            Ok(Action::WebNavigate { session_id, url })
+            // settle-capture: optional readiness gate for the auto-capture.
+            let until = optional_settle_until(&params)?;
+            let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
+            Ok(Action::WebNavigate {
+                session_id,
+                url,
+                until,
+                timeout_ms,
+            })
         }
         "web.click" => {
             let session_id = session_id_from_params(&params)?;
@@ -601,6 +631,17 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
             Ok(Action::WebWait {
                 session_id,
                 selector,
+                timeout_ms,
+            })
+        }
+        "web.wait_for" => {
+            let session_id = session_id_from_params(&params)?;
+            // settle-capture: same validated readiness mode as web.navigate.
+            let until = optional_settle_until(&params)?;
+            let timeout_ms = params.get("timeout_ms").and_then(|v| v.as_u64());
+            Ok(Action::WebWaitFor {
+                session_id,
+                until,
                 timeout_ms,
             })
         }

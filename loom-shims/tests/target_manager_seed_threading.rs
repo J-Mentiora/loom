@@ -112,7 +112,7 @@ async fn create_new_target_actually_awaits_inject_and_sends_cdp_command() {
     let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
 
     let target_id = mgr
-        .create_new_target(1, "default".into(), Seed(42), EpochMs(0))
+        .create_new_target(1, "default".into(), Seed(42), EpochMs(0), true)
         .await
         .expect("create_new_target must succeed when inject succeeds");
 
@@ -138,14 +138,14 @@ async fn create_new_target_failed_inject_leaves_flag_false_and_no_session_bindin
     let mgr = ChromiumTargetManager::new(cdp_failing.clone(), injector, build_response_tx());
 
     let result = mgr
-        .create_new_target(2, "default".into(), Seed(42), EpochMs(0))
+        .create_new_target(2, "default".into(), Seed(42), EpochMs(0), true)
         .await;
     assert!(result.is_err(), "inject failure must propagate");
 
     // Re-trying must NOT short-circuit through a poisoned by_session map —
     // the second create_new_target also exercises a fresh inject attempt.
     let result2 = mgr
-        .create_new_target(2, "default".into(), Seed(42), EpochMs(0))
+        .create_new_target(2, "default".into(), Seed(42), EpochMs(0), true)
         .await;
     assert!(
         result2.is_err(),
@@ -168,11 +168,11 @@ async fn create_new_target_idempotent_per_session() {
     let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
 
     let t1 = mgr
-        .create_new_target(7, "default".into(), Seed(42), EpochMs(0))
+        .create_new_target(7, "default".into(), Seed(42), EpochMs(0), true)
         .await
         .unwrap();
     let t2 = mgr
-        .create_new_target(7, "default".into(), Seed(42), EpochMs(0))
+        .create_new_target(7, "default".into(), Seed(42), EpochMs(0), true)
         .await
         .unwrap();
     assert_eq!(t1, t2, "same session must yield same target_id");

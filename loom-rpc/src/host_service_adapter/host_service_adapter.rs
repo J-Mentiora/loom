@@ -55,6 +55,12 @@ pub enum Action {
     WebNavigate {
         session_id: String,
         url: String,
+        // settle-capture: readiness gate for the auto-capture. `None` = the
+        // daemon default (`settled`). One of `load|networkidle|settled`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
     },
     WebClick {
         session_id: String,
@@ -91,6 +97,16 @@ pub enum Action {
     WebWait {
         session_id: String,
         selector: String,
+        timeout_ms: Option<u64>,
+    },
+    // settle-capture slice 2: standalone readiness wait on the current page.
+    // `until` is the readiness mode (`load|networkidle|settled`, default
+    // `settled`); validated by the router's `optional_settle_until`.
+    WebWaitFor {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u64>,
     },
     WebSnapshot {
@@ -188,6 +204,13 @@ pub struct Receipt {
     /// roll-up so consumers don't need to scan the array.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_summary: Option<NetworkSummary>,
+    // ---- settle-capture readiness fields (navigate tier) ----
+    /// Readiness mode the capture was gated on (`load|networkidle|settled`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_until: Option<String>,
+    /// How the readiness wait ended (`reached|timeout|dom_unstable`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settle_outcome: Option<String>,
     // ---- Evaluate tier fields ----
     /// JS expression result, canonical-JSON encoded. `None` means either
     /// "not an evaluate action" or "result was offloaded to the content

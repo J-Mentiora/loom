@@ -203,9 +203,10 @@ async fn handle_request(
             profile,
             seed,
             epoch_ms,
+            determinism_enabled,
         } => {
             match target_manager
-                .create_new_target(session_id, profile, seed, epoch_ms)
+                .create_new_target(session_id, profile, seed, epoch_ms, determinism_enabled)
                 .await
             {
                 Ok(target_id) => {
@@ -256,6 +257,8 @@ async fn handle_request(
             seed,
             epoch_ms,
             blocklist_enabled,
+            until,
+            determinism_enabled,
         } => {
             // Lazy-spawn: when the host doesn't know the target yet (target_id == 0),
             // create one here so the per-session seed reaches the inject path even
@@ -263,7 +266,13 @@ async fn handle_request(
             // Idempotent at the target_manager level.
             let effective_target_id = if target_id == 0 {
                 match target_manager
-                    .create_new_target(session_id, "default".into(), seed, epoch_ms)
+                    .create_new_target(
+                        session_id,
+                        "default".into(),
+                        seed,
+                        epoch_ms,
+                        determinism_enabled,
+                    )
                     .await
                 {
                     Ok(t) => t,
@@ -280,10 +289,40 @@ async fn handle_request(
             } else {
                 target_id
             };
+            let settle_mode =
+                crate::readiness_monitor::SettleMode::parse(&until).unwrap_or_default();
             match action_executor
-                .page_navigate(effective_target_id, url, None, blocklist_enabled)
+                .page_navigate(
+                    effective_target_id,
+                    url,
+                    None,
+                    blocklist_enabled,
+                    settle_mode,
+                )
                 .await
             {
+                Ok(result) => {
+                    make_ok_response(request_id, Some(session_id), action_result_to_cbor(result))
+                }
+                Err(mut shim_resp) => {
+                    overwrite_correlation(&mut shim_resp, request_id, Some(session_id));
+                    shim_resp
+                }
+            }
+        }
+        ShimRequest::WaitFor {
+            request_id,
+            session_id,
+            target_id,
+            until,
+        } => {
+            // settle-capture: standalone readiness wait on the current page.
+            // The host issues an idempotent SpawnTarget before this (mirroring
+            // the evaluate path), so target_id resolves to the session's
+            // determinism-injected target. No navigation, no capture.
+            let settle_mode =
+                crate::readiness_monitor::SettleMode::parse(&until).unwrap_or_default();
+            match action_executor.wait_for(target_id, settle_mode, None).await {
                 Ok(result) => {
                     make_ok_response(request_id, Some(session_id), action_result_to_cbor(result))
                 }
@@ -329,6 +368,11 @@ fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
             ..
         }
         | ShimRequest::PageClose {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::WaitFor {
             request_id,
             session_id,
             ..
@@ -440,7 +484,10 @@ pub fn route_target(req: &ShimRequest) -> RouteTarget {
         ShimRequest::SpawnTarget { .. }
         | ShimRequest::PageNavigate { .. }
         | ShimRequest::PageClose { .. } => RouteTarget::TargetManager,
-        ShimRequest::CdpSend { .. } => RouteTarget::ActionExecutor,
+        // WaitFor runs the SettleDriver on an already-existing target (the host
+        // issues an idempotent SpawnTarget first), so it is executor work like
+        // CdpSend — not a TargetManager lifecycle op.
+        ShimRequest::CdpSend { .. } | ShimRequest::WaitFor { .. } => RouteTarget::ActionExecutor,
         ShimRequest::Shutdown { .. } => RouteTarget::Shutdown,
         ShimRequest::Health { .. } => RouteTarget::Health,
     }

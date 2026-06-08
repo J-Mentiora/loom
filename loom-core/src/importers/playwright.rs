@@ -165,6 +165,11 @@ fn build_wal_lines(session_id: &str, now_ms: u64, k: u64) -> Vec<String> {
         prev_hash: None,
         budgets: None,
         capture_policy: None,
+        // Imported (non-loom) sessions have no determinism seed.
+        seed: None,
+        // Imported sessions are non-replayable already; leave determinism
+        // unspecified (legacy/None) — the replay refuse-guard is moot here.
+        determinism_enabled: None,
     };
     lines.push(serde_json::to_string(&header).expect("Header serialisation must not fail"));
 

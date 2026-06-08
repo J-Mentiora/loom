@@ -47,6 +47,7 @@ fn create_args_field_names_match_schema() {
         budget: None,
         capture_policy: None,
         no_blocklist: false,
+        no_determinism: false,
     })
     .unwrap();
     assert!(json.get("profile").is_some());

@@ -116,6 +116,7 @@ async fn evaluate(
             30_000,
             loom_shared::types::Seed(42),
             loom_shared::types::EpochMs(1_700_000_000_000),
+            true,
         ),
     )
     .await
