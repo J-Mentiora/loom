@@ -7,20 +7,18 @@ use crate::CliError;
 use std::time::Duration;
 
 #[test]
-fn rpc_client_config_carries_socket_path_and_timeouts() {
+fn rpc_client_config_carries_socket_path_and_timeout() {
     let c = RpcClientConfig {
         socket_path: "/tmp/loom.sock".into(),
-        connect_timeout: Duration::from_secs(5),
         request_timeout: Duration::from_secs(30),
     };
-    assert_eq!(c.connect_timeout, Duration::from_secs(5));
+    assert_eq!(c.request_timeout, Duration::from_secs(30));
 }
 
 #[test]
 fn new_does_not_open_socket() {
     let c = RpcClientConfig {
         socket_path: "/tmp/nonexistent.sock".into(),
-        connect_timeout: Duration::from_millis(1),
         request_timeout: Duration::from_millis(1),
     };
     let _client = RpcClient::new(c);
