@@ -6,10 +6,26 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-08 — Network Entries + Readiness-Gated Capture
+
+Two capture features land together: per-request network entries surfaced from CDP
+(for per-test route footprints), and deterministic readiness-gated capture that
+waits for a page to settle before snapshotting. Both are additive and preserve the
+replay hash chain (NFR-DET-01).
+
 ### Added
 
+- **Deterministic readiness-gated capture (settle-capture, #123).** `web.navigate`
+  gains an optional `until` readiness mode so a capture can be gated on the page
+  reaching a stable state instead of a raw load event, and a new `loom.web.wait_for`
+  tool runs a standalone readiness wait on the current page. The receipt carries
+  `settle_until` / `settle_outcome` (recorded on the canonical receipt, so replay
+  reproduces them) plus host-side `settle_ms` / `network_count_at_settle`
+  diagnostics. Readiness is driven by virtual time so it stays replay-equal; a
+  per-session `--no-determinism` opt-out is available.
+
 - **Per-request network entries on the navigate receipt + `loom.web.network_log`
-  tool.** `web.navigate` receipts now carry an optional `network_entries`
+  tool (#122).** `web.navigate` receipts now carry an optional `network_entries`
   array — the raw, complete list of requests the navigation made (document +
   xhr/fetch + subresources), each `{url, method, status, resource_type,
   from_cache, request_id, ts_ms}`, sourced from CDP. Previously loom captured
