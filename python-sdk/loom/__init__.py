@@ -75,6 +75,28 @@ def _build_action_params(session_id: str, kind: str, payload: dict, deadline_ms:
     }
 
 
+def _navigate_payload(url: str, until: str | None, timeout_ms: int | None) -> dict:
+    """Build the web.navigate action payload, omitting settle-capture options
+    when unset so the daemon applies its defaults (until="settled")."""
+    payload: dict = {"url": url}
+    if until is not None:
+        payload["until"] = until
+    if timeout_ms is not None:
+        payload["timeout_ms"] = timeout_ms
+    return payload
+
+
+def _wait_for_payload(until: str | None, timeout_ms: int | None) -> dict:
+    """Build the web.wait_for action payload, omitting options when unset so the
+    daemon applies its defaults (until="settled")."""
+    payload: dict = {}
+    if until is not None:
+        payload["until"] = until
+    if timeout_ms is not None:
+        payload["timeout_ms"] = timeout_ms
+    return payload
+
+
 class Session:
     """
     Synchronous loom session handle.
@@ -99,8 +121,15 @@ class Session:
         budget: Any = None,
         socket_path: str | None = None,
         token: str | None = None,
+        no_determinism: bool = False,
     ) -> Session:
-        """Create a new session on the daemon and return a Session handle."""
+        """Create a new session on the daemon and return a Session handle.
+
+        Determinism is ON by default (frozen clock/animations + seeded RNG →
+        byte-reproducible captures). Pass ``no_determinism=True`` for
+        live/non-reproducible capture; such a session is recorded as
+        NON-REPLAYABLE (``replay`` refuses it).
+        """
         transport = LoomTransport(socket_path, token)
         params: dict[str, Any] = {
             "profile": profile,
@@ -111,6 +140,8 @@ class Session:
             params["seed"] = seed
         if budget is not None:
             params["budget"] = budget
+        if no_determinism:
+            params["no_determinism"] = True
         result = transport.call("session.create", params)
         return cls(
             session_id=result["session_id"],
@@ -118,10 +149,62 @@ class Session:
             transport=transport,
         )
 
-    def navigate(self, url: str, *, deadline_ms: int = 5000) -> Receipt:
+    def navigate(
+        self,
+        url: str,
+        *,
+        deadline_ms: int = 5000,
+        until: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> Receipt:
+        """Navigate and capture DOM + screenshot, gating the capture on a
+        readiness state (settle-capture).
+
+        By default loom waits until the page is ``"settled"`` (network quiet +
+        ``readyState`` complete + the final URL stable after client-side
+        redirects + the DOM quiescent), so the capture is a real rendered page
+        rather than a blank SPA shell or an arbitrary animation frame.
+
+        Args:
+            until: ``"load" | "networkidle" | "settled"`` (default ``"settled"``).
+            timeout_ms: bound on the readiness wait. If readiness is never
+                reached (persistent connection, perpetual animation) the call
+                still returns — the receipt's ``settle_outcome`` is ``"timeout"``
+                / ``"dom_unstable"`` instead of ``"reached"``. It never hangs.
+        """
         r = self._transport.call(
             "action.web.navigate",
-            _build_action_params(self.session_id, "navigate", {"url": url}, deadline_ms),
+            _build_action_params(
+                self.session_id, "navigate", _navigate_payload(url, until, timeout_ms), deadline_ms
+            ),
+        )
+        return Receipt._from_dict(r)
+
+    def wait_for(
+        self,
+        *,
+        deadline_ms: int = 30000,
+        until: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> Receipt:
+        """Wait for the CURRENT page to reach a readiness state (settle-capture),
+        without navigating.
+
+        Use after a navigate or an interaction that triggers async re-render to
+        gate a subsequent screenshot/snapshot on real readiness instead of a
+        magic sleep.
+
+        Args:
+            until: ``"load" | "networkidle" | "settled"`` (default ``"settled"``).
+            timeout_ms: bound on the wait. If readiness is never reached the call
+                still returns — the receipt's ``settle_outcome`` is ``"timeout"``
+                / ``"dom_unstable"`` instead of ``"reached"``. It never hangs.
+        """
+        r = self._transport.call(
+            "action.web.wait_for",
+            _build_action_params(
+                self.session_id, "wait_for", _wait_for_payload(until, timeout_ms), deadline_ms
+            ),
         )
         return Receipt._from_dict(r)
 
@@ -348,6 +431,7 @@ class AsyncSession:
         budget: Any = None,
         socket_path: str | None = None,
         token: str | None = None,
+        no_determinism: bool = False,
     ) -> AsyncSession:
         transport = await AsyncLoomTransport.connect(socket_path, token)
         params: dict[str, Any] = {
@@ -359,6 +443,8 @@ class AsyncSession:
             params["seed"] = seed
         if budget is not None:
             params["budget"] = budget
+        if no_determinism:
+            params["no_determinism"] = True
         result = await transport.call("session.create", params)
         return cls(
             session_id=result["session_id"],
@@ -366,10 +452,40 @@ class AsyncSession:
             transport=transport,
         )
 
-    async def navigate(self, url: str, *, deadline_ms: int = 5000) -> Receipt:
+    async def navigate(
+        self,
+        url: str,
+        *,
+        deadline_ms: int = 5000,
+        until: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> Receipt:
+        """Navigate and capture DOM + screenshot, gating the capture on a
+        readiness state (settle-capture). See :meth:`Session.navigate` for the
+        ``until`` / ``timeout_ms`` semantics."""
         r = await self._transport.call(
             "action.web.navigate",
-            _build_action_params(self.session_id, "navigate", {"url": url}, deadline_ms),
+            _build_action_params(
+                self.session_id, "navigate", _navigate_payload(url, until, timeout_ms), deadline_ms
+            ),
+        )
+        return Receipt._from_dict(r)
+
+    async def wait_for(
+        self,
+        *,
+        deadline_ms: int = 30000,
+        until: str | None = None,
+        timeout_ms: int | None = None,
+    ) -> Receipt:
+        """Wait for the CURRENT page to reach a readiness state (settle-capture),
+        without navigating. See :meth:`Session.wait_for` for the ``until`` /
+        ``timeout_ms`` semantics."""
+        r = await self._transport.call(
+            "action.web.wait_for",
+            _build_action_params(
+                self.session_id, "wait_for", _wait_for_payload(until, timeout_ms), deadline_ms
+            ),
         )
         return Receipt._from_dict(r)
 

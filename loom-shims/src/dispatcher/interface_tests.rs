@@ -19,6 +19,7 @@ fn spawn_target_routes_to_target_manager() {
         profile: "default".into(),
         seed: Seed(0),
         epoch_ms: EpochMs(0),
+        determinism_enabled: true,
     };
     assert_eq!(route_target(&req), RouteTarget::TargetManager);
 }
@@ -33,6 +34,8 @@ fn page_navigate_routes_to_target_manager() {
         seed: Seed(0),
         epoch_ms: EpochMs(0),
         blocklist_enabled: true,
+        until: "settled".to_string(),
+        determinism_enabled: true,
     };
     assert_eq!(route_target(&req), RouteTarget::TargetManager);
 }
@@ -142,6 +145,7 @@ fn route_target_handles_every_shim_request_variant() {
             profile: "p".into(),
             seed: Seed(0),
             epoch_ms: EpochMs(0),
+            determinism_enabled: true,
         },
         ShimRequest::CdpSend {
             request_id: 2,
@@ -160,6 +164,8 @@ fn route_target_handles_every_shim_request_variant() {
             seed: Seed(0),
             epoch_ms: EpochMs(0),
             blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
         },
         ShimRequest::PageClose {
             request_id: 4,
@@ -194,6 +200,7 @@ async fn dispatcher_run_returns_on_shutdown_request() {
             _: String,
             _: Seed,
             _: EpochMs,
+            _: bool,
         ) -> Result<TargetId, crate::target_manager::target_manager::TargetError> {
             Ok(0)
         }
@@ -235,9 +242,23 @@ async fn dispatcher_run_returns_on_shutdown_request() {
             _: String,
             _: Option<std::time::Duration>,
             _: bool,
+            _: crate::readiness_monitor::SettleMode,
         ) -> Result<ActionResult, ShimResponse> {
             Ok(ActionResult::CdpResult {
                 result: CborValue::Null,
+            })
+        }
+        async fn wait_for(
+            &self,
+            _: TargetId,
+            _: crate::readiness_monitor::SettleMode,
+            _: Option<std::time::Duration>,
+        ) -> Result<ActionResult, ShimResponse> {
+            Ok(ActionResult::Waited {
+                settle_until: "settled".into(),
+                settle_outcome: "reached".into(),
+                settle_ms: 0,
+                network_count_at_settle: 0,
             })
         }
         async fn page_close(&self, t: TargetId) -> Result<ActionResult, ShimResponse> {

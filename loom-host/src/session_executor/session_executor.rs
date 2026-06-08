@@ -88,6 +88,9 @@ pub struct SessionHandle {
     /// compute `blocklist_enabled = !no_blocklist` for each
     /// `ShimRequest::PageNavigate`.
     pub no_blocklist: bool,
+    /// Operator's `--no-determinism` opt-out (settle-capture 4b). Threaded
+    /// from `Session.no_determinism` onto `HostState.no_determinism`.
+    pub no_determinism: bool,
     /// Operator's `--profile` choice (`"safe" | "standard" | "full"`).
     /// Threaded from `Session.profile` so HostState can inject
     /// `LOOM_SHIM_PROFILE` into per-session shim spawns
@@ -412,6 +415,17 @@ pub(crate) fn decode_typed_receipt(
                         }
                         ("network-entries-truncated", Val::Option(opt)) => {
                             builder.navigate_network_entries_truncated = extract_opt_bool(opt);
+                        }
+                        // settle-capture: the two deterministic readiness fields
+                        // are recorded on the canonical receipt (so they surface
+                        // on the wire receipt and replay reproduces them). The
+                        // settle-ms / network-count-at-settle diagnostics stay in
+                        // the host NavigateResult only.
+                        ("settle-until", Val::Option(opt)) => {
+                            builder.navigate_settle_until = extract_opt_string(opt);
+                        }
+                        ("settle-outcome", Val::Option(opt)) => {
+                            builder.navigate_settle_outcome = extract_opt_string(opt);
                         }
                         // ---- Evaluate tier optional fields ----
                         ("return-value-json", Val::Option(opt)) => {

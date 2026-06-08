@@ -123,6 +123,8 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
             loom_shared::types::Seed(0),
             loom_shared::types::EpochMs(0),
             true,
+            "settled".to_string(),
+            true,
         ),
     )
     .await
@@ -160,6 +162,20 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
     // console events gets caught by the wire-receipt tests, not silently
     // dropped.
     let _: &Vec<loom_shared::navigate_outcome::ShimConsoleLine> = &outcome.console_lines;
+
+    // (2b) settle-capture: the capture was gated on the default `settled`
+    // readiness state and the fake page settles cleanly, so the shim must
+    // surface `settled` / `reached` through to the NavigateOutcome. A
+    // regression that drops the readiness gate (capturing at commit time)
+    // would leave these unset.
+    assert_eq!(
+        outcome.settle_until, "settled",
+        "navigate default must gate capture on settled readiness"
+    );
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "the fake page settles cleanly → settle_outcome must be `reached`"
+    );
 
     // (3) NetworkSummary aggregation
     // logic mirroring host_function_table::navigate_execute. Verifies the
@@ -281,6 +297,8 @@ async fn error_navigate_summary_counts_4xx_as_error() {
             30_000,
             loom_shared::types::Seed(0),
             loom_shared::types::EpochMs(0),
+            true,
+            "settled".to_string(),
             true,
         ),
     )

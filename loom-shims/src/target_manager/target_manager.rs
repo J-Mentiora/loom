@@ -103,6 +103,9 @@ pub trait TargetManager: Send + Sync {
         profile: String,
         seed: Seed,
         epoch_ms: EpochMs,
+        // settle-capture (4b): when `false`, SKIP the determinism freeze-inject
+        // (real clock + unseeded RNG). The R3 readiness flag still flips.
+        determinism_enabled: bool,
     ) -> Result<TargetId, TargetError>;
 
     /// Look up the target for a session; None if unknown.
@@ -160,6 +163,7 @@ impl TargetManager for ChromiumTargetManager {
         profile: String,
         seed: Seed,
         epoch_ms: EpochMs,
+        determinism_enabled: bool,
     ) -> Result<TargetId, TargetError> {
         // Idempotent: return existing target if session already has one
         if let Some(existing) = self.by_session.read().get(&session_id).copied() {
@@ -169,13 +173,22 @@ impl TargetManager for ChromiumTargetManager {
         // Current: synthesize target_id from session_id.
         let target_id = session_id.wrapping_mul(0x9e3779b97f4a7c15);
         let mut state = TargetState::new(session_id, target_id, profile);
-        // R3 LOAD-BEARING. Await the inject; flag flips ONLY on
-        // Ok. A failed inject leaves the flag false AND does not insert into
-        // by_target/by_session — a retry runs cleanly without leaking state.
-        self.determinism
-            .inject(target_id, seed, epoch_ms)
-            .await
-            .map_err(|e| TargetError::DeterminismInjectionFailed(e.to_string()))?;
+        // R3 LOAD-BEARING. Await the inject; flag flips ONLY on Ok. A failed
+        // inject leaves the flag false AND does not insert — a retry runs
+        // cleanly without leaking state.
+        //
+        // settle-capture (4b): when determinism is OFF, SKIP the freeze-inject
+        // so the page keeps real `Date.now`/`Math.random`. The R3 readiness
+        // flag still flips (the target is "ready" — there is simply nothing to
+        // inject), so the navigate gate is UNCHANGED. The session was marked
+        // non-replayable in its manifest Header, so no determinism guarantee is
+        // silently weakened.
+        if determinism_enabled {
+            self.determinism
+                .inject(target_id, seed, epoch_ms)
+                .await
+                .map_err(|e| TargetError::DeterminismInjectionFailed(e.to_string()))?;
+        }
         state.determinism_injected = true;
         self.by_target.write().insert(target_id, state);
         self.by_session.write().insert(session_id, target_id);

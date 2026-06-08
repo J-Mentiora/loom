@@ -79,6 +79,7 @@ impl CoreFacadeBridge for NoopCoreBridge {
         _: Option<u64>,
         _: Option<serde_json::Value>,
         _: bool,
+        _: bool,
     ) -> Result<(String, u64), LoomErrorCode> {
         Err(LoomErrorCode::InternalError)
     }
@@ -220,6 +221,7 @@ fn create_params(
         seed: None,
         budget,
         no_blocklist: false,
+        no_determinism: false,
     }
 }
 

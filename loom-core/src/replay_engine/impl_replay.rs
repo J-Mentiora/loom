@@ -313,16 +313,61 @@ impl ReplayEngine for LocalReplayEngine {
             }
         });
 
+        // settle-capture (D3): reconstruct the source session's determinism
+        // seed from its recorded Header. Before this fix the replay session was
+        // always created with `seed: None` → `Seed(default_seed)`, so a
+        // `--seed N` recording replayed with a DIFFERENT in-Chromium
+        // Math.random/Date.now and diverged. `None` for legacy headers (no seed
+        // field) preserves the prior default-seed behaviour.
+        let source_seed = entries.iter().find_map(|e| {
+            if let ManifestEntry::Header { seed, .. } = e {
+                *seed
+            } else {
+                None
+            }
+        });
+
+        // settle-capture (4b): REFUSE to replay a non-deterministic session.
+        // A `--no-determinism` recording ran with real wall-clock + unseeded
+        // RNG, so its receipts can never be reproduced — replaying it would
+        // silently echo the recorded bytes and imply a reproducibility the run
+        // never had. `None`/`Some(true)` (legacy + deterministic) replay
+        // normally. This is the safety pair of the Header flag (NFR-DET-01).
+        let source_determinism_enabled = entries.iter().find_map(|e| {
+            if let ManifestEntry::Header {
+                determinism_enabled,
+                ..
+            } = e
+            {
+                *determinism_enabled
+            } else {
+                None
+            }
+        });
+        if source_determinism_enabled == Some(false) {
+            return Err(LoomError::new(
+                LoomErrorCode::InvalidArgument,
+                format!(
+                    "session {} was recorded with --no-determinism (real clock + unseeded RNG) \
+                     and is NOT replayable: a non-deterministic run can never be replay-equal",
+                    source.0
+                ),
+            ));
+        }
+
         // 5. Create replay session via SessionManager
         let replay_id = self.session_manager.create(SessionCreateOpts {
             agent_id: "replay-engine".to_string(),
             surface: "replay".to_string(),
-            seed: None,
+            seed: source_seed,
             limits: None,
             replay_of: Some(source.clone()),
             started_at_ms_override: source_started_at_ms,
             capture_policy: None,
             no_blocklist: false,
+            // The replay session itself is deterministic by construction (we
+            // refused non-deterministic sources above).
+            no_determinism: false,
             // Replay sessions inherit the source's profile via the manifest;
             // the gate is a daemon-layer concern that doesn't fire on replay
             // (no live shim). Default-safe is fine for the in-memory copy.

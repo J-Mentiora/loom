@@ -151,4 +151,50 @@ pub struct NavigateOutcome {
     /// for wire back-compat.
     #[serde(default)]
     pub network_entries_truncated: bool,
+    /// settle-capture: the readiness mode the capture was gated on
+    /// (`load|networkidle|settled`). `serde(default)` (→ `settled`) keeps
+    /// pre-feature CBOR payloads decoding unchanged.
+    #[serde(default = "default_settle_until_outcome")]
+    pub settle_until: String,
+    /// How the readiness wait ended: `reached|timeout|dom_unstable`.
+    #[serde(default = "default_settle_outcome")]
+    pub settle_outcome: String,
+    /// Virtual-tick count translated to ms by the shim's session clock. A
+    /// diagnostic ONLY — excluded from the host's `outcome_hash` (like the
+    /// screenshot hash) so it never affects replay byte-equality.
+    #[serde(default)]
+    pub settle_ms: u64,
+    /// In-flight (non-WebSocket/EventSource) request count observed at settle.
+    #[serde(default)]
+    pub network_count_at_settle: u64,
+}
+
+fn default_settle_until_outcome() -> String {
+    "settled".to_string()
+}
+
+fn default_settle_outcome() -> String {
+    "reached".to_string()
+}
+
+/// settle-capture slice 2: decoded result of a `ShimRequest::WaitFor` call.
+/// Produced by `ShimManager::send_wait_for` by CBOR-deserializing the shim's
+/// `ActionResult::Waited` payload (field names match that variant; the `kind`
+/// tag and any unknown fields are ignored by serde). `emitted_at_ms` is stamped
+/// host-side from the DeterminismHarness, like the navigate path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WaitOutcome {
+    /// Readiness mode that was waited for (`load|networkidle|settled`).
+    #[serde(default = "default_settle_until_outcome")]
+    pub settle_until: String,
+    /// How the readiness wait ended (`reached|timeout|dom_unstable`).
+    #[serde(default = "default_settle_outcome")]
+    pub settle_outcome: String,
+    /// Virtual-tick count translated to ms. Diagnostic only — excluded from the
+    /// host's `outcome_hash` so it never affects replay byte-equality.
+    #[serde(default)]
+    pub settle_ms: u64,
+    /// In-flight (non-WebSocket/EventSource) request count observed at settle.
+    #[serde(default)]
+    pub network_count_at_settle: u64,
 }

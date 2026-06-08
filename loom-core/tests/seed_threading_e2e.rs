@@ -13,7 +13,7 @@
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
 use loom_core::determinism_harness::DeterminismHarness;
-use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter};
+use loom_core::manifest_writer::{LocalManifestWriter, ManifestEntry, ManifestWriter};
 use loom_core::observability::Observability;
 use loom_core::session_manager::{LocalSessionManager, SessionCreateOpts};
 use loom_core::vault::{KeychainAccess, LocalVault, Vault};
@@ -87,7 +87,95 @@ fn opts(seed: Option<u64>) -> SessionCreateOpts {
         started_at_ms_override: None,
         capture_policy: None,
         no_blocklist: false,
+        no_determinism: false,
         profile: "safe".to_string(),
+    }
+}
+
+#[test]
+fn seed_is_recorded_in_manifest_header_for_replay() {
+    // D3 (settle-capture): a `--seed 42` session must RECORD seed=42 in the
+    // manifest Header so replay can reconstruct it. Before this fix the seed
+    // was never recorded, so replay silently created the session with
+    // Seed(default) and the in-Chromium Math.random/Date.now diverged.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+    let sm = make_sm(root, 99);
+    let id = sm.create(opts(Some(42))).unwrap();
+
+    let wal = std::path::Path::new(root)
+        .join("sessions")
+        .join(&id.0)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal).expect("manifest.wal must exist");
+    let header_line = contents
+        .lines()
+        .next()
+        .expect("Header is the first WAL line");
+    let header: ManifestEntry = serde_json::from_str(header_line).expect("Header must parse");
+    match header {
+        ManifestEntry::Header { seed, .. } => {
+            assert_eq!(
+                seed,
+                Some(42),
+                "the manifest Header must record the session's determinism seed"
+            );
+        }
+        other => panic!("first manifest entry must be a Header, got {other:?}"),
+    }
+}
+
+#[test]
+fn no_determinism_is_recorded_in_manifest_header() {
+    // settle-capture (4b): a `--no-determinism` session must RECORD
+    // determinism_enabled=false in the Header so replay can REFUSE it.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+    let sm = make_sm(root, 99);
+    let mut o = opts(Some(7));
+    o.no_determinism = true;
+    let id = sm.create(o).unwrap();
+
+    let wal = std::path::Path::new(root)
+        .join("sessions")
+        .join(&id.0)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal).expect("manifest.wal must exist");
+    let header: ManifestEntry =
+        serde_json::from_str(contents.lines().next().unwrap()).expect("Header parses");
+    match header {
+        ManifestEntry::Header {
+            determinism_enabled,
+            ..
+        } => assert_eq!(
+            determinism_enabled,
+            Some(false),
+            "a --no-determinism session must record determinism_enabled=false"
+        ),
+        other => panic!("first entry must be a Header, got {other:?}"),
+    }
+}
+
+#[test]
+fn deterministic_session_records_determinism_enabled_true() {
+    // The default (deterministic) session records `Some(true)` — explicit, so
+    // an operator inspecting the Header sees determinism was on.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+    let sm = make_sm(root, 99);
+    let id = sm.create(opts(Some(7))).unwrap();
+    let wal = std::path::Path::new(root)
+        .join("sessions")
+        .join(&id.0)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal).unwrap();
+    let header: ManifestEntry = serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+    match header {
+        ManifestEntry::Header {
+            determinism_enabled,
+            ..
+        } => assert_eq!(determinism_enabled, Some(true)),
+        other => panic!("first entry must be a Header, got {other:?}"),
     }
 }
 

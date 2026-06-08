@@ -34,22 +34,39 @@ use loom::surface::host;
 /// The action payload bytes are interpreted as a UTF-8 URL string.
 #[cfg(target_arch = "wasm32")]
 fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
-    // Decode URL from action payload bytes (plain UTF-8; the daemon
-    // encodes navigate payloads as raw URL bytes for simplicity).
-    let url = String::from_utf8(a.payload.clone())
-        .map_err(|e| HostError::Internal(format!("navigate: payload not valid UTF-8 URL: {e}")))?;
+    // Decode the payload. settle-capture encodes navigate payloads as
+    // `<until>\n<url>` (the daemon guarantees the prefix; URLs never contain a
+    // newline). Split once: the first line is the readiness mode, the rest is
+    // the URL. A payload with no newline is treated as a bare URL (settled).
+    let payload_str = String::from_utf8(a.payload.clone())
+        .map_err(|e| HostError::Internal(format!("navigate: payload not valid UTF-8: {e}")))?;
+    let (until, url) = match payload_str.split_once('\n') {
+        Some((mode, url)) => (mode.to_string(), url.to_string()),
+        None => ("settled".to_string(), payload_str),
+    };
 
     // action_id == action_hash at this layer (Q5 plumbing). The host
     // uses it for receipt correlation; the shim never sees it.
-    let action_hash = hex_sha256(&a.payload);
+    //
+    // settle-capture: hash the URL ONLY, not the `<until>\n<url>` payload, so
+    // the navigate action_hash stays `sha256(url)` — the documented,
+    // externally-computable contract (`hashlib.sha256(url.encode())`) that SDK
+    // consumers rely on (see integration_naverr_cli_e2e::
+    // sha_action_hash_matches_sha256_of_url_for_navigate). `until` is a
+    // capture-gating option, not part of the URL identity; it stays
+    // tamper-protected via `settle_until` in the receipt hash chain.
+    let action_hash = hex_sha256(url.as_bytes());
 
     // Host's `navigate_execute` is now the sole HTTP 4xx/5xx + transport-
     // error gate. It returns Err(HostError::ShimFailure) for those cases
     // — which we propagate via `?`. The guest never sees a
     // `result.status_code >= 400` value: the host short-circuits first.
-    let result = host::navigate_execute(&action_hash, &url, a.deadline_ms)?;
+    let result = host::navigate_execute(&action_hash, &url, &until, a.deadline_ms)?;
 
     // Deterministic outcome hash: digest of dom + screenshot hashes concatenated.
+    // settle-capture: the settle fields (until/outcome/ms/network-count) are
+    // DELIBERATELY excluded from outcome_hash — they are virtual-time-derived
+    // diagnostics, like the screenshot hash is excluded from the replay chain.
     let outcome_input = format!(
         "{}{}",
         result.dom_snapshot_hash, result.screenshot_after_hash
@@ -83,6 +100,10 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        settle_until: Some(result.settle_until),
+        settle_outcome: Some(result.settle_outcome),
+        settle_ms: Some(result.settle_ms),
+        network_count_at_settle: Some(result.network_count_at_settle),
     })
 }
 
@@ -146,6 +167,10 @@ fn evaluate_verb(a: Action) -> Result<Receipt, HostError> {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        settle_until: None,
+        settle_outcome: None,
+        settle_ms: None,
+        network_count_at_settle: None,
     })
 }
 
@@ -189,6 +214,70 @@ fn set_input_files_verb(a: Action) -> Result<Receipt, HostError> {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        settle_until: None,
+        settle_outcome: None,
+        settle_ms: None,
+        network_count_at_settle: None,
+    })
+}
+
+/// Wait-for verb (settle-capture slice 2): a standalone readiness wait on the
+/// current page. Calls the typed `wait-for-execute` host function and builds a
+/// receipt carrying ONLY the settle verdict (no DOM / screenshot — wait_for
+/// captures nothing). The action payload bytes are the readiness mode string
+/// (`load|networkidle|settled`); an empty payload defaults to `settled`.
+#[cfg(target_arch = "wasm32")]
+fn wait_for_verb(a: Action) -> Result<Receipt, HostError> {
+    let until = String::from_utf8(a.payload.clone())
+        .map_err(|e| HostError::Internal(format!("wait_for: payload not valid UTF-8: {e}")))?;
+    let until = if until.is_empty() {
+        "settled".to_string()
+    } else {
+        until
+    };
+
+    // action_id == action_hash at this layer (Q5 plumbing).
+    let action_hash = hex_sha256(&a.payload);
+
+    let result = host::wait_for_execute(&action_hash, &until, a.deadline_ms)?;
+
+    // Replay-stable outcome hash: derived from the settle VERDICT only
+    // (settle_until + settle_outcome are pure functions of the recorded
+    // observation sequence). settle_ms / network_count_at_settle are
+    // machine-variable diagnostics and are DELIBERATELY excluded — exactly
+    // as navigate excludes them and as the screenshot hash is excluded from
+    // the replay chain.
+    let outcome_input = format!("W:{}:{}", result.settle_until, result.settle_outcome);
+    let outcome_hash = hex_sha256(outcome_input.as_bytes());
+
+    Ok(Receipt {
+        action_hash,
+        outcome_hash,
+        emitted_at_ms: result.emitted_at_ms,
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        side_effects_json: None,
+        console_lines_json: None,
+        network_summary_json: None,
+        network_entries_json: None,
+        network_entries_blob_ref: None,
+        network_entries_truncated: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+        settle_until: Some(result.settle_until),
+        settle_outcome: Some(result.settle_outcome),
+        settle_ms: Some(result.settle_ms),
+        network_count_at_settle: Some(result.network_count_at_settle),
     })
 }
 
@@ -301,6 +390,10 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        settle_until: None,
+        settle_outcome: None,
+        settle_ms: None,
+        network_count_at_settle: None,
     })
 }
 
@@ -400,6 +493,9 @@ impl exports::loom::surface::web_surface::Guest for SurfaceWebImpl {
     }
     fn wait(a: Action) -> Result<Receipt, HostError> {
         dispatch("wait", a)
+    }
+    fn wait_for(a: Action) -> Result<Receipt, HostError> {
+        wait_for_verb(a)
     }
     fn evaluate(a: Action) -> Result<Receipt, HostError> {
         evaluate_verb(a)

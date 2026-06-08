@@ -122,6 +122,7 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         _: Option<u64>,
         _: Option<serde_json::Value>,
         _: bool,
+        _: bool,
     ) -> Result<(String, u64), LoomErrorCode> {
         Err(LoomErrorCode::InternalError)
     }
@@ -282,6 +283,8 @@ impl WasmHostBridge for NoopHostBridge {
             network_entries: vec![],
             network_entries_blob_ref: None,
             network_entries_truncated: None,
+            settle_until: None,
+            settle_outcome: None,
             return_value_json: None,
             return_value_blob_ref: None,
             set_cookies_result: None,

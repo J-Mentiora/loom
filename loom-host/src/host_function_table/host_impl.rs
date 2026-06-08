@@ -20,7 +20,7 @@ use crate::wit_type_marshaller::loom_surface_bindings::loom::surface::{
     host::Host,
     types::{
         ContentRef, EvaluateResult, HostError, Instant, LogLevel, NavigateResult, NetReq, NetResp,
-        Receipt, SetInputFilesResult,
+        Receipt, SetInputFilesResult, WaitResult,
     },
 };
 use crate::wit_type_marshaller::Mode;
@@ -381,6 +381,7 @@ impl Host for HostState {
         &mut self,
         action_id: String,
         url: String,
+        until: String,
         budget_ms: u64,
     ) -> impl ::core::future::Future<Output = Result<NavigateResult, HostError>> + Send {
         use crate::shim_manager::ShimId;
@@ -398,6 +399,8 @@ impl Host for HostState {
         // affirmative `blocklist_enabled`. Inverting once at this seam
         // makes wire / log dumps directly readable.
         let blocklist_enabled = !self.no_blocklist;
+        // settle-capture (4b): per-session determinism toggle.
+        let determinism_enabled = !self.no_determinism;
         let manifest_writer = self.core.manifest_writer.clone();
         let session_id_for_audit = self.session_id.clone();
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
@@ -469,6 +472,8 @@ impl Host for HostState {
                     seed,
                     epoch_ms,
                     blocklist_enabled,
+                    until,
+                    determinism_enabled,
                 )
                 .await
                 .map_err(loom_to_wit_error)?;
@@ -657,6 +662,76 @@ impl Host for HostState {
                 network_entries_json,
                 network_entries_blob_ref,
                 network_entries_truncated,
+                // settle-capture: pass the shim's readiness verdict through.
+                // These are NOT folded into outcome_hash (the guest excludes
+                // them) — they are virtual-time-derived diagnostics.
+                settle_until: outcome.settle_until,
+                settle_outcome: outcome.settle_outcome,
+                settle_ms: outcome.settle_ms,
+                network_count_at_settle: outcome.network_count_at_settle,
+            })
+        }
+    }
+
+    // --- Typed wait-for-execute host function (settle-capture slice 2) ---
+    fn wait_for_execute(
+        &mut self,
+        action_id: String,
+        until: String,
+        budget_ms: u64,
+    ) -> impl ::core::future::Future<Output = Result<WaitResult, HostError>> + Send {
+        use crate::shim_manager::ShimId;
+
+        // ALL sync work up front so the future holds only owned Send types.
+        let session_id_str = self.session_id.0.clone();
+        let shim_manager = self.shim_manager.clone();
+        let determinism = self.determinism.clone();
+        let seed = self.seed;
+        let epoch_ms = self.epoch_ms;
+        // settle-capture (4b): per-session determinism toggle.
+        let determinism_enabled = !self.no_determinism;
+        let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
+
+        let maybe_id: Result<ShimId, HostError> =
+            if self.mode == crate::wit_type_marshaller::Mode::Replay {
+                Err(HostError::Internal(
+                    "wait_for_execute not allowed in replay mode".to_owned(),
+                ))
+            } else {
+                // wait_for never navigates or downloads, so it needs only the
+                // common register core (no safe-profile downloads_dir env).
+                register_chromium_shim_if_absent(&shim_manager, &session_id_str, |_config| {})
+            };
+
+        async move {
+            let effective_id = maybe_id?;
+
+            // target_id = 0 → resolves to the session's current target (the
+            // shim's WaitFor handler runs after an idempotent SpawnTarget).
+            let outcome = shim_manager
+                .send_wait_for(
+                    effective_id,
+                    action_id,
+                    shim_session_id,
+                    0,
+                    until,
+                    budget_ms,
+                    seed,
+                    epoch_ms,
+                    determinism_enabled,
+                )
+                .await
+                .map_err(loom_to_wit_error)?;
+
+            // Session-monotonic timestamp from DeterminismHarness (like navigate).
+            let emitted_at_ms = determinism.clock_now();
+
+            Ok(WaitResult {
+                settle_until: outcome.settle_until,
+                settle_outcome: outcome.settle_outcome,
+                settle_ms: outcome.settle_ms,
+                network_count_at_settle: outcome.network_count_at_settle,
+                emitted_at_ms,
             })
         }
     }
@@ -682,6 +757,8 @@ impl Host for HostState {
         // Math.random leak real values.
         let seed = self.seed;
         let epoch_ms = self.epoch_ms;
+        // settle-capture (4b): per-session determinism toggle.
+        let determinism_enabled = !self.no_determinism;
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
 
         // Resolve effective shim ID and lazy-register if needed (same
@@ -711,6 +788,7 @@ impl Host for HostState {
                     budget_ms,
                     seed,
                     epoch_ms,
+                    determinism_enabled,
                 )
                 .await
                 .map_err(loom_to_wit_error)?;
@@ -784,6 +862,8 @@ impl Host for HostState {
         let shim_manager = self.shim_manager.clone();
         let seed = self.seed;
         let epoch_ms = self.epoch_ms;
+        // settle-capture (4b): per-session determinism toggle.
+        let determinism_enabled = !self.no_determinism;
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
 
         // Resolve effective shim ID and lazy-register if needed (same
@@ -813,6 +893,7 @@ impl Host for HostState {
                     budget_ms,
                     seed,
                     epoch_ms,
+                    determinism_enabled,
                 )
                 .await
                 .map_err(loom_to_wit_error)?;

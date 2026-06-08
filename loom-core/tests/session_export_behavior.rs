@@ -29,6 +29,8 @@ fn write_wal(sessions_root: &std::path::Path, session_id: &str, receipts: &[Vec<
         prev_hash: None,
         budgets: None,
         capture_policy: None,
+        seed: None,
+        determinism_enabled: None,
     };
     let mut lines = vec![serde_json::to_string(&header).unwrap()];
 

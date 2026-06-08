@@ -223,6 +223,8 @@ impl ManifestWriter for MockManifestWriter {
         _budgets: Option<crate::budget_enforcer::BudgetLimits>,
         _started_at_ms_override: Option<u64>,
         _capture_policy: Option<String>,
+        _seed: Option<u64>,
+        _determinism_enabled: bool,
     ) -> Result<WriterHandle, LoomError> {
         if self.open_delay_ms > 0 {
             std::thread::sleep(std::time::Duration::from_millis(self.open_delay_ms));

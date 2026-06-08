@@ -32,6 +32,7 @@ impl LocalSessionManager {
         let is_replay = opts.replay_of.is_some();
         let capture_policy = opts.capture_policy.clone();
         let no_blocklist = opts.no_blocklist;
+        let no_determinism = opts.no_determinism;
         let profile = opts.profile.clone();
 
         // The Option<u64> → Seed collapse happens HERE — exactly once.
@@ -86,6 +87,14 @@ impl LocalSessionManager {
             limits,
             started_at_ms_override,
             capture_policy.clone(),
+            // settle-capture (D3): record the resolved seed so replay can
+            // reconstruct it. On the replay path `opts.seed` is the recorded
+            // source seed, so this records the same value round-trip.
+            Some(seed.0),
+            // settle-capture (4b): record whether determinism was ON so the
+            // replay path can REFUSE non-deterministic sessions (they can never
+            // be replay-equal). `true` for the default deterministic session.
+            !no_determinism,
         )?;
 
         let tape_writer = self.determinism.new_tape_writer();
@@ -104,6 +113,7 @@ impl LocalSessionManager {
             kill_reason: Arc::new(parking_lot::Mutex::new(None)),
             capture_policy,
             no_blocklist,
+            no_determinism,
             seed,
             epoch_ms,
             profile,

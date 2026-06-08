@@ -53,6 +53,7 @@ pub fn run(config: &BenchmarkConfig) -> Result<ReceiptOverheadReport, BenchmarkE
         started_at_ms_override: None,
         capture_policy: None,
         no_blocklist: false,
+        no_determinism: false,
         profile: "safe".to_string(),
     };
 
@@ -171,6 +172,7 @@ mod tests {
                 started_at_ms_override: None,
                 capture_policy: None,
                 no_blocklist: false,
+                no_determinism: false,
                 profile: "safe".to_string(),
             })
             .unwrap();

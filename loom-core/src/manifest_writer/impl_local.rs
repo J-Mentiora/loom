@@ -208,6 +208,8 @@ impl ManifestWriter for LocalManifestWriter {
         budgets: Option<crate::budget_enforcer::BudgetLimits>,
         started_at_ms_override: Option<u64>,
         capture_policy: Option<String>,
+        seed: Option<u64>,
+        determinism_enabled: bool,
     ) -> Result<WriterHandle, LoomError> {
         let session_dir = self.sessions_root.join(&session.0);
         fs::create_dir_all(&session_dir)?;
@@ -229,6 +231,12 @@ impl ManifestWriter for LocalManifestWriter {
                     prev_hash: None,
                     budgets,
                     capture_policy,
+                    seed,
+                    // settle-capture (4b): record ON-ness only when OFF would
+                    // be surprising — `Some(false)` is the replay-refuse marker;
+                    // `Some(true)` documents the default explicitly. Both
+                    // round-trip; legacy headers (None) are treated as ON.
+                    determinism_enabled: Some(determinism_enabled),
                 };
                 let json_line = serde_jcs::to_string(&header)
                     .map_err(|e| LoomError::internal(format!("JCS header: {e}")))?;

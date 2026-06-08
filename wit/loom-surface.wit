@@ -62,6 +62,11 @@ interface types {
         get-cookies-result: option<string>,
         clear-cookies-result: option<string>,
         delete-cookies-result: option<string>,
+        // settle-capture readiness fields (navigate-tier).
+        settle-until: option<string>,
+        settle-outcome: option<string>,
+        settle-ms: option<u64>,
+        network-count-at-settle: option<u64>,
     }
 
     /// Result returned by the navigate-execute host function.
@@ -96,6 +101,16 @@ interface types {
         network-entries-blob-ref: option<content-ref>,
         /// The entries list is incomplete (cap hit or offload failure).
         network-entries-truncated: bool,
+        /// settle-capture: readiness mode the capture was gated on.
+        settle-until: string,
+        /// settle-capture: how the readiness wait ended
+        /// (`reached|timeout|dom_unstable`).
+        settle-outcome: string,
+        /// settle-capture: virtual-tick count mapped to ms. Diagnostic only —
+        /// excluded from outcome_hash.
+        settle-ms: u64,
+        /// settle-capture: in-flight (non-WS/SSE) request count at settle.
+        network-count-at-settle: u64,
     }
 
     /// Result returned by the evaluate-execute host function. Exactly one
@@ -119,6 +134,23 @@ interface types {
     record set-input-files-result {
         /// Number of files set on the input element.
         file-count: u32,
+    }
+
+    /// Result returned by the wait-for-execute host function (settle-capture
+    /// slice 2). A readiness wait on the CURRENT page — no navigation, no DOM /
+    /// screenshot capture. Carries only the settle verdict.
+    record wait-result {
+        /// Readiness mode that was waited for (load|networkidle|settled).
+        settle-until: string,
+        /// How the wait ended (reached|timeout|dom_unstable).
+        settle-outcome: string,
+        /// Virtual-tick count mapped to ms. Diagnostic only — excluded from
+        /// outcome_hash (like the screenshot hash is excluded from the chain).
+        settle-ms: u64,
+        /// In-flight (non-WS/SSE) request count at settle.
+        network-count-at-settle: u64,
+        /// Session-monotonic ms timestamp (DeterminismHarness).
+        emitted-at-ms: u64,
     }
 
     record content-ref {
@@ -157,7 +189,7 @@ interface types {
 interface host {
     use types.{action, receipt, content-ref, instant, host-error,
                net-req, net-resp, log-level, navigate-result, evaluate-result,
-               set-input-files-result};
+               set-input-files-result, wait-result};
 
     // Determinism sources
     clock-now: func() -> instant;
@@ -186,7 +218,9 @@ interface host {
     // a typed navigate-result.
     // action-id propagates the WASM-guest-computed action_hash (= sha256 of
     // action.payload) for receipt correlation in the host.
-    navigate-execute: func(action-id: string, url: string, budget-ms: u64) -> result<navigate-result, host-error>;
+    // `until` (settle-capture) is the readiness mode the capture is gated on
+    // (`load|networkidle|settled`); the host forwards it to the shim.
+    navigate-execute: func(action-id: string, url: string, until: string, budget-ms: u64) -> result<navigate-result, host-error>;
 
     // Evaluate-execute: typed replacement for shim-call on the web.evaluate
     // path. Host handles ShimManager::send_evaluate, CDP Runtime.evaluate
@@ -203,6 +237,14 @@ interface host {
     // (error on a resolved node → shim-failure kind=not_a_file_input). Paths are
     // already validated + canonicalized daemon-side (upload_guard).
     set-input-files-execute: func(action-id: string, payload: list<u8>, budget-ms: u64) -> result<set-input-files-result, host-error>;
+
+    // Wait-for-execute: typed readiness wait on the CURRENT page (settle-capture
+    // slice 2). Runs the shim-side SettleDriver/ReadinessMonitor WITHOUT
+    // navigating or capturing DOM/screenshot. `until` is the readiness mode
+    // (`load|networkidle|settled`); the host forwards it to the shim's
+    // wait-for path, which reuses the exact verdict logic the navigate gate
+    // uses. Returns a typed wait-result with the settle verdict.
+    wait-for-execute: func(action-id: string, until: string, budget-ms: u64) -> result<wait-result, host-error>;
 
     // Vault-substitute-cookies: v0.9.6 web-cookie-injection grant
     // resolution. Wraps `Vault::substitute_cookies(grant, session)`
@@ -236,6 +278,8 @@ interface web-surface {
     hover:          func(a: action) -> result<receipt, host-error>;
     scroll:         func(a: action) -> result<receipt, host-error>;
     wait:           func(a: action) -> result<receipt, host-error>;
+    // settle-capture slice 2: standalone readiness wait on the current page.
+    wait-for:       func(a: action) -> result<receipt, host-error>;
     evaluate:       func(a: action) -> result<receipt, host-error>;
     set-input-files: func(a: action) -> result<receipt, host-error>;
     screenshot:     func(a: action) -> result<receipt, host-error>;

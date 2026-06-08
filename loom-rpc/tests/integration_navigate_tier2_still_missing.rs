@@ -156,6 +156,8 @@ fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
         network_entries: vec![],
         network_entries_blob_ref: None,
         network_entries_truncated: None,
+        settle_until: None,
+        settle_outcome: None,
         return_value_json: None,
         return_value_blob_ref: None,
         set_cookies_result: None,

@@ -63,6 +63,12 @@ pub struct ReceiptBuilder {
     pub navigate_console_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_network_count: Option<u64>,
+    // settle-capture: the two deterministic readiness fields surfaced on the
+    // canonical (and therefore wire) receipt.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub navigate_settle_until: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub navigate_settle_outcome: Option<String>,
     /// JSON bytes of `Vec<LoomNetworkEvent>`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_side_effects_json: Option<Vec<u8>>,
@@ -484,6 +490,8 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         } else {
             None
         },
+        settle_until: builder.navigate_settle_until.clone(),
+        settle_outcome: builder.navigate_settle_outcome.clone(),
     };
 
     payload.canonical_bytes()
@@ -592,6 +600,9 @@ fn assemble_evaluate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         } else {
             None
         },
+        // Non-navigate receipts never carry settle fields.
+        settle_until: None,
+        settle_outcome: None,
     };
 
     payload.canonical_bytes()

@@ -252,6 +252,7 @@ impl WasmHost {
             seed: session.seed,
             epoch_ms: session.epoch_ms,
             no_blocklist: session.no_blocklist,
+            no_determinism: session.no_determinism,
             profile: session.profile.clone(),
             downloads_dir: session.downloads_dir.clone(),
         };

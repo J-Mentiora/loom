@@ -19,6 +19,7 @@ fn params(
         seed: None,
         budget,
         no_blocklist: false,
+        no_determinism: false,
     }
 }
 
@@ -34,6 +35,7 @@ fn params_with_capture_policy(
         seed: None,
         budget: None,
         no_blocklist: false,
+        no_determinism: false,
     }
 }
 

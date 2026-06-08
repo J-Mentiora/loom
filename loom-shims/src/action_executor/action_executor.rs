@@ -49,6 +49,15 @@ pub const DEFAULT_ACTION_BUDGET: Duration = Duration::from_secs(30);
 /// the slow-TLS / unresponsive-host worst case.
 pub const DEFAULT_NAVIGATE_BUDGET: Duration = Duration::from_secs(10);
 
+/// settle-capture: serde defaults for the readiness fields on
+/// `ActionResult::Navigated`, so a pre-feature CBOR payload decodes unchanged.
+fn default_settle_until_field() -> String {
+    "settled".to_string()
+}
+fn default_settle_outcome_field() -> String {
+    "reached".to_string()
+}
+
 /// Translated, typed result of an action. Never carries raw CDP bytes
 /// outside `cdp_send`'s explicit pass-through path.
 // Navigated carries dom_bytes + screenshot_bytes (heap Vec<u8>) alongside
@@ -104,11 +113,39 @@ pub enum ActionResult {
         /// True when the shim accumulator hit its cap and dropped entries.
         #[serde(default)]
         network_entries_truncated: bool,
+        // --- settle-capture readiness fields ---
+        /// Readiness mode the capture was gated on (`load|networkidle|settled`).
+        #[serde(default = "default_settle_until_field")]
+        settle_until: String,
+        /// How the wait ended: `reached|timeout|dom_unstable`.
+        #[serde(default = "default_settle_outcome_field")]
+        settle_outcome: String,
+        /// Virtual-tick count mapped to ms; diagnostic only (excluded from
+        /// the host's outcome_hash).
+        #[serde(default)]
+        settle_ms: u64,
+        /// In-flight (non-WS/SSE) request count at settle.
+        #[serde(default)]
+        network_count_at_settle: u64,
     },
     /// `cdp_send` round-trip; opaque pass-through to the daemon.
     CdpResult { result: CborValue },
     /// `page_close` completed.
     PageClosed { target_id: TargetId },
+    /// settle-capture slice 2: `wait_for` completed — a standalone readiness
+    /// wait on the current page (no navigation, no capture). Carries only the
+    /// settle verdict; the host stamps `emitted_at_ms`.
+    Waited {
+        /// Readiness mode that was waited for (`load|networkidle|settled`).
+        settle_until: String,
+        /// How the wait ended: `reached|timeout|dom_unstable`.
+        settle_outcome: String,
+        /// Virtual-tick count mapped to ms; diagnostic only (excluded from the
+        /// host's outcome_hash).
+        settle_ms: u64,
+        /// In-flight (non-WS/SSE) request count at settle.
+        network_count_at_settle: u64,
+    },
 }
 
 /// Concrete ActionExecutor.
@@ -169,6 +206,20 @@ pub trait ActionExecutor: Send + Sync {
         url: String,
         budget: Option<Duration>,
         blocklist_enabled: bool,
+        // settle-capture: readiness state the capture is gated on.
+        settle_mode: crate::readiness_monitor::SettleMode,
+    ) -> Result<ActionResult, ShimResponse>;
+
+    /// settle-capture slice 2: run a standalone readiness wait on `target_id`
+    /// (no navigation, no capture), reusing the SettleDriver/ReadinessMonitor.
+    /// Returns `ActionResult::Waited` with the settle verdict. Bounded by the
+    /// tick ceiling derived from `budget` — returns a typed `timeout` /
+    /// `dom_unstable` verdict rather than hanging.
+    async fn wait_for(
+        &self,
+        target_id: TargetId,
+        settle_mode: crate::readiness_monitor::SettleMode,
+        budget: Option<Duration>,
     ) -> Result<ActionResult, ShimResponse>;
 
     /// Close the target.
@@ -223,6 +274,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         url: String,
         budget: Option<Duration>,
         blocklist_enabled: bool,
+        settle_mode: crate::readiness_monitor::SettleMode,
     ) -> Result<ActionResult, ShimResponse> {
         // R3 PRECONDITION. Refuse to navigate before the
         // determinism script has been installed for this target. Today
@@ -331,7 +383,22 @@ impl ActionExecutor for ChromiumActionExecutor {
         // STEP 4: await Page.loadEventFired with timeout. The fake-chromium
         // harness emits the event right after Page.navigate response so this
         // typically completes immediately. Real Chromium can take longer.
-        let _ = tokio::time::timeout(timeout, load_rx).await;
+        let load_fired = tokio::time::timeout(timeout, load_rx).await.is_ok();
+
+        // STEP 4b (settle-capture): gate the capture on the requested readiness
+        // state. The verdict is a pure function of the per-tick observation
+        // sequence in virtual ticks (DET-CORE), so it is replay-equal. `load`
+        // mode returns immediately once load fired; networkidle/settled poll
+        // until quiet or the tick ceiling (a bounded, typed fallback).
+        let settle = crate::readiness_monitor::wait_for_settle(
+            &self.cdp,
+            target_id,
+            settle_mode,
+            crate::readiness_monitor::settle_driver::config_for_timeout(timeout),
+            load_fired,
+            timeout,
+        )
+        .await;
 
         // STEP 5: DOM.getDocument → raw CBOR bytes + SHA-256.
         let dom_msg = CdpMessage {
@@ -510,9 +577,47 @@ impl ActionExecutor for ChromiumActionExecutor {
                 let mut guard = console_collector.lock();
                 std::mem::take(&mut *guard)
             },
+            settle_until: settle.mode.as_str().to_string(),
+            settle_outcome: settle.outcome.as_str().to_string(),
+            // Map the virtual tick count to a ms diagnostic via the pacing
+            // cadence. Excluded from outcome_hash host-side.
+            settle_ms: settle.ticks as u64 * 5,
+            network_count_at_settle: settle.network_count as u64,
             blocked_events,
             network_entries,
             network_entries_truncated,
+        })
+    }
+
+    async fn wait_for(
+        &self,
+        target_id: TargetId,
+        settle_mode: crate::readiness_monitor::SettleMode,
+        budget: Option<Duration>,
+    ) -> Result<ActionResult, ShimResponse> {
+        // Standalone readiness wait on an ALREADY-LOADED page. Unlike navigate
+        // we did not subscribe to (and observe) Page.loadEventFired for this
+        // call — the page has already loaded by the time a caller invokes
+        // wait_for — so `load_fired` is true. The verdict is a pure function of
+        // the per-tick observation sequence in virtual ticks (DET-CORE), so it
+        // replays identically; the tick ceiling (from `budget`) bounds it to a
+        // typed `timeout`/`dom_unstable` instead of hanging.
+        let timeout = budget.unwrap_or(DEFAULT_NAVIGATE_BUDGET);
+        let settle = crate::readiness_monitor::wait_for_settle(
+            &self.cdp,
+            target_id,
+            settle_mode,
+            crate::readiness_monitor::settle_driver::config_for_timeout(timeout),
+            true,
+            timeout,
+        )
+        .await;
+
+        Ok(ActionResult::Waited {
+            settle_until: settle.mode.as_str().to_string(),
+            settle_outcome: settle.outcome.as_str().to_string(),
+            settle_ms: settle.ticks as u64 * 5,
+            network_count_at_settle: settle.network_count as u64,
         })
     }
 

@@ -21,6 +21,8 @@ fn header_entry_carries_optional_prev_hash_set_to_none() {
         prev_hash: None,
         budgets: None,
         capture_policy: None,
+        seed: None,
+        determinism_enabled: None,
     };
     if let ManifestEntry::Header { prev_hash, .. } = h {
         assert!(prev_hash.is_none());
@@ -41,6 +43,8 @@ fn header_serializes_capture_policy_with_skip_if_none() {
         prev_hash: None,
         budgets: None,
         capture_policy: Some("minimal".into()),
+        seed: None,
+        determinism_enabled: None,
     };
     let s_with = serde_jcs::to_string(&with).expect("jcs serialize with");
     assert!(
@@ -54,6 +58,8 @@ fn header_serializes_capture_policy_with_skip_if_none() {
         prev_hash: None,
         budgets: None,
         capture_policy: None,
+        seed: None,
+        determinism_enabled: None,
     };
     let s_without = serde_jcs::to_string(&without).expect("jcs serialize without");
     assert!(
@@ -196,7 +202,7 @@ fn append_audit_rejects_malformed_secret_label() {
     ));
     // Header first to bootstrap the chain.
     let _ = w
-        .open_manifest_with_started_at(session.clone(), None, Some(1), None)
+        .open_manifest_with_started_at(session.clone(), None, Some(1), None, None, true)
         .expect("open_manifest");
 
     // Label has a space (not in [A-Za-z0-9:_-]) — must be rejected.
@@ -238,7 +244,7 @@ fn append_audit_label_gate_scoped_to_secret_kinds() {
         rand::random::<u16>()
     ));
     let _ = w
-        .open_manifest_with_started_at(session.clone(), None, Some(2), None)
+        .open_manifest_with_started_at(session.clone(), None, Some(2), None, None, true)
         .expect("open_manifest");
 
     // A label that would fail the Secret* gate — but Grant* is scoped out.

@@ -384,6 +384,7 @@ impl CoreFacadeBridge for CoreBridge {
         seed: Option<u64>,
         budget: Option<serde_json::Value>,
         no_blocklist: bool,
+        no_determinism: bool,
     ) -> Result<(String, u64), AdapterError> {
         use loom_core::budget_enforcer::BudgetLimits;
         use loom_core::error::LoomErrorCode;
@@ -462,6 +463,7 @@ impl CoreFacadeBridge for CoreBridge {
             started_at_ms_override: None,
             capture_policy: capture_policy.map(|s| s.to_string()),
             no_blocklist,
+            no_determinism,
             profile: profile.to_string(),
         };
         let session_id = self
@@ -1120,6 +1122,8 @@ impl WasmHostBridge for WasmBridge {
             seed: session.seed,
             epoch_ms: session.epoch_ms,
             no_blocklist: session.no_blocklist,
+            // settle-capture (4b): thread the determinism toggle through.
+            no_determinism: session.no_determinism,
             // thread profile + downloads_dir into the
             // SessionHandle so HostState can inject env vars at shim spawn.
             profile: session.profile.clone(),
@@ -1150,8 +1154,22 @@ impl WasmHostBridge for WasmBridge {
             // `internal_error: action dispatch failed` to the CLI.
             // (This regression was caught after the evaluate-result-not-surfaced
             // feature landed.)
-            Action::WebNavigate { url, .. } => url.as_bytes().to_vec(),
+            // settle-capture: the navigate payload is `<until>\n<url>` so the
+            // readiness mode rides to the guest (which has no JSON parser and
+            // splits once on the newline). URLs are http/https/about:blank —
+            // never contain a newline — so the split is unambiguous.
+            Action::WebNavigate { url, until, .. } => {
+                let mode = until.as_deref().unwrap_or("settled");
+                format!("{mode}\n{url}").into_bytes()
+            }
             Action::WebEvaluate { expression, .. } => expression.as_bytes().to_vec(),
+            // settle-capture: web.wait_for's guest verb (`wait_for_verb`) reads
+            // the payload as the readiness mode string and calls the typed
+            // `host::wait_for_execute`. Raw UTF-8 `until` bytes (default
+            // `settled`) — never a CBOR CdpMessage.
+            Action::WebWaitFor { until, .. } => {
+                until.as_deref().unwrap_or("settled").as_bytes().to_vec()
+            }
             // web.set_input_files: the guest's `set_input_files_verb` decodes
             // {selector, paths} from the payload and calls
             // `host::set_input_files_execute`. Paths here are already
@@ -1290,6 +1308,8 @@ fn profile_restricted_evaluate_receipt(
         network_entries: vec![],
         network_entries_blob_ref: None,
         network_entries_truncated: None,
+        settle_until: None,
+        settle_outcome: None,
         return_value_json: None,
         return_value_blob_ref: None,
         // v0.9.6 cookie-result fields — not applicable to a
@@ -1350,6 +1370,8 @@ fn upload_error_receipt(action_id: u64, session_id: &str, kind: &str, message: S
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        settle_until: None,
+        settle_outcome: None,
     }
 }
 
@@ -1388,6 +1410,8 @@ fn build_network_log_receipt(
         network_entries: data.network_entries,
         network_entries_blob_ref: data.network_entries_blob_ref,
         network_entries_truncated: Some(data.network_entries_truncated),
+        settle_until: None,
+        settle_outcome: None,
         return_value_json: None,
         return_value_blob_ref: None,
         set_cookies_result: None,
@@ -1437,6 +1461,8 @@ fn cookie_validation_error_receipt(
         network_entries: vec![],
         network_entries_blob_ref: None,
         network_entries_truncated: None,
+        settle_until: None,
+        settle_outcome: None,
         return_value_json: None,
         return_value_blob_ref: None,
         set_cookies_result: None,
@@ -1628,6 +1654,12 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
             let sel = serde_json::to_string(selector).ok()?;
             runtime_evaluate(format!("document.querySelector({sel}) !== null"))
         }
+
+        // settle-capture: web.wait_for uses the typed `wait_for_execute` host
+        // function (like navigate/evaluate), NOT a single CDP envelope —
+        // `args_canonical_bytes` special-cases it before this fn is called.
+        // This arm exists only to satisfy the exhaustive match.
+        Action::WebWaitFor { .. } => return None,
 
         Action::WebScreenshot { .. } => Value::Map(vec![
             (
@@ -1935,6 +1967,9 @@ fn build_navigate_wire_receipt(
         network_entries,
         network_entries_blob_ref,
         network_entries_truncated,
+        // settle-capture readiness fields (surfaced from the builder).
+        settle_until: builder.navigate_settle_until.clone(),
+        settle_outcome: builder.navigate_settle_outcome.clone(),
         return_value_json,
         return_value_blob_ref,
         // v0.9.6 cookie-result wire fields. Populated by Tier 4
@@ -2023,6 +2058,7 @@ fn action_session_id(action: &Action) -> &str {
         | Action::WebScroll { session_id, .. }
         | Action::WebWait { session_id, .. }
         | Action::WebSnapshot { session_id } => session_id,
+        Action::WebWaitFor { session_id, .. } => session_id,
         Action::WebSetInputFiles { session_id, .. } => session_id,
         // v0.9.6 web-cookie-injection.
         Action::WebSetCookies { session_id, .. }
@@ -2056,6 +2092,7 @@ fn action_verb(action: &Action) -> &str {
         Action::WebHover { .. } => "hover",
         Action::WebScroll { .. } => "scroll",
         Action::WebWait { .. } => "wait",
+        Action::WebWaitFor { .. } => "wait-for",
         Action::WebSnapshot { .. } => "snapshot",
         Action::WebSetInputFiles { .. } => "set-input-files",
         // v0.9.6 web-cookie-injection.
@@ -2926,6 +2963,8 @@ mod tests {
                 Action::WebNavigate {
                     session_id: session.clone(),
                     url: s("https://example.com"),
+                    until: None,
+                    timeout_ms: None,
                 },
                 "Page.navigate",
             ),

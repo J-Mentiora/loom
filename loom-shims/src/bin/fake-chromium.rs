@@ -23,6 +23,19 @@
 //!   `DOM.scrollIntoViewIfNeeded`, and `Page.getLayoutMetrics`. Shape:
 //!   `{ "boxes": { "<selector>": [x1, y1, x2, y2] }, "viewport": [w, h] }`.
 //!   Used by the Click/Hover/Scroll hit-test integration tests.
+//! - `LOOM_FAKE_CHROMIUM_SCRIPT` — path to a JSON file driving the
+//!   settle-capture readiness probe deterministically across ticks. Shape:
+//!   `{ "settle_probe": [[ready_complete, "href", dom_mutations], ...],
+//!      "perpetual_inflight": N }`.
+//!   The i-th settle probe `Runtime.evaluate` (the one carrying
+//!   `__loomSettleMut`) returns `settle_probe[i]` (the last entry repeats
+//!   once exhausted), letting a test script a client-side redirect
+//!   (href changes then stabilises), async-after-load content (a late
+//!   DOM-mutation burst), or a never-settling DOM (perpetual mutations).
+//!   `perpetual_inflight` pins N never-finishing in-flight requests
+//!   (re-asserted on every probe so the wait sees them regardless of when
+//!   the host's Network handler registered) → drives the bounded-timeout
+//!   path. The settle-capture never-settles / redirect e2e cases use this.
 
 use futures::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -127,6 +140,11 @@ async fn handle_connection(
     // disabled the blocklist gate (`blocklist_enabled = false` →
     // `subscribe()` skipped → no `Fetch.enable`).
     let mut fetch_enabled = false;
+    // settle-capture: per-connection cursor into LOOM_FAKE_CHROMIUM_SCRIPT's
+    // `settle_probe` array. Reset on each Page.navigate so every navigation
+    // replays the script from the top; advanced once per settle probe.
+    let script = settle_script();
+    let mut settle_idx: usize = 0;
 
     while let Some(msg) = read.next().await {
         let msg = match msg {
@@ -222,16 +240,39 @@ async fn handle_connection(
             FakeUrlPattern::None
         };
 
+        // Page.navigate resets the settle-script cursor so each navigation
+        // replays LOOM_FAKE_CHROMIUM_SCRIPT from the top.
+        if method == "Page.navigate" {
+            settle_idx = 0;
+        }
+
         // Runtime.evaluate is driven by an expression-pattern convention
         // (parallels Page.navigate's URL-pattern scheme above) so
         // integration tests can drive every evaluate-result branch
         // synthetically. See `parse_fake_evaluate_pattern` for the
-        // sentinel grammar.
-        let evaluate_response = if method == "Runtime.evaluate" {
+        // sentinel grammar. The settle-capture readiness probe (carrying the
+        // `__loomSettleMut` global) is special-cased here because its
+        // response advances per-connection script state.
+        let expression = if method == "Runtime.evaluate" {
             params
                 .get("expression")
                 .and_then(|v| v.as_str())
-                .map(build_fake_evaluate_response)
+                .map(String::from)
+        } else {
+            None
+        };
+        let is_settle_probe = expression
+            .as_deref()
+            .map(|e| e.contains("__loomSettleMut"))
+            .unwrap_or(false);
+        let evaluate_response = if let Some(expr) = &expression {
+            if is_settle_probe {
+                let resp = script.probe_response(settle_idx);
+                settle_idx += 1;
+                Some(resp)
+            } else {
+                Some(build_fake_evaluate_response(expr))
+            }
         } else {
             None
         };
@@ -276,6 +317,36 @@ async fn handle_connection(
             .is_err()
         {
             return;
+        }
+
+        // settle-capture never-settles (network) shape: re-assert N
+        // never-finishing in-flight requests on every settle probe. Stable
+        // requestIds make the inserts idempotent in the host's in-flight set,
+        // so the count stays pinned at N regardless of when the host's
+        // `Network.` handler registered (it registers only once the settle
+        // wait begins, after this navigate's load fires). N > the idle
+        // threshold keeps `networkidle` from ever quiescing → bounded Timeout.
+        if is_settle_probe && script.perpetual_inflight > 0 {
+            for i in 0..script.perpetual_inflight {
+                let mut evt = json!({
+                    "method": "Network.requestWillBeSent",
+                    "params": {
+                        "requestId": format!("perpetual-{i}"),
+                        "type": "Fetch",
+                        "request": { "url": "http://fake.test/poll", "method": "GET" },
+                    },
+                });
+                if let Some(sid) = &session_id {
+                    evt["sessionId"] = json!(sid);
+                }
+                if write
+                    .send(Message::Text(evt.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+            }
         }
 
         // Per-URL synthetic CDP events emitted right after Page.navigate
@@ -519,6 +590,12 @@ enum FakeUrlPattern {
 ///
 /// Anything else → empty `{}` (caller treats as a no-op evaluate).
 fn build_fake_evaluate_response(expression: &str) -> Value {
+    // settle-capture: the ReadinessMonitor settle probe (identified by its
+    // unique `__loomSettleMut` global) is intercepted in `handle_connection`
+    // BEFORE this function is reached, because its per-tick response is driven
+    // by mutable per-connection state (the script index) + the optional
+    // `LOOM_FAKE_CHROMIUM_SCRIPT`. See `SettleScript::probe_response`.
+
     // Throw sentinel:  __loom_test_throw__:<message>
     if let Some(msg) = expression.strip_prefix("__loom_test_throw__:") {
         return json!({
@@ -760,6 +837,96 @@ fn canned_response(method: &str, params: &Value) -> Value {
         }),
         // Page.enable, Network.enable, DOM.enable, etc.
         _ => json!({}),
+    }
+}
+
+/// settle-capture: deterministic per-tick script for the readiness probe,
+/// loaded once from `LOOM_FAKE_CHROMIUM_SCRIPT`. Absent env → a single
+/// "immediately settled" entry, reproducing the legacy hard-coded probe
+/// response (`[true,"https://fake.test/",0]`) so every non-settle test is
+/// unaffected.
+#[derive(Debug, Clone)]
+struct SettleScript {
+    /// Per-tick probe responses `(ready_complete, href, dom_mutations)`.
+    /// Never empty. The last entry repeats once the cursor runs off the end.
+    probe: Vec<(bool, String, u32)>,
+    /// Number of never-finishing in-flight requests to pin (the never-settles
+    /// network shape). Zero for normal pages.
+    perpetual_inflight: usize,
+}
+
+impl SettleScript {
+    /// Build the `Runtime.evaluate` response for the settle probe at tick
+    /// `idx`. `result.value` is the JSON string `[ready, "href", mutations]`
+    /// the host's `parse_probe` expects.
+    fn probe_response(&self, idx: usize) -> Value {
+        let (ready, href, muts) = self
+            .probe
+            .get(idx)
+            .or_else(|| self.probe.last())
+            .cloned()
+            .unwrap_or_else(|| (true, "https://fake.test/".to_string(), 0));
+        let encoded = json!([ready, href, muts]).to_string();
+        json!({ "result": { "type": "string", "value": encoded } })
+    }
+}
+
+fn default_settle_script() -> SettleScript {
+    SettleScript {
+        probe: vec![(true, "https://fake.test/".to_string(), 0)],
+        perpetual_inflight: 0,
+    }
+}
+
+static SETTLE_SCRIPT: OnceLock<SettleScript> = OnceLock::new();
+
+fn settle_script() -> &'static SettleScript {
+    SETTLE_SCRIPT.get_or_init(load_settle_script)
+}
+
+fn load_settle_script() -> SettleScript {
+    let default = default_settle_script();
+    let path = match std::env::var("LOOM_FAKE_CHROMIUM_SCRIPT") {
+        Ok(p) => p,
+        Err(_) => return default,
+    };
+    let raw = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("fake-chromium: cannot read settle script {path}: {e}");
+            return default;
+        }
+    };
+    let v: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("fake-chromium: malformed settle script JSON: {e}");
+            return default;
+        }
+    };
+    let probe: Vec<(bool, String, u32)> = v
+        .get("settle_probe")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| {
+                    let e = e.as_array()?;
+                    let ready = e.first()?.as_bool()?;
+                    let href = e.get(1)?.as_str()?.to_string();
+                    let muts = e.get(2)?.as_u64()? as u32;
+                    Some((ready, href, muts))
+                })
+                .collect::<Vec<_>>()
+        })
+        .filter(|v| !v.is_empty())
+        .unwrap_or(default.probe);
+    let perpetual_inflight = v
+        .get("perpetual_inflight")
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0) as usize;
+    SettleScript {
+        probe,
+        perpetual_inflight,
     }
 }
 

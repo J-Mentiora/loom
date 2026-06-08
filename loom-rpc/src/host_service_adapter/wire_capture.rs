@@ -115,6 +115,8 @@ mod tests {
             network_entries: vec![serde_json::json!({"url": "https://example.com/api"})],
             network_entries_blob_ref: None,
             network_entries_truncated: None,
+            settle_until: Some("settled".into()),
+            settle_outcome: Some("reached".into()),
             return_value_json: None,
             return_value_blob_ref: None,
             set_cookies_result: None,
