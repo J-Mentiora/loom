@@ -162,7 +162,6 @@ pub enum VaultCmd {
 fn make_rpc_client(config: &CliConfig) -> RpcClient {
     RpcClient::new(RpcClientConfig {
         socket_path: config.socket_path.clone(),
-        connect_timeout: config.connect_timeout,
         request_timeout: config.request_timeout,
     })
 }

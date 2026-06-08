@@ -54,8 +54,7 @@ pub struct CliConfig {
     pub stdout_color_enabled: bool,
     #[serde(default = "default_true", skip_serializing_if = "is_true")]
     pub stderr_color_enabled: bool,
-    /// Connect / request timeouts.
-    pub connect_timeout: Duration,
+    /// Request timeout.
     pub request_timeout: Duration,
     /// Default profile for `loom session create` when `--profile` is absent.
     /// Resolved from config file `default_profile`, env `LOOM_DEFAULT_PROFILE`,
@@ -85,6 +84,9 @@ struct FileConfig {
     surfaces_dir: Option<PathBuf>,
     chromium_dir: Option<PathBuf>,
     pretty: Option<bool>,
+    /// Deprecated: tolerated for back-compat (FileConfig denies unknown fields) but
+    /// no longer applied — connect timeout was an unwired no-op and was removed.
+    #[allow(dead_code)]
     connect_timeout_secs: Option<u64>,
     request_timeout_secs: Option<u64>,
     default_profile: Option<String>,
@@ -130,9 +132,7 @@ pub fn resolve(
         if let Some(v) = file.pretty {
             cfg.pretty = v;
         }
-        if let Some(s) = file.connect_timeout_secs {
-            cfg.connect_timeout = Duration::from_secs(s);
-        }
+        // connect_timeout_secs is accepted for back-compat but intentionally ignored.
         if let Some(s) = file.request_timeout_secs {
             cfg.request_timeout = Duration::from_secs(s);
         }
@@ -196,7 +196,6 @@ pub fn compiled_defaults() -> CliConfig {
         // when the stream isn't a TTY or when env vars say no.
         stdout_color_enabled: true,
         stderr_color_enabled: true,
-        connect_timeout: Duration::from_secs(5),
         request_timeout: Duration::from_secs(30),
         default_profile: None,
     }
@@ -283,15 +282,8 @@ fn apply_overrides(
                     ))
                 })?;
             }
-            "connect_timeout" | "connect_timeout_secs" => {
-                let secs = val.parse::<u64>().map_err(|_| {
-                    CliError::Usage(format!(
-                        "invalid value for `connect_timeout`: {:?}; expected integer seconds",
-                        val
-                    ))
-                })?;
-                cfg.connect_timeout = Duration::from_secs(secs);
-            }
+            // connect_timeout / connect_timeout_secs: accepted but ignored (removed
+            // no-op) — falls through to the silent `_ => {}` arm below.
             "request_timeout" | "request_timeout_secs" => {
                 let secs = val.parse::<u64>().map_err(|_| {
                     CliError::Usage(format!(
