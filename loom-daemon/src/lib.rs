@@ -873,6 +873,17 @@ impl CoreFacadeBridge for CoreBridge {
     {
         // Skip set = sessions live in memory, so a session merely mid-WAL-write
         // is never mistaken for an abandoned corrupt orphan (D4).
+        //
+        // TOCTOU note: a session created AFTER this snapshot but scanned before
+        // it finishes writing is not in `skip`. Two independent guards make a
+        // false quarantine effectively impossible: (1) a freshly created session
+        // writes a valid Header synchronously in `open_manifest` before
+        // `create_session` returns, so `is_corrupt_orphan` sees a well-formed
+        // (non-corrupt) WAL and leaves it alone; (2) reap is only needed once
+        // corrupt phantoms have saturated the cap — and then `session.create`
+        // is already rejected with `TooManyRequests`, so nothing new can race
+        // in. Quarantine is non-destructive (dir moved aside, not deleted), so
+        // even a pathological miss is recoverable by moving the dir back.
         let skip = self.core.session_manager.live_session_ids();
         let outcome = self
             .core

@@ -42,6 +42,14 @@ fn is_valid_cas_address(s: &str) -> bool {
     s.len() == 64 && s.chars().all(|c| matches!(c, '0'..='9' | 'a'..='f'))
 }
 
+/// Reject any directory name that isn't a plain single-component session id
+/// before it can be used to build an `fs::rename` path. `read_dir` never yields
+/// `.`/`..` or separators, so this can only fail on a hand-crafted name — but a
+/// dir MOVE is exactly where a path-traversal name would matter, so guard it.
+fn is_safe_session_dirname(name: &str) -> bool {
+    !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\'])
+}
+
 impl StartupManager {
     pub fn perform_recovery_sweep(&self) -> Result<RecoveryReport, LoomError> {
         let orphans = self.sweep_orphan_tmpfiles()?;
@@ -375,6 +383,13 @@ impl StartupManager {
                 Some(s) => SessionId(s.to_string()),
                 None => continue,
             };
+            // Defense-in-depth: `read_dir` only ever yields single path
+            // components (never `.`/`..`/separators), but a quarantine MOVES a
+            // directory by name, so refuse anything that isn't a plain session
+            // dir name before it can reach an `fs::rename` path join.
+            if !is_safe_session_dirname(&session_id.0) {
+                continue;
+            }
             if !path.join("manifest.wal").exists() {
                 continue;
             }
@@ -407,6 +422,13 @@ impl StartupManager {
     /// session in place — never a silent drop, never a destructive copy+remove.
     fn quarantine_one(&self, qroot: &Path, session_id: &SessionId) -> Result<(), LoomError> {
         std::fs::create_dir_all(qroot)?;
+        // Quarantined dirs hold the same (possibly sensitive) session data as
+        // sessions_root, so keep the holding pen owner-only (0700) on unix.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(qroot, std::fs::Permissions::from_mode(0o700));
+        }
         let src = self.sessions_root.join(&session_id.0);
         let dest = qroot.join(&session_id.0);
         if dest.exists() {

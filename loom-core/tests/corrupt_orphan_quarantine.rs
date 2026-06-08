@@ -192,3 +192,32 @@ fn healthy_orphan_is_not_quarantined() {
         "healthy orphan stays in sessions_root (reconciled in place)"
     );
 }
+
+/// A quarantine move that can't complete (here: the destination already exists)
+/// is recorded in `failed` and the session is LEFT in place — never silently
+/// dropped. (Mirrors the EXDEV cross-device path, which is hard to unit-test.)
+#[test]
+fn quarantine_failure_is_recorded_not_silently_dropped() {
+    use std::collections::HashSet;
+    let (sm, mw, sessions_root, tmp) = fixture();
+    let id = make_corrupt_orphan(&mw, &sessions_root);
+
+    // Pre-create the destination so the rename can't land.
+    let dest = tmp.path().join("quarantine").join(&id.0);
+    fs::create_dir_all(&dest).unwrap();
+
+    let outcome = sm
+        .quarantine_corrupt_sessions(false, &HashSet::new())
+        .expect("reap should not hard-error on a per-session failure");
+
+    assert!(
+        outcome.quarantined.is_empty(),
+        "the blocked session must not count as quarantined"
+    );
+    assert_eq!(outcome.failed.len(), 1, "the failure must be recorded");
+    assert_eq!(outcome.failed[0].session_id.0, id.0);
+    assert!(
+        sessions_root.join(&id.0).join("manifest.wal").exists(),
+        "a failed quarantine must leave the session in place"
+    );
+}
