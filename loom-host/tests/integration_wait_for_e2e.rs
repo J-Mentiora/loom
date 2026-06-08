@@ -108,8 +108,13 @@ async fn wait_for_settled(
     mgr: &std::sync::Arc<ShimManager>,
     id: &ShimId,
 ) -> loom_shared::navigate_outcome::WaitOutcome {
+    // 180s outer guard: the never-settles cases walk the full 2000-tick
+    // ceiling, whose wall-clock (ceiling × per-tick CDP round-trip) can
+    // approach ~30s on a slow CI runner. The guard only exists to fail loudly
+    // on a TRUE infinite hang, so it needs ample headroom. The clean case
+    // settles in ~25ms and never approaches it.
     tokio::time::timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(180),
         mgr.send_wait_for(
             id.clone(),
             "test-action".to_string(),

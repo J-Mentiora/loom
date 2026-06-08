@@ -240,9 +240,13 @@ async fn never_settles_network_returns_bounded_timeout() {
     }"#;
     let (mgr, id, _udd) = make_manager_with_script("settle-net-timeout", script);
 
-    // Bounded by the shim's DEFAULT_NAVIGATE_BUDGET (10s) → tick ceiling; give
-    // the outer guard generous headroom so a real hang fails loudly here.
-    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(30)).await;
+    // Bounded by the shim's DEFAULT_NAVIGATE_BUDGET (10s) → 2000-tick ceiling.
+    // The VERDICT is deterministic (tick-count based), but the wall-clock to
+    // walk the ceiling = ceiling × (tick pacing + per-tick CDP round-trip),
+    // which on a slow/loaded CI runner can approach ~30s — so this outer guard
+    // (which only exists to fail loudly on a TRUE infinite hang) needs ample
+    // headroom over that. 180s is ~5× the observed CI wall-time.
+    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(180)).await;
 
     assert_eq!(
         outcome.settle_outcome, "timeout",
@@ -271,7 +275,10 @@ async fn never_settles_dom_returns_dom_unstable() {
     }"#;
     let (mgr, id, _udd) = make_manager_with_script("settle-dom-unstable", script);
 
-    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(30)).await;
+    // 180s outer guard: same 2000-tick ceiling wall-time rationale as the
+    // never-settles-network case (the verdict is deterministic; only the
+    // wall-clock to reach the ceiling varies with CI runner speed).
+    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(180)).await;
 
     assert_eq!(
         outcome.settle_outcome, "dom_unstable",
