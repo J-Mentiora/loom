@@ -47,7 +47,15 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
 
     // action_id == action_hash at this layer (Q5 plumbing). The host
     // uses it for receipt correlation; the shim never sees it.
-    let action_hash = hex_sha256(&a.payload);
+    //
+    // settle-capture: hash the URL ONLY, not the `<until>\n<url>` payload, so
+    // the navigate action_hash stays `sha256(url)` — the documented,
+    // externally-computable contract (`hashlib.sha256(url.encode())`) that SDK
+    // consumers rely on (see integration_naverr_cli_e2e::
+    // sha_action_hash_matches_sha256_of_url_for_navigate). `until` is a
+    // capture-gating option, not part of the URL identity; it stays
+    // tamper-protected via `settle_until` in the receipt hash chain.
+    let action_hash = hex_sha256(url.as_bytes());
 
     // Host's `navigate_execute` is now the sole HTTP 4xx/5xx + transport-
     // error gate. It returns Err(HostError::ShimFailure) for those cases
