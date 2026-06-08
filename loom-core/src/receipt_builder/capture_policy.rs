@@ -46,6 +46,9 @@ pub enum CaptureField {
     NetworkCount,
     NetworkSummary,
     SideEffects,
+    /// Observational per-request `network_entries` (+ blob_ref + truncated).
+    /// Wire-only; never on the manifest `ReceiptPayload`.
+    NetworkEntries,
     ActionHash,
     OutcomeHash,
     EmittedAtMs,
@@ -92,6 +95,7 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Wire, P::Minimal, F::NetworkCount) => false,
         (S::Wire, P::Minimal, F::NetworkSummary) => false,
         (S::Wire, P::Minimal, F::SideEffects) => false,
+        (S::Wire, P::Minimal, F::NetworkEntries) => false,
         (S::Wire, P::Minimal, F::ActionHash) => false,
         (S::Wire, P::Minimal, F::OutcomeHash) => false,
         (S::Wire, P::Minimal, F::EmittedAtMs) => false,
@@ -143,6 +147,9 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Manifest, P::Minimal, F::ConsoleCount) => true,
         (S::Manifest, P::Minimal, F::NetworkCount) => true,
         (S::Manifest, P::Minimal, F::NetworkSummary) => true,
+        // network_entries is wire-only — never on the manifest ReceiptPayload.
+        // No manifest enforcer queries it; answer defensively (irrelevant).
+        (S::Manifest, P::Minimal, F::NetworkEntries) => false,
         (S::Manifest, P::Minimal, F::NetworkEvents) => true,
         (S::Manifest, P::Minimal, F::SideEffects) => true,
         (S::Manifest, P::Minimal, F::ActionHash) => true,
@@ -180,6 +187,7 @@ mod tests {
             CaptureField::NetworkCount,
             CaptureField::NetworkSummary,
             CaptureField::SideEffects,
+            CaptureField::NetworkEntries,
             CaptureField::ActionHash,
             CaptureField::OutcomeHash,
             CaptureField::EmittedAtMs,
@@ -227,6 +235,7 @@ mod tests {
             CaptureField::NetworkCount,
             CaptureField::NetworkSummary,
             CaptureField::SideEffects,
+            CaptureField::NetworkEntries,
             CaptureField::ActionHash,
             CaptureField::OutcomeHash,
             CaptureField::EmittedAtMs,
@@ -253,6 +262,7 @@ mod tests {
             CaptureField::NetworkCount,
             CaptureField::NetworkSummary,
             CaptureField::SideEffects,
+            CaptureField::NetworkEntries,
             CaptureField::ActionHash,
             CaptureField::OutcomeHash,
             CaptureField::EmittedAtMs,

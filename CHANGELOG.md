@@ -6,6 +6,27 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Per-request network entries on the navigate receipt + `loom.web.network_log`
+  tool.** `web.navigate` receipts now carry an optional `network_entries`
+  array — the raw, complete list of requests the navigation made (document +
+  xhr/fetch + subresources), each `{url, method, status, resource_type,
+  from_cache, request_id, ts_ms}`, sourced from CDP. Previously loom captured
+  only the main-document load and never surfaced the HTTP method, forcing
+  consumers (e.g. agentic-test-studio's Test Impact Analysis) into a brittle
+  in-page `performance.getEntriesByType('resource')` workaround. The new
+  `loom.web.network_log` tool returns the session-accumulated entries since the
+  last navigate (capturing xhr triggered by clicks). Large lists (≥ 64 KB) are
+  offloaded to the content store as `network_entries_blob_ref` (same pattern as
+  `return_value_blob_ref`); `network_entries_truncated` flags an incomplete list.
+
+  The list is **observational** — metadata only (never bodies or headers), and
+  **excluded from the replay hash chain**: `network_count`, `side_effects`,
+  `network_summary`, and the canonical receipt bytes are byte-for-byte
+  unchanged, so determinism (NFR-DET-01) is preserved. Capped at 1000 entries
+  per session; redirect hops appear as separate entries sharing `request_id`.
+
 ## [0.9.9] — 2026-06-04 — MCP Screenshot Delivery
 
 Screenshots captured by `web.screenshot` / `web.navigate` now reach MCP clients

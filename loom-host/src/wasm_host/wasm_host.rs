@@ -310,4 +310,69 @@ impl WasmHost {
     pub fn shim_manager(&self) -> Arc<ShimManager> {
         self.shim.clone()
     }
+
+    /// Read the session's full-capture network entries observed since the last
+    /// navigate (the `loom.web.network_log` tool). Observation-only — does NOT
+    /// run the WASM guest, navigate, or touch the replay hash chain. When the
+    /// serialized list ≥ 64KB it is offloaded to the content store and returned
+    /// as a `network_entries_blob_ref`. A missing shim (no navigate yet) yields
+    /// an empty result rather than spawning Chromium.
+    pub async fn network_log(&self, session_id: &str) -> Result<NetworkLogData, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Ok(NetworkLogData::default());
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        let outcome = self
+            .shim
+            .send_network_log(effective_id, shim_session_id, 0)
+            .await?;
+
+        const NETWORK_ENTRIES_INLINE_THRESHOLD: usize = 65_536;
+        let bytes = serde_json::to_vec(&outcome.network_entries).unwrap_or_default();
+        if bytes.len() >= NETWORK_ENTRIES_INLINE_THRESHOLD {
+            match self.core.content_store.put(&bytes) {
+                Ok(cref) => Ok(NetworkLogData {
+                    network_entries: Vec::new(),
+                    network_entries_blob_ref: Some(cref.sha256),
+                    network_entries_truncated: outcome.network_entries_truncated,
+                }),
+                Err(e) => {
+                    // Graceful degrade: drop the list (count only, no URLs).
+                    tracing::warn!(
+                        entry_count = outcome.network_entries.len(),
+                        error = %e,
+                        "network_log content-store offload failed; dropping list"
+                    );
+                    Ok(NetworkLogData {
+                        network_entries: Vec::new(),
+                        network_entries_blob_ref: None,
+                        network_entries_truncated: true,
+                    })
+                }
+            }
+        } else {
+            let entries = outcome
+                .network_entries
+                .iter()
+                .filter_map(|e| serde_json::to_value(e).ok())
+                .collect();
+            Ok(NetworkLogData {
+                network_entries: entries,
+                network_entries_blob_ref: None,
+                network_entries_truncated: outcome.network_entries_truncated,
+            })
+        }
+    }
+}
+
+/// Result of [`WasmHost::network_log`]. Mirrors the wire `Receipt`'s
+/// network-entries fields: exactly one of `network_entries` (inline) /
+/// `network_entries_blob_ref` (offloaded) carries data.
+#[derive(Debug, Default, Clone)]
+pub struct NetworkLogData {
+    pub network_entries: Vec<serde_json::Value>,
+    pub network_entries_blob_ref: Option<String>,
+    pub network_entries_truncated: bool,
 }

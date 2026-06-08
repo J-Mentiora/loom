@@ -289,6 +289,25 @@ async fn handle_connection(
                 .to_string();
             match &nav_url_pattern {
                 FakeUrlPattern::Status(status) => {
+                    // Document requestWillBeSent FIRST (real Chromium order) so
+                    // the full-capture accumulator records the HTTP method —
+                    // responseReceived alone has no method.
+                    let mut doc_req = json!({
+                        "method": "Network.requestWillBeSent",
+                        "params": {
+                            "requestId": "fake-req-1",
+                            "loaderId": "fake-loader-1",
+                            "timestamp": 1.0,
+                            "wallTime": 1_700_000_000.0,
+                            "type": "Document",
+                            "request": { "url": nav_url, "method": "GET" },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        doc_req["sessionId"] = json!(sid);
+                    }
+                    let _ = write.send(Message::Text(doc_req.to_string().into())).await;
+
                     let mut evt = json!({
                         "method": "Network.responseReceived",
                         "params": {
@@ -308,6 +327,48 @@ async fn handle_connection(
                         evt["sessionId"] = json!(sid);
                     }
                     let _ = write.send(Message::Text(evt.to_string().into())).await;
+
+                    // A known xhr to `/api/thing` — exercises the full-capture
+                    // network-entries path (NON-Document, with method+status+
+                    // resource_type) that the studio's route footprints need.
+                    // Dropped by the Document-only `network_events` path, so it
+                    // appears ONLY in `network_entries`.
+                    let api_url = format!("{}/api/thing", nav_url.trim_end_matches('/'));
+                    let mut xhr_req = json!({
+                        "method": "Network.requestWillBeSent",
+                        "params": {
+                            "requestId": "fake-xhr-1",
+                            "loaderId": "fake-loader-1",
+                            "timestamp": 1.1,
+                            "wallTime": 1_700_000_001.0,
+                            "type": "XHR",
+                            "request": { "url": api_url, "method": "GET" },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        xhr_req["sessionId"] = json!(sid);
+                    }
+                    let _ = write.send(Message::Text(xhr_req.to_string().into())).await;
+
+                    let mut xhr_resp = json!({
+                        "method": "Network.responseReceived",
+                        "params": {
+                            "requestId": "fake-xhr-1",
+                            "loaderId": "fake-loader-1",
+                            "timestamp": 1.2,
+                            "type": "XHR",
+                            "response": {
+                                "url": api_url,
+                                "status": 200,
+                                "statusText": "OK",
+                                "mimeType": "application/json",
+                            },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        xhr_resp["sessionId"] = json!(sid);
+                    }
+                    let _ = write.send(Message::Text(xhr_resp.to_string().into())).await;
                 }
                 FakeUrlPattern::Error(code) => {
                     let mut evt = json!({

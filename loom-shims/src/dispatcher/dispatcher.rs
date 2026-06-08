@@ -306,9 +306,40 @@ async fn handle_request(
                 shim_resp
             }
         },
+        ShimRequest::GetNetworkLog {
+            request_id,
+            session_id,
+            target_id,
+        } => {
+            // Observation-only: read the accumulator the Network.* handler has
+            // been filling since the last navigate. No CDP round-trip.
+            let (network_entries, network_entries_truncated) =
+                action_executor.read_network_log(target_id);
+            let outcome = loom_shared::navigate_outcome::NetworkLogOutcome {
+                network_entries,
+                network_entries_truncated,
+            };
+            make_ok_response(
+                request_id,
+                Some(session_id),
+                network_log_outcome_to_cbor(&outcome),
+            )
+        }
         ShimRequest::Shutdown { .. } => unreachable!("Shutdown handled in run loop"),
         ShimRequest::Health { .. } => unreachable!("Health handled in run loop"),
     }
+}
+
+/// Serialise a `NetworkLogOutcome` to a structured `CborValue` for the
+/// `ShimResponse::Ok.payload` (mirrors `action_result_to_cbor`).
+fn network_log_outcome_to_cbor(
+    outcome: &loom_shared::navigate_outcome::NetworkLogOutcome,
+) -> CborValue {
+    let mut bytes = Vec::new();
+    if ciborium::ser::into_writer(outcome, &mut bytes).is_err() {
+        return CborValue::Null;
+    }
+    ciborium::de::from_reader(&bytes[..]).unwrap_or(CborValue::Null)
 }
 
 fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
@@ -329,6 +360,11 @@ fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
             ..
         }
         | ShimRequest::PageClose {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::GetNetworkLog {
             request_id,
             session_id,
             ..
@@ -440,7 +476,9 @@ pub fn route_target(req: &ShimRequest) -> RouteTarget {
         ShimRequest::SpawnTarget { .. }
         | ShimRequest::PageNavigate { .. }
         | ShimRequest::PageClose { .. } => RouteTarget::TargetManager,
-        ShimRequest::CdpSend { .. } => RouteTarget::ActionExecutor,
+        ShimRequest::CdpSend { .. } | ShimRequest::GetNetworkLog { .. } => {
+            RouteTarget::ActionExecutor
+        }
         ShimRequest::Shutdown { .. } => RouteTarget::Shutdown,
         ShimRequest::Health { .. } => RouteTarget::Health,
     }

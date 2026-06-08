@@ -192,7 +192,8 @@ impl WasmHostBridge for CannedHostBridge {
             Action::WebSetCookies { session_id, .. }
             | Action::WebGetCookies { session_id, .. }
             | Action::WebClearCookies { session_id }
-            | Action::WebDeleteCookies { session_id, .. } => session_id.clone(),
+            | Action::WebDeleteCookies { session_id, .. }
+            | Action::WebNetworkLog { session_id } => session_id.clone(),
         };
         Ok(Receipt {
             action_id: 42,
@@ -214,6 +215,9 @@ impl WasmHostBridge for CannedHostBridge {
             network_count: None,
             console_lines: vec![],
             network_summary: None,
+            network_entries: vec![],
+            network_entries_blob_ref: None,
+            network_entries_truncated: None,
             return_value_json: None,
             return_value_blob_ref: None,
             set_cookies_result: None,

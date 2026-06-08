@@ -402,6 +402,17 @@ pub(crate) fn decode_typed_receipt(
                         ("network-summary-json", Val::Option(opt)) => {
                             builder.navigate_network_summary_json = extract_opt_bytes(opt);
                         }
+                        // ---- Observational network-entries side-channel ----
+                        ("network-entries-json", Val::Option(opt)) => {
+                            builder.navigate_network_entries_json = extract_opt_bytes(opt);
+                        }
+                        ("network-entries-blob-ref", Val::Option(opt)) => {
+                            builder.navigate_network_entries_blob_ref =
+                                extract_opt_content_ref(opt);
+                        }
+                        ("network-entries-truncated", Val::Option(opt)) => {
+                            builder.navigate_network_entries_truncated = extract_opt_bool(opt);
+                        }
                         // ---- Evaluate tier optional fields ----
                         ("return-value-json", Val::Option(opt)) => {
                             builder.evaluate_return_value_json = extract_opt_string(opt);
@@ -562,6 +573,13 @@ fn extract_opt_u32(opt: &Option<Box<Val>>) -> Option<u32> {
 fn extract_opt_u64(opt: &Option<Box<Val>>) -> Option<u64> {
     match opt.as_deref() {
         Some(Val::U64(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+fn extract_opt_bool(opt: &Option<Box<Val>>) -> Option<bool> {
+    match opt.as_deref() {
+        Some(Val::Bool(b)) => Some(*b),
         _ => None,
     }
 }

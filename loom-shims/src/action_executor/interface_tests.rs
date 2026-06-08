@@ -36,6 +36,8 @@ fn navigated_result_carries_typed_fields_not_cdp_bytes() {
         screenshot_bytes: vec![],
         console_lines: vec![],
         blocked_events: vec![],
+        network_entries: vec![],
+        network_entries_truncated: false,
     };
     match r {
         ActionResult::Navigated {

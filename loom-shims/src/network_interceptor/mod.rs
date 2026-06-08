@@ -4,3 +4,6 @@ pub use network_interceptor::*;
 
 #[cfg(test)]
 mod interface_tests;
+
+#[cfg(test)]
+mod entries_tests;

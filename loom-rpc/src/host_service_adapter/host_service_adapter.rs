@@ -127,6 +127,12 @@ pub enum Action {
         domain: Option<String>,
         path: Option<String>,
     },
+    // loom.web.network_log: read the session-accumulated network entries
+    // observed since the last navigate (document + click-triggered xhr/fetch).
+    // Observation-only; no CDP round-trip.
+    WebNetworkLog {
+        session_id: String,
+    },
     // Additional surface.verb pairs added as the WIT grows. The match
     // arm in `RpcHandlers` is exhaustive — adding a verb forces a
     // handler addition (compile-time evidence).
@@ -188,6 +194,24 @@ pub struct Receipt {
     /// roll-up so consumers don't need to scan the array.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_summary: Option<NetworkSummary>,
+    /// Raw per-request network entries (full-capture: document + xhr/fetch +
+    /// subresource), each `{url, method, status, resource_type, from_cache,
+    /// request_id, ts_ms}`. OBSERVATIONAL — not part of the replay hash chain.
+    /// Empty when offloaded to the CAS (see `network_entries_blob_ref`) or when
+    /// stripped under `minimal` capture. Redirect hops share `request_id`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub network_entries: Vec<serde_json::Value>,
+    /// SHA-256 hex of the canonical-JSON `network_entries` blob when the
+    /// serialized list ≥ 64KB. `None` when inline-sized or dropped on offload
+    /// failure. Mutually exclusive with a non-empty `network_entries`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_entries_blob_ref: Option<String>,
+    /// True when `network_entries` is incomplete — the cap was hit OR a
+    /// content-store offload failed and the list was dropped. To disambiguate:
+    /// `blob_ref=None && network_entries empty && truncated` ⇒ offload failure;
+    /// otherwise a cap hit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_entries_truncated: Option<bool>,
     // ---- Evaluate tier fields ----
     /// JS expression result, canonical-JSON encoded. `None` means either
     /// "not an evaluate action" or "result was offloaded to the content

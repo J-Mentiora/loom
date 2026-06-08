@@ -30,6 +30,17 @@ interface types {
         console-lines-json: option<list<u8>>,
         // JSON-serialized NetworkSummary {total_count, total_bytes, error_count}.
         network-summary-json: option<list<u8>>,
+        // Observational per-request network entries (NOT in the replay hash
+        // chain). JSON-serialized Vec<LoomNetworkEntry>. Inline-XOR-blob
+        // discriminator, mirroring return-value-*: network-entries-blob-ref
+        // is_some() ↔ serialized list ≥ 64KB (offloaded to content store) and
+        // network-entries-json is None. network-entries-truncated = the list
+        // is incomplete (shim cap hit, host cap clamp, OR a content-store
+        // offload failure that dropped the list — in the last case both
+        // json and blob-ref are None).
+        network-entries-json: option<list<u8>>,
+        network-entries-blob-ref: option<content-ref>,
+        network-entries-truncated: option<bool>,
         // Evaluate-tier optional fields. Truncation discriminator:
         // return-value-blob-ref.is_some() ↔ value > 64KB and offloaded to
         // the content store.
@@ -76,6 +87,15 @@ interface types {
         /// UTF-8 JSON bytes of loom_core NetworkSummary
         /// {total_count, total_bytes, error_count}.
         network-summary-json: list<u8>,
+        /// Observational per-request network entries (NOT hash-chained).
+        /// Inline UTF-8 JSON bytes of Vec<LoomNetworkEntry>; None when
+        /// offloaded (≥64KB → network-entries-blob-ref) OR when an offload
+        /// failure dropped the list (then blob-ref is None too).
+        network-entries-json: option<list<u8>>,
+        /// ContentRef to the JSON bytes when ≥64KB. None when inline or dropped.
+        network-entries-blob-ref: option<content-ref>,
+        /// The entries list is incomplete (cap hit or offload failure).
+        network-entries-truncated: bool,
     }
 
     /// Result returned by the evaluate-execute host function. Exactly one

@@ -73,6 +73,18 @@ pub struct ReceiptBuilder {
     /// JSON bytes of `loom_core::NetworkSummary`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub navigate_network_summary_json: Option<Vec<u8>>,
+    /// Observational per-request network entries (NOT hash-chained). JSON
+    /// bytes of `Vec<LoomNetworkEntry>` (inline) — None when offloaded to the
+    /// content store (see `navigate_network_entries_blob_ref`) or dropped on
+    /// offload failure.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub navigate_network_entries_json: Option<Vec<u8>>,
+    /// ContentRef when the entries JSON ≥ 64KB. None when inline or dropped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub navigate_network_entries_blob_ref: Option<loom_core::content_store::ContentRef>,
+    /// The entries list is incomplete (cap hit or offload failure).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub navigate_network_entries_truncated: Option<bool>,
     // ---- Evaluate tier fields ----
     // Populated by decode_typed_receipt when the WIT receipt carries them.
     // Truncation discriminator: evaluate_return_value_blob_ref.is_some().
