@@ -1092,6 +1092,26 @@ impl WasmHostBridge for WasmBridge {
         };
 
         let handle = tokio::runtime::Handle::current();
+
+        // web.network_log is a host/shim READ — it does NOT run the WASM guest,
+        // navigate, or touch the replay hash chain. Intercept here and build the
+        // receipt directly from the shim accumulator.
+        if let Action::WebNetworkLog { .. } = &action {
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let action_id = session.allocate_action_id();
+            let data = tokio::task::block_in_place(|| handle.block_on(host.network_log(&sid)))
+                .map_err(|e| {
+                    tracing::error!(
+                        session_id = %sid,
+                        error = %e,
+                        "web.network_log failed"
+                    );
+                    map_loom_error(&e)
+                })?;
+            return Ok(build_network_log_receipt(action_id, session_id_str, data));
+        }
+
         let session_handle = SessionHandle {
             session_id: session.id.clone(),
             handle: handle.clone(),
@@ -1285,6 +1305,9 @@ fn profile_restricted_evaluate_receipt(
         network_count: None,
         console_lines: vec![],
         network_summary: None,
+        network_entries: vec![],
+        network_entries_blob_ref: None,
+        network_entries_truncated: None,
         settle_until: None,
         settle_outcome: None,
         return_value_json: None,
@@ -1338,6 +1361,55 @@ fn upload_error_receipt(action_id: u64, session_id: &str, kind: &str, message: S
         network_count: None,
         console_lines: vec![],
         network_summary: None,
+        network_entries: vec![],
+        network_entries_blob_ref: None,
+        network_entries_truncated: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+        settle_until: None,
+        settle_outcome: None,
+    }
+}
+
+/// Synthesize the `loom.web.network_log` receipt from the host's read of the
+/// shim accumulator. Observation-only: no navigate-tier fields, no hash chain.
+fn build_network_log_receipt(
+    action_id: u64,
+    session_id: &str,
+    data: loom_host::wasm_host::wasm_host::NetworkLogData,
+) -> Receipt {
+    use loom_rpc::host_service_adapter::host_service_adapter::ReceiptStatus;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Receipt {
+        action_id,
+        session_id: session_id.to_string(),
+        status: ReceiptStatus::Success,
+        timing_ticks: 0,
+        side_effects: vec![],
+        error: None,
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: Some(now),
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        screenshot_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: vec![],
+        network_summary: None,
+        network_entries: data.network_entries,
+        network_entries_blob_ref: data.network_entries_blob_ref,
+        network_entries_truncated: Some(data.network_entries_truncated),
         settle_until: None,
         settle_outcome: None,
         return_value_json: None,
@@ -1386,6 +1458,9 @@ fn cookie_validation_error_receipt(
         network_count: None,
         console_lines: vec![],
         network_summary: None,
+        network_entries: vec![],
+        network_entries_blob_ref: None,
+        network_entries_truncated: None,
         settle_until: None,
         settle_outcome: None,
         return_value_json: None,
@@ -1507,6 +1582,8 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         // `args_canonical_bytes` special-cases it before this fn is called.
         // This arm exists only to satisfy the exhaustive match.
         Action::WebSetInputFiles { .. } => return None,
+        // Intercepted before build_chromium_args (host/shim read, no CDP).
+        Action::WebNetworkLog { .. } => return None,
 
         Action::WebType { selector, text, .. } => {
             // Direct `el.value = text` bypasses React/Vue/Angular value
@@ -1833,6 +1910,37 @@ fn build_navigate_wire_receipt(
         .as_ref()
         .map(|cref| cref.sha256.clone());
 
+    // Observational network-entries side-channel (NOT hash-chained). Decode the
+    // inline JSON bytes into `Vec<Value>`; when offloaded, the bytes are absent
+    // and `network_entries_blob_ref` carries the sha256 instead.
+    let network_entries: Vec<serde_json::Value> = builder
+        .navigate_network_entries_json
+        .as_deref()
+        .map(|bytes| {
+            match serde_json::from_slice::<Vec<loom_shared::navigate_outcome::LoomNetworkEntry>>(
+                bytes,
+            ) {
+                Ok(entries) => entries
+                    .into_iter()
+                    .filter_map(|e| serde_json::to_value(&e).ok())
+                    .collect(),
+                Err(e) => {
+                    tracing::warn!(
+                        action_id = builder.action_id,
+                        error = %e,
+                        "navigate receipt: network_entries decode failed; emitting empty"
+                    );
+                    Vec::new()
+                }
+            }
+        })
+        .unwrap_or_default();
+    let network_entries_blob_ref = builder
+        .navigate_network_entries_blob_ref
+        .as_ref()
+        .map(|cref| cref.sha256.clone());
+    let network_entries_truncated = builder.navigate_network_entries_truncated;
+
     let mut receipt = Receipt {
         action_id: builder.action_id,
         session_id: session_id.to_string(),
@@ -1856,6 +1964,9 @@ fn build_navigate_wire_receipt(
         network_count: builder.navigate_network_count,
         console_lines,
         network_summary,
+        network_entries,
+        network_entries_blob_ref,
+        network_entries_truncated,
         // settle-capture readiness fields (surfaced from the builder).
         settle_until: builder.navigate_settle_until.clone(),
         settle_outcome: builder.navigate_settle_outcome.clone(),
@@ -1954,6 +2065,7 @@ fn action_session_id(action: &Action) -> &str {
         | Action::WebGetCookies { session_id, .. }
         | Action::WebClearCookies { session_id }
         | Action::WebDeleteCookies { session_id, .. } => session_id,
+        Action::WebNetworkLog { session_id } => session_id,
     }
 }
 
@@ -1988,6 +2100,7 @@ fn action_verb(action: &Action) -> &str {
         Action::WebGetCookies { .. } => "get-cookies",
         Action::WebClearCookies { .. } => "clear-cookies",
         Action::WebDeleteCookies { .. } => "delete-cookies",
+        Action::WebNetworkLog { .. } => "network-log",
     }
 }
 
@@ -3234,6 +3347,79 @@ mod tests {
         assert!(r.action_hash.is_none());
         assert!(r.outcome_hash.is_none());
         assert!(r.emitted_at_ms.is_none());
+    }
+
+    /// network_entries side-channel surfaces inline AND leaves the
+    /// existing hashed/aggregate fields (network_count, side_effects,
+    /// network_summary) byte-identical (backward-compat: separate path).
+    #[test]
+    fn build_navigate_wire_receipt_surfaces_inline_network_entries() {
+        let mut builder = navigate_builder_with_all_blobs();
+        let entries = vec![loom_shared::navigate_outcome::LoomNetworkEntry {
+            url: "https://app.test/api/thing".into(),
+            method: "GET".into(),
+            status: 200,
+            resource_type: "XHR".into(),
+            from_cache: false,
+            request_id: "R-1".into(),
+            ts_ms: 1_700_000_000_000,
+        }];
+        builder.navigate_network_entries_json = Some(serde_json::to_vec(&entries).unwrap());
+        let r = build_navigate_wire_receipt(&builder, "S1", None);
+
+        // network_entries surfaced.
+        assert_eq!(r.network_entries.len(), 1);
+        assert_eq!(r.network_entries[0]["method"], "GET");
+        assert_eq!(r.network_entries[0]["status"], 200);
+        assert_eq!(r.network_entries[0]["resource_type"], "XHR");
+        assert!(r.network_entries_blob_ref.is_none());
+
+        // Backward-compat: the existing fields are untouched by the new path.
+        assert_eq!(r.network_count, Some(2));
+        assert_eq!(r.side_effects.len(), 2);
+        assert!(r.network_summary.is_some());
+    }
+
+    /// When the host offloaded the list, the wire receipt carries the
+    /// blob_ref (sha256) and an EMPTY inline list — the inline-XOR-blob
+    /// discriminator, mirroring return_value_blob_ref.
+    #[test]
+    fn build_navigate_wire_receipt_surfaces_network_entries_blob_ref() {
+        let mut builder = navigate_builder_with_all_blobs();
+        builder.navigate_network_entries_json = None;
+        builder.navigate_network_entries_blob_ref = Some(loom_core::content_store::ContentRef {
+            sha256: "c".repeat(64),
+            size_bytes: 70_000,
+        });
+        builder.navigate_network_entries_truncated = Some(false);
+        let r = build_navigate_wire_receipt(&builder, "S1", None);
+
+        assert!(r.network_entries.is_empty());
+        assert_eq!(
+            r.network_entries_blob_ref.as_ref().map(String::len),
+            Some(64)
+        );
+    }
+
+    /// --capture-policy minimal strips the observational network_entries.
+    #[test]
+    fn build_navigate_wire_receipt_minimal_strips_network_entries() {
+        let mut builder = navigate_builder_with_all_blobs();
+        let entries = vec![loom_shared::navigate_outcome::LoomNetworkEntry {
+            url: "https://app.test/x".into(),
+            method: "GET".into(),
+            status: 200,
+            resource_type: "Fetch".into(),
+            from_cache: false,
+            request_id: "R-1".into(),
+            ts_ms: 1,
+        }];
+        builder.navigate_network_entries_json = Some(serde_json::to_vec(&entries).unwrap());
+        builder.navigate_network_entries_truncated = Some(true);
+        let r = build_navigate_wire_receipt(&builder, "S1", Some("minimal"));
+        assert!(r.network_entries.is_empty());
+        assert!(r.network_entries_blob_ref.is_none());
+        assert!(r.network_entries_truncated.is_none());
     }
 
     /// `capture_policy_str = Some("default")` and `Some("full")` are

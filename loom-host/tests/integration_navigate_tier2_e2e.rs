@@ -236,6 +236,45 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
         "navigate screenshot_bytes must NOT be a decodable CBOR{{data:base64}} envelope"
     );
 
+    // (5) mcp-network-entries AC: the full-capture network_entries path
+    // surfaces the xhr to `/api/thing` — which the Document-only
+    // `network_events` path drops — with method + status + resource_type.
+    // This is the studio's per-test-route-footprint payload.
+    let api = outcome
+        .network_entries
+        .iter()
+        .find(|e| e.url.ends_with("/api/thing"))
+        .expect("network_entries must contain the xhr to /api/thing");
+    assert_eq!(api.method, "GET", "method comes from requestWillBeSent");
+    assert_eq!(api.status, 200, "status comes from responseReceived");
+    assert_eq!(api.resource_type, "XHR", "resource_type is the CDP type");
+    assert!(
+        !api.request_id.is_empty(),
+        "request_id correlates the events"
+    );
+    // The xhr is NOT in the Document-only network_events (count unchanged).
+    assert!(
+        !outcome
+            .network_events
+            .iter()
+            .any(|e| e.url.ends_with("/api/thing")),
+        "network_events (Document-only, hashed) must NOT contain the xhr"
+    );
+
+    // (6) network_log tool path: reading the accumulator (NON-draining) after
+    // the navigate returns the same session-accumulated entries — the document
+    // load AND the xhr — proving the loom.web.network_log backing path.
+    let log = mgr
+        .send_network_log(id.clone(), 0, 0)
+        .await
+        .expect("send_network_log returned an error");
+    assert!(
+        log.network_entries
+            .iter()
+            .any(|e| e.url.ends_with("/api/thing") && e.method == "GET" && e.status == 200),
+        "network_log must return the session-accumulated xhr entry"
+    );
+
     mgr.shutdown_session("tier2-spine-200").await;
 }
 

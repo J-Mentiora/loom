@@ -40,6 +40,46 @@ pub struct LoomNetworkEvent {
     pub error_kind: Option<String>,
 }
 
+/// One observed network request (raw, per-hop), captured by the shim's
+/// full-capture network-entries path. This is the OBSERVATIONAL side-channel
+/// data behind the navigate receipt's `network_entries` and the
+/// `loom.web.network_log` tool — it is NEVER part of the replay hash chain
+/// (see `loom-core::receipt_builder::ReceiptPayload`, which deliberately
+/// omits it). Distinct from `LoomNetworkEvent` (the Document-only, hashed
+/// path that derives `status_code`).
+///
+/// Metadata only — never request/response bodies or headers. `status == 0`
+/// means "no final response observed" (request still pending at snapshot OR
+/// `loadingFailed`). Redirect hops share `request_id` (one entry per hop).
+/// `ts_ms` is wall-clock epoch milliseconds (CDP `requestWillBeSent.wallTime`)
+/// — permissible here precisely because this data is excluded from the
+/// deterministic hash chain. All numeric fields are integers.
+///
+/// Mirror of `loom_shims::network_interceptor::network_interceptor::LoomNetworkEntry`;
+/// the two definitions stay structurally identical for CBOR round-trip.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LoomNetworkEntry {
+    pub url: String,
+    pub method: String,
+    pub status: u16,
+    pub resource_type: String,
+    pub from_cache: bool,
+    pub request_id: String,
+    pub ts_ms: u64,
+}
+
+/// Decoded result of a `ShimRequest::GetNetworkLog` call (the
+/// `loom.web.network_log` tool). Carries the session-accumulated network
+/// entries observed since the last navigate, plus the shim-side truncation
+/// flag. `serde(default)` on both for CBOR wire back-compat.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct NetworkLogOutcome {
+    #[serde(default)]
+    pub network_entries: Vec<LoomNetworkEntry>,
+    #[serde(default)]
+    pub network_entries_truncated: bool,
+}
+
 /// Console line captured by the shim (currently always empty; real capture is followup work).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShimConsoleLine {
@@ -100,6 +140,17 @@ pub struct NavigateOutcome {
     pub dom_after_sha256: String,
     /// SHA-256 hex of `screenshot_bytes` (precomputed by shim).
     pub screenshot_sha256: String,
+    /// Raw per-request network entries observed during this navigate (the
+    /// full-capture, non-hashed side-channel — xhr/fetch/subresource +
+    /// document, NOT just the main document). `serde(default)` keeps the CBOR
+    /// wire backward-compatible — pre-feature payloads decode with an empty vec.
+    #[serde(default)]
+    pub network_entries: Vec<LoomNetworkEntry>,
+    /// True when the session accumulator hit its `max_network_entries` cap and
+    /// dropped further entries (the returned list is the first-N). `serde(default)`
+    /// for wire back-compat.
+    #[serde(default)]
+    pub network_entries_truncated: bool,
     /// settle-capture: the readiness mode the capture was gated on
     /// (`load|networkidle|settled`). `serde(default)` (→ `settled`) keeps
     /// pre-feature CBOR payloads decoding unchanged.

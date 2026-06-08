@@ -525,6 +525,7 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.get_cookies" => &["session_id"],
         "web.clear_cookies" => &["session_id"],
         "web.delete_cookies" => &["session_id", "name"],
+        "web.network_log" => &["session_id"],
         _ => return None,
     })
 }
@@ -539,6 +540,7 @@ pub fn known_router_methods() -> &'static [&'static str] {
         "web.get_cookies",
         "web.hover",
         "web.navigate",
+        "web.network_log",
         "web.screenshot",
         "web.scroll",
         "web.select",
@@ -701,6 +703,10 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         "web.snapshot" => {
             let session_id = session_id_from_params(&params)?;
             Ok(Action::WebSnapshot { session_id })
+        }
+        "web.network_log" => {
+            let session_id = session_id_from_params(&params)?;
+            Ok(Action::WebNetworkLog { session_id })
         }
         // v0.9.6 web-cookie-injection.
         "web.set_cookies" => {

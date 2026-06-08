@@ -25,7 +25,8 @@ use crate::cdp_connection::cdp_connection::{CdpConnection, CdpError, EventFilter
 use crate::dispatcher::dispatcher::make_error_response;
 use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, ShimResponse, TargetId};
 use crate::network_interceptor::network_interceptor::{
-    classify_chromium_nav_error, BlockedEvent, LoomNetworkEvent, NetworkInterceptor,
+    classify_chromium_nav_error, BlockedEvent, LoomNetworkEntry, LoomNetworkEvent,
+    NetworkInterceptor,
 };
 use crate::target_manager::target_manager::TargetManager;
 use async_trait::async_trait;
@@ -102,6 +103,16 @@ pub enum ActionResult {
         /// pre-feature CBOR payload (no field) decodes as empty.
         #[serde(default)]
         blocked_events: Vec<BlockedEvent>,
+        /// Raw per-request network entries (full-capture, observational —
+        /// xhr/fetch/subresource/document) read from the `NetworkInterceptor`
+        /// accumulator after `Page.loadEventFired`. NOT part of the replay
+        /// hash chain. `serde(default)` so a pre-feature CBOR payload decodes
+        /// with an empty vec.
+        #[serde(default)]
+        network_entries: Vec<LoomNetworkEntry>,
+        /// True when the shim accumulator hit its cap and dropped entries.
+        #[serde(default)]
+        network_entries_truncated: bool,
         // --- settle-capture readiness fields ---
         /// Readiness mode the capture was gated on (`load|networkidle|settled`).
         #[serde(default = "default_settle_until_field")]
@@ -213,6 +224,14 @@ pub trait ActionExecutor: Send + Sync {
 
     /// Close the target.
     async fn page_close(&self, target_id: TargetId) -> Result<ActionResult, ShimResponse>;
+
+    /// Read (NON-draining) the full-capture network-entries snapshot for the
+    /// target — everything observed since the last navigate. Backs the
+    /// `loom.web.network_log` tool. Returns `(entries, shim_truncated)`.
+    /// Default returns empty (only `ChromiumActionExecutor` accumulates).
+    fn read_network_log(&self, _target_id: TargetId) -> (Vec<LoomNetworkEntry>, bool) {
+        (Vec::new(), false)
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -295,6 +314,14 @@ impl ActionExecutor for ChromiumActionExecutor {
         let _load_reg = self
             .cdp
             .register_event_handler(EventFilter::new("Page.loadEventFired"), load_handler);
+
+        // Reset the full-capture network-entries accumulator at navigate START
+        // so this navigate's `network_entries` reflect only this navigate;
+        // entries then accumulate across in-session clicks/evaluate until the
+        // next navigate. CDP events arrive under target_id==0 (see the drain
+        // note below); clear both keys to cover the fake-chromium per-target path.
+        self.network.clear_entries(0);
+        self.network.clear_entries(target_id);
 
         // STEP 1b: subscribe to Runtime.consoleAPICalled to accumulate
         // console output during the navigate.. The
@@ -479,6 +506,18 @@ impl ActionExecutor for ChromiumActionExecutor {
             blocked_events = self.network.drain_blocked(target_id);
         }
 
+        // Read (NON-draining) the full-capture network-entries snapshot — the
+        // accumulator persists across in-session actions for the `network_log`
+        // tool. Mirror the target_id==0 / target_id duality used above.
+        let (network_entries, network_entries_truncated) = {
+            let from_zero = self.network.read_entries(0);
+            if from_zero.0.is_empty() {
+                self.network.read_entries(target_id)
+            } else {
+                from_zero
+            }
+        };
+
         // Derive status_code from first network event; fall back to 0.
         // Computed BEFORE any synthetic-event push so HTTP status from a
         // real Network.responseReceived isn't shadowed by a status=0
@@ -545,6 +584,8 @@ impl ActionExecutor for ChromiumActionExecutor {
             settle_ms: settle.ticks as u64 * 5,
             network_count_at_settle: settle.network_count as u64,
             blocked_events,
+            network_entries,
+            network_entries_truncated,
         })
     }
 
@@ -593,6 +634,18 @@ impl ActionExecutor for ChromiumActionExecutor {
         };
         let _ = self.cdp.command(target_id, close_msg, None).await;
         Ok(ActionResult::PageClosed { target_id })
+    }
+
+    fn read_network_log(&self, target_id: TargetId) -> (Vec<LoomNetworkEntry>, bool) {
+        // CDP events accumulate under target_id==0 (see page_navigate drain
+        // note); fall back to the explicit target for the fake-chromium
+        // per-target path.
+        let from_zero = self.network.read_entries(0);
+        if from_zero.0.is_empty() {
+            self.network.read_entries(target_id)
+        } else {
+            from_zero
+        }
     }
 }
 

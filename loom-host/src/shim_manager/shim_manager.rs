@@ -19,7 +19,7 @@
 use crate::host_observability::HostObservability;
 use crate::shim_manager::process::{send_and_await, shutdown_process, ShimProcess, SpawnConfig};
 use loom_core::error::{LoomError, LoomErrorCode};
-use loom_shared::navigate_outcome::NavigateOutcome;
+use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome};
 use loom_shared::shim_protocol::{
     ciborium_from_slice, ciborium_to_vec, CdpMessage, ShimHealthInfo, ShimRequest, ShimResponse,
 };
@@ -409,6 +409,80 @@ impl ShimManager {
                     LoomError::new(
                         LoomErrorCode::ShimFailure,
                         format!("shim {}: navigate outcome decode: {e}", id.0),
+                    )
+                })
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id);
+                Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ))
+            }
+            Ok(other) => {
+                self.record_failure(&id);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id);
+                Err(e)
+            }
+        }
+    }
+
+    /// Read the shim's full-capture network-entries accumulator (everything
+    /// observed since the last navigate). Observation-only — no CDP round-trip,
+    /// no navigate. Backs the `loom.web.network_log` tool.
+    pub async fn send_network_log(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+    ) -> Result<NetworkLogOutcome, LoomError> {
+        if let Some(state) = self.states.get(&id) {
+            if state.breaker == BreakerState::Open {
+                return Err(LoomError::new(
+                    LoomErrorCode::ShimBreakerOpen,
+                    format!("shim {} circuit breaker is open", id.0),
+                ));
+            }
+        }
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(&id, &config).await?;
+        let request = ShimRequest::GetNetworkLog {
+            request_id: 0, // overwritten by send_and_await
+            session_id,
+            target_id,
+        };
+        match send_and_await(
+            &process,
+            request,
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(config.recv_timeout_ms),
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { payload, .. }) => {
+                self.record_success(&id);
+                let mut bytes = Vec::new();
+                if let Err(e) = ciborium::ser::into_writer(&payload, &mut bytes) {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: network_log response re-encode: {e}", id.0),
+                    ));
+                }
+                ciborium_from_slice::<NetworkLogOutcome>(&bytes).map_err(|e| {
+                    LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: network_log outcome decode: {e}", id.0),
                     )
                 })
             }

@@ -341,6 +341,35 @@ are never captured. The receipt records `until` and `settle_outcome` \
         example: &["loom", "action", "web.navigate", "--session", "<SESSION>", "--url", "https://example.com"],
     },
     ActionMeta {
+        name: "web.network_log",
+        summary: "Read the per-request network entries observed since the last navigate.",
+        description: "\
+Returns the raw, complete list of network requests the session has made \
+since the most recent `web.navigate` — the navigating document plus every \
+xhr/fetch and subresource triggered by it and by subsequent in-session \
+actions (clicks, evaluate). Each entry carries `url`, `method`, `status`, \
+`resource_type`, `from_cache`, `request_id`, and `ts_ms`. Redirect hops \
+share `request_id` (one entry per hop).\n\n\
+This is OBSERVATIONAL metadata sourced from the Chrome DevTools Protocol — \
+never request/response bodies or headers. It is NOT part of the replay hash \
+chain, so ordering is best-effort and not guaranteed identical across \
+replays. The list is capped (default 1000 entries); when it exceeds ~64KB \
+serialised it is offloaded to the content store and surfaced as \
+`network_entries_blob_ref`. `network_entries_truncated` flags an incomplete \
+list (cap hit or offload failure). Consumers filter same-origin / asset \
+noise themselves; loom returns everything.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+        ],
+        returns: "Receipt with `network_entries: [{url, method, status, resource_type, from_cache, request_id, ts_ms}]` (or `network_entries_blob_ref: <sha256>` when offloaded; fetch via `loom blob get <hash>`), plus `network_entries_truncated: bool`.",
+        example: &["loom", "action", "web.network_log", "--session", "<SESSION>"],
+    },
+    ActionMeta {
         name: "web.screenshot",
         summary: "Capture a PNG screenshot of the page or a selected element.",
         description: "\

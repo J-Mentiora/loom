@@ -598,6 +598,54 @@ impl Host for HostState {
             };
             let network_summary_json = serde_json::to_vec(&network_summary).unwrap_or_default();
 
+            // Observational network-entries side-channel (NOT hash-chained).
+            // Serialize the raw per-request list; offload to the content store
+            // when ≥64KB (mirrors the evaluate return-value discriminator).
+            // Graceful degrade: this data must NEVER fail a navigate, so a
+            // content-store put error drops the list (truncated=true) rather
+            // than erroring.
+            const NETWORK_ENTRIES_INLINE_THRESHOLD: usize = 65_536;
+            let mut network_entries_truncated = outcome.network_entries_truncated;
+            let network_entries_bytes = match serde_json::to_vec(&outcome.network_entries) {
+                Ok(b) => b,
+                Err(e) => {
+                    // Should not happen (all fields are JSON-trivial), but never
+                    // silently drop — flag truncation so the consumer knows the
+                    // list is incomplete. Count + session only, no URLs.
+                    tracing::warn!(
+                        session_id = %session_id_str,
+                        entry_count = outcome.network_entries.len(),
+                        error = %e,
+                        "network_entries serialization failed; dropping list (navigate unaffected)"
+                    );
+                    network_entries_truncated = true;
+                    Vec::new()
+                }
+            };
+            let (network_entries_json, network_entries_blob_ref) = if network_entries_bytes
+                .is_empty()
+            {
+                (None, None)
+            } else if network_entries_bytes.len() >= NETWORK_ENTRIES_INLINE_THRESHOLD {
+                match content_store.put(&network_entries_bytes) {
+                    Ok(cref) => (None, Some(core_ref_to_wit(cref))),
+                    Err(e) => {
+                        // Warn (count + session only — no URLs) so the offload
+                        // failure is visible without leaking request metadata.
+                        tracing::warn!(
+                            session_id = %session_id_str,
+                            entry_count = outcome.network_entries.len(),
+                            error = %e,
+                            "network_entries content-store offload failed; dropping list (navigate unaffected)"
+                        );
+                        network_entries_truncated = true;
+                        (None, None)
+                    }
+                }
+            } else {
+                (Some(network_entries_bytes), None)
+            };
+
             Ok(NavigateResult {
                 url: outcome.url,
                 final_url: outcome.final_url,
@@ -611,6 +659,9 @@ impl Host for HostState {
                 emitted_at_ms,
                 console_lines_json,
                 network_summary_json,
+                network_entries_json,
+                network_entries_blob_ref,
+                network_entries_truncated,
                 // settle-capture: pass the shim's readiness verdict through.
                 // These are NOT folded into outcome_hash (the guest excludes
                 // them) — they are virtual-time-derived diagnostics.

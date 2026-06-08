@@ -208,6 +208,16 @@ pub enum ShimRequest {
         session_id: SessionId,
         target_id: TargetId,
     },
+    /// Read (NON-draining) the full-capture network-entries accumulator for a
+    /// target — everything observed since the last navigate (document +
+    /// click-triggered xhr/fetch). Backs the `loom.web.network_log` tool.
+    /// Returns a `ShimResponse::Ok` whose CBOR payload is a
+    /// `NetworkLogOutcome` (loom-shared). Observation-only (no CDP round-trip).
+    GetNetworkLog {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+    },
     /// Cooperative shutdown. Drains in-flight, then exits.
     Shutdown { request_id: u64 },
     /// Liveness + introspection probe. The shim responds with a

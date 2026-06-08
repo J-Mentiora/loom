@@ -625,6 +625,10 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
         "web.snapshot",
         r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
     ),
+    (
+        "web.network_log",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
     // `rpc.schemas` — JSON-RPC introspection. Wire-side
     // schema_validator treats it as a built-in (no param check); this
     // CLI-side schema is permissive so `loom action rpc.schemas` reaches
