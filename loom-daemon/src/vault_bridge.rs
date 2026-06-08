@@ -232,9 +232,7 @@ pub(crate) fn vault_get_session_context(
     use loom_rpc::error_translator::error_translator::LoomErrorCode;
     // Enumerate sessions; pick the most recently created Active one.
     // Returns SessionNotFound when no active sessions exist.
-    let infos = core
-        .list_sessions_info()
-        .map_err(|e| map_loom_error(&e))?;
+    let infos = core.list_sessions_info().map_err(|e| map_loom_error(&e))?;
     let mut active: Vec<&(String, String, u64)> = infos
         .iter()
         .filter(|(_id, status, _ts)| {
@@ -264,35 +262,36 @@ pub(crate) fn vault_diagnose(core: &CoreApiFacade) -> Result<VaultDiagnoseInfo, 
     // stable; richer state (cached last-error, backend identity from
     // KeychainConfig) lands in a follow-up that wires those signals
     // through `CoreApiFacade`.
-    let (label_count, last_keychain_error, init_status) = match core.vault.list_labels(None) {
-        Ok(labels) => (
-            u32::try_from(labels.len()).unwrap_or(u32::MAX),
-            None,
-            VaultDiagnoseInitStatus::Ok,
-        ),
-        Err(e) => {
-            // The LoomError code → KeychainErrorKind snake_case round-trip
-            // (string match is fine — the set is closed at 6).
-            let kind = match e.code {
-                loom_core::error::LoomErrorCode::VaultUnknownLabel => "not_found",
-                loom_core::error::LoomErrorCode::VaultPermissionDenied => "denied",
-                loom_core::error::LoomErrorCode::VaultBackendUnavailable => "unavailable",
-                loom_core::error::LoomErrorCode::VaultBackendTimeout => "timed_out",
-                loom_core::error::LoomErrorCode::VaultNonInteractivePrompt => {
-                    "non_interactive_prompt"
-                }
-                loom_core::error::LoomErrorCode::VaultInternal => "internal",
-                _ => "internal",
-            };
-            let internal_hash = e
-                .context
-                .as_ref()
-                .and_then(|c| c.get("internal_hash"))
-                .and_then(|h| h.as_str())
-                .map(str::to_owned);
-            let diagnosed_at_ts =
-                humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
-            (
+    let (label_count, last_keychain_error, init_status) =
+        match core.vault.list_labels(None) {
+            Ok(labels) => (
+                u32::try_from(labels.len()).unwrap_or(u32::MAX),
+                None,
+                VaultDiagnoseInitStatus::Ok,
+            ),
+            Err(e) => {
+                // The LoomError code → KeychainErrorKind snake_case round-trip
+                // (string match is fine — the set is closed at 6).
+                let kind = match e.code {
+                    loom_core::error::LoomErrorCode::VaultUnknownLabel => "not_found",
+                    loom_core::error::LoomErrorCode::VaultPermissionDenied => "denied",
+                    loom_core::error::LoomErrorCode::VaultBackendUnavailable => "unavailable",
+                    loom_core::error::LoomErrorCode::VaultBackendTimeout => "timed_out",
+                    loom_core::error::LoomErrorCode::VaultNonInteractivePrompt => {
+                        "non_interactive_prompt"
+                    }
+                    loom_core::error::LoomErrorCode::VaultInternal => "internal",
+                    _ => "internal",
+                };
+                let internal_hash = e
+                    .context
+                    .as_ref()
+                    .and_then(|c| c.get("internal_hash"))
+                    .and_then(|h| h.as_str())
+                    .map(str::to_owned);
+                let diagnosed_at_ts =
+                    humantime::format_rfc3339_seconds(std::time::SystemTime::now()).to_string();
+                (
                 0,
                 Some(loom_rpc::core_service_adapter::core_service_adapter::VaultDiagnoseLastError {
                     kind: kind.to_string(),
@@ -303,8 +302,8 @@ pub(crate) fn vault_diagnose(core: &CoreApiFacade) -> Result<VaultDiagnoseInfo, 
                     reason: e.message.clone(),
                 },
             )
-        }
-    };
+            }
+        };
 
     let backend = default_backend_name();
     Ok(VaultDiagnoseInfo {

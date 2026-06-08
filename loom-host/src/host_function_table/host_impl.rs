@@ -635,15 +635,14 @@ impl Host for HostState {
 
         // Resolve effective shim ID and lazy-register if needed (same
         // pattern as navigate_execute).
-        let maybe_id: Result<ShimId, HostError> = if self.mode
-            == crate::wit_type_marshaller::Mode::Replay
-        {
-            Err(HostError::Internal(
-                "evaluate_execute not allowed in replay mode".to_owned(),
-            ))
-        } else {
-            register_chromium_shim_if_absent(&shim_manager, &session_id_str, |_config| {})
-        };
+        let maybe_id: Result<ShimId, HostError> =
+            if self.mode == crate::wit_type_marshaller::Mode::Replay {
+                Err(HostError::Internal(
+                    "evaluate_execute not allowed in replay mode".to_owned(),
+                ))
+            } else {
+                register_chromium_shim_if_absent(&shim_manager, &session_id_str, |_config| {})
+            };
 
         async move {
             let effective_id = maybe_id?;
@@ -985,7 +984,10 @@ mod register_chromium_shim_tests {
             .configs
             .get(&ShimId("chromium:sess-b".to_owned()))
             .unwrap();
-        assert!(cfg.env.iter().any(|(k, v)| k == "LOOM_SHIM_PROFILE" && v == "safe"));
+        assert!(cfg
+            .env
+            .iter()
+            .any(|(k, v)| k == "LOOM_SHIM_PROFILE" && v == "safe"));
     }
 
     #[test]
