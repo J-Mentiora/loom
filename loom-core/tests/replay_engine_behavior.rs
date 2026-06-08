@@ -1395,3 +1395,82 @@ fn two_consecutive_replays_produce_identical_headers() {
         "two consecutive replays must produce identical Header timestamps"
     );
 }
+
+// ---- settle-capture (4b): replay refuses a non-deterministic session ----
+
+/// Build a recorded session whose Header records `determinism_enabled = false`
+/// (the `--no-determinism` shape) + one ActionReceipt + a terminal. Mirrors
+/// `build_recorded_session` but threads the determinism flag into the Header.
+fn build_non_deterministic_session(
+    mw: &dyn ManifestWriter,
+    sessions_root: &std::path::Path,
+) -> SessionId {
+    let id = SessionId("01TESTNODETERMINISM00000000".to_string());
+    std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
+    // determinism_enabled = false → the replay-refuse marker.
+    mw.open_manifest_with_started_at(id.clone(), None, Some(1_000_000), None, None, false)
+        .unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::ActionReceipt {
+            action_id: 0,
+            emitted_at_ms: 1_000_100,
+            receipt_canonical_bytes: serde_jcs::to_string(&serde_json::json!({"action_id": 0}))
+                .unwrap()
+                .into_bytes(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: 1,
+            emitted_at_ms: 1_000_200,
+            reason: "close".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+    id
+}
+
+#[test]
+fn replay_refuses_non_deterministic_session() {
+    let tmp = tmp_path();
+    let obs = make_obs(&tmp);
+    let sessions_root = tmp.path().join("sessions");
+    let mw = make_manifest_writer(&tmp, obs.clone());
+    let cs = make_content_store(&tmp, obs.clone());
+    let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
+    let engine = make_engine(
+        &tmp,
+        cs.clone() as Arc<dyn ContentStore>,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        sm.clone(),
+    );
+
+    let source_id =
+        build_non_deterministic_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root);
+
+    let err = engine
+        .replay(source_id.clone(), ReplayOpts::default())
+        .expect_err("replay MUST refuse a --no-determinism session (it can never be replay-equal)");
+    assert_eq!(
+        err.code,
+        loom_core::error::LoomErrorCode::InvalidArgument,
+        "refusal must be a typed InvalidArgument, got {err:?}"
+    );
+    assert!(
+        err.message.contains("no-determinism") || err.message.contains("not replayable"),
+        "refusal message must explain the non-determinism reason; got: {}",
+        err.message
+    );
+}

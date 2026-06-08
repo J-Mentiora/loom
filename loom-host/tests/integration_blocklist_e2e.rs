@@ -123,6 +123,8 @@ async fn blocklist_ga_subresource_is_blocked_and_recorded() {
             loom_shared::types::Seed(0),
             loom_shared::types::EpochMs(0),
             true, // blocklist_enabled
+            "settled".to_string(),
+            true,
         ),
     )
     .await
@@ -173,6 +175,8 @@ async fn no_blocklist_disables_enforcement() {
             loom_shared::types::Seed(0),
             loom_shared::types::EpochMs(0),
             false, // blocklist_enabled — disabled per --no-blocklist
+            "settled".to_string(),
+            true,
         ),
     )
     .await

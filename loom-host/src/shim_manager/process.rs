@@ -426,6 +426,7 @@ fn set_request_id(req: &mut ShimRequest, id: u64) {
         ShimRequest::SpawnTarget { request_id, .. }
         | ShimRequest::CdpSend { request_id, .. }
         | ShimRequest::PageNavigate { request_id, .. }
+        | ShimRequest::WaitFor { request_id, .. }
         | ShimRequest::PageClose { request_id, .. }
         | ShimRequest::Shutdown { request_id }
         | ShimRequest::Health { request_id } => *request_id = id,

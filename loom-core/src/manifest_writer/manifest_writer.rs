@@ -45,6 +45,20 @@ pub enum ManifestEntry {
         /// (pre-feature) headers round-trip without schema churn.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         capture_policy: Option<String>,
+        /// settle-capture (D3): the determinism seed this session was created
+        /// with. Recorded so replay reconstructs the SAME seed instead of
+        /// silently defaulting to `Seed(0)` — which diverged the in-Chromium
+        /// Math.random/Date.now for any `--seed N` session. `skip_if_none`
+        /// keeps legacy (pre-feature) headers round-tripping unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        seed: Option<u64>,
+        /// settle-capture (4b): whether determinism was ON for this session.
+        /// `None`/absent (legacy headers) and `Some(true)` both mean ON; only
+        /// `Some(false)` marks a non-deterministic session, which the replay
+        /// engine REFUSES (a real-RNG/real-clock run can never be replay-equal).
+        /// `skip_if_none` keeps legacy headers round-tripping unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        determinism_enabled: Option<bool>,
     },
     /// A surface action receipt. Real Receipt type is WIT-derived; this
     /// is the manifest-side wrapper.
@@ -190,7 +204,8 @@ pub trait ManifestWriter: Send + Sync {
         session: SessionId,
         budgets: Option<BudgetLimits>,
     ) -> Result<WriterHandle, LoomError> {
-        self.open_manifest_with_started_at(session, budgets, None, None)
+        // Default: deterministic session (the common case).
+        self.open_manifest_with_started_at(session, budgets, None, None, None, true)
     }
 
     /// Same as `open_manifest`, but lets the caller override the
@@ -205,6 +220,13 @@ pub trait ManifestWriter: Send + Sync {
         budgets: Option<BudgetLimits>,
         started_at_ms_override: Option<u64>,
         capture_policy: Option<String>,
+        // settle-capture (D3): the determinism seed to record in the Header so
+        // replay can reconstruct it. `None` for legacy/default-seed sessions.
+        seed: Option<u64>,
+        // settle-capture (4b): whether determinism was ON. Recorded in the
+        // Header (as `Some(determinism_enabled)`) so replay refuses non-
+        // deterministic sessions.
+        determinism_enabled: bool,
     ) -> Result<WriterHandle, LoomError>;
 
     /// Append an entry. Atomic: WAL write + fsync; checkpoint to

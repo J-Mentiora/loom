@@ -81,6 +81,15 @@ pub struct CreateArgs {
     #[arg(long = "no-blocklist", default_value_t = false)]
     #[serde(default)]
     pub no_blocklist: bool,
+
+    /// Disable determinism for this session (settle-capture). By default loom
+    /// freezes `Date.now`/animations and seeds `Math.random` so captures are
+    /// byte-reproducible. With `--no-determinism` the page keeps real
+    /// wall-clock + unseeded RNG (for live/non-reproducible capture). Such a
+    /// session is recorded as NON-REPLAYABLE — `loom replay` refuses it.
+    #[arg(long = "no-determinism", default_value_t = false)]
+    #[serde(default)]
+    pub no_determinism: bool,
 }
 
 /// Parse a --budget flag string into BudgetLimits.
@@ -325,6 +334,11 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
     // shape consistent with pre-feature payloads.
     if args.no_blocklist {
         params.insert("no_blocklist".to_string(), serde_json::Value::Bool(true));
+    }
+    // forward `--no-determinism` (settle-capture 4b); only when true so the
+    // default deterministic session keeps the pre-feature params shape.
+    if args.no_determinism {
+        params.insert("no_determinism".to_string(), serde_json::Value::Bool(true));
     }
     let resp = rpc
         .call("session.create", serde_json::Value::Object(params))

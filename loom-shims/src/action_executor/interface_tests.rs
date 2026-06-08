@@ -36,6 +36,10 @@ fn navigated_result_carries_typed_fields_not_cdp_bytes() {
         screenshot_bytes: vec![],
         console_lines: vec![],
         blocked_events: vec![],
+        settle_until: "settled".into(),
+        settle_outcome: "reached".into(),
+        settle_ms: 0,
+        network_count_at_settle: 0,
     };
     match r {
         ActionResult::Navigated {

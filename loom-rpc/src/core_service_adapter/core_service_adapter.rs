@@ -99,6 +99,7 @@ pub trait CoreFacadeBridge: Send + Sync {
         seed: Option<u64>,
         budget: Option<serde_json::Value>,
         no_blocklist: bool,
+        no_determinism: bool,
     ) -> Result<(String, u64), AdapterError>;
 
     /// Close an active session.
@@ -283,6 +284,12 @@ pub struct CreateSessionParams {
     /// omit the field entirely → defaults to `false` → enforcement on.
     #[serde(default)]
     pub no_blocklist: bool,
+    /// Operator's `--no-determinism` opt-out (settle-capture slice 4b).
+    /// Default `false` (determinism ON). Pre-feature CLI clients omit the
+    /// field → `false` → deterministic capture. `true` injects a pass-through
+    /// (real clock + unseeded RNG) and marks the session non-replayable.
+    #[serde(default)]
+    pub no_determinism: bool,
 }
 
 fn default_profile() -> String {

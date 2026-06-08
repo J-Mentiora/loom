@@ -187,6 +187,7 @@ impl WasmHostBridge for CannedHostBridge {
             | Action::WebScroll { session_id, .. }
             | Action::WebWait { session_id, .. }
             | Action::WebSnapshot { session_id } => session_id.clone(),
+            Action::WebWaitFor { session_id, .. } => session_id.clone(),
             Action::WebSetInputFiles { session_id, .. } => session_id.clone(),
             // v0.9.6 cookie verbs.
             Action::WebSetCookies { session_id, .. }
@@ -214,6 +215,8 @@ impl WasmHostBridge for CannedHostBridge {
             network_count: None,
             console_lines: vec![],
             network_summary: None,
+            settle_until: None,
+            settle_outcome: None,
             return_value_json: None,
             return_value_blob_ref: None,
             set_cookies_result: None,
@@ -300,6 +303,7 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _: Option<&str>,
         _: Option<u64>,
         _: Option<serde_json::Value>,
+        _: bool,
         _: bool,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
     {

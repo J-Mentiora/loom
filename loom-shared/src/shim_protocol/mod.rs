@@ -95,6 +95,20 @@ pub fn default_blocklist_enabled() -> bool {
     true
 }
 
+/// Serde default for `ShimRequest::PageNavigate.until` (settle-capture).
+/// Returns `"settled"` so an old-host payload (no field) is decoded as the
+/// strict default by a new shim. The RPC layer validates the value before it
+/// reaches the wire, so this is just the safe default, not a parse gate.
+pub fn default_settle_until() -> String {
+    "settled".to_string()
+}
+
+/// Serde default for the `determinism_enabled` wire fields (settle-capture 4b).
+/// `true` so an old-shape payload decodes to the strict deterministic default.
+pub fn default_determinism_enabled() -> bool {
+    true
+}
+
 /// Inbound request frames from `loom-host::ShimManager`.
 /// CBOR-encoded as a discriminated union via the `kind` tag.
 ///
@@ -116,6 +130,12 @@ pub enum ShimRequest {
         profile: String,
         seed: Seed,
         epoch_ms: EpochMs,
+        /// settle-capture (4b): when `false`, the target_manager SKIPS the
+        /// determinism freeze-inject (real clock + unseeded RNG) — the R3
+        /// readiness flag still flips. Serde-default `true` so old-shape
+        /// payloads decode to the strict deterministic default.
+        #[serde(default = "default_determinism_enabled")]
+        determinism_enabled: bool,
     },
     /// Issue a CDP command against a previously-spawned target.
     /// Note: no `grant_id` field. Vault substitution is upstream
@@ -159,6 +179,28 @@ pub enum ShimRequest {
         epoch_ms: EpochMs,
         #[serde(default = "default_blocklist_enabled")]
         blocklist_enabled: bool,
+        /// settle-capture: readiness mode the shim gates the capture on
+        /// (`load|networkidle|settled`). Serde-default `settled` so an
+        /// old-shape payload decodes to the strict default.
+        #[serde(default = "default_settle_until")]
+        until: String,
+        /// settle-capture (4b): when `false`, the navigate lazy-spawn path
+        /// SKIPS the determinism freeze-inject (see `SpawnTarget`). Serde-
+        /// default `true` so an old-shape payload decodes to deterministic.
+        #[serde(default = "default_determinism_enabled")]
+        determinism_enabled: bool,
+    },
+    /// settle-capture slice 2: standalone readiness wait on the current page
+    /// (no navigation, no capture). The shim runs the same SettleDriver /
+    /// ReadinessMonitor the navigate gate uses, then returns the settle verdict.
+    WaitFor {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+        /// Readiness mode (`load|networkidle|settled`). Serde-default `settled`
+        /// so an old-shape payload decodes to the strict default.
+        #[serde(default = "default_settle_until")]
+        until: String,
     },
     /// Close the target and drop its `TargetState`.
     PageClose {
@@ -326,6 +368,7 @@ mod tests {
             profile: "default".into(),
             seed: Seed(42),
             epoch_ms: EpochMs(1_700_000_000_000),
+            determinism_enabled: true,
         };
         let payload = ciborium_to_vec(&req).unwrap();
         let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
@@ -347,6 +390,8 @@ mod tests {
             seed: Seed(0),
             epoch_ms: EpochMs(0),
             blocklist_enabled: true,
+            until: default_settle_until(),
+            determinism_enabled: default_determinism_enabled(),
         };
         let req_b = ShimRequest::PageNavigate {
             request_id: 2,
@@ -356,6 +401,8 @@ mod tests {
             seed: Seed(0),
             epoch_ms: EpochMs(0),
             blocklist_enabled: true,
+            until: default_settle_until(),
+            determinism_enabled: default_determinism_enabled(),
         };
 
         let resp_b = ShimResponse::Ok {
@@ -432,6 +479,8 @@ mod tests {
             seed: Seed(42),
             epoch_ms: EpochMs(1_700_000_000_000),
             blocklist_enabled: true,
+            until: default_settle_until(),
+            determinism_enabled: default_determinism_enabled(),
         };
         let bytes = ciborium_to_vec(&req).unwrap();
         let back: ShimRequest = ciborium_from_slice(&bytes).unwrap();
@@ -449,6 +498,8 @@ mod tests {
             seed: Seed(0),
             epoch_ms: EpochMs(0),
             blocklist_enabled: true,
+            until: default_settle_until(),
+            determinism_enabled: default_determinism_enabled(),
         };
         let bytes = ciborium_to_vec(&req).unwrap();
         let back: ShimRequest = ciborium_from_slice(&bytes).unwrap();
@@ -515,6 +566,8 @@ mod tests {
             seed: Seed(42),
             epoch_ms: EpochMs(1_700_000_000_000),
             blocklist_enabled: false,
+            until: default_settle_until(),
+            determinism_enabled: default_determinism_enabled(),
         };
         let bytes = ciborium_to_vec(&req).unwrap();
         let back: ShimRequest = ciborium_from_slice(&bytes).unwrap();

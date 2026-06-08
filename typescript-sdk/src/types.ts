@@ -68,6 +68,20 @@ export interface Receipt {
   actionHash: string;
   outcomeHash: string;
   emittedAtMs: number;
+  /**
+   * settle-capture: the readiness mode the capture was gated on
+   * (`"load" | "networkidle" | "settled"`). Present on `navigate` receipts;
+   * `undefined` for verbs without a readiness gate.
+   */
+  settleUntil?: string;
+  /**
+   * settle-capture: how the readiness wait ended
+   * (`"reached" | "timeout" | "dom_unstable"`). `"timeout"`/`"dom_unstable"`
+   * mean the bounded fallback fired — the page never reached the requested
+   * readiness state (e.g. a persistent connection or a perpetually-animating
+   * DOM). Present on `navigate` receipts.
+   */
+  settleOutcome?: string;
 }
 
 /**

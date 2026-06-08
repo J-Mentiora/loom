@@ -47,6 +47,10 @@ function toReceipt(d: Record<string, unknown>): Receipt {
     actionHash: (d["action_hash"] as string) ?? "",
     outcomeHash: (d["outcome_hash"] as string) ?? "",
     emittedAtMs: (d["emitted_at_ms"] as number) ?? 0,
+    // settle-capture: present on navigate receipts; absent (→ undefined) on
+    // verbs without a readiness gate.
+    settleUntil: d["settle_until"] as string | undefined,
+    settleOutcome: d["settle_outcome"] as string | undefined,
   };
 }
 
@@ -58,6 +62,14 @@ export interface SessionCreateOptions {
   budget?: unknown;
   socketPath?: string;
   token?: string;
+  /**
+   * Disable determinism for this session (settle-capture). Determinism is ON
+   * by default: loom freezes `Date.now`/animations and seeds `Math.random` so
+   * captures are byte-reproducible. Set `true` for live/non-reproducible
+   * capture (real clock + unseeded RNG). Such a session is recorded as
+   * NON-REPLAYABLE — replay refuses it.
+   */
+  noDeterminism?: boolean;
 }
 
 export class Session {
@@ -81,6 +93,7 @@ export class Session {
     };
     if (opts.seed !== undefined) params["seed"] = opts.seed;
     if (opts.budget !== undefined) params["budget"] = opts.budget;
+    if (opts.noDeterminism) params["no_determinism"] = true;
     const result = (await transport.call("session.create", params)) as Record<string, unknown>;
     return new Session(
       result["session_id"] as string,
@@ -182,10 +195,53 @@ export class Session {
     };
   }
 
-  async navigate(url: string, opts: { deadlineMs?: number } = {}): Promise<Receipt> {
+  /**
+   * Navigate the page and capture DOM + screenshot, gating the capture on a
+   * readiness state (settle-capture). By default loom waits until the page is
+   * `"settled"` (network quiet + `readyState` complete + the final URL stable
+   * after client-side redirects + the DOM quiescent) so the capture is a real
+   * rendered page, not a blank SPA shell or an arbitrary animation frame.
+   *
+   * - `until`: `"load"` | `"networkidle"` | `"settled"` (default `"settled"`).
+   * - `timeoutMs`: bound on the readiness wait. If readiness is never reached
+   *   (persistent connection, perpetual animation) the call still returns — the
+   *   receipt's {@link Receipt.settleOutcome} is `"timeout"` / `"dom_unstable"`
+   *   instead of `"reached"`. It never hangs.
+   */
+  async navigate(
+    url: string,
+    opts: { deadlineMs?: number; until?: "load" | "networkidle" | "settled"; timeoutMs?: number } = {},
+  ): Promise<Receipt> {
+    const payload: Record<string, unknown> = { url };
+    if (opts.until !== undefined) payload["until"] = opts.until;
+    if (opts.timeoutMs !== undefined) payload["timeout_ms"] = opts.timeoutMs;
     const result = (await this._transport.call(
       "action.web.navigate",
-      buildActionParams(this.sessionId, "navigate", { url }, opts.deadlineMs ?? 5000),
+      buildActionParams(this.sessionId, "navigate", payload, opts.deadlineMs ?? 5000),
+    )) as Record<string, unknown>;
+    return toReceipt(result);
+  }
+
+  /**
+   * Wait for the CURRENT page to reach a readiness state (settle-capture),
+   * without navigating. Use after a navigate or an interaction that triggers
+   * async re-render to gate a subsequent screenshot/snapshot on real
+   * readiness instead of a magic sleep.
+   *
+   * - `until`: `"load"` | `"networkidle"` | `"settled"` (default `"settled"`).
+   * - `timeoutMs`: bound on the wait. If readiness is never reached the call
+   *   still returns — the receipt's {@link Receipt.settleOutcome} is
+   *   `"timeout"` / `"dom_unstable"` instead of `"reached"`. It never hangs.
+   */
+  async waitFor(
+    opts: { deadlineMs?: number; until?: "load" | "networkidle" | "settled"; timeoutMs?: number } = {},
+  ): Promise<Receipt> {
+    const payload: Record<string, unknown> = {};
+    if (opts.until !== undefined) payload["until"] = opts.until;
+    if (opts.timeoutMs !== undefined) payload["timeout_ms"] = opts.timeoutMs;
+    const result = (await this._transport.call(
+      "action.web.wait_for",
+      buildActionParams(this.sessionId, "wait_for", payload, opts.deadlineMs ?? 30000),
     )) as Record<string, unknown>;
     return toReceipt(result);
   }

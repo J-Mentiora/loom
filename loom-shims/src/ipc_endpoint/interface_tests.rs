@@ -38,6 +38,7 @@ fn decode_frame_round_trips_shim_request() {
         profile: "default".into(),
         seed: loom_shared::types::Seed(0),
         epoch_ms: loom_shared::types::EpochMs(0),
+        determinism_enabled: true,
     };
     // Hand-roll the wire bytes for a request (encode_frame is for responses;
     // the request side is structurally identical though).

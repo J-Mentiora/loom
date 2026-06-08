@@ -190,6 +190,15 @@ pub struct ReceiptPayload {
     /// Session-monotonic ms timestamp from DeterminismHarness.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub emitted_at_ms: Option<u64>,
+    // ---- settle-capture readiness fields (deterministic; recorded so replay
+    // reproduces them verbatim). settle_ms / network_count_at_settle are
+    // host-side diagnostics only and intentionally NOT recorded here. ----
+    /// Readiness mode the capture was gated on (`load|networkidle|settled`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_until: Option<String>,
+    /// How the readiness wait ended (`reached|timeout|dom_unstable`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub settle_outcome: Option<String>,
 }
 
 impl ReceiptPayload {
@@ -243,6 +252,8 @@ impl ReceiptBuilder {
             console_count: None,
             network_count: None,
             emitted_at_ms: None,
+            settle_until: None,
+            settle_outcome: None,
         }
     }
 
@@ -282,6 +293,8 @@ impl ReceiptBuilder {
             console_count: None,
             network_count: None,
             emitted_at_ms: None,
+            settle_until: None,
+            settle_outcome: None,
         }
     }
 
@@ -322,6 +335,8 @@ impl ReceiptBuilder {
             console_count: None,
             network_count: None,
             emitted_at_ms: None,
+            settle_until: None,
+            settle_outcome: None,
         }
     }
 
@@ -367,6 +382,8 @@ impl ReceiptBuilder {
             console_count: None,
             network_count: None,
             emitted_at_ms: None,
+            settle_until: None,
+            settle_outcome: None,
         }
     }
 
@@ -404,6 +421,8 @@ impl ReceiptBuilder {
             console_count: None,
             network_count: None,
             emitted_at_ms: None,
+            settle_until: None,
+            settle_outcome: None,
         }
     }
 }

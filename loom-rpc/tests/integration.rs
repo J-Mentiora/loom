@@ -235,6 +235,7 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _: Option<u64>,
         _: Option<serde_json::Value>,
         _: bool,
+        _: bool,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
     {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)

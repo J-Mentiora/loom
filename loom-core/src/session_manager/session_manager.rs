@@ -73,6 +73,16 @@ pub struct SessionCreateOpts {
     /// `blocklist_enabled = !no_blocklist` for each ShimRequest.
     #[serde(default)]
     pub no_blocklist: bool,
+    /// Operator's `--no-determinism` opt-out (settle-capture slice 4b).
+    /// Default `false` (determinism ON: the injected template freezes
+    /// `Date.now`/`performance.now` and seeds `Math.random`, so captures are
+    /// byte-reproducible). When `true`, the shim injects a PASS-THROUGH script
+    /// instead (real wall-clock + unseeded RNG) for live/non-reproducible
+    /// capture. Recorded in the manifest Header so replay REFUSES the session —
+    /// a non-deterministic run can never be replay-equal. The R3 ordering gate
+    /// is unchanged (inject still runs + flips the readiness flag).
+    #[serde(default)]
+    pub no_determinism: bool,
     /// Operator's `--profile` choice — `"safe" | "standard" | "full"`. Wire-default
     /// is `"safe"` (per `loom_rpc::core_service_adapter::CreateSessionParams::default_profile`).
     /// Daemon's evaluate gate and shim's download confinement
@@ -96,6 +106,7 @@ impl Default for SessionCreateOpts {
             started_at_ms_override: None,
             capture_policy: None,
             no_blocklist: false,
+            no_determinism: false,
             profile: default_profile_string(),
         }
     }
@@ -200,6 +211,11 @@ pub struct Session {
     /// `navigate_execute` to compute the per-PageNavigate
     /// `blocklist_enabled` field.
     pub no_blocklist: bool,
+    /// Operator's `--no-determinism` opt-out (settle-capture slice 4b).
+    /// `false` by default (determinism ON). Read by the host's target-spawn
+    /// path to compute the per-request `determinism_enabled = !no_determinism`
+    /// so the shim injects the freeze template (true) or a pass-through (false).
+    pub no_determinism: bool,
     /// Per-session determinism seed. The `Option<u64> → Seed` collapse
     /// happens exactly once, at `LocalSessionManager::create` —
     /// `opts.seed.unwrap_or(default_seed)`. Downstream layers (HostState,
