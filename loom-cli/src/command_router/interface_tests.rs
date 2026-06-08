@@ -79,6 +79,7 @@ fn session_subcommand_variant_set_locked() {
             SessionCmd::Diff(_) => "diff",
             SessionCmd::Export(_) => "export",
             SessionCmd::Validate(_) => "validate",
+            SessionCmd::Reap(_) => "reap",
         }
     }
     let _ = _ck;

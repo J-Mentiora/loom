@@ -6,11 +6,11 @@ use super::session_commands::{
     ExportFormat, InspectArgs, ListArgs, ReplayArgs, ValidateArgs, SUBCOMMAND_RPC_MAP,
 };
 
-// === 9 session subcommands map to 9 RPC methods ===
+// === 10 session subcommands map to 10 RPC methods ===
 
 #[test]
-fn subcommand_rpc_map_has_nine_entries() {
-    assert_eq!(SUBCOMMAND_RPC_MAP.len(), 9);
+fn subcommand_rpc_map_has_ten_entries() {
+    assert_eq!(SUBCOMMAND_RPC_MAP.len(), 10);
 }
 
 #[test]
@@ -18,6 +18,7 @@ fn subcommand_rpc_map_covers_all_session_verbs() {
     let verbs: Vec<&str> = SUBCOMMAND_RPC_MAP.iter().map(|(k, _)| *k).collect();
     for expected in [
         "create", "inspect", "list", "close", "abort", "replay", "diff", "export", "validate",
+        "reap",
     ] {
         assert!(verbs.contains(&expected), "missing verb {expected}");
     }

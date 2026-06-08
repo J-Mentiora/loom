@@ -38,7 +38,12 @@ impl RequestRouter {
         // session.kill, daemon.health, request.cancel — admin/control
         // RPCs added in the daemon-session-stall fix. Router-level
         // (no schema in registry) so enumerate explicitly.
-        for m in ["session.kill", "daemon.health", "request.cancel"] {
+        for m in [
+            "session.kill",
+            "session.reap",
+            "daemon.health",
+            "request.cancel",
+        ] {
             if !methods.contains(&m.to_string()) {
                 methods.push(m.to_string());
             }
@@ -362,6 +367,17 @@ impl RequestRouterApi for RequestRouter {
                 let ttl_days = params.get("ttl_days").and_then(|v| v.as_u64());
                 let store_max_bytes = params.get("store_max_bytes").and_then(|v| v.as_u64());
                 match self.ctx.handlers.gc_run(ttl_days, store_max_bytes).await {
+                    Ok(v) => canonical_bytes(&v),
+                    Err(e) => error_bytes(&e),
+                }
+            }
+            "session.reap" => {
+                // Safe by default: preview unless the caller explicitly opts in.
+                let dry_run = params
+                    .get("dry_run")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                match self.ctx.handlers.session_reap(dry_run).await {
                     Ok(v) => canonical_bytes(&v),
                     Err(e) => error_bytes(&e),
                 }
