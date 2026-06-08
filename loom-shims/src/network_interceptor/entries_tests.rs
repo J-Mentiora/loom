@@ -133,6 +133,42 @@ fn from_disk_cache_response_sets_from_cache_flag() {
 
 // === D-REDIR: per-hop entries; redirect hops share request_id ===
 
+// A redirect's second requestWillBeSent carries `redirectResponse` (the prior
+// hop's real status) under the same requestId.
+fn request_will_be_sent_redirect(
+    request_id: &str,
+    url: &str,
+    method: &str,
+    rtype: &str,
+    redirect_status: i64,
+) -> Value {
+    Value::Map(vec![
+        (
+            Value::Text("requestId".into()),
+            Value::Text(request_id.into()),
+        ),
+        (Value::Text("type".into()), Value::Text(rtype.into())),
+        (
+            Value::Text("wallTime".into()),
+            Value::Float(1_700_000_002.0),
+        ),
+        (
+            Value::Text("request".into()),
+            Value::Map(vec![
+                (Value::Text("url".into()), Value::Text(url.into())),
+                (Value::Text("method".into()), Value::Text(method.into())),
+            ]),
+        ),
+        (
+            Value::Text("redirectResponse".into()),
+            Value::Map(vec![(
+                Value::Text("status".into()),
+                Value::Integer(redirect_status.into()),
+            )]),
+        ),
+    ])
+}
+
 #[test]
 fn redirect_emits_one_entry_per_hop_sharing_request_id() {
     let acc = NetworkEntryAccumulator::new();
@@ -141,9 +177,10 @@ fn redirect_emits_one_entry_per_hop_sharing_request_id() {
         "Network.requestWillBeSent",
         &request_will_be_sent("R-5", "https://app.test/api/thing", "GET", "XHR"),
     );
+    // Second hop carries the prior hop's 302 in redirectResponse.
     acc.observe(
         "Network.requestWillBeSent",
-        &request_will_be_sent("R-5", "https://app.test/api/thing/", "GET", "XHR"),
+        &request_will_be_sent_redirect("R-5", "https://app.test/api/thing/", "GET", "XHR", 302),
     );
     acc.observe(
         "Network.responseReceived",
@@ -156,7 +193,12 @@ fn redirect_emits_one_entry_per_hop_sharing_request_id() {
         "hops share request_id"
     );
     assert_eq!(entries[0].url, "https://app.test/api/thing");
+    assert_eq!(
+        entries[0].status, 302,
+        "first hop's real status from redirectResponse"
+    );
     assert_eq!(entries[1].url, "https://app.test/api/thing/");
+    assert_eq!(entries[1].status, 200, "final hop from responseReceived");
 }
 
 // === loadingFailed keeps the entry with status 0 ===

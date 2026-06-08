@@ -339,8 +339,9 @@ impl WasmHost {
                     network_entries_truncated: outcome.network_entries_truncated,
                 }),
                 Err(e) => {
-                    // Graceful degrade: drop the list (count only, no URLs).
+                    // Graceful degrade: drop the list (count + session only, no URLs).
                     tracing::warn!(
+                        session_id = %session_id,
                         entry_count = outcome.network_entries.len(),
                         error = %e,
                         "network_log content-store offload failed; dropping list"

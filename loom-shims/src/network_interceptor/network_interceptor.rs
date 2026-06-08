@@ -149,7 +149,25 @@ impl NetworkEntryAccumulator {
                     .filter(|w| *w > 0.0)
                     .map(|w| (w * 1000.0) as u64)
                     .unwrap_or(0);
+                // On a redirect, CDP fires a fresh requestWillBeSent for the new
+                // hop carrying `redirectResponse` — the response (status) of the
+                // PRIOR hop, under the SAME requestId. Backfill the prior hop's
+                // status before pushing the new hop, so a 302→200 chain reads as
+                // [302, 200] not [0, 200].
+                let redirect_status = match cbor_map_get(map, "redirectResponse") {
+                    Some(CborValue::Map(rr)) => cbor_map_u16(rr, "status"),
+                    _ => None,
+                };
                 let mut st = self.state.lock();
+                if let Some(status) = redirect_status {
+                    if let Some(idx) = st.last_index.get(&request_id).copied() {
+                        if let Some(e) = st.entries.get_mut(idx) {
+                            if e.status == 0 {
+                                e.status = status;
+                            }
+                        }
+                    }
+                }
                 if st.entries.len() >= self.cap {
                     st.truncated = true;
                     return;
