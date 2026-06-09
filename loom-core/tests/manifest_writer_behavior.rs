@@ -21,9 +21,16 @@ use tempfile::TempDir;
 
 fn make_mw() -> (LocalManifestWriter, TempDir) {
     let tmp = TempDir::new().unwrap();
-    let obs = Observability::new(tmp.path().join("loom.log"), false);
-    let mw = LocalManifestWriter::new(tmp.path().join("sessions"), obs);
+    let mw = make_mw_at(tmp.path());
     (mw, tmp)
+}
+
+// Build a writer rooted at an existing dir — lets two writer instances share
+// one on-disk session store (cold-cache fallback test) without each call
+// getting its own per-run TempDir.
+fn make_mw_at(root: &std::path::Path) -> LocalManifestWriter {
+    let obs = Observability::new(root.join("loom.log"), false);
+    LocalManifestWriter::new(root.join("sessions"), obs)
 }
 
 // === hash chain integrity ===
@@ -314,11 +321,10 @@ fn test_manifest_jcs_not_serde_json() {
 // set, a bogus raw line is written into the WAL file OUT OF BAND between the
 // 2nd and 3rd appends — simulating arbitrary unrelated file content that a
 // full-file re-read would (incorrectly) chain off of.
-fn build_three_and_read_last_prev_hash(tmp: &str, sid: SessionId, inject_bogus: bool) -> String {
-    // Hermetic: drop any stale WAL from a previous run (the existing tests in
-    // this file share /tmp; clean our session dir so open_manifest creates fresh).
-    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
-    let mw = make_mw(tmp);
+fn build_three_and_read_last_prev_hash(sid: SessionId, inject_bogus: bool) -> String {
+    // Hermetic per-run TempDir (returned so it outlives the WAL reads below) —
+    // no shared /tmp, so a stale WAL can never leak across runs.
+    let (mw, tmp) = make_mw();
     mw.open_manifest(sid.clone(), None).unwrap();
     let receipt = |id: u64| ManifestEntry::ActionReceipt {
         action_id: id,
@@ -329,11 +335,16 @@ fn build_three_and_read_last_prev_hash(tmp: &str, sid: SessionId, inject_bogus: 
     mw.append(sid.clone(), receipt(1)).unwrap();
     mw.append(sid.clone(), receipt(2)).unwrap();
 
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.wal");
+
     if inject_bogus {
         // Append a bogus line directly to the file, bypassing append(). A
         // full-file re-read would see THIS as the last line; the per-session
         // cache must ignore it and chain entry 3 off entry 2.
-        let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
         let mut contents = std::fs::read_to_string(&wal_path).unwrap();
         contents.push_str("{\"bogus\":\"out-of-band-line-not-via-append\"}\n");
         std::fs::write(&wal_path, contents).unwrap();
@@ -343,7 +354,6 @@ fn build_three_and_read_last_prev_hash(tmp: &str, sid: SessionId, inject_bogus: 
 
     // Entry 3 is the last *appended* line. With the bogus injection it's the
     // last line in the file too (we appended after it).
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
     let contents = std::fs::read_to_string(&wal_path).unwrap();
     let last = contents.lines().last().expect("a last WAL line");
     let v: serde_json::Value = serde_json::from_str(last).expect("entry 3 is valid JSON");
@@ -362,16 +372,10 @@ fn build_three_and_read_last_prev_hash(tmp: &str, sid: SessionId, inject_bogus: 
 // The cached code chains off entry 2 in both -> GREEN.
 #[test]
 fn append_chains_off_cached_last_line_not_a_full_reread() {
-    let control = build_three_and_read_last_prev_hash(
-        "/tmp/loom-test-mw-cache-control",
-        SessionId("01HZCACHE0CONTROL00000000A".into()),
-        false,
-    );
-    let injected = build_three_and_read_last_prev_hash(
-        "/tmp/loom-test-mw-cache-inject",
-        SessionId("01HZCACHE0INJECT000000000B".into()),
-        true,
-    );
+    let control =
+        build_three_and_read_last_prev_hash(SessionId("01HZCACHE0CONTROL00000000A".into()), false);
+    let injected =
+        build_three_and_read_last_prev_hash(SessionId("01HZCACHE0INJECT000000000B".into()), true);
     assert_eq!(
         injected, control,
         "append() must chain the next entry off the cached last-written line, \
@@ -387,10 +391,8 @@ fn append_chains_off_cached_last_line_not_a_full_reread() {
 // oracle the council asked for: cache == disk reality.
 #[test]
 fn warm_cache_appends_still_validate_against_disk() {
-    let tmp = "/tmp/loom-test-mw-cache-validate";
+    let (mw, _tmp) = make_mw();
     let sid = SessionId("01HZCACHE0VALIDATE0000000C".into());
-    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
-    let mw = make_mw(tmp);
     mw.open_manifest(sid.clone(), None).unwrap();
     for id in 1..=12u64 {
         mw.append(
@@ -415,12 +417,13 @@ fn warm_cache_appends_still_validate_against_disk() {
 // sessions, and the benign two-writer startup-sweep pattern.
 #[test]
 fn cold_cache_second_writer_falls_back_and_chain_validates() {
-    let tmp = "/tmp/loom-test-mw-cache-coldmiss";
+    // One shared on-disk store; two writer instances rooted at it so writer 2
+    // has a cold cache for this session and must fall back to reading the WAL.
+    let tmp = TempDir::new().unwrap();
     let sid = SessionId("01HZCACHE0COLDMISS000000D".into());
-    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
 
     // Writer 1: header + two receipts (warms ITS OWN cache only).
-    let mw1 = make_mw(tmp);
+    let mw1 = make_mw_at(tmp.path());
     mw1.open_manifest(sid.clone(), None).unwrap();
     for id in 1..=2u64 {
         mw1.append(
@@ -437,7 +440,7 @@ fn cold_cache_second_writer_falls_back_and_chain_validates() {
 
     // Writer 2: brand-new instance, cold cache for this session. Its append must
     // fall back to last_wal_line(file) to chain correctly off writer 1's last line.
-    let mw2 = make_mw(tmp);
+    let mw2 = make_mw_at(tmp.path());
     mw2.append(
         sid.clone(),
         ManifestEntry::ActionReceipt {
