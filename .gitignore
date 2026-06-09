@@ -35,3 +35,9 @@ __pycache__/
 .feature-workflow/events/
 .feature-workflow/backfill-checkpoint.json
 .feature-workflow/backfill-checkpoint.json.tmp
+
+# Local /feature working plans (loom is public — keep planning artifacts local).
+.feature-workflow/cleanup-opportunities.md
+
+# Marketing assets (slides, carousels, launch collateral — kept out of the repo).
+marketing/
