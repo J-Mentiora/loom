@@ -1,8 +1,6 @@
 council/
 specs/
 target/
-# Ignore local Claude settings, but TRACK repo-shared skills (e.g. cut-release).
-# Negation requires excluding .claude/* (not .claude/) so children can be re-included.
 .claude/*
 !.claude/skills/
 .DS_Store
@@ -13,21 +11,12 @@ target/
 .env
 .env.local
 .env.dev.local
-
-# cargo-dist intermediates
 dist-manifest.json
-
-# Python SDK build artifacts (`python -m build`, used by publish-pypi.yml)
 python-sdk/dist/
 python-sdk/*.egg-info/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
-
-# event-log substrate (loom is a public repo — keep internal infra config + any
-# telemetry/runtime artifacts OUT of git). Internal users configure the hosted
-# backend via a LOCAL .feature-workflow/event-log.yaml (ignored below); the
-# fallback queue can contain sensitive text and must never be committed.
 .feature-workflow/event-log.yaml
 .feature-workflow/event-log-fallback.jsonl
 .feature-workflow/event-log-fallback.jsonl.lock
@@ -35,9 +24,5 @@ __pycache__/
 .feature-workflow/events/
 .feature-workflow/backfill-checkpoint.json
 .feature-workflow/backfill-checkpoint.json.tmp
-
-# Local /feature working plans (loom is public — keep planning artifacts local).
 .feature-workflow/cleanup-opportunities.md
-
-# Marketing assets (slides, carousels, launch collateral — kept out of the repo).
 marketing/
