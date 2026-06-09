@@ -18,6 +18,84 @@ fn sha256_hex(input: &[u8]) -> String {
     d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Project a stored manifest line into its HASHABLE form by zeroing the
+/// top-level ephemeral fields that vary across two independent same-seed runs:
+/// the Header's random `session_id` (a per-session ULID) + wall-clock
+/// `started_at_ms`, and every entry's wall-clock `emitted_at_ms`. The fields
+/// STAY in the stored line — portable session identity + forensic timestamps are
+/// preserved — they are only excluded from the chain hash so the manifest hash
+/// chain is byte-equal across two independent same-seed record runs (the
+/// determinism property agentic-test-studio relies on).
+///
+/// Inner `receipt_canonical_bytes` timestamps (started/finished/timing/emitted)
+/// are made deterministic at record time via the per-session virtual clock, since
+/// they live in an opaque blob that cannot be projected here.
+///
+/// On any parse/encode failure the raw line is hashed unchanged (never silently
+/// drop a line from the chain). Used symmetrically by `append` (computing the
+/// next `prev_hash`) and `validate` (re-deriving it), so the chain stays
+/// internally consistent.
+fn hashable_line(line: &str) -> Vec<u8> {
+    // Byte-level field zeroing (NO JSON parse): the chain line is canonical JCS
+    // (sorted keys, no whitespace), and these three keys are unambiguous tokens
+    // that appear only as object keys (their values are a ULID / hex / number
+    // arrays — never the literal `"<key>":` substring). Parsing+re-serializing the
+    // whole line (incl. the receipt_canonical_bytes number array, on every append
+    // AND every validate line) measurably regressed replay throughput; a targeted
+    // scan that zeroes the values in place is effectively free and equally
+    // deterministic/consistent between `append` and `validate`. On any unexpected
+    // shape the bytes are left unchanged.
+    let mut buf = line.as_bytes().to_vec();
+    zero_json_string_value(&mut buf, b"\"session_id\":");
+    zero_json_number_value(&mut buf, b"\"started_at_ms\":");
+    zero_json_number_value(&mut buf, b"\"emitted_at_ms\":");
+    buf
+}
+
+/// Find the first occurrence of `needle` in `hay` (small needles; naive is fine).
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Replace the unsigned-integer value following `key` (e.g. `"emitted_at_ms":`)
+/// with `0`. No-op if the key is absent or not followed by digits.
+fn zero_json_number_value(buf: &mut Vec<u8>, key: &[u8]) {
+    let Some(pos) = find_subslice(buf, key) else {
+        return;
+    };
+    let start = pos + key.len();
+    let mut end = start;
+    while end < buf.len() && buf[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end > start {
+        buf.splice(start..end, std::iter::once(b'0'));
+    }
+}
+
+/// Empty the JSON string value following `key` (e.g. `"session_id":`). No-op if
+/// the key is absent or not followed by a quoted string. ULIDs contain no escape
+/// sequences, so scanning to the next `"` is sufficient.
+fn zero_json_string_value(buf: &mut Vec<u8>, key: &[u8]) {
+    let Some(pos) = find_subslice(buf, key) else {
+        return;
+    };
+    let open = pos + key.len();
+    if buf.get(open) != Some(&b'"') {
+        return;
+    }
+    let mut close = open + 1;
+    while close < buf.len() && buf[close] != b'"' {
+        close += 1;
+    }
+    if close < buf.len() {
+        buf.splice(open + 1..close, std::iter::empty());
+    }
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -264,7 +342,7 @@ impl ManifestWriter for LocalManifestWriter {
 
         // Compute prev_hash from the last line already in the WAL.
         let prev_hash = match last_wal_line(&wal_path)? {
-            Some(last_line) => sha256_hex(last_line.as_bytes()),
+            Some(last_line) => sha256_hex(&hashable_line(&last_line)),
             None => "0".repeat(64),
         };
 
@@ -358,22 +436,88 @@ impl ManifestWriter for LocalManifestWriter {
         }
 
         for i in 1..lines.len() {
-            let expected = sha256_hex(lines[i - 1].as_bytes());
+            // Accept EITHER the projected hash (new chains: ephemeral fields
+            // excluded → cross-run replay-equal) OR the raw-line hash (manifests
+            // recorded before this change, and the old lines of a session resumed
+            // across the upgrade). Both bind the non-ephemeral content, so a real
+            // tamper changes both and is still caught; this only avoids rejecting
+            // pre-existing/legacy chains as corrupt.
+            let expected_projected = sha256_hex(&hashable_line(lines[i - 1]));
             let entry: serde_json::Value = serde_json::from_str(lines[i])
                 .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
             let actual = entry["prev_hash"].as_str().unwrap_or("");
-            if actual != expected {
-                return Err(LoomError::new(
-                    LoomErrorCode::ManifestCorrupt,
-                    format!("hash chain broken at index {i}"),
-                )
-                .with_context(serde_json::json!({
-                    "failed_at_index": i,
-                    "expected_hash": expected,
-                    "observed_hash": actual
-                })));
+            if actual != expected_projected {
+                let expected_raw = sha256_hex(lines[i - 1].as_bytes());
+                if actual != expected_raw {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ManifestCorrupt,
+                        format!("hash chain broken at index {i}"),
+                    )
+                    .with_context(serde_json::json!({
+                        "failed_at_index": i,
+                        "expected_hash": expected_projected,
+                        "expected_hash_legacy": expected_raw,
+                        "observed_hash": actual
+                    })));
+                }
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod hashable_line_tests {
+    use super::{hashable_line, sha256_hex};
+
+    // Two header lines differing ONLY in the ephemeral session_id + started_at_ms
+    // must project to the same bytes (→ same chain hash).
+    #[test]
+    fn header_projection_ignores_session_id_and_started_at() {
+        let a = r#"{"determinism_enabled":true,"kind":"header","seed":42,"session_id":"01run-aaaa","started_at_ms":1000000}"#;
+        let b = r#"{"determinism_enabled":true,"kind":"header","seed":42,"session_id":"01run-bbbb","started_at_ms":2222222}"#;
+        assert_eq!(hashable_line(a), hashable_line(b));
+        // ...but a different SEED (content) must differ.
+        let c = r#"{"determinism_enabled":true,"kind":"header","seed":7,"session_id":"01run-aaaa","started_at_ms":1000000}"#;
+        assert_ne!(hashable_line(a), hashable_line(c));
+    }
+
+    // Receipt lines differing only in emitted_at_ms project equal; differing in
+    // receipt_canonical_bytes (content) differ. Guards against the projection
+    // mis-zeroing or matching the wrong occurrence inside the byte array.
+    #[test]
+    fn receipt_projection_ignores_emitted_at_ms_but_not_content() {
+        let a = r#"{"action_id":1,"emitted_at_ms":111,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[1,2,3]}"#;
+        let b = r#"{"action_id":1,"emitted_at_ms":999999,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[1,2,3]}"#;
+        assert_eq!(hashable_line(a), hashable_line(b));
+        let c = r#"{"action_id":1,"emitted_at_ms":111,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[1,2,4]}"#;
+        assert_ne!(hashable_line(a), hashable_line(c));
+    }
+
+    // The byte-array values are preserved verbatim (only the emitted_at_ms scalar
+    // is zeroed). A number array can never contain the literal `"emitted_at_ms":`
+    // token, so the first-occurrence scan only hits the real key.
+    #[test]
+    fn projection_preserves_byte_array_and_zeros_only_the_scalar() {
+        let line = r#"{"action_id":2,"emitted_at_ms":5,"kind":"action_receipt","prev_hash":"p","receipt_canonical_bytes":[34,101,109,105]}"#;
+        let projected = String::from_utf8(hashable_line(line)).unwrap();
+        assert!(
+            projected.contains(r#""emitted_at_ms":0"#),
+            "emitted_at_ms zeroed"
+        );
+        assert!(
+            projected.contains("[34,101,109,105]"),
+            "byte array preserved verbatim"
+        );
+    }
+
+    // Determinism: projecting the same line twice yields identical bytes.
+    #[test]
+    fn projection_is_deterministic() {
+        let line = r#"{"action_id":1,"emitted_at_ms":111,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[9]}"#;
+        assert_eq!(
+            sha256_hex(&hashable_line(line)),
+            sha256_hex(&hashable_line(line))
+        );
     }
 }

@@ -95,6 +95,16 @@ impl Default for TapeWriter {
     }
 }
 
+/// Fixed virtual-time advance per action, in milliseconds, used when
+/// determinism is enabled. Receipt timestamps become a pure function of the
+/// per-session `action_id` (`started = action_id * DELTA`,
+/// `finished = (action_id + 1) * DELTA`), so two independent same-seed runs
+/// produce byte-equal receipts (and a byte-equal manifest hash chain) instead
+/// of folding in real wall-clock dispatch durations. The exact value is
+/// immaterial to determinism — it only must be `>= 1` so `finished > started`
+/// and `timing_ticks > 0`.
+pub const DETERMINISTIC_ACTION_DELTA_MS: u64 = 1;
+
 /// The DeterminismHarness module. Held by `CoreApiFacade` as
 /// `Arc<DeterminismHarness>`; per-session tape writers are minted via
 /// `new_tape_writer`.
