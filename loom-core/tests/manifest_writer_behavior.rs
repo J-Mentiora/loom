@@ -7,25 +7,30 @@
 //   - structured error context: test_validate_corrupt_error_has_structured_context
 //   - atomic write: test_manifest_atomic_write_no_tmp_file
 //   - JCS compliance (HARD #3): test_manifest_jcs_not_serde_json
+//
+// Each test gets its own `tempfile::TempDir` (auto-removed on drop) so a stale WAL
+// can never leak across runs — bind the returned dir (`let (mw, _tmp) = make_mw();`)
+// so it outlives the test body.
 
 use loom_core::error::LoomErrorCode;
 use loom_core::manifest_writer::{
     AuditKind, LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId,
 };
 use loom_core::observability::Observability;
-use std::path::PathBuf;
+use tempfile::TempDir;
 
-fn make_mw(tmp: &str) -> LocalManifestWriter {
-    let obs = Observability::new(PathBuf::from(format!("{tmp}/loom.log")), false);
-    LocalManifestWriter::new(PathBuf::from(format!("{tmp}/sessions")), obs)
+fn make_mw() -> (LocalManifestWriter, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let obs = Observability::new(tmp.path().join("loom.log"), false);
+    let mw = LocalManifestWriter::new(tmp.path().join("sessions"), obs);
+    (mw, tmp)
 }
 
 // === hash chain integrity ===
 
 #[test]
 fn test_manifest_hash_chain_validates_intact() {
-    let tmp = "/tmp/loom-test-mw-validate";
-    let mw = make_mw(tmp);
+    let (mw, _tmp) = make_mw();
     let sid = SessionId("01HZAAAAAAAAAAAAAAAAAAAAAA".into());
     let handle = mw.open_manifest(sid.clone(), None).unwrap();
     let _ = handle;
@@ -56,8 +61,7 @@ fn test_manifest_hash_chain_validates_intact() {
 
 #[test]
 fn test_manifest_hash_chain_detects_tampering() {
-    let tmp = "/tmp/loom-test-mw-tamper";
-    let mw = make_mw(tmp);
+    let (mw, tmp) = make_mw();
     let sid = SessionId("01HZBBBBBBBBBBBBBBBBBBBBBB".into());
     mw.open_manifest(sid.clone(), None).unwrap();
     mw.append(
@@ -71,7 +75,11 @@ fn test_manifest_hash_chain_detects_tampering() {
     )
     .unwrap();
     // Tamper: overwrite the WAL file with a corrupted second line.
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.wal");
     let mut contents = std::fs::read_to_string(&wal_path).unwrap();
     contents.push_str("{\"kind\":\"action_receipt\",\"action_id\":99,\"emitted_at_ms\":0,\"receipt_canonical_bytes\":[],\"prev_hash\":\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\"}\n");
     std::fs::write(&wal_path, contents).unwrap();
@@ -84,12 +92,8 @@ fn test_manifest_hash_chain_detects_tampering() {
 
 #[test]
 fn test_manifest_json_checkpoint_has_entries_array() {
-    let tmp = "/tmp/loom-test-mw-json-ckpt";
+    let (mw, tmp) = make_mw();
     let sid = SessionId("01HZDDDDDDDDDDDDDDDDDDDDDD".into());
-    // Clean up previous run so open_manifest creates a fresh WAL.
-    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
-
-    let mw = make_mw(tmp);
     mw.open_manifest(sid.clone(), None).unwrap();
     mw.append(
         sid.clone(),
@@ -123,7 +127,11 @@ fn test_manifest_json_checkpoint_has_entries_array() {
     )
     .unwrap();
 
-    let json_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.json", sid.0));
+    let json_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.json");
     assert!(
         json_path.exists(),
         "manifest.json must exist after SessionTerminal append"
@@ -169,11 +177,8 @@ fn test_manifest_json_checkpoint_has_entries_array() {
 
 #[test]
 fn test_validate_corrupt_error_has_structured_context() {
-    let tmp = "/tmp/loom-test-mw-ctx";
+    let (mw, tmp) = make_mw();
     let sid = SessionId("01HZEEEEEEEEEEEEEEEEEEEEEE".into());
-    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
-
-    let mw = make_mw(tmp);
     mw.open_manifest(sid.clone(), None).unwrap();
     mw.append(
         sid.clone(),
@@ -186,7 +191,11 @@ fn test_validate_corrupt_error_has_structured_context() {
     )
     .unwrap();
     // Append a line with a deliberately wrong prev_hash.
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.wal");
     let mut contents = std::fs::read_to_string(&wal_path).unwrap();
     contents.push_str("{\"action_id\":99,\"emitted_at_ms\":0,\"kind\":\"action_receipt\",\"prev_hash\":\"deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\",\"receipt_canonical_bytes\":[]}\n");
     std::fs::write(&wal_path, contents).unwrap();
@@ -218,11 +227,8 @@ fn test_validate_corrupt_error_has_structured_context() {
 
 #[test]
 fn test_manifest_atomic_write_no_tmp_file() {
-    let tmp = "/tmp/loom-test-mw-atomic";
+    let (mw, tmp) = make_mw();
     let sid = SessionId("01HZFFFFFFFFFFFFFFFFFFFFFF".into());
-    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
-
-    let mw = make_mw(tmp);
     mw.open_manifest(sid.clone(), None).unwrap();
     mw.append(
         sid.clone(),
@@ -237,8 +243,16 @@ fn test_manifest_atomic_write_no_tmp_file() {
     // Trigger manifest.json export directly (also tested via SessionTerminal above).
     mw.export_manifest_json(sid.clone()).unwrap();
 
-    let json_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.json", sid.0));
-    let tmp_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.json.tmp", sid.0));
+    let json_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.json");
+    let tmp_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.json.tmp");
 
     // manifest.json must exist and be valid JSON.
     assert!(json_path.exists(), "manifest.json must exist after export");
@@ -260,8 +274,7 @@ fn test_manifest_jcs_not_serde_json() {
     // Verify that the WAL entry is serialized with sorted JSON keys (JCS).
     // serde_json::to_string does NOT guarantee key ordering.
     // serde_jcs::to_string sorts keys alphabetically — that's the contract.
-    let tmp = "/tmp/loom-test-mw-jcs";
-    let mw = make_mw(tmp);
+    let (mw, tmp) = make_mw();
     let sid = SessionId("01HZCCCCCCCCCCCCCCCCCCCCCC".into());
     mw.open_manifest(sid.clone(), None).unwrap();
     mw.append(
@@ -275,7 +288,11 @@ fn test_manifest_jcs_not_serde_json() {
         },
     )
     .unwrap();
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.wal");
     let contents = std::fs::read_to_string(&wal_path).unwrap();
     // The second line (index 1) is the AuditEntry we just appended.
     let entry_line = contents.lines().nth(1).expect("second WAL line must exist");
