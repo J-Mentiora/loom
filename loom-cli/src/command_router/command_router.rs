@@ -130,9 +130,11 @@ pub enum SessionCmd {
     Diff(DiffArgs),
     Export(ExportArgs),
     Validate(ValidateArgs),
-    /// `session reap [--apply]` — quarantine corrupt-WAL orphan sessions that
-    /// are stuck in the active set and consuming concurrency slots. Previews by
-    /// default (dry-run); pass `--apply` to actually move them aside.
+    /// `session reap [--apply]` — reap leaked resources: evict idle sessions,
+    /// close zombie sessions, terminate orphan Chromium trees, and quarantine
+    /// corrupt-WAL orphan sessions stuck in the active set. Previews by default
+    /// (dry-run); pass `--apply` to actually reap. Idempotent and never touches a
+    /// live session or a non-loom browser.
     Reap(ReapArgs),
 }
 

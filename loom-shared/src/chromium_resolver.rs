@@ -38,6 +38,12 @@
 
 use std::path::{Path, PathBuf};
 
+/// Filename of the sidecar pidfile the shim supervisor writes into each session's Chromium
+/// user-data-dir, holding the browser process-group leader pid. The session+Chromium reaper
+/// reads it to `killpg` orphan trees precisely after a daemon restart. Single source of truth
+/// shared by the writer (`loom-shims` supervisor) and the reader (`loom-daemon` reaper).
+pub const CHROMIUM_PIDFILE_NAME: &str = "loom-chromium.pid";
+
 /// Where the resolved chromium came from. Used by the daemon to emit a
 /// `tracing::warn!` when source is not `Pinned` so users know they've
 /// lost replay-bit-equality (per CONTRIBUTING.md "Determinism is sacred").
