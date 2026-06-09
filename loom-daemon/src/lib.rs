@@ -516,6 +516,14 @@ impl CoreFacadeBridge for CoreBridge {
             no_determinism,
             profile: profile.to_string(),
         };
+        if let Some(anchor) = clock_anchor {
+            // Greppable signal that a cross-run clock anchor was applied (the
+            // session's injected Date.now/performance.now epoch is pinned to this).
+            tracing::info!(
+                clock_anchor = anchor,
+                "session create: clock anchor applied"
+            );
+        }
         let session_id = self
             .core
             .session_manager

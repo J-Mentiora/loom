@@ -464,7 +464,12 @@ impl ActionExecutor for ChromiumActionExecutor {
                     Some(rx) => tokio::time::timeout(timeout, rx).await.is_ok(),
                     None => true,
                 };
-                if !budget_drained {
+                if budget_drained {
+                    tracing::debug!(
+                        target_id,
+                        "navigate: virtualTimeBudgetExpired arrived; DOM capture is virtual-time settled"
+                    );
+                } else {
                     tracing::warn!(
                         target_id,
                         "navigate: virtualTimeBudgetExpired did not arrive within timeout; \
