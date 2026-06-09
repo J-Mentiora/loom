@@ -87,7 +87,7 @@ fn method_names_match_cdp_wire_namespace() {
     assert_eq!(
         CdpMessage::DomGetDocument(DomGetDocument {
             depth: -1,
-            pierce: false
+            pierce: true
         })
         .method_name(),
         "DOM.getDocument"

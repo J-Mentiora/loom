@@ -375,9 +375,9 @@ loom action web.set_input_files --session <SESSION> --selector #upload --paths '
 
 **Capture a full DOM snapshot of the active page.**
 
-Calls `DOM.getDocument` and serialises the resulting tree into a content-addressed blob. The receipt carries a `content_ref` (SHA-256) plus a top-level hash so callers can detect DOM-state changes without comparing full snapshots.
+Calls `DOM.getDocument` with `pierce:true` (matching `web.navigate`) and serialises the resulting tree into a content-addressed blob. `pierce:true` inlines shadow-DOM and iframe `contentDocument` subtrees, so the snapshot covers the full composed page rather than just the top document. The receipt carries a `content_ref` (SHA-256) plus a top-level hash so callers can detect DOM-state changes without comparing full snapshots.
 
-Snapshots include the deterministic profile's effects — frozen time, seeded randomness, 0-duration animations — so two snapshots from sessions with the same seed and action chain are bit-identical at this level.
+Snapshots include the deterministic profile's effects — frozen time, seeded randomness, 0-duration animations — so two snapshots from sessions with the same seed and action chain are bit-identical at this level. Per-frame `frameId`s (one per inlined shadow/iframe document) are stripped during normalisation, so they do not perturb the hash.
 
 **Parameters**
 

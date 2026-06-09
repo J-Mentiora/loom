@@ -561,14 +561,17 @@ input target → `not_a_file_input`. Single-file inputs take `paths[0]`.",
         name: "web.snapshot",
         summary: "Capture a full DOM snapshot of the active page.",
         description: "\
-Calls `DOM.getDocument` and serialises the resulting tree into a \
-content-addressed blob. The receipt carries a `content_ref` (SHA-256) \
-plus a top-level hash so callers can detect DOM-state changes \
-without comparing full snapshots.\n\n\
+Calls `DOM.getDocument` with `pierce:true` (matching `web.navigate`) and \
+serialises the resulting tree into a content-addressed blob. `pierce:true` \
+inlines shadow-DOM and iframe `contentDocument` subtrees, so the snapshot \
+covers the full composed page rather than just the top document. The receipt \
+carries a `content_ref` (SHA-256) plus a top-level hash so callers can detect \
+DOM-state changes without comparing full snapshots.\n\n\
 Snapshots include the deterministic profile's effects — frozen time, \
 seeded randomness, 0-duration animations — so two snapshots from \
 sessions with the same seed and action chain are bit-identical at \
-this level.",
+this level. Per-frame `frameId`s (one per inlined shadow/iframe document) \
+are stripped during normalisation, so they do not perturb the hash.",
         params: &[
             ParamMeta {
                 name: "session_id",

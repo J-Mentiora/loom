@@ -1760,7 +1760,11 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
                         Value::Text("depth".into()),
                         Value::Integer((-1i128).try_into().ok()?),
                     ),
-                    (Value::Text("pierce".into()), Value::Bool(false)),
+                    // pierce:true inlines shadow-DOM + iframe contentDocument subtrees,
+                    // matching web.navigate (shim STEP 5) so the two DOM captures hash a
+                    // comparable node set. Normalized via dom_normalize (frameId stripped
+                    // recursively) at the shim cdp_send chokepoint.
+                    (Value::Text("pierce".into()), Value::Bool(true)),
                 ]),
             ),
         ]),
@@ -3192,6 +3196,25 @@ mod tests {
             let msg = decode_cdp(&action)
                 .unwrap_or_else(|| panic!("build_chromium_args returned None for {action:?}"));
             assert_eq!(msg.method, expected_method, "wrong method for {action:?}");
+        }
+    }
+
+    /// web.snapshot must capture shadow DOM + iframe content (`pierce:true`),
+    /// matching web.navigate (shim STEP 5, already pierce:true) so the two DOM
+    /// captures hash a comparable node set. Locks the unified contract against
+    /// silent regression — see specs/2026-06-09-unify-pierce-setting/plan.md.
+    #[test]
+    fn build_chromium_args_snapshot_emits_pierce_true() {
+        let action = Action::WebSnapshot {
+            session_id: s("sess-1"),
+        };
+        let msg = decode_cdp(&action).expect("Some");
+        assert_eq!(msg.method, "DOM.getDocument");
+        match params_get(&msg, "pierce").expect("pierce param") {
+            ciborium::value::Value::Bool(b) => {
+                assert!(*b, "snapshot DOM.getDocument must use pierce:true")
+            }
+            other => panic!("pierce not a Bool: {other:?}"),
         }
     }
 
