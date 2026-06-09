@@ -35,9 +35,20 @@ pub fn config_for_timeout(timeout: Duration) -> SettleConfig {
 /// The single JS probe run each tick. Self-installs a `MutationObserver` on
 /// first call (counting childList/characterData/attribute mutations — the
 /// "meaningful mutation" set, R-g), then returns
-/// `[readyState==complete, location.href, mutations-since-last-call]` as a JSON
-/// string. Reading the counter resets it, so each tick sees only the mutations
-/// of that interval.
+/// `[readyState==complete, location.href, activity-since-last-call]` as a JSON
+/// string. Reading the mutation counter resets it, so each tick sees only the
+/// mutations of that interval.
+///
+/// `activity` = mutations + currently-running animations
+/// (`document.getAnimations()` with `playState==='running'`). Folding the
+/// running-animation count into the same "is the page still changing?" signal
+/// (faithful-entrance-animations) keeps the readiness gate open until
+/// animations finish — covering WAAPI `element.animate()` and compositor-thread
+/// CSS transforms/opacity, which animate without mutating the DOM and so are
+/// invisible to the MutationObserver. JS-rAF (framer-motion) reveals are already
+/// caught via the inline-style mutations they make; this adds the rest. When the
+/// page is truly quiet (no mutations AND no running animations) `activity` is 0
+/// and the existing quiet-tick machine settles.
 const SETTLE_PROBE_JS: &str = r#"(function(){
   if(!window.__loomSettleObs){
     window.__loomSettleMut = 0;
@@ -48,7 +59,13 @@ const SETTLE_PROBE_JS: &str = r#"(function(){
     } catch(e) { window.__loomSettleObs = null; }
   }
   var m = window.__loomSettleMut|0; window.__loomSettleMut = 0;
-  return JSON.stringify([document.readyState === 'complete', location.href || '', m]);
+  var anim = 0;
+  try {
+    if (typeof document.getAnimations === 'function') {
+      anim = document.getAnimations().filter(function(a){ return a.playState === 'running'; }).length;
+    }
+  } catch(e) { anim = 0; }
+  return JSON.stringify([document.readyState === 'complete', location.href || '', (m + anim)|0]);
 })()"#;
 
 /// Outcome of a readiness wait.

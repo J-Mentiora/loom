@@ -114,7 +114,7 @@ Executes the supplied JavaScript expression via `Runtime.evaluate` in the page's
 
 Failure modes: an uncaught exception in the expression surfaces as `kind: "js_throw"`. Under the `safe` profile (default for `loom session create`) loom blocks destructive patterns — writes to `window.location`, `document.write`, and similar — before the expression reaches the page. The `standard` profile lifts the denylist; `full` removes all guards.
 
-Determinism: `Math.random()` is sfc32-seeded from the session seed, `Date.now()` and `performance.now()` return the frozen session epoch, and `requestAnimationFrame` ticks at fixed 16 ms intervals. Two sessions created with the same seed will produce identical results for an identical expression.
+Determinism: `Math.random()` is sfc32-seeded from the session seed. The clock (`Date.now()`, `performance.now()`, `requestAnimationFrame`, `setTimeout`) runs on a deterministic virtual timeline pinned to the session epoch — it advances (so client-side animations render) but is a pure function of the page's work plus the seed, so two sessions created with the same seed produce identical results for an identical expression. Because virtual time fast-forwards, client-side time-based controls (cooldowns, trial/license gates) are not honored during capture and must not be relied on as a security boundary.
 
 Security: the expression is executed verbatim in the page. Treat it as untrusted code if any portion comes from user input — escape appropriately, or prefer `web.click` / `web.type` for typed interactions.
 
@@ -246,7 +246,7 @@ loom action web.network_log --session <SESSION>
 
 Calls `Page.captureScreenshot`. Without `selector`, captures the full viewport. With `selector`, restricts the capture to the element's bounding rect (fails with `kind: "js_throw"` if the selector misses).
 
-The PNG is stored in the content-addressed blob store; the receipt carries a `screenshot_ref` (SHA-256) rather than inline bytes. Determinism: under the deterministic profile animations are 0s and `requestAnimationFrame` is locked to 16 ms ticks, so two sessions with the same seed produce byte-identical screenshots for the same page state.
+The PNG is stored in the content-addressed blob store; the receipt carries a `screenshot_ref` (SHA-256) rather than inline bytes. Determinism: client-side animations run to completion on a deterministic virtual-time clock and the readiness gate captures the settled final frame, so two sessions with the same seed reach the same final page state. Screenshot bytes are excluded from the replay hash chain (only the settled DOM + content hash are chained).
 
 **Parameters**
 
