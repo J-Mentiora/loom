@@ -51,6 +51,7 @@ pub const CHECK_NAMES: &[&str] = &[
     "chromium_present_and_verified",
     "vault_keychain_accessible",
     "macos_quarantine_clear",
+    "session_health",
     "browser_smoke",
 ];
 
@@ -124,6 +125,41 @@ pub async fn run(
         check_macos_quarantine_clear(&paths.chromium_binary)
     );
 
+    // session_health: informational counts (active sessions, orphan browser trees, oldest
+    // session age) so a wedged daemon is visible before it's fatal. Reported as `warn` when
+    // orphan trees exist (the periodic reaper will clean them), `ok` otherwise — never a hard
+    // failure, so it does not flip `loom doctor` red on a transient leak. Skipped when the
+    // daemon isn't responsive (no health to read).
+    if !failures.iter().any(|f| f == "daemon_responsive") {
+        match check_session_health(rpc).await {
+            Ok((active, orphans, oldest)) => {
+                let oldest_str = oldest
+                    .map(|s| format!("{s}s"))
+                    .unwrap_or_else(|| "n/a".to_string());
+                checks.push(DoctorCheck {
+                    name: "session_health".to_string(),
+                    status: if orphans > 0 { "warn" } else { "ok" }.to_string(),
+                    detail: Some(serde_json::json!(format!(
+                        "active_sessions={active} orphan_browser_trees={orphans} oldest_session_age={oldest_str}"
+                    ))),
+                });
+            }
+            Err(e) => checks.push(DoctorCheck {
+                name: "session_health".to_string(),
+                status: "skipped".to_string(),
+                detail: Some(serde_json::json!(format!(
+                    "could not read daemon.health: {e}"
+                ))),
+            }),
+        }
+    } else {
+        checks.push(DoctorCheck {
+            name: "session_health".to_string(),
+            status: "skipped".to_string(),
+            detail: Some(serde_json::json!("skipped: daemon not responsive")),
+        });
+    }
+
     // browser_smoke: a REAL end-to-end browser round-trip
     // (session.create → web.navigate(about:blank) → web.screenshot →
     // web.clear_cookies → session.close). This is what makes `loom doctor`
@@ -182,6 +218,24 @@ pub async fn check_socket_reachable(socket_path: &std::path::Path) -> Result<(),
 /// Check 2 — daemon responsive (single rpc.ping).
 pub async fn check_daemon_responsive(rpc: &RpcClient) -> Result<(), CliError> {
     rpc.ping().await
+}
+
+/// Read session-health counts from `daemon.health`. Returns
+/// `(active_sessions, orphan_browser_trees, oldest_active_session_age_secs)`.
+pub async fn check_session_health(rpc: &RpcClient) -> Result<(u64, u64, Option<u64>), CliError> {
+    let resp = rpc.call("daemon.health", serde_json::json!({})).await?;
+    let active = resp
+        .get("active_sessions")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let orphans = resp
+        .get("orphan_browser_trees")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let oldest = resp
+        .get("oldest_active_session_age_secs")
+        .and_then(|v| v.as_u64());
+    Ok((active, orphans, oldest))
 }
 
 /// Check 7 — real browser smoke. Drives a full ephemeral session end-to-end so

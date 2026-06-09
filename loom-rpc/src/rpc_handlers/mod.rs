@@ -150,6 +150,8 @@ impl RpcHandlers {
                 active_sessions: 0,
                 shim_breaker_states: Vec::new(),
                 otel_exporter: "unwired".to_string(),
+                orphan_browser_trees: 0,
+                oldest_active_session_age_secs: None,
                 deep: None,
             });
 

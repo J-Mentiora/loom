@@ -35,6 +35,7 @@ fn max_concurrent_sessions() -> usize {
     })
 }
 
+pub mod reaper;
 mod upload_guard;
 mod vault_bridge;
 
@@ -172,10 +173,42 @@ impl DaemonHealthProvider for DaemonHealthBridge {
             _ => "disabled".to_string(),
         };
 
+        // Reaper health counts (best-effort, cheap: a single $TMPDIR readdir + per-dir
+        // pidfile stat). Orphan trees = loom-chromium dirs whose session isn't live but whose
+        // browser pid is still alive. On any read error these degrade to 0/None, never block.
+        let (orphan_browser_trees, oldest_active_session_age_secs) = {
+            let live: std::collections::HashSet<String> = self
+                .core
+                .session_manager
+                .live_session_ids()
+                .iter()
+                .map(|s| s.0.clone())
+                .collect();
+            let orphans = reaper::proc::scan_browser_dirs(&reaper::proc::browser_tmp_root())
+                .into_iter()
+                .filter(|e| e.is_dir && !e.is_symlink && !live.contains(&e.session_id))
+                .filter(|e| {
+                    reaper::proc::read_pidfile(&e.path)
+                        .map(reaper::proc::pid_is_alive)
+                        .unwrap_or(false)
+                })
+                .count();
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            (
+                orphans,
+                self.core.session_manager.oldest_active_age_secs(now_ms),
+            )
+        };
+
         DaemonHealth {
             active_sessions,
             shim_breaker_states,
             otel_exporter,
+            orphan_browser_trees,
+            oldest_active_session_age_secs,
             // Sync `snapshot` cannot reach the async probe. The deep path
             // is populated by `DaemonHealthAsync::snapshot_deep` (see
             // impl below) called from the `daemon_health` handler when
@@ -273,6 +306,17 @@ fn now_epoch_ms() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// RAII guard that decrements a session's in-flight action counter (and refreshes its idle
+/// clock) when an action dispatch returns, no matter which path. Constructed AFTER
+/// `Session::action_started`, so creation+drop bracket exactly one action.
+struct ActionActivityGuard(Arc<loom_core::session_manager::Session>);
+
+impl Drop for ActionActivityGuard {
+    fn drop(&mut self) {
+        self.0.action_finished(now_epoch_ms());
+    }
 }
 
 // ─── Bridge: CoreApiFacade → CoreFacadeBridge ───────────────────────────────
@@ -435,7 +479,8 @@ impl CoreFacadeBridge for CoreBridge {
             return Err(map_loom_error(&LoomError::new(
                 LoomErrorCode::TooManyRequests,
                 format!(
-                    "concurrent session cap reached ({active}/{cap}); retry after a session closes"
+                    "concurrent session cap reached ({active}/{cap}); run `loom session reap` \
+                     to free leaked slots, or retry after a session closes"
                 ),
             )));
         }
@@ -655,6 +700,22 @@ impl CoreFacadeBridge for CoreBridge {
             );
         }
 
+        // Also reap leaked LIVE resources: idle/zombie sessions + orphan Chromium trees.
+        // `apply = !dry_run` so a dry-run only previews. The sweep is async; run it on the
+        // current multi-thread runtime via block_in_place (we're inside a sync adapter call
+        // dispatched from the async RPC loop). Best-effort: a sweep failure must not fail the
+        // corrupt-WAL reap that already succeeded.
+        let sweep = {
+            let cfg = reaper::ReaperConfig::from_env();
+            let core = Arc::clone(&self.core);
+            let host = self.wasm_host.clone();
+            tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current().block_on(async move {
+                    reaper::run_sweep(&core, host.as_ref(), &cfg, !dry_run).await
+                })
+            })
+        };
+
         Ok(
             loom_rpc::core_service_adapter::core_service_adapter::ReapReport {
                 quarantined: outcome.quarantined.into_iter().map(|s| s.0).collect(),
@@ -666,6 +727,10 @@ impl CoreFacadeBridge for CoreBridge {
                     .into_iter()
                     .map(|f| format!("{}: {}", f.session_id.0, f.details))
                     .collect(),
+                idle_evicted: sweep.idle_evicted,
+                zombies_closed: sweep.zombies_closed,
+                orphan_browsers_killed: sweep.orphan_browsers_killed,
+                orphan_dirs_removed: sweep.orphan_dirs_removed,
             },
         )
     }
@@ -912,6 +977,14 @@ impl WasmHostBridge for WasmBridge {
                 SessionStatus::Created | SessionStatus::Active => {}
             }
         }
+
+        // Activity tracking for the idle reaper: mark the action in-flight for the WHOLE
+        // dispatch (so an actively-working session is never seen as idle, even a single long
+        // navigate) and bump `last_activity` on both entry and exit. The guard's Drop runs on
+        // every return path — early returns, errors, panics-as-unwind — so `in_flight` can't
+        // leak. Placed AFTER the terminal-status check so closed/aborted sessions don't count.
+        session.action_started(now_epoch_ms());
+        let _activity = ActionActivityGuard(Arc::clone(&session));
 
         // Safe profile blocks destructive evaluate.
         // Daemon-layer gate (NOT shim) — daemon has typed Action +
@@ -2223,7 +2296,13 @@ fn print_daemon_help() {
              LOOM_DATA_ROOT       Same as --data-root.\n    \
              LOOM_LOG_PATH        Override the daemon log file path.\n    \
              LOOM_OTEL_ENABLED    Set to `1` to enable OTEL exports.\n    \
-             LOOM_UPLOAD_ROOT     Allow-list root for web.set_input_files. Unset → uploads fail closed.\n"
+             LOOM_UPLOAD_ROOT     Allow-list root for web.set_input_files. Unset → uploads fail closed.\n    \
+             LOOM_MAX_CONCURRENT_SESSIONS  Hard cap on concurrent sessions (default 16).\n    \
+             LOOM_SESSION_IDLE_TTL_SECS    Evict sessions idle this long (default 1800; 0 disables).\n    \
+             LOOM_REAPER_SWEEP_SECS        Reaper sweep cadence (default 60).\n    \
+             LOOM_REAP_KILL_GRACE_MS       SIGTERM→SIGKILL grace per orphan tree (default 2000).\n    \
+             LOOM_REAP_ORPHAN_MIN_AGE_SECS Min age before an orphan dir is GC'd (default 60).\n    \
+             LOOM_REAPER_ORPHAN_GC         Orphan-Chromium GC on/off (default on; set 0 to disable).\n"
     );
 }
 
@@ -2390,6 +2469,27 @@ async fn async_main() -> Result<()> {
     let (host_bridge, wasm_host_handle): (Arc<dyn WasmHostBridge>, _) =
         build_host_bridge(Arc::clone(&core), args.upload_root.clone());
 
+    // 3b. Startup orphan-Chromium GC. A previous daemon's unclean exit can leave
+    //     `loom-chromium-*` user-data-dirs whose sessions are gone but whose browser trees
+    //     still hold fds/pids. The live set is empty here (no sessions created yet), so every
+    //     aged loom-chromium dir is an orphan — reap it before serving so a churned host
+    //     starts clean. Best-effort; never fatal.
+    {
+        let reaper_cfg = reaper::ReaperConfig::from_env();
+        if reaper_cfg.orphan_gc_enabled {
+            let report =
+                reaper::run_sweep(&core, wasm_host_handle.as_ref(), &reaper_cfg, true).await;
+            if !report.is_empty() {
+                tracing::warn!(
+                    metric = "loom_reaper_startup_sweep",
+                    orphan_browsers_killed = report.orphan_browsers_killed.len(),
+                    orphan_dirs_removed = report.orphan_dirs_removed,
+                    "startup orphan-Chromium GC reaped leaked browser trees"
+                );
+            }
+        }
+    }
+
     // 4. Build schema provider. The schema directory holds per-method
     //    JSON Schema files emitted at build time .
     //    If the directory is empty / missing, the daemon starts with an
@@ -2528,9 +2628,61 @@ async fn async_main() -> Result<()> {
             .expect("failed to install Ctrl-C handler");
     };
 
+    // 9b. Periodic reaper sweep: idle-session eviction + zombie detection + orphan-Chromium
+    //     GC on a fixed cadence so a long-running daemon under churn stays healthy without
+    //     manual intervention. Runs as a background task aborted on shutdown (below). Skipped
+    //     entirely when neither idle-TTL nor orphan-GC is enabled.
+    let reaper_task = {
+        let reaper_cfg = reaper::ReaperConfig::from_env();
+        if reaper_cfg.periodic_enabled() {
+            let core_for_reaper = Arc::clone(&core);
+            let host_for_reaper = wasm_host_handle.clone();
+            tracing::info!(
+                idle_ttl_secs = reaper_cfg.idle_ttl.as_secs(),
+                sweep_secs = reaper_cfg.sweep_interval.as_secs(),
+                orphan_gc = reaper_cfg.orphan_gc_enabled,
+                "reaper: periodic sweep enabled"
+            );
+            Some(tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(reaper_cfg.sweep_interval);
+                ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                // First tick fires immediately; skip it so we don't double-run the
+                // startup sweep that already executed above.
+                ticker.tick().await;
+                loop {
+                    ticker.tick().await;
+                    let report = reaper::run_sweep(
+                        &core_for_reaper,
+                        host_for_reaper.as_ref(),
+                        &reaper_cfg,
+                        true,
+                    )
+                    .await;
+                    if !report.is_empty() {
+                        tracing::info!(
+                            metric = "loom_reaper_periodic_sweep",
+                            idle_evicted = report.idle_evicted.len(),
+                            zombies_closed = report.zombies_closed.len(),
+                            orphan_browsers_killed = report.orphan_browsers_killed.len(),
+                            orphan_dirs_removed = report.orphan_dirs_removed,
+                            "reaper: periodic sweep reaped leaked resources"
+                        );
+                    }
+                }
+            }))
+        } else {
+            None
+        }
+    };
+
     // 10. Serve.
     let handle = tokio::runtime::Handle::current();
     server.serve(handle, shutdown).await;
+
+    // 10b. Stop the reaper task on shutdown so it doesn't outlive the runtime.
+    if let Some(task) = reaper_task {
+        task.abort();
+    }
 
     // 11. Cleanup auth artefacts on shutdown.
     let _ = std::fs::remove_file(&token_path);

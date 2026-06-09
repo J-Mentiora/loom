@@ -582,23 +582,46 @@ pub async fn reap(rpc: &RpcClient, _cfg: &CliConfig, args: ReapArgs) -> Result<(
         dry_run: bool,
         quarantine_dir: Option<String>,
         failed: Vec<String>,
+        #[serde(default)]
+        idle_evicted: Vec<String>,
+        #[serde(default)]
+        zombies_closed: Vec<String>,
+        #[serde(default)]
+        orphan_browsers_killed: Vec<String>,
+        #[serde(default)]
+        orphan_dirs_removed: u64,
     }
     let result: ReapResult = serde_json::from_value(resp)
         .map_err(|e| CliError::Internal(format!("reap response parse: {e}")))?;
 
     let verb = if result.dry_run {
-        "would quarantine"
+        "would reap"
     } else {
-        "quarantined"
+        "reaped"
     };
     println!(
-        "{} {} corrupt orphan session(s); {} live session(s) skipped",
-        verb,
+        "{verb}: {} idle session(s), {} zombie session(s), {} orphan browser tree(s), \
+         {} corrupt orphan session(s); {} live session(s) skipped",
+        result.idle_evicted.len(),
+        result.zombies_closed.len(),
+        result.orphan_browsers_killed.len(),
         result.quarantined.len(),
-        result.skipped_live
+        result.skipped_live,
     );
-    for id in &result.quarantined {
-        println!("  - {id}");
+    let print_ids = |label: &str, ids: &[String]| {
+        if !ids.is_empty() {
+            println!("  {label}:");
+            for id in ids {
+                println!("    - {id}");
+            }
+        }
+    };
+    print_ids("idle", &result.idle_evicted);
+    print_ids("zombie", &result.zombies_closed);
+    print_ids("orphan-browser", &result.orphan_browsers_killed);
+    print_ids("corrupt-orphan (quarantined)", &result.quarantined);
+    if result.orphan_dirs_removed > 0 {
+        println!("  orphan dirs removed: {}", result.orphan_dirs_removed);
     }
     if let Some(dir) = &result.quarantine_dir {
         if !result.quarantined.is_empty() {
@@ -608,8 +631,12 @@ pub async fn reap(rpc: &RpcClient, _cfg: &CliConfig, args: ReapArgs) -> Result<(
     for f in &result.failed {
         println!("  ! failed: {f}");
     }
-    if result.dry_run && !result.quarantined.is_empty() {
-        println!("(dry-run — re-run with --apply to move them)");
+    let nothing = result.idle_evicted.is_empty()
+        && result.zombies_closed.is_empty()
+        && result.orphan_browsers_killed.is_empty()
+        && result.quarantined.is_empty();
+    if result.dry_run && !nothing {
+        println!("(dry-run — re-run with --apply to reap them)");
     }
     Ok(())
 }
