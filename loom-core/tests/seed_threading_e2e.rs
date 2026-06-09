@@ -157,6 +157,62 @@ fn no_determinism_is_recorded_in_manifest_header() {
 }
 
 #[test]
+fn clock_anchor_pins_header_started_at_ms() {
+    // cross-run determinism (Cluster A): a `--clock-anchor M` session maps to
+    // `started_at_ms_override: Some(M)`, which must pin the manifest Header's
+    // `started_at_ms` to exactly M (instead of wall-clock now_ms()). The same
+    // override drives `epoch_ms` → CDP initialVirtualTime, so equal Header
+    // started_at_ms across two fresh runs ⇒ equal injected browser clock.
+    const ANCHOR: u64 = 1_700_000_000_000;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+    let sm = make_sm(root, 99);
+    let mut o = opts(Some(42));
+    o.started_at_ms_override = Some(ANCHOR);
+    let id = sm.create(o).unwrap();
+
+    let wal = std::path::Path::new(root)
+        .join("sessions")
+        .join(&id.0)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal).expect("manifest.wal must exist");
+    let header: ManifestEntry =
+        serde_json::from_str(contents.lines().next().unwrap()).expect("Header parses");
+    match header {
+        ManifestEntry::Header { started_at_ms, .. } => assert_eq!(
+            started_at_ms, ANCHOR,
+            "a --clock-anchor session must pin Header started_at_ms to the anchor epoch"
+        ),
+        other => panic!("first entry must be a Header, got {other:?}"),
+    }
+}
+
+#[test]
+fn without_clock_anchor_started_at_ms_is_wall_clock_not_the_anchor() {
+    // Converse: with no anchor, the Header records wall-clock now_ms(), NOT the
+    // anchor value — proving the anchor is load-bearing (matches the e2e §21
+    // negative control: a no-anchor session diffs nonzero against an anchored one).
+    const ANCHOR: u64 = 1_700_000_000_000;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+    let sm = make_sm(root, 99);
+    let id = sm.create(opts(Some(42))).unwrap(); // started_at_ms_override: None
+    let wal = std::path::Path::new(root)
+        .join("sessions")
+        .join(&id.0)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal).unwrap();
+    let header: ManifestEntry = serde_json::from_str(contents.lines().next().unwrap()).unwrap();
+    match header {
+        ManifestEntry::Header { started_at_ms, .. } => assert_ne!(
+            started_at_ms, ANCHOR,
+            "a session WITHOUT --clock-anchor must use wall-clock, not the anchor"
+        ),
+        other => panic!("first entry must be a Header, got {other:?}"),
+    }
+}
+
+#[test]
 fn deterministic_session_records_determinism_enabled_true() {
     // The default (deterministic) session records `Some(true)` — explicit, so
     // an operator inspecting the Header sees determinism was on.

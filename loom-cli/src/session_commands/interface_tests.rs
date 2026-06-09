@@ -48,12 +48,14 @@ fn create_args_field_names_match_schema() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        clock_anchor: Some(1_700_000_000_000),
     })
     .unwrap();
     assert!(json.get("profile").is_some());
     // serde rename for kebab→snake — the on-the-wire JSON uses snake_case.
     assert!(json.get("network_mode").is_some());
     assert!(json.get("seed").is_some());
+    assert!(json.get("clock_anchor").is_some());
 }
 
 // === clap rejects unknown capture-policy values with exit 2 ===
@@ -89,6 +91,41 @@ fn clap_rejects_capture_policy_bogus_with_exit_2() {
     // clap maps invalid value parse failures to ValueValidation /
     // InvalidValue → ErrorKind::InvalidValue, which exits 2 in the binary.
     assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue);
+}
+
+// === --clock-anchor: clap validates the u64 epoch for free (T5) ===
+
+#[test]
+fn clap_rejects_non_numeric_clock_anchor() {
+    use clap::{CommandFactory, FromArgMatches, Parser};
+    #[derive(Parser, Debug)]
+    struct Wrap {
+        #[command(flatten)]
+        inner: CreateArgs,
+    }
+    // `Option<u64>` parsing rejects a non-numeric value at the clap boundary —
+    // no hand-rolled validation needed. Any valid u64 is a semantically valid
+    // epoch, so there is no range check / recovery path.
+    let err = Wrap::command()
+        .try_get_matches_from(["test", "--clock-anchor", "not-a-number"])
+        .map(|m| Wrap::from_arg_matches(&m).unwrap())
+        .expect_err("clap should reject non-numeric --clock-anchor");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn clap_accepts_numeric_clock_anchor() {
+    use clap::{CommandFactory, FromArgMatches, Parser};
+    #[derive(Parser, Debug)]
+    struct Wrap {
+        #[command(flatten)]
+        inner: CreateArgs,
+    }
+    let m = Wrap::command()
+        .try_get_matches_from(["test", "--clock-anchor", "1700000000000"])
+        .map(|m| Wrap::from_arg_matches(&m).unwrap())
+        .expect("clap should accept a numeric epoch");
+    assert_eq!(m.inner.clock_anchor, Some(1_700_000_000_000));
 }
 
 #[test]

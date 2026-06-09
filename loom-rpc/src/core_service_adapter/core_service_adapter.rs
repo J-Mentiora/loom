@@ -100,6 +100,7 @@ pub trait CoreFacadeBridge: Send + Sync {
         budget: Option<serde_json::Value>,
         no_blocklist: bool,
         no_determinism: bool,
+        clock_anchor: Option<u64>,
     ) -> Result<(String, u64), AdapterError>;
 
     /// Close an active session.
@@ -307,6 +308,14 @@ pub struct CreateSessionParams {
     /// (real clock + unseeded RNG) and marks the session non-replayable.
     #[serde(default)]
     pub no_determinism: bool,
+    /// Operator's `--clock-anchor` value: a fixed Unix epoch (ms) that pins the
+    /// injected browser clock for cross-run determinism. Maps to
+    /// `SessionCreateOpts.started_at_ms_override` (→ epoch_ms → CDP
+    /// initialVirtualTime + Header started_at_ms + replay round-trip).
+    /// Default `None` → epoch falls back to wall-clock `now_ms()` (pre-feature
+    /// behavior unchanged). No effect under `--no-determinism`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clock_anchor: Option<u64>,
 }
 
 fn default_profile() -> String {

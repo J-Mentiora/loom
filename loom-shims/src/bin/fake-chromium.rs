@@ -319,6 +319,29 @@ async fn handle_connection(
             return;
         }
 
+        // Emit Emulation.virtualTimeBudgetExpired right after a
+        // setVirtualTimePolicy that carries a `budget`, so the action_executor's
+        // post-load budget await (cross-run determinism) completes promptly
+        // instead of waiting out its wall-clock timeout. Real Chromium emits this
+        // once the granted virtual-time budget elapses; here we treat the budget
+        // as instantly drained (the fake has no real virtual clock).
+        if method == "Emulation.setVirtualTimePolicy" && params.get("budget").is_some() {
+            let mut vt_evt = json!({
+                "method": "Emulation.virtualTimeBudgetExpired",
+                "params": {},
+            });
+            if let Some(sid) = &session_id {
+                vt_evt["sessionId"] = json!(sid);
+            }
+            if write
+                .send(Message::Text(vt_evt.to_string().into()))
+                .await
+                .is_err()
+            {
+                return;
+            }
+        }
+
         // settle-capture never-settles (network) shape: re-assert N
         // never-finishing in-flight requests on every settle probe. Stable
         // requestIds make the inserts idempotent in the host's in-flight set,

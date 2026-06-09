@@ -298,6 +298,7 @@ async fn handle_request(
                     None,
                     blocklist_enabled,
                     settle_mode,
+                    determinism_enabled,
                 )
                 .await
             {
