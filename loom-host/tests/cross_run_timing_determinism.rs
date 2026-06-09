@@ -36,7 +36,10 @@ fn deterministic_tick_is_positive_and_reproducible() {
     let first = action_delta_ms(true, 0);
     let second = action_delta_ms(true, 0);
     assert!(first >= 1, "each deterministic tick must be a positive ms");
-    assert_eq!(first, second, "deterministic ticks are identical run-to-run");
+    assert_eq!(
+        first, second,
+        "deterministic ticks are identical run-to-run"
+    );
 }
 
 #[test]
