@@ -25,72 +25,16 @@ use serde::{Deserialize, Serialize};
 // propagation stays per-system, and loom-rpc owns its translation
 // surface.
 
-/// Stable error code mirroring `loom_core::error::LoomErrorCode` 1:1.
-/// Encoded as snake_case strings on the wire.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LoomErrorCode {
-    // Protocol layer (loom-rpc owners)
-    ProtocolAuthRequired,
-    ProtocolMalformed,
-    SchemaViolation,
-    MethodNotFound,
-    // Mirrored from loom-core / loom-host (full set lives in errors.json)
-    SessionNotFound,
-    SessionAborted,
-    SessionClosed,
-    BudgetExceeded,
-    SurfaceTrap,
-    SurfaceUnavailable,
-    VaultGrantNotFound,
-    VaultGrantRevoked,
-    VaultGrantExpired,
-    VaultRejection,
-    VaultCredentialTypeUnsupported,
-    StoreIntegrityFailed,
-    InternalError,
-    // Session-create typed validation. Carries structured
-    // `data: {provided, available}` via the matching
-    // `ErrorTranslator::from_*` constructors. Additive variants are
-    // SemVer-compatible.
-    UnknownProfile,
-    InvalidNetworkMode,
-    InvalidBudgetKey,
-    InvalidCapturePolicy,
-    /// Action rejected because the active session profile
-    /// (e.g. `"safe"`) forbids it. `data` carries
-    /// `{matched_pattern, profile, violation}` so callers distinguish
-    /// evaluate-denylist hits from download blocks. Wire string:
-    /// `"profile_restricted"`.
-    ProfileRestricted,
-    /// Chromium binary not located by any resolver search
-    /// path during session.create. Wire string: `"browser_not_found"`
-    /// (snake_case via `rename_all = "snake_case"`; matches the
-    /// canonical loom-shared enum's kebab-case `"browser-not-found"`
-    /// modulo separator). Additive variant; SemVer-compatible.
-    BrowserNotFound,
-    /// Per-request server-side deadline expired before dispatch returned
-    /// a response. Configurable via `LOOM_REQUEST_TIMEOUT_MS` (default
-    /// 30000). Distinct from `BudgetExceeded` (per-session wall-clock)
-    /// and shim-level timeouts (host-shim CBOR round-trip).
-    RequestTimeout,
-    /// In-flight request cancelled by a sibling `request.cancel` on
-    /// the same connection.
-    RequestCancelled,
-    /// Per-connection rate limit exceeded for the requested method.
-    /// Currently fires only on `daemon.health` (issue #58). Mirrors
-    /// `loom_shared::LoomErrorCode::TooManyRequests`. Wire string
-    /// `"too_many_requests"` (snake_case via `rename_all` here;
-    /// canonical kebab-case is `"too-many-requests"` modulo separator).
-    TooManyRequests,
-    /// Transient transport/connection fault (broken pipe, connection
-    /// closed/EOF, idle-drop of a long-lived connection). Mirrors
-    /// `loom_shared::LoomErrorCode::TransportDropped`. Wire string
-    /// `"transport_dropped"`; the canonical loom-shared `from_wire` accepts
-    /// both this and the kebab `"transport-dropped"`. Retryable via reconnect
-    /// on the client. Additive variant; SemVer-compatible.
-    TransportDropped,
-}
+// The daemon wire error code IS the canonical `loom_shared::LoomErrorCode`
+// (error-code-consolidation): the former 27-variant duplicate enum was merged
+// into loom-shared, which now owns every daemon-distinct variant (ProtocolAuthRequired,
+// ProtocolMalformed, MethodNotFound, SurfaceUnavailable, SessionClosed, VaultGrantNotFound,
+// VaultCredentialTypeUnsupported, UnknownProfile, Invalid{NetworkMode,BudgetKey,CapturePolicy},
+// InternalError) alongside the shared ones. The on-wire snake_case spelling is produced by
+// `loom_shared::LoomErrorCode`'s manual `Serialize`/`as_wire` (no `rename_all` needed) and is
+// pinned to BC-RPC-03 by `wire_parity_with_bc_rpc_03`. Re-exported here so existing
+// `error_translator::LoomErrorCode` paths keep resolving.
+pub use loom_shared::error_format::LoomErrorCode;
 
 /// Structured field detail for a `schema_violation` envelope.
 /// Wire-equal to the `data` block in `{error: {code: "schema_violation",
@@ -126,9 +70,9 @@ pub struct ErrorTranslator;
 pub struct LoomErrorRef<'a>(pub &'a dyn LoomErrorLike);
 
 /// Minimal trait surfacing the variant + structured data we need to
-/// build the JSON-RPC envelope. `loom_core::error::LoomError`
-/// implements this via a build-time-generated impl (the impl is
-/// emitted alongside `errors.json` schema).
+/// build the JSON-RPC envelope. `code()` returns the canonical
+/// `loom_shared::LoomErrorCode` (re-exported above); there is no
+/// generated `errors.json` schema — the enum is the single source of truth.
 pub trait LoomErrorLike: Send + Sync {
     fn code(&self) -> LoomErrorCode;
     fn message(&self) -> String;

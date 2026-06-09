@@ -158,6 +158,20 @@ impl From<LoomError> for HostError {
             | LoomErrorCode::InvalidArgument
             | LoomErrorCode::Unsupported
             | LoomErrorCode::BrowserNotFound
+            // Daemon protocol / validation layer (merged from loom-rpc): these
+            // are RPC-boundary errors, mapped to Internal like the other Rpc* codes.
+            | LoomErrorCode::ProtocolAuthRequired
+            | LoomErrorCode::ProtocolMalformed
+            | LoomErrorCode::MethodNotFound
+            | LoomErrorCode::SurfaceUnavailable
+            | LoomErrorCode::SessionClosed
+            | LoomErrorCode::VaultGrantNotFound
+            | LoomErrorCode::VaultCredentialTypeUnsupported
+            | LoomErrorCode::UnknownProfile
+            | LoomErrorCode::InvalidNetworkMode
+            | LoomErrorCode::InvalidBudgetKey
+            | LoomErrorCode::InvalidCapturePolicy
+            | LoomErrorCode::InternalError
             | LoomErrorCode::Internal => HostError::Internal(detail),
         }
     }
