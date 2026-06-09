@@ -436,22 +436,88 @@ impl ManifestWriter for LocalManifestWriter {
         }
 
         for i in 1..lines.len() {
-            let expected = sha256_hex(&hashable_line(lines[i - 1]));
+            // Accept EITHER the projected hash (new chains: ephemeral fields
+            // excluded → cross-run replay-equal) OR the raw-line hash (manifests
+            // recorded before this change, and the old lines of a session resumed
+            // across the upgrade). Both bind the non-ephemeral content, so a real
+            // tamper changes both and is still caught; this only avoids rejecting
+            // pre-existing/legacy chains as corrupt.
+            let expected_projected = sha256_hex(&hashable_line(lines[i - 1]));
             let entry: serde_json::Value = serde_json::from_str(lines[i])
                 .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
             let actual = entry["prev_hash"].as_str().unwrap_or("");
-            if actual != expected {
-                return Err(LoomError::new(
-                    LoomErrorCode::ManifestCorrupt,
-                    format!("hash chain broken at index {i}"),
-                )
-                .with_context(serde_json::json!({
-                    "failed_at_index": i,
-                    "expected_hash": expected,
-                    "observed_hash": actual
-                })));
+            if actual != expected_projected {
+                let expected_raw = sha256_hex(lines[i - 1].as_bytes());
+                if actual != expected_raw {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ManifestCorrupt,
+                        format!("hash chain broken at index {i}"),
+                    )
+                    .with_context(serde_json::json!({
+                        "failed_at_index": i,
+                        "expected_hash": expected_projected,
+                        "expected_hash_legacy": expected_raw,
+                        "observed_hash": actual
+                    })));
+                }
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod hashable_line_tests {
+    use super::{hashable_line, sha256_hex};
+
+    // Two header lines differing ONLY in the ephemeral session_id + started_at_ms
+    // must project to the same bytes (→ same chain hash).
+    #[test]
+    fn header_projection_ignores_session_id_and_started_at() {
+        let a = r#"{"determinism_enabled":true,"kind":"header","seed":42,"session_id":"01run-aaaa","started_at_ms":1000000}"#;
+        let b = r#"{"determinism_enabled":true,"kind":"header","seed":42,"session_id":"01run-bbbb","started_at_ms":2222222}"#;
+        assert_eq!(hashable_line(a), hashable_line(b));
+        // ...but a different SEED (content) must differ.
+        let c = r#"{"determinism_enabled":true,"kind":"header","seed":7,"session_id":"01run-aaaa","started_at_ms":1000000}"#;
+        assert_ne!(hashable_line(a), hashable_line(c));
+    }
+
+    // Receipt lines differing only in emitted_at_ms project equal; differing in
+    // receipt_canonical_bytes (content) differ. Guards against the projection
+    // mis-zeroing or matching the wrong occurrence inside the byte array.
+    #[test]
+    fn receipt_projection_ignores_emitted_at_ms_but_not_content() {
+        let a = r#"{"action_id":1,"emitted_at_ms":111,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[1,2,3]}"#;
+        let b = r#"{"action_id":1,"emitted_at_ms":999999,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[1,2,3]}"#;
+        assert_eq!(hashable_line(a), hashable_line(b));
+        let c = r#"{"action_id":1,"emitted_at_ms":111,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[1,2,4]}"#;
+        assert_ne!(hashable_line(a), hashable_line(c));
+    }
+
+    // The byte-array values are preserved verbatim (only the emitted_at_ms scalar
+    // is zeroed). A number array can never contain the literal `"emitted_at_ms":`
+    // token, so the first-occurrence scan only hits the real key.
+    #[test]
+    fn projection_preserves_byte_array_and_zeros_only_the_scalar() {
+        let line = r#"{"action_id":2,"emitted_at_ms":5,"kind":"action_receipt","prev_hash":"p","receipt_canonical_bytes":[34,101,109,105]}"#;
+        let projected = String::from_utf8(hashable_line(line)).unwrap();
+        assert!(
+            projected.contains(r#""emitted_at_ms":0"#),
+            "emitted_at_ms zeroed"
+        );
+        assert!(
+            projected.contains("[34,101,109,105]"),
+            "byte array preserved verbatim"
+        );
+    }
+
+    // Determinism: projecting the same line twice yields identical bytes.
+    #[test]
+    fn projection_is_deterministic() {
+        let line = r#"{"action_id":1,"emitted_at_ms":111,"kind":"action_receipt","prev_hash":"x","receipt_canonical_bytes":[9]}"#;
+        assert_eq!(
+            sha256_hex(&hashable_line(line)),
+            sha256_hex(&hashable_line(line))
+        );
     }
 }
