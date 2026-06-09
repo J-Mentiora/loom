@@ -262,8 +262,21 @@ impl ActionExecutor for ChromiumActionExecutor {
         msg: CdpMessage,
         budget: Option<Duration>,
     ) -> Result<ActionResult, ShimResponse> {
+        // Snapshot (and the loom-surfaces guest verbs) reach DOM.getDocument via
+        // this generic path and hash the raw response; normalize it here too so
+        // their `dom_snapshot_hash` is content-stable, just like navigate STEP 5.
+        let is_dom_get_document = msg.method == "DOM.getDocument";
         match self.cdp.command(target_id, msg, budget).await {
-            Ok(result) => Ok(ActionResult::CdpResult { result }),
+            Ok(result) => {
+                let result = if is_dom_get_document {
+                    let normalized =
+                        loom_shared::dom_normalize::normalize_dom_cbor(&cbor_to_bytes(&result));
+                    ciborium::de::from_reader(normalized.as_bytes()).unwrap_or(result)
+                } else {
+                    result
+                };
+                Ok(ActionResult::CdpResult { result })
+            }
             Err(e) => Err(action_error_to_response(ActionError::Cdp(e), 0, None)),
         }
     }
@@ -416,8 +429,14 @@ impl ActionExecutor for ChromiumActionExecutor {
             .command(target_id, dom_msg, Some(timeout))
             .await
             .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
-        let dom_after_sha256 = sha256_hex_of_cbor(&dom_result);
-        let dom_bytes = cbor_to_bytes(&dom_result);
+        // Strip the ephemeral per-navigation `frameId` (and any future ephemeral
+        // CDP id) from the DOM CBOR before it is hashed or stored, so two
+        // independent same-seed captures of byte-identical content produce the
+        // same `dom_snapshot_hash`. The host re-hashes these stored bytes, so the
+        // bytes themselves (not just the side hash) must be normalized.
+        let dom_bytes = loom_shared::dom_normalize::normalize_dom_cbor(&cbor_to_bytes(&dom_result))
+            .into_bytes();
+        let dom_after_sha256 = sha256_hex_of_bytes(&dom_bytes);
 
         // STEP 6: Page.captureScreenshot → raw CBOR bytes + SHA-256.
         let shot_msg = CdpMessage {
@@ -792,23 +811,6 @@ fn cbor_to_bytes(value: &CborValue) -> Vec<u8> {
 fn sha256_hex_of_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    let digest = hasher.finalize();
-    let mut out = String::with_capacity(64);
-    for b in digest.iter() {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
-}
-
-/// Compute SHA-256 (lowercase hex) of the CBOR-encoded form of a value.
-/// Used for `dom_after_sha256` + `screenshot_sha256`.
-fn sha256_hex_of_cbor(value: &CborValue) -> String {
-    let mut bytes = Vec::new();
-    if ciborium::ser::into_writer(value, &mut bytes).is_err() {
-        return String::new();
-    }
-    let mut hasher = Sha256::new();
-    hasher.update(&bytes);
     let digest = hasher.finalize();
     let mut out = String::with_capacity(64);
     for b in digest.iter() {

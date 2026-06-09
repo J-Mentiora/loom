@@ -326,3 +326,52 @@ async fn error_navigate_summary_counts_4xx_as_error() {
 
     mgr.shutdown_session("tier2-spine-404").await;
 }
+
+/// Helper: drive one navigation through the real shim and return its
+/// (normalized) DOM-snapshot bytes — what the host hashes into
+/// `dom_snapshot_hash` via `content_store.put`.
+async fn navigate_dom_bytes(session_label: &str) -> Vec<u8> {
+    let (mgr, id, _udd) = make_manager(session_label);
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(45),
+        mgr.send_navigate(
+            id.clone(),
+            "test-action".to_string(),
+            0,
+            0,
+            "http://fake.test/status/200".into(),
+            30_000,
+            loom_shared::types::Seed(42),
+            loom_shared::types::EpochMs(0),
+            true,
+            "settled".to_string(),
+            true,
+        ),
+    )
+    .await
+    .expect("send_navigate timed out")
+    .expect("send_navigate returned an error");
+    mgr.shutdown_session(session_label).await;
+    outcome.dom_bytes
+}
+
+/// stable-dom-snapshot-hash regression (Part 1): two INDEPENDENT same-seed
+/// navigations of byte-identical content must produce an IDENTICAL
+/// `dom_snapshot_hash`. fake-chromium emits a fresh ephemeral `frameId` per
+/// call/process, so this can only hold because the shim's `dom_normalize` strips
+/// it from the hashed/stored DOM bytes. Before the fix the two runs differed by
+/// exactly that `frameId`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn two_independent_navigations_yield_identical_dom_snapshot_bytes() {
+    assert_binaries_built();
+    let a = navigate_dom_bytes("xrun-dom-a").await;
+    let b = navigate_dom_bytes("xrun-dom-b").await;
+    assert!(!a.is_empty(), "dom bytes must be populated");
+    assert_eq!(
+        a, b,
+        "two independent same-seed navigations of identical content must yield \
+         byte-equal normalized DOM (→ identical dom_snapshot_hash); a difference \
+         means an ephemeral CDP id (e.g. frameId) leaked into the hashed bytes"
+    );
+}

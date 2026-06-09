@@ -12,6 +12,7 @@ pub mod action_aliases;
 pub mod auth_token;
 pub mod binary_resolver;
 pub mod chromium_resolver;
+pub mod dom_normalize;
 pub mod error_format;
 pub mod llm_types;
 pub mod logging;

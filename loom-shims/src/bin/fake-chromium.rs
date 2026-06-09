@@ -730,6 +730,20 @@ fn is_browser_scope_method_local(method: &str) -> bool {
 ///
 /// `params` is consumed for `DOM.querySelector` (extract `selector`) and
 /// `DOM.getBoxModel` (extract `nodeId`); for other methods it is ignored.
+/// A per-process, per-call ephemeral frame id — stands in for the random
+/// per-navigation `frameId` real Chromium embeds in `DOM.getDocument`. Distinct
+/// across independent runs so a content-stable `dom_snapshot_hash` can only hold
+/// if the shim strips it.
+fn ephemeral_frame_id() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "fake-frame-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    )
+}
+
 fn canned_response(method: &str, params: &Value) -> Value {
     match method {
         "Page.navigate" => json!({
@@ -743,6 +757,12 @@ fn canned_response(method: &str, params: &Value) -> Value {
                 "nodeName": "#document",
                 "nodeType": 9,
                 "childNodeCount": 0,
+                // Ephemeral per-navigation frame id, mirroring real Chromium.
+                // Varies per call + per process so the determinism e2e proves
+                // `dom_snapshot_hash` normalization STRIPS it: two independent
+                // same-seed runs hash identically ONLY because the shim removes
+                // this id (see loom_shared::dom_normalize).
+                "frameId": ephemeral_frame_id(),
                 "children": []
             }
         }),

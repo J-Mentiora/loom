@@ -163,6 +163,8 @@ impl SessionExecutor {
         // the Store — needed to advance the virtual clock around dispatch
         // (timing invariants).
         let harness = host_state.determinism.clone();
+        // Capture before host_state moves into the Store (decisions D9).
+        let determinism_on = !host_state.no_determinism;
         let mut store = wasmtime::Store::new(engine, host_state);
         let instance = self
             .instantiate_surface(&mut store, &component, linker)
@@ -180,9 +182,20 @@ impl SessionExecutor {
                 )
             })?;
 
-        // Snapshot the session-elapsed virtual clock at action start.
-        let started_ms = harness.clock_now();
-        // Wall-clock measurement of dispatch overhead — feeds begin_action.
+        // Receipt timestamps: under determinism (the default), a pure function of
+        // the per-session `action_id` so two independent same-seed runs produce
+        // byte-equal receipts (and a byte-equal manifest hash chain) instead of
+        // folding in real wall-clock dispatch duration. With `--no-determinism`,
+        // keep the real virtual clock. No shared mutable clock in the determinism
+        // path → no cross-session bleed (decisions D9; council C2).
+        const ACTION_DELTA_MS: u64 = loom_core::determinism_harness::DETERMINISTIC_ACTION_DELTA_MS;
+        let started_ms = if determinism_on {
+            action.action_id.saturating_mul(ACTION_DELTA_MS)
+        } else {
+            harness.clock_now()
+        };
+        // Wall-clock measurement of dispatch overhead — feeds begin_action in the
+        // non-determinism path only.
         let dispatch_t0 = std::time::Instant::now();
 
         let mut builder = ReceiptBuilder {
@@ -203,11 +216,15 @@ impl SessionExecutor {
         let call_result = tokio::select! {
             result = func.call_async(&mut store, &input_args, &mut output_slot) => result,
             _ = abort_signal.notified() => {
-                // Even on abort, advance the virtual clock so timing_ticks
-                // remains monotonically non-decreasing across actions.
-                let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
-                harness.begin_action(delta_ms);
-                builder.finished_at_ms = harness.clock_now();
+                // Even on abort, set finished so timing_ticks remains
+                // monotonically non-decreasing across actions.
+                builder.finished_at_ms = if determinism_on {
+                    action.action_id.saturating_add(1).saturating_mul(ACTION_DELTA_MS)
+                } else {
+                    let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
+                    harness.begin_action(delta_ms);
+                    harness.clock_now()
+                };
                 // Distinguish budget-kill from user-abort. Budget-kill
                 // populates Session::kill_reason BEFORE notifying.
                 // Budget-kill detection.
@@ -236,12 +253,19 @@ impl SessionExecutor {
             }
         };
 
-        // Advance the virtual session clock by the measured wall-clock
-        // dispatch duration; `.max(1)` ensures strictly-positive monotonic
-        // advance even for sub-ms dispatches.
-        let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
-        harness.begin_action(delta_ms);
-        builder.finished_at_ms = harness.clock_now();
+        // Set finished: deterministic per-session value under determinism, else
+        // advance the virtual clock by measured wall-clock (`.max(1)` keeps it
+        // strictly-positive monotonic even for sub-ms dispatches).
+        builder.finished_at_ms = if determinism_on {
+            action
+                .action_id
+                .saturating_add(1)
+                .saturating_mul(ACTION_DELTA_MS)
+        } else {
+            let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
+            harness.begin_action(delta_ms);
+            harness.clock_now()
+        };
 
         match call_result {
             Ok(()) => match decode_typed_receipt(&output_slot[0], &mut builder) {

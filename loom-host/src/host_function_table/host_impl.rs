@@ -64,12 +64,33 @@ fn loom_to_wit_error(err: loom_shared::error_format::LoomError) -> HostError {
     }
 }
 
+impl HostState {
+    /// Deterministic per-session virtual clock (ms) for receipt timestamps when
+    /// determinism is enabled; `None` falls back to the harness clock. A pure
+    /// function of the per-session `action_id` — no shared mutable state — so two
+    /// independent same-seed runs produce byte-equal timestamps and concurrent
+    /// sessions cannot bleed clock state into each other (the manifest-chain
+    /// cross-run determinism property; see decisions D9).
+    fn deterministic_clock_ms(&self) -> Option<u64> {
+        if self.mode == Mode::Live && !self.no_determinism {
+            Some(
+                self.action_id
+                    .saturating_mul(loom_core::determinism_harness::DETERMINISTIC_ACTION_DELTA_MS),
+            )
+        } else {
+            None
+        }
+    }
+}
+
 impl Host for HostState {
     // --- Determinism sources ---
 
     fn clock_now(&mut self) -> impl ::core::future::Future<Output = Instant> + Send {
         let ms = match self.mode {
-            Mode::Live => self.determinism.clock_now(),
+            Mode::Live => self
+                .deterministic_clock_ms()
+                .unwrap_or_else(|| self.determinism.clock_now()),
             Mode::Replay => {
                 let table = self
                     .replay_table
@@ -571,8 +592,11 @@ impl Host for HostState {
                 .put(&outcome.screenshot_bytes)
                 .map_err(loom_to_wit_error)?;
 
-            // Session-monotonic timestamp from DeterminismHarness.
-            let emitted_at_ms = determinism.clock_now();
+            // Session-monotonic timestamp: deterministic per-session virtual
+            // clock when determinism is on (cross-run byte-equal), else harness.
+            let emitted_at_ms = self
+                .deterministic_clock_ms()
+                .unwrap_or_else(|| determinism.clock_now());
 
             // Serialize network events as JSON Vec<LoomNetworkEvent>.
             let side_effects_json = serde_json::to_vec(&outcome.network_events).unwrap_or_default();
@@ -724,7 +748,9 @@ impl Host for HostState {
                 .map_err(loom_to_wit_error)?;
 
             // Session-monotonic timestamp from DeterminismHarness (like navigate).
-            let emitted_at_ms = determinism.clock_now();
+            let emitted_at_ms = self
+                .deterministic_clock_ms()
+                .unwrap_or_else(|| determinism.clock_now());
 
             Ok(WaitResult {
                 settle_until: outcome.settle_until,
@@ -815,7 +841,9 @@ impl Host for HostState {
             })?;
 
             // Session-monotonic timestamp.
-            let emitted_at_ms = determinism.clock_now();
+            let emitted_at_ms = self
+                .deterministic_clock_ms()
+                .unwrap_or_else(|| determinism.clock_now());
 
             // > 64KB → offload to content store.
             const TRUNCATION_THRESHOLD: usize = 65_536;

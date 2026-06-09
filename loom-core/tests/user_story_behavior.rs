@@ -168,41 +168,43 @@ fn click_bytes(action_id: u64, dom_hash: &str) -> Vec<u8> {
 /// Write a WAL with Header + N click ActionReceipts + SessionTerminal.
 /// Each entry's prev_hash = sha256(raw_bytes_of_previous_line) so that
 /// LocalManifestWriter::validate() passes.
+/// Build a manifest writer rooted at `sessions_root` so synthetic test sessions
+/// are written through the SAME append path production uses — in particular the
+/// chain `prev_hash` is computed with the real projection rule (ephemeral
+/// session_id/timestamps excluded from the hash). Hand-rolling `prev_hash` here
+/// would diverge from `validate()` and fail replay.
+fn helper_writer(sessions_root: &Path) -> LocalManifestWriter {
+    let obs = Observability::new(sessions_root.join("helper.log"), false);
+    LocalManifestWriter::new(sessions_root.to_path_buf(), obs)
+}
+
 fn write_click_session(sessions_root: &Path, session_id: &str, n: u64, dom_hash: &str) {
-    let session_dir = sessions_root.join(session_id);
-    fs::create_dir_all(&session_dir).unwrap();
-
-    let header = ManifestEntry::Header {
-        session_id: session_id.to_string(),
-        started_at_ms: 0,
-        prev_hash: None,
-        budgets: None,
-        capture_policy: None,
-        seed: None,
-        determinism_enabled: None,
-    };
-    let mut lines: Vec<String> = vec![serde_json::to_string(&header).unwrap()];
-
+    let w = helper_writer(sessions_root);
+    let sid = SessionId(session_id.to_string());
+    w.open_manifest_with_started_at(sid.clone(), None, Some(0), None, None, true)
+        .unwrap();
     for i in 0..n {
-        let prev_hash = sha256_hex(lines.last().unwrap().as_bytes());
-        let entry = ManifestEntry::ActionReceipt {
-            action_id: i,
-            emitted_at_ms: i * 100,
-            receipt_canonical_bytes: click_bytes(i, dom_hash),
-            prev_hash,
-        };
-        lines.push(serde_json::to_string(&entry).unwrap());
+        w.append(
+            sid.clone(),
+            ManifestEntry::ActionReceipt {
+                action_id: i,
+                emitted_at_ms: i * 100,
+                receipt_canonical_bytes: click_bytes(i, dom_hash),
+                prev_hash: String::new(),
+            },
+        )
+        .unwrap();
     }
-
-    let terminal_prev_hash = sha256_hex(lines.last().unwrap().as_bytes());
-    let terminal = ManifestEntry::SessionTerminal {
-        action_id: n,
-        emitted_at_ms: n * 100,
-        reason: "close".to_string(),
-        prev_hash: terminal_prev_hash,
-    };
-    lines.push(serde_json::to_string(&terminal).unwrap());
-    fs::write(session_dir.join("manifest.wal"), lines.join("\n")).unwrap();
+    w.append(
+        sid.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: n,
+            emitted_at_ms: n * 100,
+            reason: "close".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
 }
 
 /// Build navigate-receipt bytes via ReceiptBuilder + post-set tier-2 fields.
@@ -227,22 +229,11 @@ fn navigate_bytes(action_id: u64, url: &str, events: Vec<NetworkEvent>) -> Vec<u
 /// Write a WAL with Header + N navigate ActionReceipts + SessionTerminal.
 /// Each navigate carries one NetworkEvent so HAR export emits non-empty entries.
 fn write_navigate_session(sessions_root: &Path, session_id: &str, n: u64) {
-    let session_dir = sessions_root.join(session_id);
-    fs::create_dir_all(&session_dir).unwrap();
-
-    let header = ManifestEntry::Header {
-        session_id: session_id.to_string(),
-        started_at_ms: 0,
-        prev_hash: None,
-        budgets: None,
-        capture_policy: None,
-        seed: None,
-        determinism_enabled: None,
-    };
-    let mut lines: Vec<String> = vec![serde_json::to_string(&header).unwrap()];
-
+    let w = helper_writer(sessions_root);
+    let sid = SessionId(session_id.to_string());
+    w.open_manifest_with_started_at(sid.clone(), None, Some(0), None, None, true)
+        .unwrap();
     for i in 0..n {
-        let prev_hash = sha256_hex(lines.last().unwrap().as_bytes());
         let url = format!("https://example.com/page-{i}");
         let event = NetworkEvent {
             method: "GET".to_string(),
@@ -254,24 +245,27 @@ fn write_navigate_session(sessions_root: &Path, session_id: &str, n: u64) {
             timing_ticks: 50_000,
             content_type: "text/html".to_string(),
         };
-        let entry = ManifestEntry::ActionReceipt {
-            action_id: i,
-            emitted_at_ms: i * 100,
-            receipt_canonical_bytes: navigate_bytes(i, &url, vec![event]),
-            prev_hash,
-        };
-        lines.push(serde_json::to_string(&entry).unwrap());
+        w.append(
+            sid.clone(),
+            ManifestEntry::ActionReceipt {
+                action_id: i,
+                emitted_at_ms: i * 100,
+                receipt_canonical_bytes: navigate_bytes(i, &url, vec![event]),
+                prev_hash: String::new(),
+            },
+        )
+        .unwrap();
     }
-
-    let terminal_prev_hash = sha256_hex(lines.last().unwrap().as_bytes());
-    let terminal = ManifestEntry::SessionTerminal {
-        action_id: n,
-        emitted_at_ms: n * 100,
-        reason: "close".to_string(),
-        prev_hash: terminal_prev_hash,
-    };
-    lines.push(serde_json::to_string(&terminal).unwrap());
-    fs::write(session_dir.join("manifest.wal"), lines.join("\n")).unwrap();
+    w.append(
+        sid.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: n,
+            emitted_at_ms: n * 100,
+            reason: "close".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
 }
 
 // ── — Typed receipt drives agent control flow ─────────────────

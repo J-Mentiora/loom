@@ -18,6 +18,51 @@ fn sha256_hex(input: &[u8]) -> String {
     d.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Project a stored manifest line into its HASHABLE form by zeroing the
+/// top-level ephemeral fields that vary across two independent same-seed runs:
+/// the Header's random `session_id` (a per-session ULID) + wall-clock
+/// `started_at_ms`, and every entry's wall-clock `emitted_at_ms`. The fields
+/// STAY in the stored line — portable session identity + forensic timestamps are
+/// preserved — they are only excluded from the chain hash so the manifest hash
+/// chain is byte-equal across two independent same-seed record runs (the
+/// determinism property agentic-test-studio relies on).
+///
+/// Inner `receipt_canonical_bytes` timestamps (started/finished/timing/emitted)
+/// are made deterministic at record time via the per-session virtual clock, since
+/// they live in an opaque blob that cannot be projected here.
+///
+/// On any parse/encode failure the raw line is hashed unchanged (never silently
+/// drop a line from the chain). Used symmetrically by `append` (computing the
+/// next `prev_hash`) and `validate` (re-deriving it), so the chain stays
+/// internally consistent.
+fn hashable_line(line: &str) -> Vec<u8> {
+    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return line.as_bytes().to_vec();
+    };
+    if let Some(obj) = v.as_object_mut() {
+        for key in ["session_id"] {
+            if obj.contains_key(key) {
+                obj.insert(key.to_string(), serde_json::Value::String(String::new()));
+            }
+        }
+        for key in ["started_at_ms", "emitted_at_ms"] {
+            if obj.contains_key(key) {
+                obj.insert(key.to_string(), serde_json::json!(0));
+            }
+        }
+    }
+    // serde_json (NOT serde_jcs): the projection only needs to be DETERMINISTIC
+    // and CONSISTENT between `append` and `validate` — it is never stored, so it
+    // does not need RFC-8785 canonicalization. serde_json is materially faster on
+    // this hot path (per-append + per-validate-line, over large
+    // receipt_canonical_bytes arrays). serde_json preserves the input key order
+    // here, so the same line always projects to the same bytes.
+    match serde_json::to_string(&v) {
+        Ok(s) => s.into_bytes(),
+        Err(_) => line.as_bytes().to_vec(),
+    }
+}
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -264,7 +309,7 @@ impl ManifestWriter for LocalManifestWriter {
 
         // Compute prev_hash from the last line already in the WAL.
         let prev_hash = match last_wal_line(&wal_path)? {
-            Some(last_line) => sha256_hex(last_line.as_bytes()),
+            Some(last_line) => sha256_hex(&hashable_line(&last_line)),
             None => "0".repeat(64),
         };
 
@@ -358,7 +403,7 @@ impl ManifestWriter for LocalManifestWriter {
         }
 
         for i in 1..lines.len() {
-            let expected = sha256_hex(lines[i - 1].as_bytes());
+            let expected = sha256_hex(&hashable_line(lines[i - 1]));
             let entry: serde_json::Value = serde_json::from_str(lines[i])
                 .map_err(|e| LoomError::new(LoomErrorCode::ManifestCorrupt, e.to_string()))?;
             let actual = entry["prev_hash"].as_str().unwrap_or("");
