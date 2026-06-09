@@ -108,6 +108,50 @@ fn header_started_at_ms(root: &str, id: &str) -> u64 {
     }
 }
 
+fn header_started_at_and_determinism(root: &str, id: &str) -> (u64, Option<bool>) {
+    let wal = std::path::Path::new(root)
+        .join("sessions")
+        .join(id)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal).expect("manifest.wal must exist");
+    let header: ManifestEntry =
+        serde_json::from_str(contents.lines().next().unwrap()).expect("Header parses");
+    match header {
+        ManifestEntry::Header {
+            started_at_ms,
+            determinism_enabled,
+            ..
+        } => (started_at_ms, determinism_enabled),
+        other => panic!("first entry must be a Header, got {other:?}"),
+    }
+}
+
+#[test]
+fn clock_anchor_with_no_determinism_records_anchor_but_marks_non_replayable() {
+    // Interaction contract: under --no-determinism the page-clock injection is
+    // skipped, but the anchor still lands in the Header started_at_ms (it shares
+    // started_at_ms_override) and the session is recorded determinism_enabled=false
+    // (so replay refuses it). The anchor is harmless here, not silently dropped.
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_str().unwrap();
+    let sm = make_sm(root);
+
+    let mut o = opts_with_anchor(Some(ANCHOR));
+    o.no_determinism = true;
+    let id = sm.create(o).unwrap();
+
+    let (started, determinism) = header_started_at_and_determinism(root, &id.0);
+    assert_eq!(
+        started, ANCHOR,
+        "anchor still recorded under --no-determinism"
+    );
+    assert_eq!(
+        determinism,
+        Some(false),
+        "--no-determinism session must record determinism_enabled=false (replay refuses it)"
+    );
+}
+
 #[test]
 fn clock_anchor_pins_header_started_at_ms_identically_across_fresh_sessions() {
     // Two INDEPENDENT fresh sessions with the same anchor must record the same
