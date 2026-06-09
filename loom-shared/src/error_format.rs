@@ -162,6 +162,39 @@ pub enum LoomErrorCode {
     /// `LoomError.message` carries the actionable install command.
     BrowserNotFound,
 
+    // ---- Daemon protocol / validation layer (merged from loom-rpc, error-code-consolidation) ----
+    // These 1:1 mirror the former `loom_rpc::error_translator::LoomErrorCode`
+    // daemon-distinct variants. Their wire strings are frozen by BC-RPC-03
+    // (mirrored snake_case in python-sdk/loom/types.py + typescript-sdk/src/types.ts);
+    // the `wire_parity_with_bc_rpc_03` test pins them. Kept distinct from the
+    // client-side `Rpc*` / `Internal` / `Unsupported` classifications so the daemon
+    // wire stays byte-identical.
+    /// JSON-RPC handshake requires auth. Daemon wire `protocol_auth_required`.
+    ProtocolAuthRequired,
+    /// Malformed JSON-RPC frame/shape. Daemon wire `protocol_malformed`.
+    ProtocolMalformed,
+    /// Unknown JSON-RPC method. Daemon wire `method_not_found`.
+    MethodNotFound,
+    /// Surface/shim unavailable to serve the action. Daemon wire `surface_unavailable`.
+    SurfaceUnavailable,
+    /// Session exists but is closed. Daemon wire `session_closed`.
+    SessionClosed,
+    /// Vault grant id not found. Daemon wire `vault_grant_not_found`.
+    VaultGrantNotFound,
+    /// Vault credential type not supported. Daemon wire `vault_credential_type_unsupported`.
+    VaultCredentialTypeUnsupported,
+    /// session.create: unknown profile. Daemon wire `unknown_profile`.
+    UnknownProfile,
+    /// session.create: invalid network mode. Daemon wire `invalid_network_mode`.
+    InvalidNetworkMode,
+    /// session.create: invalid budget key. Daemon wire `invalid_budget_key`.
+    InvalidBudgetKey,
+    /// session.create: invalid capture policy. Daemon wire `invalid_capture_policy`.
+    InvalidCapturePolicy,
+    /// Daemon-internal error. Daemon wire `internal_error` — distinct from the
+    /// client-side `Internal` catch-all (wire `internal`) to preserve BC-RPC-03.
+    InternalError,
+
     // ---- Catch-alls ----
     InvalidArgument,
     Unsupported,
@@ -172,48 +205,61 @@ impl LoomErrorCode {
     /// Stable kebab-case wire string. Hand-written to keep grep-able.
     pub fn as_wire(&self) -> &'static str {
         match self {
-            LoomErrorCode::SessionNotFound => "session-not-found",
-            LoomErrorCode::SessionAlreadyClosed => "session-already-closed",
-            LoomErrorCode::SessionAborted => "session-aborted",
-            LoomErrorCode::SessionKilled => "session-killed",
-            LoomErrorCode::SurfaceTrap => "surface-trap",
-            LoomErrorCode::VaultRejection => "vault-rejection",
-            LoomErrorCode::VaultGrantExpired => "vault-grant-expired",
-            LoomErrorCode::VaultGrantRevoked => "vault-grant-revoked",
-            LoomErrorCode::VaultUnknownLabel => "vault-unknown-label",
-            LoomErrorCode::VaultPermissionDenied => "vault-permission-denied",
-            LoomErrorCode::VaultBackendUnavailable => "vault-backend-unavailable",
-            LoomErrorCode::VaultBackendTimeout => "vault-backend-timeout",
-            LoomErrorCode::VaultNonInteractivePrompt => "vault-non-interactive-prompt",
-            LoomErrorCode::VaultInternal => "vault-internal",
-            LoomErrorCode::VaultInvalidLabel => "vault-invalid-label",
-            LoomErrorCode::BudgetExceeded => "budget-exceeded",
-            LoomErrorCode::BudgetRateLimited => "budget-rate-limited",
-            LoomErrorCode::StoreIntegrityFailed => "store-integrity-failed",
-            LoomErrorCode::StoreNotFound => "store-not-found",
-            LoomErrorCode::StoreFullNoEvictable => "store-full-no-evictable",
-            LoomErrorCode::ManifestCorrupt => "manifest-corrupt",
-            LoomErrorCode::ReplayDivergence => "replay-divergence",
-            LoomErrorCode::ReplayMissingBlob => "replay-missing-blob",
-            LoomErrorCode::ShimFailure => "shim-failure",
-            LoomErrorCode::ShimTimeout => "shim-timeout",
-            LoomErrorCode::ShimBreakerOpen => "shim-breaker-open",
-            LoomErrorCode::RpcInvalidRequest => "rpc-invalid-request",
-            LoomErrorCode::RpcAuthFailed => "rpc-auth-failed",
-            LoomErrorCode::RpcSchemaViolation => "rpc-schema-violation",
-            LoomErrorCode::RequestTimeout => "request-timeout",
-            LoomErrorCode::RequestCancelled => "request-cancelled",
-            LoomErrorCode::TooManyRequests => "too-many-requests",
-            LoomErrorCode::TransportDropped => "transport-dropped",
-            LoomErrorCode::LlmCacheMiss => "llm-cache-miss",
+            LoomErrorCode::SessionNotFound => "session_not_found",
+            LoomErrorCode::SessionAlreadyClosed => "session_already_closed",
+            LoomErrorCode::SessionAborted => "session_aborted",
+            LoomErrorCode::SessionKilled => "session_killed",
+            LoomErrorCode::SurfaceTrap => "surface_trap",
+            LoomErrorCode::VaultRejection => "vault_rejection",
+            LoomErrorCode::VaultGrantExpired => "vault_grant_expired",
+            LoomErrorCode::VaultGrantRevoked => "vault_grant_revoked",
+            LoomErrorCode::VaultUnknownLabel => "vault_unknown_label",
+            LoomErrorCode::VaultPermissionDenied => "vault_permission_denied",
+            LoomErrorCode::VaultBackendUnavailable => "vault_backend_unavailable",
+            LoomErrorCode::VaultBackendTimeout => "vault_backend_timeout",
+            LoomErrorCode::VaultNonInteractivePrompt => "vault_non_interactive_prompt",
+            LoomErrorCode::VaultInternal => "vault_internal",
+            LoomErrorCode::VaultInvalidLabel => "vault_invalid_label",
+            LoomErrorCode::BudgetExceeded => "budget_exceeded",
+            LoomErrorCode::BudgetRateLimited => "budget_rate_limited",
+            LoomErrorCode::StoreIntegrityFailed => "store_integrity_failed",
+            LoomErrorCode::StoreNotFound => "store_not_found",
+            LoomErrorCode::StoreFullNoEvictable => "store_full_no_evictable",
+            LoomErrorCode::ManifestCorrupt => "manifest_corrupt",
+            LoomErrorCode::ReplayDivergence => "replay_divergence",
+            LoomErrorCode::ReplayMissingBlob => "replay_missing_blob",
+            LoomErrorCode::ShimFailure => "shim_failure",
+            LoomErrorCode::ShimTimeout => "shim_timeout",
+            LoomErrorCode::ShimBreakerOpen => "shim_breaker_open",
+            LoomErrorCode::RpcInvalidRequest => "rpc_invalid_request",
+            LoomErrorCode::RpcAuthFailed => "rpc_auth_failed",
+            LoomErrorCode::RpcSchemaViolation => "rpc_schema_violation",
+            LoomErrorCode::RequestTimeout => "request_timeout",
+            LoomErrorCode::RequestCancelled => "request_cancelled",
+            LoomErrorCode::TooManyRequests => "too_many_requests",
+            LoomErrorCode::TransportDropped => "transport_dropped",
+            LoomErrorCode::LlmCacheMiss => "llm_cache_miss",
             LoomErrorCode::Io => "io",
             LoomErrorCode::SchemaViolation => "schema_violation",
             LoomErrorCode::SafeProfileDownloadBlocked => "safe_profile_download_blocked",
             LoomErrorCode::ProfileRestricted => "profile_restricted",
-            LoomErrorCode::BrowserNotFound => "browser-not-found",
-            LoomErrorCode::InvalidArgument => "invalid-argument",
+            LoomErrorCode::BrowserNotFound => "browser_not_found",
+            LoomErrorCode::InvalidArgument => "invalid_argument",
             LoomErrorCode::Unsupported => "unsupported",
             LoomErrorCode::Internal => "internal",
+            // ---- Daemon protocol / validation layer (BC-RPC-03 frozen wire) ----
+            LoomErrorCode::ProtocolAuthRequired => "protocol_auth_required",
+            LoomErrorCode::ProtocolMalformed => "protocol_malformed",
+            LoomErrorCode::MethodNotFound => "method_not_found",
+            LoomErrorCode::SurfaceUnavailable => "surface_unavailable",
+            LoomErrorCode::SessionClosed => "session_closed",
+            LoomErrorCode::VaultGrantNotFound => "vault_grant_not_found",
+            LoomErrorCode::VaultCredentialTypeUnsupported => "vault_credential_type_unsupported",
+            LoomErrorCode::UnknownProfile => "unknown_profile",
+            LoomErrorCode::InvalidNetworkMode => "invalid_network_mode",
+            LoomErrorCode::InvalidBudgetKey => "invalid_budget_key",
+            LoomErrorCode::InvalidCapturePolicy => "invalid_capture_policy",
+            LoomErrorCode::InternalError => "internal_error",
         }
     }
 
@@ -228,18 +274,17 @@ impl LoomErrorCode {
         use LoomErrorCode::*;
         match s {
             "session-not-found" | "session_not_found" => SessionNotFound,
-            "session-already-closed" | "session_already_closed" | "session_closed" => {
-                SessionAlreadyClosed
-            }
+            "session-already-closed" | "session_already_closed" => SessionAlreadyClosed,
+            "session_closed" => SessionClosed,
             "session-aborted" | "session_aborted" => SessionAborted,
             "session-killed" | "session_killed" => SessionKilled,
             "surface-trap" | "surface_trap" => SurfaceTrap,
             "vault-rejection" | "vault_rejection" => VaultRejection,
             "vault-grant-expired" | "vault_grant_expired" => VaultGrantExpired,
             "vault-grant-revoked" | "vault_grant_revoked" => VaultGrantRevoked,
-            "vault-unknown-label" | "vault_unknown_label" | "vault_grant_not_found" => {
-                VaultUnknownLabel
-            }
+            "vault-unknown-label" | "vault_unknown_label" => VaultUnknownLabel,
+            "vault_grant_not_found" => VaultGrantNotFound,
+            "vault_credential_type_unsupported" => VaultCredentialTypeUnsupported,
             "vault-permission-denied" | "vault_permission_denied" => VaultPermissionDenied,
             "vault-backend-unavailable" | "vault_backend_unavailable" => VaultBackendUnavailable,
             "vault-backend-timeout" | "vault_backend_timeout" => VaultBackendTimeout,
@@ -256,13 +301,14 @@ impl LoomErrorCode {
             "manifest-corrupt" | "manifest_corrupt" => ManifestCorrupt,
             "replay-divergence" | "replay_divergence" => ReplayDivergence,
             "replay-missing-blob" | "replay_missing_blob" => ReplayMissingBlob,
-            "shim-failure" | "shim_failure" | "surface_unavailable" => ShimFailure,
+            "shim-failure" | "shim_failure" => ShimFailure,
+            "surface_unavailable" => SurfaceUnavailable,
             "shim-timeout" | "shim_timeout" => ShimTimeout,
             "shim-breaker-open" | "shim_breaker_open" => ShimBreakerOpen,
-            "rpc-invalid-request" | "rpc_invalid_request" | "protocol_malformed" => {
-                RpcInvalidRequest
-            }
-            "rpc-auth-failed" | "rpc_auth_failed" | "protocol_auth_required" => RpcAuthFailed,
+            "rpc-invalid-request" | "rpc_invalid_request" => RpcInvalidRequest,
+            "protocol_malformed" => ProtocolMalformed,
+            "rpc-auth-failed" | "rpc_auth_failed" => RpcAuthFailed,
+            "protocol_auth_required" => ProtocolAuthRequired,
             "rpc-schema-violation" | "rpc_schema_violation" => RpcSchemaViolation,
             "request-timeout" | "request_timeout" => RequestTimeout,
             "request-cancelled" | "request_cancelled" => RequestCancelled,
@@ -276,14 +322,15 @@ impl LoomErrorCode {
             }
             "profile-restricted" | "profile_restricted" => ProfileRestricted,
             "browser-not-found" | "browser_not_found" => BrowserNotFound,
-            "invalid-argument"
-            | "invalid_argument"
-            | "unknown_profile"
-            | "invalid_network_mode"
-            | "invalid_budget_key"
-            | "invalid_capture_policy" => InvalidArgument,
-            "unsupported" | "method_not_found" | "vault_credential_type_unsupported" => Unsupported,
-            "internal" | "internal_error" => Internal,
+            "method_not_found" => MethodNotFound,
+            "unknown_profile" => UnknownProfile,
+            "invalid_network_mode" => InvalidNetworkMode,
+            "invalid_budget_key" => InvalidBudgetKey,
+            "invalid_capture_policy" => InvalidCapturePolicy,
+            "invalid-argument" | "invalid_argument" => InvalidArgument,
+            "unsupported" => Unsupported,
+            "internal_error" => InternalError,
+            "internal" => Internal,
             _ => Internal,
         }
     }
@@ -426,18 +473,28 @@ mod tests {
             LoomErrorCode::from_wire("too_many_requests"),
             LoomErrorCode::TooManyRequests
         );
-        // Translator-only spellings map to the nearest canonical variant.
+        // Daemon-distinct codes now decode to their exact (merged) variants
+        // (error-code-consolidation: 1:1 instead of the old conflated mapping).
         assert_eq!(
             LoomErrorCode::from_wire("internal_error"),
-            LoomErrorCode::Internal
+            LoomErrorCode::InternalError
         );
         assert_eq!(
             LoomErrorCode::from_wire("protocol_malformed"),
-            LoomErrorCode::RpcInvalidRequest
+            LoomErrorCode::ProtocolMalformed
         );
         assert_eq!(
             LoomErrorCode::from_wire("session_closed"),
-            LoomErrorCode::SessionAlreadyClosed
+            LoomErrorCode::SessionClosed
+        );
+        // The client-side catch-all keeps its own wire + legacy kebab tolerance.
+        assert_eq!(
+            LoomErrorCode::from_wire("internal"),
+            LoomErrorCode::Internal
+        );
+        assert_eq!(
+            LoomErrorCode::from_wire("session-not-found"),
+            LoomErrorCode::SessionNotFound
         );
     }
 
@@ -485,5 +542,54 @@ mod tests {
         );
         assert!(LoomErrorCode::TransportDropped.is_retryable());
         assert!(!LoomErrorCode::SessionNotFound.is_retryable());
+    }
+
+    /// Anti-drift guard (error-code-consolidation D9): the canonical `as_wire`
+    /// MUST emit the exact snake_case strings the daemon wire is frozen to by
+    /// BC-RPC-03 (mirrored in python-sdk/loom/types.py + typescript-sdk/src/types.ts).
+    /// Covers all 14 BC-RPC-03 codes; each MUST round-trip via `from_wire`.
+    #[test]
+    fn wire_parity_with_bc_rpc_03() {
+        // The complete BC-RPC-03 frozen set: (variant, exact daemon snake wire).
+        // If you add/rename a variant that the daemon emits, update this table AND
+        // the SDK mirrors (python-sdk/loom/types.py, typescript-sdk/src/types.ts).
+        let frozen: &[(LoomErrorCode, &str)] = &[
+            (
+                LoomErrorCode::ProtocolAuthRequired,
+                "protocol_auth_required",
+            ),
+            (LoomErrorCode::ProtocolMalformed, "protocol_malformed"),
+            (LoomErrorCode::SchemaViolation, "schema_violation"),
+            (LoomErrorCode::MethodNotFound, "method_not_found"),
+            (LoomErrorCode::SessionNotFound, "session_not_found"),
+            (LoomErrorCode::SessionAborted, "session_aborted"),
+            (LoomErrorCode::BudgetExceeded, "budget_exceeded"),
+            (LoomErrorCode::SurfaceTrap, "surface_trap"),
+            (LoomErrorCode::SurfaceUnavailable, "surface_unavailable"),
+            (LoomErrorCode::VaultGrantNotFound, "vault_grant_not_found"),
+            (LoomErrorCode::VaultGrantRevoked, "vault_grant_revoked"),
+            (
+                LoomErrorCode::VaultCredentialTypeUnsupported,
+                "vault_credential_type_unsupported",
+            ),
+            (
+                LoomErrorCode::StoreIntegrityFailed,
+                "store_integrity_failed",
+            ),
+            (LoomErrorCode::InternalError, "internal_error"),
+        ];
+        for (variant, wire) in frozen {
+            assert_eq!(
+                variant.as_wire(),
+                *wire,
+                "BC-RPC-03 wire drift: {variant:?} must serialize to {wire:?}"
+            );
+            // Round-trip: the frozen wire must decode back to the same variant.
+            assert_eq!(
+                LoomErrorCode::from_wire(wire),
+                *variant,
+                "BC-RPC-03 decode drift: {wire:?} must decode to {variant:?}"
+            );
+        }
     }
 }

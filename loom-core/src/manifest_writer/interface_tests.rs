@@ -124,7 +124,7 @@ fn append_signature_returns_unit_or_loomerror() {
 fn validate_returns_manifest_corrupt_on_chain_break() {
     // validate() returns Err with code ManifestCorrupt when the hash chain is broken.
     let code = LoomErrorCode::ManifestCorrupt;
-    assert_eq!(code.as_wire(), "manifest-corrupt");
+    assert_eq!(code.as_wire(), "manifest_corrupt");
 }
 
 // === Audit entries in same hash chain ===
