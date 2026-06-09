@@ -197,4 +197,29 @@ mod tests {
         );
         assert!(truncated, "put failure forces truncated=true");
     }
+
+    /// Regression guard for the `network_log` adapter: re-parsing the helper's
+    /// `Inline` bytes via `from_slice::<Vec<Value>>` must yield the exact same
+    /// `Vec<serde_json::Value>` the OLD per-entry `to_value().collect()` produced.
+    #[test]
+    fn inline_bytes_reparse_equals_per_entry_to_value() {
+        let store = MockContentStore::new();
+        let entries = vec![
+            entry("https://example.com/a?q=1".to_string()),
+            entry("https://example.com/b".to_string()),
+        ];
+        let (payload, _) = offload_or_inline_network_entries(&*store, &entries, false, "s");
+        let reparsed = match payload {
+            NetworkEntriesPayload::Inline(bytes) => {
+                serde_json::from_slice::<Vec<serde_json::Value>>(&bytes).unwrap_or_default()
+            }
+            _ => panic!("expected Inline"),
+        };
+        // The exact transformation the old wasm_host inline branch performed.
+        let per_entry: Vec<serde_json::Value> = entries
+            .iter()
+            .filter_map(|e| serde_json::to_value(e).ok())
+            .collect();
+        assert_eq!(reparsed, per_entry);
+    }
 }
