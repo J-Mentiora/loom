@@ -289,3 +289,149 @@ fn test_manifest_jcs_not_serde_json() {
         "JCS requires keys sorted: 'action_id_ref' must precede 'audit_kind' in WAL output"
     );
 }
+
+// === incremental last-line cache (perf fix: O(n^2) full-WAL re-read) ===
+
+// Build a session with three ActionReceipts. Returns the prev_hash of the
+// LAST appended entry (entry 3), read back from the WAL. If `inject_bogus` is
+// set, a bogus raw line is written into the WAL file OUT OF BAND between the
+// 2nd and 3rd appends — simulating arbitrary unrelated file content that a
+// full-file re-read would (incorrectly) chain off of.
+fn build_three_and_read_last_prev_hash(tmp: &str, sid: SessionId, inject_bogus: bool) -> String {
+    // Hermetic: drop any stale WAL from a previous run (the existing tests in
+    // this file share /tmp; clean our session dir so open_manifest creates fresh).
+    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
+    let mw = make_mw(tmp);
+    mw.open_manifest(sid.clone(), None).unwrap();
+    let receipt = |id: u64| ManifestEntry::ActionReceipt {
+        action_id: id,
+        emitted_at_ms: 1_714_000_000_000 + id,
+        receipt_canonical_bytes: format!("action{id}").into_bytes(),
+        prev_hash: "0".repeat(64), // overwritten by append()
+    };
+    mw.append(sid.clone(), receipt(1)).unwrap();
+    mw.append(sid.clone(), receipt(2)).unwrap();
+
+    if inject_bogus {
+        // Append a bogus line directly to the file, bypassing append(). A
+        // full-file re-read would see THIS as the last line; the per-session
+        // cache must ignore it and chain entry 3 off entry 2.
+        let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
+        let mut contents = std::fs::read_to_string(&wal_path).unwrap();
+        contents.push_str("{\"bogus\":\"out-of-band-line-not-via-append\"}\n");
+        std::fs::write(&wal_path, contents).unwrap();
+    }
+
+    mw.append(sid.clone(), receipt(3)).unwrap();
+
+    // Entry 3 is the last *appended* line. With the bogus injection it's the
+    // last line in the file too (we appended after it).
+    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", sid.0));
+    let contents = std::fs::read_to_string(&wal_path).unwrap();
+    let last = contents.lines().last().expect("a last WAL line");
+    let v: serde_json::Value = serde_json::from_str(last).expect("entry 3 is valid JSON");
+    v["prev_hash"]
+        .as_str()
+        .expect("entry 3 has a prev_hash")
+        .to_string()
+}
+
+// REGRESSION (perf, NFR-DET-01): append() must compute prev_hash from the
+// last line it WROTE for this session (cached), not by re-reading the whole
+// WAL each time. Proof without timing: inject an unrelated line into the WAL
+// file out of band between appends; the resulting entry-3 prev_hash must be
+// IDENTICAL to the clean control (file mutation ignored). The unfixed code
+// re-reads the file and chains off the bogus line, so the two diverge -> RED.
+// The cached code chains off entry 2 in both -> GREEN.
+#[test]
+fn append_chains_off_cached_last_line_not_a_full_reread() {
+    let control = build_three_and_read_last_prev_hash(
+        "/tmp/loom-test-mw-cache-control",
+        SessionId("01HZCACHE0CONTROL00000000A".into()),
+        false,
+    );
+    let injected = build_three_and_read_last_prev_hash(
+        "/tmp/loom-test-mw-cache-inject",
+        SessionId("01HZCACHE0INJECT000000000B".into()),
+        true,
+    );
+    assert_eq!(
+        injected, control,
+        "append() must chain the next entry off the cached last-written line, \
+         not re-read the (here, out-of-band-mutated) WAL file"
+    );
+}
+
+// DETERMINISM ORACLE (NFR-DET-01): validate() re-derives the chain by reading
+// the WAL from DISK, independent of any in-memory cache. If the cached last
+// line ever diverged in hashed bytes from what was persisted, the on-disk
+// prev_hash links would not match validate()'s disk-derived expectation and
+// this would fail. So a warm-cache session that still validates is the concrete
+// oracle the council asked for: cache == disk reality.
+#[test]
+fn warm_cache_appends_still_validate_against_disk() {
+    let tmp = "/tmp/loom-test-mw-cache-validate";
+    let sid = SessionId("01HZCACHE0VALIDATE0000000C".into());
+    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
+    let mw = make_mw(tmp);
+    mw.open_manifest(sid.clone(), None).unwrap();
+    for id in 1..=12u64 {
+        mw.append(
+            sid.clone(),
+            ManifestEntry::ActionReceipt {
+                action_id: id,
+                emitted_at_ms: 1_714_000_000_000 + id,
+                receipt_canonical_bytes: format!("action{id}").into_bytes(),
+                prev_hash: "0".repeat(64),
+            },
+        )
+        .unwrap();
+    }
+    mw.validate(sid)
+        .expect("warm-cache chain must match the on-disk chain validate() re-derives");
+}
+
+// COLD-MISS FALLBACK (council: fallback path was uncovered): a SECOND writer
+// instance with a cold cache appends onto an existing session's WAL. With no
+// cached line it must fall back to reading the file for prev_hash; the chain it
+// writes must still validate. This mirrors first-append-after-open, resumed
+// sessions, and the benign two-writer startup-sweep pattern.
+#[test]
+fn cold_cache_second_writer_falls_back_and_chain_validates() {
+    let tmp = "/tmp/loom-test-mw-cache-coldmiss";
+    let sid = SessionId("01HZCACHE0COLDMISS000000D".into());
+    std::fs::remove_dir_all(format!("{tmp}/sessions/{}", sid.0)).ok();
+
+    // Writer 1: header + two receipts (warms ITS OWN cache only).
+    let mw1 = make_mw(tmp);
+    mw1.open_manifest(sid.clone(), None).unwrap();
+    for id in 1..=2u64 {
+        mw1.append(
+            sid.clone(),
+            ManifestEntry::ActionReceipt {
+                action_id: id,
+                emitted_at_ms: 1_714_000_000_000 + id,
+                receipt_canonical_bytes: format!("action{id}").into_bytes(),
+                prev_hash: "0".repeat(64),
+            },
+        )
+        .unwrap();
+    }
+
+    // Writer 2: brand-new instance, cold cache for this session. Its append must
+    // fall back to last_wal_line(file) to chain correctly off writer 1's last line.
+    let mw2 = make_mw(tmp);
+    mw2.append(
+        sid.clone(),
+        ManifestEntry::ActionReceipt {
+            action_id: 3,
+            emitted_at_ms: 1_714_000_000_003,
+            receipt_canonical_bytes: b"action3".to_vec(),
+            prev_hash: "0".repeat(64),
+        },
+    )
+    .unwrap();
+
+    mw2.validate(sid)
+        .expect("cold-cache fallback append must produce a chain that validates");
+}
