@@ -156,3 +156,42 @@ fn interleaved_same_seed_sessions_do_not_bleed() {
     mw(tmp).validate(a).expect("A validates");
     mw(tmp).validate(b).expect("B validates");
 }
+
+#[test]
+fn legacy_raw_hash_chain_still_validates_after_upgrade() {
+    // Backward-compat (ship council C1/D16): a manifest written BEFORE this change
+    // links each line with prev_hash = sha256(raw previous line) — no projection.
+    // The upgraded validate() must still accept it (accepts projected OR raw hash),
+    // so existing recordings are not rejected as corrupt.
+    use ring::digest::{digest, SHA256};
+    fn raw_sha(s: &str) -> String {
+        digest(&SHA256, s.as_bytes())
+            .as_ref()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+    let tmp = "/tmp/loom-xrun-legacy";
+    let _ = std::fs::remove_dir_all(tmp);
+    let sid = "01legacy-aaaaaaaaaaaaaaaaaa";
+    let dir = format!("{tmp}/sessions/{sid}");
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // Hand-build a legacy chain: raw-line prev_hash, real session_id + timestamps.
+    let header = format!(
+        r#"{{"determinism_enabled":true,"kind":"header","seed":42,"session_id":"{sid}","started_at_ms":1717000000000}}"#
+    );
+    let mut lines = vec![header];
+    for action_id in 1..=2u64 {
+        let prev = raw_sha(lines.last().unwrap());
+        lines.push(format!(
+            r#"{{"action_id":{action_id},"emitted_at_ms":{ts},"kind":"action_receipt","prev_hash":"{prev}","receipt_canonical_bytes":[{action_id}]}}"#,
+            ts = 1717000000000u64 + action_id
+        ));
+    }
+    std::fs::write(format!("{dir}/manifest.wal"), lines.join("\n")).unwrap();
+
+    mw(tmp)
+        .validate(SessionId(sid.to_string()))
+        .expect("legacy raw-hash chain must still validate after the upgrade");
+}
