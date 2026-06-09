@@ -451,54 +451,76 @@ fn test_runaway_tab_killed_by_js_heap_budget() {
 
 #[test]
 fn test_all_documented_error_codes_are_matchable() {
-    // All 30 LoomErrorCode wire strings. Two use underscores (not kebab-case):
-    // schema_violation and safe_profile_download_blocked.
-    // Kept in sync with loom-shared/src/error_format.rs; tools/lint-error-codes.py
-    // provides a second coverage layer.
+    // All LoomErrorCode wire strings — now uniformly snake_case
+    // (error-code-consolidation: as_wire flipped kebab→snake; daemon-distinct
+    // variants merged from loom-rpc). Kept in sync with loom-shared/src/error_format.rs;
+    // tools/lint-error-codes.py provides a second coverage layer.
     const WIRE_CODES: &[(&str, LoomErrorCode)] = &[
-        ("session-not-found", LoomErrorCode::SessionNotFound),
+        ("session_not_found", LoomErrorCode::SessionNotFound),
         (
-            "session-already-closed",
+            "session_already_closed",
             LoomErrorCode::SessionAlreadyClosed,
         ),
-        ("session-aborted", LoomErrorCode::SessionAborted),
-        ("session-killed", LoomErrorCode::SessionKilled),
-        ("surface-trap", LoomErrorCode::SurfaceTrap),
-        ("vault-rejection", LoomErrorCode::VaultRejection),
-        ("vault-grant-expired", LoomErrorCode::VaultGrantExpired),
-        ("vault-grant-revoked", LoomErrorCode::VaultGrantRevoked),
-        ("vault-unknown-label", LoomErrorCode::VaultUnknownLabel),
-        ("budget-exceeded", LoomErrorCode::BudgetExceeded),
-        ("budget-rate-limited", LoomErrorCode::BudgetRateLimited),
+        ("session_aborted", LoomErrorCode::SessionAborted),
+        ("session_killed", LoomErrorCode::SessionKilled),
+        ("surface_trap", LoomErrorCode::SurfaceTrap),
+        ("vault_rejection", LoomErrorCode::VaultRejection),
+        ("vault_grant_expired", LoomErrorCode::VaultGrantExpired),
+        ("vault_grant_revoked", LoomErrorCode::VaultGrantRevoked),
+        ("vault_unknown_label", LoomErrorCode::VaultUnknownLabel),
+        ("budget_exceeded", LoomErrorCode::BudgetExceeded),
+        ("budget_rate_limited", LoomErrorCode::BudgetRateLimited),
         (
-            "store-integrity-failed",
+            "store_integrity_failed",
             LoomErrorCode::StoreIntegrityFailed,
         ),
-        ("store-not-found", LoomErrorCode::StoreNotFound),
+        ("store_not_found", LoomErrorCode::StoreNotFound),
         (
-            "store-full-no-evictable",
+            "store_full_no_evictable",
             LoomErrorCode::StoreFullNoEvictable,
         ),
-        ("manifest-corrupt", LoomErrorCode::ManifestCorrupt),
-        ("replay-divergence", LoomErrorCode::ReplayDivergence),
-        ("replay-missing-blob", LoomErrorCode::ReplayMissingBlob),
-        ("llm-cache-miss", LoomErrorCode::LlmCacheMiss),
-        ("shim-failure", LoomErrorCode::ShimFailure),
-        ("shim-timeout", LoomErrorCode::ShimTimeout),
-        ("shim-breaker-open", LoomErrorCode::ShimBreakerOpen),
-        ("rpc-invalid-request", LoomErrorCode::RpcInvalidRequest),
-        ("rpc-auth-failed", LoomErrorCode::RpcAuthFailed),
-        ("rpc-schema-violation", LoomErrorCode::RpcSchemaViolation),
-        ("transport-dropped", LoomErrorCode::TransportDropped),
+        ("manifest_corrupt", LoomErrorCode::ManifestCorrupt),
+        ("replay_divergence", LoomErrorCode::ReplayDivergence),
+        ("replay_missing_blob", LoomErrorCode::ReplayMissingBlob),
+        ("llm_cache_miss", LoomErrorCode::LlmCacheMiss),
+        ("shim_failure", LoomErrorCode::ShimFailure),
+        ("shim_timeout", LoomErrorCode::ShimTimeout),
+        ("shim_breaker_open", LoomErrorCode::ShimBreakerOpen),
+        ("rpc_invalid_request", LoomErrorCode::RpcInvalidRequest),
+        ("rpc_auth_failed", LoomErrorCode::RpcAuthFailed),
+        ("rpc_schema_violation", LoomErrorCode::RpcSchemaViolation),
+        ("transport_dropped", LoomErrorCode::TransportDropped),
         ("io", LoomErrorCode::Io),
         ("schema_violation", LoomErrorCode::SchemaViolation),
         (
             "safe_profile_download_blocked",
             LoomErrorCode::SafeProfileDownloadBlocked,
         ),
-        ("invalid-argument", LoomErrorCode::InvalidArgument),
+        ("invalid_argument", LoomErrorCode::InvalidArgument),
         ("unsupported", LoomErrorCode::Unsupported),
         ("internal", LoomErrorCode::Internal),
+        // Daemon protocol / validation layer (merged from loom-rpc; BC-RPC-03 frozen).
+        (
+            "protocol_auth_required",
+            LoomErrorCode::ProtocolAuthRequired,
+        ),
+        ("protocol_malformed", LoomErrorCode::ProtocolMalformed),
+        ("method_not_found", LoomErrorCode::MethodNotFound),
+        ("surface_unavailable", LoomErrorCode::SurfaceUnavailable),
+        ("session_closed", LoomErrorCode::SessionClosed),
+        ("vault_grant_not_found", LoomErrorCode::VaultGrantNotFound),
+        (
+            "vault_credential_type_unsupported",
+            LoomErrorCode::VaultCredentialTypeUnsupported,
+        ),
+        ("unknown_profile", LoomErrorCode::UnknownProfile),
+        ("invalid_network_mode", LoomErrorCode::InvalidNetworkMode),
+        ("invalid_budget_key", LoomErrorCode::InvalidBudgetKey),
+        (
+            "invalid_capture_policy",
+            LoomErrorCode::InvalidCapturePolicy,
+        ),
+        ("internal_error", LoomErrorCode::InternalError),
     ];
 
     for (wire, expected) in WIRE_CODES {

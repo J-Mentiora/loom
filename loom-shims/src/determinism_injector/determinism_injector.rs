@@ -19,11 +19,16 @@
 //   targets — primary injection happens via the explicit
 //   `inject(target_id)` call from `TargetManager`.
 // - **Determinism source script.** `determinism_init.js` installs:
-//   1. Virtual clock (`Date.now`, `performance.now`, `performance.timeOrigin`).
-//   2. Seeded RNG (`Math.random` derived from session seed).
-//   3. Animation disabler (`requestAnimationFrame` clamped to 16ms ticks).
-//   The script source is shipped beside the binary at bundle install
-//   time; `Supervisor::start` resolves the bundle path.
+//   1. Seeded RNG (`Math.random` derived from session seed).
+//   2. CSS animation/transition flattening (resolve to end-state).
+//   The clocks (`Date.now`/`performance.now`/`requestAnimationFrame`/
+//   `setTimeout`) are NO LONGER overridden in JS — they are driven by CDP
+//   `Emulation.setVirtualTimePolicy` (a deterministic, epoch-pinned, advancing
+//   virtual timeline) so entrance animations render while staying replay-equal
+//   (faithful-entrance-animations). `inject` pins the origin (`pause` policy);
+//   each navigation re-arms a bounded budget. The script source is shipped
+//   beside the binary at bundle install time; `Supervisor::start` resolves the
+//   bundle path.
 // - **Idempotent.** Calling `inject(target_id)` twice on the same
 //   target is a no-op for the second call (chromiumoxide's
 //   `addScriptToEvaluateOnNewDocument` returns a different identifier
@@ -42,6 +47,94 @@ pub const ADD_SCRIPT_METHOD: &str = "Page.addScriptToEvaluateOnNewDocument";
 /// `runImmediately: true` is load-bearing for R3 — without it the script
 /// fires on the SECOND navigation only.
 pub const RUN_IMMEDIATELY: bool = true;
+
+/// CDP method that installs the deterministic, advancing virtual-time clock
+/// (faithful-entrance-animations). Driving `Date.now`/`performance.now`/`rAF`/
+/// `setTimeout` off one coherent virtual timeline lets client-side entrance
+/// animations run to completion while staying replay-equal.
+pub const VIRTUAL_TIME_METHOD: &str = "Emulation.setVirtualTimePolicy";
+
+/// Virtual-time policy. `pauseIfNetworkFetchesPending` advances time through
+/// timers/rAF/animations but pauses while network fetches are in flight, so the
+/// page still loads its resources before the clock fast-forwards.
+pub const VIRTUAL_TIME_POLICY: &str = "pauseIfNetworkFetchesPending";
+
+/// Per-navigation virtual-time budget (ms). Bounds how far the clock
+/// fast-forwards for a single navigation: enough for entrance animations to
+/// complete, but a hard ceiling so a never-terminating animation (or a page
+/// abusing `setTimeout` time-travel) can't spin virtual time unbounded. Also
+/// the documented security boundary (council "unconstrained budget / time-travel").
+pub const VIRTUAL_TIME_BUDGET_MS: f64 = 8000.0;
+
+/// Env flag (P6 rollback): set `LOOM_CAPTURE_VIRTUAL_TIME=0` to disable the
+/// virtual-time clock and fall back to the prior (frozen-clock-equivalent)
+/// behavior. Default on.
+pub fn virtual_time_enabled() -> bool {
+    std::env::var("LOOM_CAPTURE_VIRTUAL_TIME").as_deref() != Ok("0")
+}
+
+/// Pure helper: build the CBOR params for re-arming the virtual-time budget on a
+/// navigation (no `initialVirtualTime` — the origin was pinned at inject; this
+/// just grants a bounded budget for the page to advance through during load +
+/// animation).
+pub fn build_virtual_time_budget_params() -> ciborium::value::Value {
+    use ciborium::value::Value;
+    Value::Map(vec![
+        (
+            Value::Text("policy".into()),
+            Value::Text(VIRTUAL_TIME_POLICY.into()),
+        ),
+        (
+            Value::Text("budget".into()),
+            Value::Float(VIRTUAL_TIME_BUDGET_MS),
+        ),
+    ])
+}
+
+/// Deterministic clock-FREEZE fallback. Injected ONLY when virtual time is
+/// disabled (`LOOM_CAPTURE_VIRTUAL_TIME=0`) or when arming it fails — so the
+/// rollback / failure path restores the prior *deterministic* frozen-clock
+/// behavior (replay-equal, animations don't run) rather than leaking a
+/// non-deterministic real-time clock. `__LOOM_EPOCH_MS__` is substituted with
+/// the session epoch. Kept separate from `determinism_init.js` (the main asset
+/// stays freeze-free so the default virtual-time path is unaffected).
+pub const CLOCK_FREEZE_JS: &str = r#"(function(){'use strict';
+  var _e = __LOOM_EPOCH_MS__;
+  Date.now = function(){ return _e; };
+  Date.prototype.getTime = function(){ return _e; };
+  if (typeof performance !== 'undefined') {
+    try { Object.defineProperty(performance, 'timeOrigin', { get:function(){return _e;}, configurable:true }); } catch(e){}
+    performance.now = function(){ return 0; };
+  }
+  var _t = 0;
+  window.requestAnimationFrame = function(cb){ _t += 16; var t = _t; setTimeout(function(){ cb(t); }, 0); return _t; };
+  window.cancelAnimationFrame = function(_id){};
+})()"#;
+
+/// Render the clock-freeze fallback with the session epoch.
+pub fn render_clock_freeze(epoch_ms: u64) -> String {
+    CLOCK_FREEZE_JS.replace("__LOOM_EPOCH_MS__", &epoch_ms.to_string())
+}
+
+/// Pure helper: build the CBOR params for the INJECT-time
+/// `Emulation.setVirtualTimePolicy`. Uses the `pause` policy with
+/// `initialVirtualTime` (seconds since epoch) to PIN the clock origin to the
+/// session epoch without advancing — so the empty about:blank document does not
+/// burn any budget before the first navigation. Each navigation then re-arms a
+/// bounded budget (`build_virtual_time_budget_params`) to actually advance the
+/// clock through load + animations. Pinning the origin makes `Date.now()` /
+/// `new Date()` deterministic and coherent with `performance.now()`.
+pub fn build_virtual_time_params(epoch_ms: u64) -> ciborium::value::Value {
+    use ciborium::value::Value;
+    let epoch_secs = epoch_ms as f64 / 1000.0;
+    Value::Map(vec![
+        (Value::Text("policy".into()), Value::Text("pause".into())),
+        (
+            Value::Text("initialVirtualTime".into()),
+            Value::Float(epoch_secs),
+        ),
+    ])
+}
 
 /// Concrete DeterminismInjector.
 pub struct ChromiumDeterminismInjector {
@@ -197,6 +290,75 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
                  but the about:blank context retains real Date.now/Math.random"
             );
         }
+
+        // Install the deterministic, advancing virtual-time clock so client-side
+        // entrance animations run to completion (faithful-entrance-animations).
+        // initialVirtualTime pins the origin to the session epoch, giving a
+        // single coherent, replay-stable timeline for Date.now/performance.now/
+        // rAF/setTimeout. CDP-failure handling (council FND): on error, log
+        // structured context and DEGRADE GRACEFULLY — the page still renders
+        // (with a non-deterministic real-time clock); we never hang or hard-fail
+        // the capture. Gated by LOOM_CAPTURE_VIRTUAL_TIME for rollback (P6).
+        let mut need_freeze = !virtual_time_enabled();
+        if virtual_time_enabled() {
+            let vt_msg = CdpMessage {
+                method: VIRTUAL_TIME_METHOD.to_string(),
+                params: build_virtual_time_params(epoch_ms.0),
+            };
+            match self.cdp.command(target_id, vt_msg, None).await {
+                Ok(_) => tracing::info!(
+                    target_id,
+                    epoch_ms = epoch_ms.0,
+                    "determinism: virtual-time clock armed"
+                ),
+                Err(e) => {
+                    // Recover to a DETERMINISTIC frozen clock (the prior behavior),
+                    // NOT a non-deterministic real-time clock — preserving
+                    // replay-equality at the cost of animations not rendering.
+                    tracing::warn!(
+                        target_id,
+                        error = %e,
+                        "determinism: setVirtualTimePolicy failed — restoring deterministic \
+                         frozen clock for this target (entrance animations will not render \
+                         this session, but replay determinism is preserved)"
+                    );
+                    need_freeze = true;
+                }
+            }
+        } else {
+            tracing::info!(
+                target_id,
+                "determinism: virtual time disabled (LOOM_CAPTURE_VIRTUAL_TIME=0) — \
+                 frozen-clock rollback in effect"
+            );
+        }
+        if need_freeze {
+            // Install the deterministic clock-freeze on all future documents AND
+            // the current context, mirroring the main inject's belt-and-braces.
+            let frozen = render_clock_freeze(epoch_ms.0);
+            let add_freeze = CdpMessage {
+                method: ADD_SCRIPT_METHOD.to_string(),
+                params: build_inject_params(&frozen),
+            };
+            if let Err(e) = self.cdp.command(target_id, add_freeze, None).await {
+                tracing::warn!(target_id, error = %e, "determinism: clock-freeze addScript failed");
+            }
+            let eval_freeze = CdpMessage {
+                method: "Runtime.evaluate".to_string(),
+                params: ciborium::value::Value::Map(vec![
+                    (
+                        ciborium::value::Value::Text("expression".into()),
+                        ciborium::value::Value::Text(frozen),
+                    ),
+                    (
+                        ciborium::value::Value::Text("returnByValue".into()),
+                        ciborium::value::Value::Bool(true),
+                    ),
+                ]),
+            };
+            let _ = self.cdp.command(target_id, eval_freeze, None).await;
+        }
+
         tracing::info!(target_id, identifier = %identifier, "determinism: inject ok");
         self.per_target_identifiers
             .write()

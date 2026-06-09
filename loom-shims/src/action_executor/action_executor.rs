@@ -380,6 +380,26 @@ impl ActionExecutor for ChromiumActionExecutor {
             .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
         let (frame_id, loader_id) = extract_frame_loader(&nav_response);
 
+        // STEP 3b (faithful-entrance-animations): grant a bounded virtual-time
+        // budget for THIS navigation so the page's entrance animations run to
+        // completion while the clock stays deterministic. The budget is a hard
+        // ceiling (security boundary) so a never-terminating animation pauses
+        // instead of spinning the renderer unbounded. Origin was pinned at
+        // inject; we only re-arm the budget here. Best-effort: a failure leaves
+        // the page on whatever clock the inject step established.
+        if crate::determinism_injector::determinism_injector::virtual_time_enabled() {
+            let vt_budget = CdpMessage {
+                method: crate::determinism_injector::determinism_injector::VIRTUAL_TIME_METHOD
+                    .to_string(),
+                params:
+                    crate::determinism_injector::determinism_injector::build_virtual_time_budget_params(
+                    ),
+            };
+            if let Err(e) = self.cdp.command(target_id, vt_budget, Some(timeout)).await {
+                tracing::warn!(target_id, error = %e, "navigate: virtual-time budget re-arm failed");
+            }
+        }
+
         // STEP 4: await Page.loadEventFired with timeout. The fake-chromium
         // harness emits the event right after Page.navigate response so this
         // typically completes immediately. Real Chromium can take longer.

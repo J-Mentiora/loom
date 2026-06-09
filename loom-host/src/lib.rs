@@ -19,6 +19,7 @@ pub mod host_function_registry;
 pub mod host_function_table;
 pub mod host_observability;
 pub mod module_library;
+pub mod network_offload;
 pub mod receipt_marshaller;
 pub mod session_executor;
 pub mod shim_manager;

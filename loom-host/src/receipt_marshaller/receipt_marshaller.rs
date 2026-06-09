@@ -258,6 +258,12 @@ impl ReceiptMarshaller {
         ];
         const EVALUATE_ERROR_KINDS: &[&str] = &["js_throw", "cbor_unrepresentable"];
 
+        // NOTE: `"shim-failure"` here is the WIT `host-error` variant NAME
+        // (wit/loom-surface.wit), staged verbatim into builder.error_code by
+        // decode_typed_receipt — NOT `LoomErrorCode::as_wire()` output. It stays
+        // kebab-case even after the error-code-consolidation snake_case flip,
+        // because the WIT contract owns this string (and it is hashed into the
+        // replay receipt — must not change).
         let is_navigate_error = builder.status == ReceiptStatus::Error
             && builder.error_code.as_deref() == Some("shim-failure")
             && detail_kind

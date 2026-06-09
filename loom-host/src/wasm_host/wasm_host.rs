@@ -29,6 +29,7 @@ use crate::compiler::Compiler;
 use crate::host_function_registry::HostFunctionRegistry;
 use crate::host_observability::HostObservability;
 use crate::module_library::ModuleLibrary;
+use crate::network_offload::{offload_or_inline_network_entries, NetworkEntriesPayload};
 use crate::receipt_marshaller::ReceiptMarshaller;
 use crate::session_executor::{Action, ActionOutcome, SessionExecutor, SessionHandle};
 use crate::shim_manager::ShimManager;
@@ -330,42 +331,27 @@ impl WasmHost {
             .send_network_log(effective_id, shim_session_id, 0)
             .await?;
 
-        const NETWORK_ENTRIES_INLINE_THRESHOLD: usize = 65_536;
-        let bytes = serde_json::to_vec(&outcome.network_entries).unwrap_or_default();
-        if bytes.len() >= NETWORK_ENTRIES_INLINE_THRESHOLD {
-            match self.core.content_store.put(&bytes) {
-                Ok(cref) => Ok(NetworkLogData {
-                    network_entries: Vec::new(),
-                    network_entries_blob_ref: Some(cref.sha256),
-                    network_entries_truncated: outcome.network_entries_truncated,
-                }),
-                Err(e) => {
-                    // Graceful degrade: drop the list (count + session only, no URLs).
-                    tracing::warn!(
-                        session_id = %session_id,
-                        entry_count = outcome.network_entries.len(),
-                        error = %e,
-                        "network_log content-store offload failed; dropping list"
-                    );
-                    Ok(NetworkLogData {
-                        network_entries: Vec::new(),
-                        network_entries_blob_ref: None,
-                        network_entries_truncated: true,
-                    })
-                }
-            }
-        } else {
-            let entries = outcome
-                .network_entries
-                .iter()
-                .filter_map(|e| serde_json::to_value(e).ok())
-                .collect();
-            Ok(NetworkLogData {
-                network_entries: entries,
-                network_entries_blob_ref: None,
-                network_entries_truncated: outcome.network_entries_truncated,
-            })
-        }
+        // Observational side-channel — shared ≥64KB offload-or-inline + fail-open
+        // degrade logic (see `crate::network_offload`, also used by `navigate_execute`).
+        let (payload, network_entries_truncated) = offload_or_inline_network_entries(
+            &*self.core.content_store,
+            &outcome.network_entries,
+            outcome.network_entries_truncated,
+            session_id,
+        );
+        let (network_entries, network_entries_blob_ref) = match payload {
+            NetworkEntriesPayload::Inline(bytes) => (
+                serde_json::from_slice::<Vec<serde_json::Value>>(&bytes).unwrap_or_default(),
+                None,
+            ),
+            NetworkEntriesPayload::Offloaded(cref) => (Vec::new(), Some(cref.sha256)),
+            NetworkEntriesPayload::Dropped => (Vec::new(), None),
+        };
+        Ok(NetworkLogData {
+            network_entries,
+            network_entries_blob_ref,
+            network_entries_truncated,
+        })
     }
 }
 
