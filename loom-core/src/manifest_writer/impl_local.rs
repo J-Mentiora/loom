@@ -36,30 +36,63 @@ fn sha256_hex(input: &[u8]) -> String {
 /// next `prev_hash`) and `validate` (re-deriving it), so the chain stays
 /// internally consistent.
 fn hashable_line(line: &str) -> Vec<u8> {
-    let Ok(mut v) = serde_json::from_str::<serde_json::Value>(line) else {
-        return line.as_bytes().to_vec();
-    };
-    if let Some(obj) = v.as_object_mut() {
-        for key in ["session_id"] {
-            if obj.contains_key(key) {
-                obj.insert(key.to_string(), serde_json::Value::String(String::new()));
-            }
-        }
-        for key in ["started_at_ms", "emitted_at_ms"] {
-            if obj.contains_key(key) {
-                obj.insert(key.to_string(), serde_json::json!(0));
-            }
-        }
+    // Byte-level field zeroing (NO JSON parse): the chain line is canonical JCS
+    // (sorted keys, no whitespace), and these three keys are unambiguous tokens
+    // that appear only as object keys (their values are a ULID / hex / number
+    // arrays — never the literal `"<key>":` substring). Parsing+re-serializing the
+    // whole line (incl. the receipt_canonical_bytes number array, on every append
+    // AND every validate line) measurably regressed replay throughput; a targeted
+    // scan that zeroes the values in place is effectively free and equally
+    // deterministic/consistent between `append` and `validate`. On any unexpected
+    // shape the bytes are left unchanged.
+    let mut buf = line.as_bytes().to_vec();
+    zero_json_string_value(&mut buf, b"\"session_id\":");
+    zero_json_number_value(&mut buf, b"\"started_at_ms\":");
+    zero_json_number_value(&mut buf, b"\"emitted_at_ms\":");
+    buf
+}
+
+/// Find the first occurrence of `needle` in `hay` (small needles; naive is fine).
+fn find_subslice(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
     }
-    // serde_json (NOT serde_jcs): the projection only needs to be DETERMINISTIC
-    // and CONSISTENT between `append` and `validate` — it is never stored, so it
-    // does not need RFC-8785 canonicalization. serde_json is materially faster on
-    // this hot path (per-append + per-validate-line, over large
-    // receipt_canonical_bytes arrays). serde_json preserves the input key order
-    // here, so the same line always projects to the same bytes.
-    match serde_json::to_string(&v) {
-        Ok(s) => s.into_bytes(),
-        Err(_) => line.as_bytes().to_vec(),
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+/// Replace the unsigned-integer value following `key` (e.g. `"emitted_at_ms":`)
+/// with `0`. No-op if the key is absent or not followed by digits.
+fn zero_json_number_value(buf: &mut Vec<u8>, key: &[u8]) {
+    let Some(pos) = find_subslice(buf, key) else {
+        return;
+    };
+    let start = pos + key.len();
+    let mut end = start;
+    while end < buf.len() && buf[end].is_ascii_digit() {
+        end += 1;
+    }
+    if end > start {
+        buf.splice(start..end, std::iter::once(b'0'));
+    }
+}
+
+/// Empty the JSON string value following `key` (e.g. `"session_id":`). No-op if
+/// the key is absent or not followed by a quoted string. ULIDs contain no escape
+/// sequences, so scanning to the next `"` is sufficient.
+fn zero_json_string_value(buf: &mut Vec<u8>, key: &[u8]) {
+    let Some(pos) = find_subslice(buf, key) else {
+        return;
+    };
+    let open = pos + key.len();
+    if buf.get(open) != Some(&b'"') {
+        return;
+    }
+    let mut close = open + 1;
+    while close < buf.len() && buf[close] != b'"' {
+        close += 1;
+    }
+    if close < buf.len() {
+        buf.splice(open + 1..close, std::iter::empty());
     }
 }
 
