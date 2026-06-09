@@ -27,7 +27,7 @@ use loom_core::session_scope::SessionScope;
 use loom_core::vault::Vault;
 use loom_shared::types::{EpochMs, Seed};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Weak};
 use tokio::sync::Notify;
 
@@ -169,6 +169,16 @@ impl From<SessionError> for LoomError {
     }
 }
 
+/// Activity snapshot of a single session for the reaper's idle/zombie decisions.
+/// A plain data carrier so `loom-core` need not depend on the daemon's reaper types.
+#[derive(Debug, Clone)]
+pub struct SessionActivity {
+    pub id: SessionId,
+    pub last_activity_ms: u64,
+    pub in_flight: u32,
+    pub is_active: bool,
+}
+
 /// Per-session in-memory state. Owned via `Arc` by the session table.
 pub struct Session {
     pub id: SessionId,
@@ -186,6 +196,15 @@ pub struct Session {
     /// `scope.drain(grace)` before returning, so the daemon never leaks
     /// fire-and-forget tasks across sessions.
     pub scope: Arc<SessionScope>,
+    /// Unix epoch milliseconds of the session's last action activity, used by the
+    /// idle-TTL reaper. Initialised to the session's `epoch_ms` at create and bumped
+    /// at action START via `touch()` (so a session running a single long action is not
+    /// seen as idle). In-memory only.
+    pub last_activity_ms: AtomicU64,
+    /// Count of actions currently executing for this session. The idle reaper never
+    /// evicts a session with `in_flight_actions > 0` (no mid-action eviction); the close
+    /// path re-checks it under the status lock. In-memory only.
+    pub in_flight_actions: AtomicU32,
     /// Per-session monotonic action sequence, 0-based. Incremented atomically
     /// at action dispatch via `allocate_action_id()`.
     /// In-memory only — NOT persisted across daemon restarts (the daemon
@@ -250,6 +269,40 @@ impl Session {
     /// `fetch_add` is atomic regardless of ordering.
     pub fn allocate_action_id(&self) -> u64 {
         self.next_action_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// Record activity at epoch-ms `now`, resetting the idle clock.
+    pub fn touch(&self, now_ms: u64) {
+        self.last_activity_ms.store(now_ms, Ordering::Relaxed);
+    }
+
+    /// Mark an action as starting: bump the in-flight counter and reset the idle clock.
+    /// Pairs with `action_finished`. Keeps a session running one long action from looking idle.
+    pub fn action_started(&self, now_ms: u64) {
+        self.in_flight_actions.fetch_add(1, Ordering::SeqCst);
+        self.touch(now_ms);
+    }
+
+    /// Mark an action as finished: decrement the in-flight counter (saturating at 0) and
+    /// reset the idle clock so the idle window starts from completion.
+    pub fn action_finished(&self, now_ms: u64) {
+        // `fetch_update` floors at 0 so an unbalanced finish can't underflow.
+        let _ = self
+            .in_flight_actions
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+                Some(n.saturating_sub(1))
+            });
+        self.touch(now_ms);
+    }
+
+    /// Current in-flight action count.
+    pub fn in_flight(&self) -> u32 {
+        self.in_flight_actions.load(Ordering::SeqCst)
+    }
+
+    /// Last activity epoch-ms.
+    pub fn last_activity(&self) -> u64 {
+        self.last_activity_ms.load(Ordering::Relaxed)
     }
 }
 

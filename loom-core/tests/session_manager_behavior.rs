@@ -101,6 +101,77 @@ fn default_opts() -> SessionCreateOpts {
     }
 }
 
+// === idle-reaper activity tracking + two-phase eviction ===
+
+#[test]
+fn activity_methods_track_in_flight_and_last_activity() {
+    let sm = make_sm("/tmp/loom-test-activity-track");
+    let id = sm.create(default_opts()).unwrap();
+    let s = sm.get(id).unwrap();
+    assert_eq!(s.in_flight(), 0);
+    let base = s.last_activity();
+
+    s.action_started(base + 5_000);
+    assert_eq!(s.in_flight(), 1, "action_started bumps in-flight");
+    assert_eq!(s.last_activity(), base + 5_000, "action_started touches");
+
+    s.action_finished(base + 9_000);
+    assert_eq!(s.in_flight(), 0, "action_finished decrements");
+    assert_eq!(s.last_activity(), base + 9_000, "action_finished touches");
+
+    // Unbalanced finish floors at 0 (never underflows).
+    s.action_finished(base + 9_500);
+    assert_eq!(s.in_flight(), 0);
+}
+
+#[test]
+fn evict_if_idle_closes_idle_session_but_spares_busy_and_fresh() {
+    let sm = make_sm("/tmp/loom-test-evict-idle");
+    let id = sm.create(default_opts()).unwrap();
+    let base = sm.get(id.clone()).unwrap().last_activity();
+    let ttl = 1_000u64;
+
+    // Fresh: idle_for (0) < ttl → spared.
+    assert!(!sm.evict_if_idle(id.clone(), ttl, base).unwrap());
+    assert_eq!(
+        *sm.get(id.clone()).unwrap().status.lock(),
+        SessionStatus::Active
+    );
+
+    // Busy: in-flight > 0 → spared even when idle past ttl (hardening A / C5).
+    sm.get(id.clone()).unwrap().action_started(base);
+    assert!(!sm.evict_if_idle(id.clone(), ttl, base + 10_000).unwrap());
+    assert_eq!(
+        *sm.get(id.clone()).unwrap().status.lock(),
+        SessionStatus::Active
+    );
+    sm.get(id.clone()).unwrap().action_finished(base);
+
+    // Idle past ttl, no in-flight → evicted (Closed + idle_ttl terminal reason).
+    assert!(sm.evict_if_idle(id.clone(), ttl, base + 10_000).unwrap());
+    assert_eq!(
+        *sm.get(id.clone()).unwrap().status.lock(),
+        SessionStatus::Closed
+    );
+
+    // Idempotent: a second evict on a now-closed session is a no-op (Ok(false), not error).
+    assert!(!sm.evict_if_idle(id, ttl, base + 20_000).unwrap());
+}
+
+#[test]
+fn oldest_active_age_tracks_least_recently_active() {
+    let sm = make_sm("/tmp/loom-test-oldest-age");
+    assert_eq!(
+        sm.oldest_active_age_secs(1_000_000),
+        None,
+        "no sessions → None"
+    );
+    let id = sm.create(default_opts()).unwrap();
+    let base = sm.get(id).unwrap().last_activity();
+    // 30s after last activity.
+    assert_eq!(sm.oldest_active_age_secs(base + 30_000), Some(30));
+}
+
 // === session creation + ULID ===
 
 #[test]

@@ -242,20 +242,31 @@ fn test_script_source_has_required_markers() {
 }
 
 #[test]
-fn test_determinism_init_js_has_animation_markers() {
-    // The include_str! embedded script must have animation-disabling markers.
-    // This test will use the actual determinism_init.js once it's embedded.
+fn test_determinism_init_js_installs_rng_and_css_but_not_clock_overrides() {
+    // Post faithful-entrance-animations: clock determinism moved to CDP virtual
+    // time, so the asset installs ONLY the seeded RNG + CSS flattening and must
+    // NOT freeze the clocks (a frozen clock stalls JS entrance animations).
     let script = include_str!("../assets/determinism_init.js");
     assert!(
-        script.contains("requestAnimationFrame"),
-        "must override requestAnimationFrame"
+        script.contains("Math.random"),
+        "must install seeded Math.random"
     );
     assert!(
         script.contains("animation-duration"),
-        "must inject CSS animation-duration: 0"
+        "must inject CSS animation/transition flattening"
     );
-    assert!(script.contains("Date.now"), "must override Date.now");
-    assert!(script.contains("Math.random"), "must override Math.random");
+    assert!(
+        !script.contains("performance.now = function"),
+        "must NOT override performance.now (drives JS animations via virtual time now)"
+    );
+    assert!(
+        !script.contains("Date.now = function"),
+        "must NOT override Date.now (driven by virtual time now)"
+    );
+    assert!(
+        !script.contains("requestAnimationFrame = function"),
+        "must NOT override requestAnimationFrame (native rAF runs on virtual time)"
+    );
 }
 
 #[tokio::test]

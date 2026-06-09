@@ -101,6 +101,15 @@ pub struct DaemonHealth {
     /// `"enabled"` when LOOM_OTEL_ENABLED + endpoint set; `"disabled"`
     /// otherwise. Cheap snapshot; doesn't probe the OTLP endpoint.
     pub otel_exporter: String,
+    /// Count of orphan Chromium trees: `loom-chromium-*` user-data-dirs whose session is no
+    /// longer live but whose browser process is still running. Surfaces the wedge before it's
+    /// fatal. `#[serde(default)]` for back-compat with older daemons.
+    #[serde(default)]
+    pub orphan_browser_trees: usize,
+    /// Age in seconds of the oldest Active session (by last activity), or `None` if there are
+    /// no active sessions. A large value flags leaked/stuck sessions.
+    #[serde(default)]
+    pub oldest_active_session_age_secs: Option<u64>,
     /// Populated only when `{deep: true}` was requested AND a
     /// `DaemonHealthAsync` provider is wired. Each entry is the
     /// per-shim probe outcome.

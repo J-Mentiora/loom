@@ -64,6 +64,9 @@ libc = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }
+# integration_reaper.rs checks orphan-process liveness via libc::kill(pid, 0) on
+# every platform (the production macos-only libc dep above doesn't cover Linux tests).
+libc = { workspace = true }
 # wasmparser: validate the embedded loom_surface_web.wasm is a real wasm
 # component (not the dev stub) in the non-ignored embedded_wasm_sha test.
 # Not lockstep-shared with wasmtime's transitive (wasmtime 44 ships 0.246.x);
