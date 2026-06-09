@@ -50,13 +50,13 @@ pub fn pid_cmdline_contains(pid: i32, needle: &str) -> bool {
     #[cfg(target_os = "linux")]
     {
         // /proc/<pid>/cmdline is NUL-separated argv.
-        match std::fs::read(format!("/proc/{pid}/cmdline")) {
-            Ok(bytes) => {
-                let cmd = String::from_utf8_lossy(&bytes).replace('\0', " ");
-                cmd.contains(needle)
-            }
-            Err(_) => false,
-        }
+        std::fs::read(format!("/proc/{pid}/cmdline"))
+            .map(|bytes| {
+                String::from_utf8_lossy(&bytes)
+                    .replace('\0', " ")
+                    .contains(needle)
+            })
+            .unwrap_or(false)
     }
     #[cfg(not(target_os = "linux"))]
     {
