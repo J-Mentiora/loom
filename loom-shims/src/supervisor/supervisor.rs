@@ -275,6 +275,23 @@ impl Supervisor for ChromiumSupervisor {
 
         *self.child_pid.lock() = Some(pid);
 
+        // Write a sidecar pidfile holding the Chromium process-group leader pid (== pgid,
+        // because we launched with `process_group(0)`). After a daemon restart the host holds
+        // no `Child` handle, so the reaper recovers the pid from this file to `killpg` the
+        // orphan tree precisely — no command-line pattern matching. Best-effort: a write
+        // failure just means the reaper falls back to skipping the kill (fail-safe).
+        let pidfile = self
+            .config
+            .user_data_dir
+            .join(loom_shared::chromium_resolver::CHROMIUM_PIDFILE_NAME);
+        if let Err(e) = std::fs::write(&pidfile, pid.to_string()) {
+            tracing::warn!(
+                pidfile = %pidfile.display(),
+                error = %e,
+                "supervisor: could not write chromium pidfile (reaper will skip-kill this dir)"
+            );
+        }
+
         // Watcher: when the chromium subprocess dies, force-exit the
         // shim process. Without this the shim hangs for ~30s on the
         // chromiumoxide WebSocket read after chromium's TCP socket

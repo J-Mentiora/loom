@@ -36,6 +36,8 @@ async-trait = { workspace = true }
 hex = { workspace = true }
 humantime = { workspace = true }
 zeroize = { workspace = true }
+# Reaper process primitives: kill(0)/killpg for orphan-Chromium GC.
+libc = { workspace = true }
 
 [lib]
 name = "loom_daemon"

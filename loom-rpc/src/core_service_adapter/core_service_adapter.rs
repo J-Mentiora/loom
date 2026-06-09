@@ -184,6 +184,11 @@ pub struct GcRunReport {
 /// Wire shape for `session.reap`. `quarantined` holds the corrupt-orphan session
 /// IDs that were (or, when `dry_run`, would be) moved aside; `failed` holds
 /// `"<id>: <reason>"` for sessions that could not be moved (e.g. cross-device).
+///
+/// The `idle_evicted` / `zombies_closed` / `orphan_browsers_killed` / `orphan_dirs_removed`
+/// fields extend reap to also cover leaked LIVE resources (idle and zombie sessions, orphan
+/// Chromium trees). All are `#[serde(default)]` so older clients that don't send/expect them
+/// still validate.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReapReport {
     pub quarantined: Vec<String>,
@@ -191,6 +196,18 @@ pub struct ReapReport {
     pub dry_run: bool,
     pub quarantine_dir: Option<String>,
     pub failed: Vec<String>,
+    /// Idle Active sessions evicted (or, in dry-run, that would be).
+    #[serde(default)]
+    pub idle_evicted: Vec<String>,
+    /// Active sessions whose Chromium pid was dead, closed (or would be).
+    #[serde(default)]
+    pub zombies_closed: Vec<String>,
+    /// Orphan Chromium trees terminated (or would be), keyed by session id.
+    #[serde(default)]
+    pub orphan_browsers_killed: Vec<String>,
+    /// Orphan user-data-dirs removed.
+    #[serde(default)]
+    pub orphan_dirs_removed: u64,
 }
 
 // === Wire types (WIT-derived; mirrored here for adapter return

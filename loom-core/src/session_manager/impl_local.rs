@@ -6,12 +6,13 @@ use crate::budget_enforcer::{ResourceKind, SessionCounters};
 use crate::error::LoomError;
 use crate::manifest_writer::{ManifestEntry, SessionId};
 use crate::session_manager::session_manager::{
-    AbortReason, LocalSessionManager, Session, SessionCreateOpts, SessionError, SessionStatus,
+    AbortReason, LocalSessionManager, Session, SessionActivity, SessionCreateOpts, SessionError,
+    SessionStatus,
 };
 use crate::session_scope::SessionScope;
 use loom_shared::types::{EpochMs, Seed};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use ulid::Ulid;
@@ -109,6 +110,8 @@ impl LocalSessionManager {
             counters: Arc::clone(&counters),
             tape_writer: Arc::new(tokio::sync::Mutex::new(tape_writer)),
             scope: Arc::clone(&scope),
+            last_activity_ms: AtomicU64::new(epoch_ms.0),
+            in_flight_actions: AtomicU32::new(0),
             next_action_id: AtomicU64::new(0),
             kill_reason: Arc::new(parking_lot::Mutex::new(None)),
             capture_policy,
@@ -184,14 +187,68 @@ impl LocalSessionManager {
     /// Close a session: Active → Closed + SessionTerminal manifest entry.
     /// Subsequent calls on a closed session return SessionAlreadyClosed.
     pub fn close(&self, id: SessionId) -> Result<(), LoomError> {
+        self.close_with_reason(id, "close")
+    }
+
+    /// Close a session with a specific terminal `reason` (e.g. `idle_ttl`, `zombie`) so the
+    /// reaper's cause is captured deterministically in the manifest `SessionTerminal`. The
+    /// reason is a fixed string per eviction kind, so the replay hash chain stays equal.
+    pub fn close_with_reason(&self, id: SessionId, reason: &str) -> Result<(), LoomError> {
+        match self.close_inner(id.clone(), reason, None)? {
+            true => Ok(()),
+            // None-guard path always returns true or errors; false is unreachable here.
+            false => Err(LoomError::from(SessionError::SessionAlreadyClosed {
+                session_id: id.0,
+            })),
+        }
+    }
+
+    /// Two-phase idle eviction (hardening A): under the SAME status lock that performs the
+    /// Active→Closed transition, re-verify the session is still Active, still idle past
+    /// `ttl_ms`, AND has no in-flight action — so a session is never evicted mid-action even
+    /// if an action started between the reaper's decision and this call. Returns `Ok(true)`
+    /// if it closed the session, `Ok(false)` if it was spared (no longer idle / now busy /
+    /// already gone) — sparing is NOT an error for the sweep.
+    pub fn evict_if_idle(
+        &self,
+        id: SessionId,
+        ttl_ms: u64,
+        now_ms: u64,
+    ) -> Result<bool, LoomError> {
+        self.close_inner(id, "idle_ttl", Some((ttl_ms, now_ms)))
+    }
+
+    /// Shared close body. `idle_guard = Some((ttl, now))` enables the two-phase re-check; in
+    /// that mode a non-Active / busy / no-longer-idle session yields `Ok(false)` (spared)
+    /// rather than an error. `idle_guard = None` is the unconditional close (returns an error
+    /// only if the session was already not Active, matching the historic `close()` contract —
+    /// surfaced by the `close_with_reason` wrapper).
+    fn close_inner(
+        &self,
+        id: SessionId,
+        reason: &str,
+        idle_guard: Option<(u64, u64)>,
+    ) -> Result<bool, LoomError> {
         let session = self.get(id.clone())?;
 
         {
             let mut status = session.status.lock();
             if *status != SessionStatus::Active {
-                return Err(LoomError::from(SessionError::SessionAlreadyClosed {
-                    session_id: id.0.clone(),
-                }));
+                return match idle_guard {
+                    Some(_) => Ok(false), // already gone — fine for the sweep
+                    None => Err(LoomError::from(SessionError::SessionAlreadyClosed {
+                        session_id: id.0.clone(),
+                    })),
+                };
+            }
+            if let Some((ttl_ms, now_ms)) = idle_guard {
+                // Re-check idleness + in-flight UNDER the lock (hardening A). If an action
+                // started or the session became active again in the decision→close gap,
+                // spare it.
+                let idle_for = now_ms.saturating_sub(session.last_activity());
+                if session.in_flight() > 0 || idle_for < ttl_ms {
+                    return Ok(false);
+                }
             }
             *status = SessionStatus::Closed;
         }
@@ -199,7 +256,7 @@ impl LocalSessionManager {
         // Signal every scope-owned task (budget timer, shim-IPC tasks,
         // receipt spawns) to exit cooperatively. The actual drain (joining
         // them with a grace period) runs at the daemon bridge layer in
-        // `close_session_raw` — keeping `close()` synchronous preserves the
+        // `close_session_raw` — keeping this synchronous preserves the
         // existing call signature across the codebase + tests + benchmarks.
         session.scope.cancel();
         self.budget_enforcer.unregister_session(id.clone());
@@ -209,12 +266,39 @@ impl LocalSessionManager {
             ManifestEntry::SessionTerminal {
                 action_id: 0,
                 emitted_at_ms: now_ms(),
-                reason: "close".into(),
+                reason: reason.to_string(),
                 prev_hash: String::new(),
             },
         )?;
 
-        Ok(())
+        Ok(true)
+    }
+
+    /// Activity snapshot of every session, for the idle/zombie reaper decisions. Pairs each
+    /// id with its last-activity epoch-ms, in-flight count, and active flag.
+    pub fn session_activity_snapshot(&self) -> Vec<SessionActivity> {
+        self.sessions
+            .iter()
+            .map(|e| {
+                let s = e.value();
+                SessionActivity {
+                    id: e.key().clone(),
+                    last_activity_ms: s.last_activity(),
+                    in_flight: s.in_flight(),
+                    is_active: *s.status.lock() == SessionStatus::Active,
+                }
+            })
+            .collect()
+    }
+
+    /// Age in seconds of the oldest Active session (by last-activity), or `None` if no
+    /// Active sessions exist. Surfaced in `daemon.health` / `loom doctor`.
+    pub fn oldest_active_age_secs(&self, now_ms: u64) -> Option<u64> {
+        self.sessions
+            .iter()
+            .filter(|e| *e.value().status.lock() == SessionStatus::Active)
+            .map(|e| now_ms.saturating_sub(e.value().last_activity()) / 1000)
+            .max()
     }
 
     /// Abort a session: flip abort_flag + notify_one + Active → Aborted.
