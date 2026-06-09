@@ -17,12 +17,5 @@ python-sdk/*.egg-info/
 __pycache__/
 .pytest_cache/
 .ruff_cache/
-.feature-workflow/event-log.yaml
-.feature-workflow/event-log-fallback.jsonl
-.feature-workflow/event-log-fallback.jsonl.lock
-.feature-workflow/event-log.off
-.feature-workflow/events/
-.feature-workflow/backfill-checkpoint.json
-.feature-workflow/backfill-checkpoint.json.tmp
-.feature-workflow/cleanup-opportunities.md
+.feature-workflow/
 marketing/
