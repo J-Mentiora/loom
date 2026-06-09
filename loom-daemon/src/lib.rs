@@ -382,6 +382,7 @@ impl CoreFacadeBridge for CoreBridge {
         _network_mode: &str,
         capture_policy: Option<&str>,
         seed: Option<u64>,
+        clock_anchor: Option<u64>,
         budget: Option<serde_json::Value>,
         no_blocklist: bool,
         no_determinism: bool,
@@ -460,7 +461,11 @@ impl CoreFacadeBridge for CoreBridge {
             seed,
             limits,
             replay_of: None,
-            started_at_ms_override: None,
+            // `--clock-anchor` pins the session clock via the same override the
+            // replay path uses: it sets epoch_ms (injected Date.now/performance.now)
+            // AND the Header started_at_ms, and round-trips through replay for free.
+            // `None` (flag absent) → real wall-clock at create, behavior unchanged.
+            started_at_ms_override: clock_anchor,
             capture_policy: capture_policy.map(|s| s.to_string()),
             no_blocklist,
             no_determinism,
@@ -471,6 +476,14 @@ impl CoreFacadeBridge for CoreBridge {
             .session_manager
             .create(opts)
             .map_err(|e| map_loom_error(&e))?;
+        if let Some(anchor) = clock_anchor {
+            // Make anchored (cross-run-deterministic) sessions greppable.
+            tracing::info!(
+                session_id = %session_id.0,
+                clock_anchor = anchor,
+                "session created with pinned clock anchor"
+            );
+        }
         let created_at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)

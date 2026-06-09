@@ -44,6 +44,7 @@ fn create_args_field_names_match_schema() {
         profile: Some("safe".into()),
         network_mode: Some("offline".into()),
         seed: Some(42),
+        clock_anchor: None,
         budget: None,
         capture_policy: None,
         no_blocklist: false,

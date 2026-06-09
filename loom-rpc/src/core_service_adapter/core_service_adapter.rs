@@ -97,6 +97,7 @@ pub trait CoreFacadeBridge: Send + Sync {
         network_mode: &str,
         capture_policy: Option<&str>,
         seed: Option<u64>,
+        clock_anchor: Option<u64>,
         budget: Option<serde_json::Value>,
         no_blocklist: bool,
         no_determinism: bool,
@@ -278,6 +279,13 @@ pub struct CreateSessionParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capture_policy: Option<String>,
     pub seed: Option<u64>,
+    /// Operator's `--clock-anchor` (Unix epoch ms). Pins the injected
+    /// `Date.now`/`performance.now` epoch (via the session's
+    /// `started_at_ms_override`) so two independent fresh recordings with the
+    /// same value diff equal. `None` → real wall-clock at create time. Pre-feature
+    /// CLI clients omit the field → `None`.
+    #[serde(default)]
+    pub clock_anchor: Option<u64>,
     pub budget: Option<serde_json::Value>,
     /// Operator's `--no-blocklist` opt-out.
     /// Default `false` (blocklist enforced). Pre-feature CLI clients

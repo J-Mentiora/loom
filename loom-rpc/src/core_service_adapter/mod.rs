@@ -12,6 +12,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
             &params.network_mode,
             params.capture_policy.as_deref(),
             params.seed,
+            params.clock_anchor,
             params.budget.clone(),
             params.no_blocklist,
             params.no_determinism,

@@ -410,6 +410,56 @@ else
 fi
 $LOOM session close "$SR" >/dev/null 2>&1 || true
 
+# -- Section 21: cross-run determinism ----------------------------------
+# Section 15 proves SELF-replay equality. This proves the stronger claim: two
+# INDEPENDENT fresh recordings of the same actions, pinned with the same
+# --seed + --clock-anchor, diff field_diffs=0 (incl. dom_snapshot_hash, the
+# evaluate-result content hash, and the now-deterministic timing fields).
+sect "Section 21: cross-run determinism (--seed + --clock-anchor)"
+XANCHOR=1700000000000
+# Record one fresh session: same flags + same actions on the fixture, which
+# reads Date.now()/Math.random() into window.__loomFixture.
+record_anchored() {
+  local sid
+  sid=$($LOOM session create --profile standard --seed 42 --clock-anchor "$XANCHOR" 2>&1 | jq -r .session_id)
+  nav "$sid" "$FIXTURE_URL" >/dev/null
+  ev "$sid" 'JSON.stringify(window.__loomFixture)' >/dev/null
+  $LOOM session close "$sid" >/dev/null 2>&1 || true
+  echo "$sid"
+}
+XA=$(record_anchored)
+XB=$(record_anchored)
+if [[ "$XA" =~ ^[a-z0-9]{26}$ && "$XB" =~ ^[a-z0-9]{26}$ ]]; then
+  ok "cross-run-sessions-created ($XA, $XB)"
+  XDIFF=$($LOOM session diff "$XA" "$XB" 2>&1)
+  echo "$XDIFF" >"$RESULTS/cross-run-diff.json"
+  XFD=$(echo "$XDIFF" | jq -r '.field_diffs | length' 2>/dev/null)
+  if [ "$XFD" = "0" ]; then
+    ok "cross-run-hash-equal (two fresh recordings, field_diffs=0)"
+  else
+    # Residual-diff sweep: surface every leaking field for triage.
+    LEAKS=$(echo "$XDIFF" | jq -rc '.field_diffs' 2>/dev/null)
+    fail "cross-run-hash-equal" "field_diffs=$XFD leaks=$LEAKS — see $RESULTS/cross-run-diff.json"
+  fi
+else
+  fail "cross-run-sessions-created" "XA=$XA XB=$XB"
+fi
+
+# Negative control: WITHOUT --clock-anchor, two fresh recordings must STILL
+# differ (real wall-clock leaks into Date.now → dom_snapshot/evaluate hash).
+# Proves the anchor is load-bearing, not a no-op.
+NC=$($LOOM session create --profile standard --seed 42 2>&1 | jq -r .session_id)
+nav "$NC" "$FIXTURE_URL" >/dev/null
+ev "$NC" 'JSON.stringify(window.__loomFixture)' >/dev/null
+$LOOM session close "$NC" >/dev/null 2>&1 || true
+NDIFF=$($LOOM session diff "$XA" "$NC" 2>&1)
+NFD=$(echo "$NDIFF" | jq -r '.field_diffs | length' 2>/dev/null)
+if [ "${NFD:-0}" -gt 0 ]; then
+  ok "no-anchor-control-differs (field_diffs=$NFD > 0)"
+else
+  fail "no-anchor-control-differs" "expected >0 without --clock-anchor, got $NFD"
+fi
+
 # -- Summary ------------------------------------------------------------
 sect "Summary"
 TOTAL=$((PASS+FAIL))

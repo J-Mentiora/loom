@@ -41,6 +41,28 @@ use tokio::runtime::Handle as TokioHandle;
 use tokio::sync::Notify;
 use wasmtime::component::Val;
 
+/// Fixed per-action virtual-clock advance (ms) used when determinism is enabled.
+/// Makes receipt `timing_ticks` / `emitted_at_ms` a pure function of the action
+/// sequence (reproducible across independent fresh runs) rather than the measured
+/// wall-clock dispatch duration. `1` is the minimal positive tick, so accumulated
+/// timing stays strictly increasing per action.
+pub const DETERMINISTIC_ACTION_TICK_MS: u64 = 1;
+
+/// Choose the amount to advance the session virtual clock for one action.
+///
+/// - determinism ON  → the fixed [`DETERMINISTIC_ACTION_TICK_MS`] tick, ignoring
+///   the measured `dispatch_elapsed_ms` (so two fresh runs produce identical
+///   `timing_ticks`/`emitted_at_ms` → cross-run `field_diffs=0`).
+/// - determinism OFF (`--no-determinism`) → the real measured `dispatch_elapsed_ms`,
+///   floored at 1 so the clock still advances on sub-millisecond dispatches.
+pub fn action_delta_ms(deterministic_timing: bool, dispatch_elapsed_ms: u64) -> u64 {
+    if deterministic_timing {
+        DETERMINISTIC_ACTION_TICK_MS
+    } else {
+        dispatch_elapsed_ms.max(1)
+    }
+}
+
 /// One action ready to dispatch. WIT-derived; here only the fields
 /// needed inside loom-host.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +185,11 @@ impl SessionExecutor {
         // the Store — needed to advance the virtual clock around dispatch
         // (timing invariants).
         let harness = host_state.determinism.clone();
+        // Capture the determinism flag before `host_state` moves into the Store.
+        // When determinism is ON the per-action clock advance is a fixed tick so
+        // receipt timing is reproducible across fresh runs; `--no-determinism`
+        // keeps the real measured wall-clock advance.
+        let deterministic_timing = !host_state.no_determinism;
         let mut store = wasmtime::Store::new(engine, host_state);
         let instance = self
             .instantiate_surface(&mut store, &component, linker)
@@ -182,7 +209,8 @@ impl SessionExecutor {
 
         // Snapshot the session-elapsed virtual clock at action start.
         let started_ms = harness.clock_now();
-        // Wall-clock measurement of dispatch overhead — feeds begin_action.
+        // Measures real dispatch overhead — used as the clock advance ONLY when
+        // determinism is off (see `action_delta_ms`).
         let dispatch_t0 = std::time::Instant::now();
 
         let mut builder = ReceiptBuilder {
@@ -205,7 +233,10 @@ impl SessionExecutor {
             _ = abort_signal.notified() => {
                 // Even on abort, advance the virtual clock so timing_ticks
                 // remains monotonically non-decreasing across actions.
-                let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
+                let delta_ms = action_delta_ms(
+                    deterministic_timing,
+                    dispatch_t0.elapsed().as_millis() as u64,
+                );
                 harness.begin_action(delta_ms);
                 builder.finished_at_ms = harness.clock_now();
                 // Distinguish budget-kill from user-abort. Budget-kill
@@ -236,10 +267,13 @@ impl SessionExecutor {
             }
         };
 
-        // Advance the virtual session clock by the measured wall-clock
-        // dispatch duration; `.max(1)` ensures strictly-positive monotonic
-        // advance even for sub-ms dispatches.
-        let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
+        // Advance the virtual session clock: a fixed deterministic tick when
+        // determinism is on (reproducible timing across fresh runs), else the
+        // measured wall-clock dispatch duration. Always strictly positive.
+        let delta_ms = action_delta_ms(
+            deterministic_timing,
+            dispatch_t0.elapsed().as_millis() as u64,
+        );
         harness.begin_action(delta_ms);
         builder.finished_at_ms = harness.clock_now();
 

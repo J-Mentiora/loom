@@ -447,6 +447,47 @@ deterministically even before the first navigate.
 + `started_at_ms`, so the replay session's manifest hash chain is bit-equal
 to the source's at every action_receipt entry.
 
+### Cross-run determinism (`--clock-anchor`)
+
+Replay equality is *self*-equality. To make two **independent fresh
+recordings** of the same actions diff-equal — a "did anything change?"
+regression oracle across runs — pin the clock as well as the RNG:
+
+```bash
+# Record today:
+A=$(loom session create --profile standard --seed 42 --clock-anchor 1700000000000 | jq -r .session_id)
+loom action web.navigate --session "$A" --url https://example.com
+loom session close "$A"
+
+# Re-run tomorrow, from scratch, same flags + same actions:
+B=$(loom session create --profile standard --seed 42 --clock-anchor 1700000000000 | jq -r .session_id)
+loom action web.navigate --session "$B" --url https://example.com
+loom session close "$B"
+
+# Identical → field_diffs == 0:
+loom session diff "$A" "$B" | jq '.field_diffs | length'   # 0
+```
+
+`--clock-anchor <epoch_ms>` fixes the injected `Date.now`/`performance.now`
+epoch across runs (the way `--seed` fixes `Math.random`). Combined with the
+seed, receipt content hashes — including `dom_snapshot_hash` — and the
+deterministic per-action timing become a pure function of the action
+sequence, so two fresh runs are diff-equal.
+
+Notes:
+
+- **Composable & independent.** `--seed` (RNG) and `--clock-anchor` (clock) are
+  orthogonal. `--clock-anchor` works without `--seed` too — the default seed
+  already pins RNG; `--seed` only *changes* it.
+- **Recorded start time = the anchor.** When `--clock-anchor` is set, the
+  session's recorded `started_at_ms` is the anchor, not real wall-clock (the
+  whole point — so two runs match). Omit it for a real creation timestamp.
+- **Within-version.** The deterministic per-action timing tick is part of the
+  recording contract; cross-run equality holds within one loom version. Old
+  recordings still replay bit-equal (replay reuses recorded bytes).
+- **`--no-determinism`** disables all of the above (real clock + unseeded RNG)
+  and marks the session non-replayable.
+
 ## Security
 
 - Path-traversal-safe session IDs (26 lowercase ASCII alphanumeric chars,

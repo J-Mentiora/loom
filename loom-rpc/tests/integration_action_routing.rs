@@ -306,6 +306,7 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _: &str,
         _: Option<&str>,
         _: Option<u64>,
+        _: Option<u64>,
         _: Option<serde_json::Value>,
         _: bool,
         _: bool,

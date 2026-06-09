@@ -171,6 +171,7 @@ fn cli_create_includes_capture_policy_in_rpc_params() {
             profile: None,
             network_mode: None,
             seed: None,
+            clock_anchor: None,
             budget: None,
             capture_policy: Some(variant),
             no_blocklist: false,

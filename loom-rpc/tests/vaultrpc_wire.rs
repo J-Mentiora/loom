@@ -120,6 +120,7 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         _: &str,
         _: Option<&str>,
         _: Option<u64>,
+        _: Option<u64>,
         _: Option<serde_json::Value>,
         _: bool,
         _: bool,
