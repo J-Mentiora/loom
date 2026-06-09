@@ -91,6 +91,31 @@ pub fn build_virtual_time_budget_params() -> ciborium::value::Value {
     ])
 }
 
+/// Deterministic clock-FREEZE fallback. Injected ONLY when virtual time is
+/// disabled (`LOOM_CAPTURE_VIRTUAL_TIME=0`) or when arming it fails — so the
+/// rollback / failure path restores the prior *deterministic* frozen-clock
+/// behavior (replay-equal, animations don't run) rather than leaking a
+/// non-deterministic real-time clock. `__LOOM_EPOCH_MS__` is substituted with
+/// the session epoch. Kept separate from `determinism_init.js` (the main asset
+/// stays freeze-free so the default virtual-time path is unaffected).
+pub const CLOCK_FREEZE_JS: &str = r#"(function(){'use strict';
+  var _e = __LOOM_EPOCH_MS__;
+  Date.now = function(){ return _e; };
+  Date.prototype.getTime = function(){ return _e; };
+  if (typeof performance !== 'undefined') {
+    try { Object.defineProperty(performance, 'timeOrigin', { get:function(){return _e;}, configurable:true }); } catch(e){}
+    performance.now = function(){ return 0; };
+  }
+  var _t = 0;
+  window.requestAnimationFrame = function(cb){ _t += 16; var t = _t; setTimeout(function(){ cb(t); }, 0); return _t; };
+  window.cancelAnimationFrame = function(_id){};
+})()"#;
+
+/// Render the clock-freeze fallback with the session epoch.
+pub fn render_clock_freeze(epoch_ms: u64) -> String {
+    CLOCK_FREEZE_JS.replace("__LOOM_EPOCH_MS__", &epoch_ms.to_string())
+}
+
 /// Pure helper: build the CBOR params for the INJECT-time
 /// `Emulation.setVirtualTimePolicy`. Uses the `pause` policy with
 /// `initialVirtualTime` (seconds since epoch) to PIN the clock origin to the
@@ -274,6 +299,7 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
         // structured context and DEGRADE GRACEFULLY — the page still renders
         // (with a non-deterministic real-time clock); we never hang or hard-fail
         // the capture. Gated by LOOM_CAPTURE_VIRTUAL_TIME for rollback (P6).
+        let mut need_freeze = !virtual_time_enabled();
         if virtual_time_enabled() {
             let vt_msg = CdpMessage {
                 method: VIRTUAL_TIME_METHOD.to_string(),
@@ -285,14 +311,52 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
                     epoch_ms = epoch_ms.0,
                     "determinism: virtual-time clock armed"
                 ),
-                Err(e) => tracing::warn!(
-                    target_id,
-                    error = %e,
-                    "determinism: setVirtualTimePolicy failed — falling back to a \
-                     real-time clock for this target (animations still render; \
-                     replay determinism degraded for this session)"
-                ),
+                Err(e) => {
+                    // Recover to a DETERMINISTIC frozen clock (the prior behavior),
+                    // NOT a non-deterministic real-time clock — preserving
+                    // replay-equality at the cost of animations not rendering.
+                    tracing::warn!(
+                        target_id,
+                        error = %e,
+                        "determinism: setVirtualTimePolicy failed — restoring deterministic \
+                         frozen clock for this target (entrance animations will not render \
+                         this session, but replay determinism is preserved)"
+                    );
+                    need_freeze = true;
+                }
             }
+        } else {
+            tracing::info!(
+                target_id,
+                "determinism: virtual time disabled (LOOM_CAPTURE_VIRTUAL_TIME=0) — \
+                 frozen-clock rollback in effect"
+            );
+        }
+        if need_freeze {
+            // Install the deterministic clock-freeze on all future documents AND
+            // the current context, mirroring the main inject's belt-and-braces.
+            let frozen = render_clock_freeze(epoch_ms.0);
+            let add_freeze = CdpMessage {
+                method: ADD_SCRIPT_METHOD.to_string(),
+                params: build_inject_params(&frozen),
+            };
+            if let Err(e) = self.cdp.command(target_id, add_freeze, None).await {
+                tracing::warn!(target_id, error = %e, "determinism: clock-freeze addScript failed");
+            }
+            let eval_freeze = CdpMessage {
+                method: "Runtime.evaluate".to_string(),
+                params: ciborium::value::Value::Map(vec![
+                    (
+                        ciborium::value::Value::Text("expression".into()),
+                        ciborium::value::Value::Text(frozen),
+                    ),
+                    (
+                        ciborium::value::Value::Text("returnByValue".into()),
+                        ciborium::value::Value::Bool(true),
+                    ),
+                ]),
+            };
+            let _ = self.cdp.command(target_id, eval_freeze, None).await;
         }
 
         tracing::info!(target_id, identifier = %identifier, "determinism: inject ok");

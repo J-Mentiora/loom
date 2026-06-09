@@ -16,6 +16,7 @@
 //! The behavioral acceptance (an opacity:0→1 page captured in its final visible
 //! state) lives in the real-Chrome e2e `loom-cli/tests/live_animation_render_regression.rs`.
 
+use loom_shims::determinism_injector::determinism_injector::render_clock_freeze;
 use loom_shims::determinism_script_template::render_determinism_script;
 
 const TEMPLATE: &str = include_str!("../assets/determinism_init.js");
@@ -41,5 +42,36 @@ fn rendered_script_does_not_freeze_performance_now_to_zero() {
          entrance/reveal animation at its initial frame. The clock must advance \
          (CDP virtual time) or, in the fallback, performance.now() must be driven \
          by an advancing per-rAF counter — never a constant.\n\nrendered script:\n{rendered}"
+    );
+    // The main asset must also NOT freeze Date.now / requestAnimationFrame —
+    // those are driven by CDP virtual time on the default path.
+    assert!(
+        !squashed.contains("Date.now=function"),
+        "main determinism asset must not override Date.now (virtual time drives it)"
+    );
+    assert!(
+        !squashed.contains("requestAnimationFrame=function"),
+        "main determinism asset must not override requestAnimationFrame (native rAF on virtual time)"
+    );
+}
+
+/// The clock-freeze FALLBACK (virtual time off / CDP failure) must restore the
+/// prior DETERMINISTIC frozen clock — so a rollback preserves replay-equality
+/// instead of leaking a real-time clock.
+#[test]
+fn clock_freeze_fallback_freezes_the_clock_deterministically() {
+    let frozen = render_clock_freeze(1_700_000_000_000);
+    let squashed = squash(&frozen);
+    assert!(
+        squashed.contains("performance.now=function(){return0;}"),
+        "freeze fallback must pin performance.now() to 0 (deterministic): {frozen}"
+    );
+    assert!(
+        squashed.contains("Date.now=function(){return_e;}"),
+        "freeze fallback must pin Date.now() to the session epoch: {frozen}"
+    );
+    assert!(
+        frozen.contains("1700000000000") && !frozen.contains("__LOOM_EPOCH_MS__"),
+        "freeze fallback must substitute the epoch token: {frozen}"
     );
 }
