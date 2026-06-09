@@ -7,7 +7,7 @@
 //! load-bearing half: a fixed anchor produces a fixed recorded start time across
 //! independent fresh sessions, while the default (no anchor) records real
 //! wall-clock. The in-Chromium `dom_snapshot_hash` half is the real-Chromium
-//! `tests/e2e/run_e2e.sh` Section 16.
+//! `tests/e2e/run_e2e.sh` Section 21 (cross-run determinism).
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
