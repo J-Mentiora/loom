@@ -12,8 +12,9 @@ use super::decide::BrowserDirEntry;
 
 /// Sidecar pidfile the shim supervisor writes into the user-data-dir. Holds the Chromium
 /// process-group leader pid (== pgid, because the supervisor launches with `process_group(0)`).
-/// Kept in sync with `loom-shims/src/supervisor/supervisor.rs` (which writes it) by string.
-pub const PIDFILE_NAME: &str = "loom-chromium.pid";
+/// Single source of truth lives in `loom-shared` so the writer (supervisor) and reader (this
+/// reaper) can never drift.
+pub use loom_shared::chromium_resolver::CHROMIUM_PIDFILE_NAME as PIDFILE_NAME;
 
 /// Mirror of `loom_host`'s private `is_safe_session_id` — the guard before touching any
 /// `loom-chromium-<id>` path. Duplicated (not shared) to avoid a new cross-crate dep for a

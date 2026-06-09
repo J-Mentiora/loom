@@ -1,7 +1,7 @@
-// DoctorRunner — `loom doctor` 6-check health probe.
+// DoctorRunner — `loom doctor` 8-check health probe.
 //
 // # Contract semantics
-// - **Exactly 6 checks, no more, no fewer:**
+// - **Exactly 8 checks, no more, no fewer:**
 //   1. Socket reachable at platform path (mode 0600).
 //   2. Daemon responsive (single `rpc.ping`).
 //   3. AOT artifacts present (`~/.../surfaces/*.cwasm` non-empty).
@@ -10,11 +10,15 @@
 //      `security-framework`'s read-only ACL check).
 //   6. macOS Gatekeeper quarantine clear on the Chromium binary
 //      (`com.apple.quarantine` xattr absent; no-op pass off macOS).
+//   7. Session health (active sessions / orphan browser trees / oldest
+//      session age, via `daemon.health`). Informational: `warn` when
+//      orphan trees exist, never a hard failure.
+//   8. Browser smoke (full session round-trip; skipped if prereqs failed).
 // - **Exit 0 if all healthy; exit 1 with typed
 //   `DoctorReport { checks, failures }` if any fails.**
 //   Exit-code mapping owned by `ErrorMapper`.
-// - **RPC-free for checks 1, 3, 4, 5, 6.** Check 2 is the SOLE RPC call
-//   in this module — uses `RpcClient::ping`.
+// - **RPC-free for checks 1, 3, 4, 5, 6.** Checks 2, 7, 8 use the daemon
+//   (`RpcClient::ping` / `daemon.health` / a real session round-trip).
 
 use clap::Args;
 use serde::{Deserialize, Serialize};

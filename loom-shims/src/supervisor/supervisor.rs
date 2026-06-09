@@ -280,7 +280,10 @@ impl Supervisor for ChromiumSupervisor {
         // no `Child` handle, so the reaper recovers the pid from this file to `killpg` the
         // orphan tree precisely — no command-line pattern matching. Best-effort: a write
         // failure just means the reaper falls back to skipping the kill (fail-safe).
-        let pidfile = self.config.user_data_dir.join("loom-chromium.pid");
+        let pidfile = self
+            .config
+            .user_data_dir
+            .join(loom_shared::chromium_resolver::CHROMIUM_PIDFILE_NAME);
         if let Err(e) = std::fs::write(&pidfile, pid.to_string()) {
             tracing::warn!(
                 pidfile = %pidfile.display(),
