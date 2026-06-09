@@ -70,9 +70,9 @@ pub struct ErrorTranslator;
 pub struct LoomErrorRef<'a>(pub &'a dyn LoomErrorLike);
 
 /// Minimal trait surfacing the variant + structured data we need to
-/// build the JSON-RPC envelope. `loom_core::error::LoomError`
-/// implements this via a build-time-generated impl (the impl is
-/// emitted alongside `errors.json` schema).
+/// build the JSON-RPC envelope. `code()` returns the canonical
+/// `loom_shared::LoomErrorCode` (re-exported above); there is no
+/// generated `errors.json` schema — the enum is the single source of truth.
 pub trait LoomErrorLike: Send + Sync {
     fn code(&self) -> LoomErrorCode;
     fn message(&self) -> String;

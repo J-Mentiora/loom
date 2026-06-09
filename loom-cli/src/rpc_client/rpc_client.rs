@@ -152,15 +152,25 @@ impl RpcClient {
     }
 }
 
-/// 1:1 mapping from `RpcError` (LoomErrorCode mirror) to `CliError`.
-/// Lives here so call sites can use `?` ergonomics.
+/// Maps the daemon's wire error `code` (snake_case, see
+/// `loom_shared::LoomErrorCode::as_wire`) to a `CliError` for `?` ergonomics.
 impl From<RpcError> for CliError {
     fn from(e: RpcError) -> Self {
         match e.code.as_str() {
-            "rpc-auth-failed" => {
+            // Daemon HELLO/auth failure (auth_middleware emits
+            // `LoomErrorCode::ProtocolAuthRequired` → wire `protocol_auth_required`).
+            // Was the dead kebab literal `"rpc-auth-failed"`, which the daemon never
+            // emits — fixed during error-code-consolidation.
+            "protocol_auth_required" => {
                 CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed)
             }
-            "rpc-schema-violation" => {
+            // TODO(error-codes): the daemon has no dedicated "RPC schema/version
+            // skew" wire code today — the only producer is a test mock, and the
+            // generic `schema_violation` also covers per-field validation, so
+            // routing it here would mis-label those as "reinstall". Left matching
+            // the (currently-unemitted) `rpc_schema_violation` pending a dedicated
+            // version-skew code; tracked in the cleanup backlog.
+            "rpc_schema_violation" => {
                 CliError::Connection(crate::error_mapper::ConnectionError::SchemaVersionSkew)
             }
             "io" => CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning),
