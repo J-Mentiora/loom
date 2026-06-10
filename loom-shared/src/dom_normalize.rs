@@ -11,7 +11,7 @@
 //! hash covers DOM structure + attributes + text + stable document fields
 //! (`documentURL`/`baseURL`) only. It runs SHIM-side, at the CDP chokepoint every
 //! DOM capture flows through (navigate STEP 5 + the generic `cdp_send` used by the
-//! WASM-guest snapshot verb and the `loom-surfaces` guest verbs), so all paths get
+//! WASM-guest snapshot verb and the other guest verbs), so all paths get
 //! content-stable bytes without touching the vendored WASM guest.
 //!
 //! Only `frameId` is stripped: a same-seed byte-diff showed it is the ONLY field

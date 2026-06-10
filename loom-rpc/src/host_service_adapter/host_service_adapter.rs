@@ -123,8 +123,8 @@ pub enum Action {
     // v0.9.6 web-cookie-injection: 4 cookie verbs. `source` for set_cookies
     // is the typed `CookieSource` JSON shape — `{"source":"inline","cookies":[...]}`
     // or `{"source":"grant","grant_id":"..."}`. Typed deserialization to
-    // `loom_surfaces::cookie_types::CookieSource` happens on the daemon
-    // side; `loom-rpc` does not depend on `loom-surfaces`.
+    // `loom_shared::cookie_types::CookieSource` happens on the daemon
+    // side; `loom-rpc` keeps `source` untyped here.
     WebSetCookies {
         session_id: String,
         source: serde_json::Value,
@@ -249,8 +249,8 @@ pub struct Receipt {
     // ---- Cookie tier fields (v0.9.6 web-cookie-injection) ----
     /// `Vec<SetCookieResult>` from `web.set_cookies`. Each entry is shape
     /// `{"name":..., "success":bool, "error_code":Option<String>}` per the
-    /// `loom_surfaces::cookie_types::SetCookieResult` struct. Untyped here
-    /// because `loom-rpc` does not depend on `loom-surfaces`.
+    /// `loom_shared::cookie_types::SetCookieResult` struct. Untyped here
+    /// because `loom-rpc` keeps this value as raw JSON.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_cookies_result: Option<serde_json::Value>,
     /// `Vec<NetworkCookie>` from `web.get_cookies`. Cookie values arrive

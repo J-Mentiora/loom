@@ -256,9 +256,9 @@ pub trait Vault: Send + Sync {
     ///
     /// Returns: a `Vec<u8>` of the raw keychain blob bytes (JSON-encoded
     /// cookie array). The caller (daemon) deserializes into the typed
-    /// `NetworkCookieParam` struct living in `loom-surfaces::cookie_types`;
-    /// keeping the byte-level boundary here avoids a `loom-core →
-    /// loom-surfaces` dep edge.
+    /// `NetworkCookieParam` struct living in `loom_shared::cookie_types`;
+    /// keeping the byte-level boundary here avoids pulling cookie-type
+    /// deserialization into `loom-core`.
     fn substitute_cookies(
         &self,
         grant: GrantId,

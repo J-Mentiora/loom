@@ -23,5 +23,4 @@ Files indexed here:
 | loom-rpc       | `loom-rpc/src/mocks.rs`              |
 | loom-mcp       | `loom-mcp/src/mocks.rs`              |
 | loom-cli       | `loom-cli/src/mocks.rs`              |
-| loom-surfaces  | `loom-surfaces/src/mocks.rs`         |
 | loom-shims     | `loom-shims/src/mocks.rs`            |
