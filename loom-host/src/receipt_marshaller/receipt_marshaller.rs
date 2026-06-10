@@ -5,8 +5,13 @@
 // - **Off the synchronous return.** `WasmHost::dispatch`
 //   returns IMMEDIATELY when the WASM export resolves. This module is
 //   invoked AFTERWARDS on a background tokio task spawned on the
-//   session's `receipt_pool` (per-session, not on a global pool, never
-//   per host-fn).
+//   caller-supplied `receipt_pool` handle (the daemon wires the shared
+//   runtime handle, never per host-fn).
+// - **Per-session append order.** Spawned tasks are detached, and tokio
+//   gives no cross-task ordering — so `queue` chains each task behind
+//   the previous one queued for the SAME session. WAL order is
+//   hash-chained; scheduler-dependent receipt order would break
+//   cross-run hash equality (NFR-DET-01).
 // - **Receipt overhead p95 ≤ 50 ms.** Bound by manifest
 //   write latency only — assembly is in-memory string + integer ops.
 // - **Canonical JSON.** Final payload is
@@ -157,6 +162,13 @@ pub struct ActionOutcome {
 pub struct ReceiptMarshaller {
     pub(crate) manifest_writer: Arc<dyn ManifestWriter>,
     pub(crate) budget: Arc<dyn loom_core::budget_enforcer::BudgetEnforcer>,
+    /// Per-session ordering chain: maps a session to the completion signal
+    /// of the LAST append task queued for it. Each new task awaits its
+    /// predecessor before appending, so receipts land in the WAL in queue
+    /// order even though the tasks themselves are detached and unordered.
+    /// One stale `Receiver` per session remains after its last append
+    /// (negligible; dropped with the marshaller).
+    pub(crate) append_tails: dashmap::DashMap<SessionId, tokio::sync::oneshot::Receiver<()>>,
 }
 
 impl ReceiptMarshaller {
@@ -167,21 +179,43 @@ impl ReceiptMarshaller {
         Arc::new(Self {
             manifest_writer,
             budget,
+            append_tails: dashmap::DashMap::new(),
         })
     }
 
     /// Queue an action outcome for receipt assembly + manifest append.
-    /// Spawns onto `pool`; does NOT block the calling task. Backpressure:
-    /// if the background pool refuses spawn (rare), falls back to a
-    /// synchronous append on the calling task.
+    /// Spawns onto `pool`; does NOT block the calling task. Same-session
+    /// appends apply in `queue` order: the spawned task first awaits the
+    /// completion of the previous task queued for this session (the
+    /// `append_tails` swap below is the atomic point that fixes the order).
     pub fn queue(
         self: &Arc<Self>,
         outcome: ActionOutcome,
         pool: TokioHandle,
     ) -> Result<(), LoomError> {
         let this = self.clone();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
+        let prev_tail = self
+            .append_tails
+            .insert(outcome.session_id.clone(), done_rx);
         pool.spawn(async move {
-            let _ = this.append_synchronous_fallback(outcome);
+            if let Some(prev) = prev_tail {
+                // Err = predecessor dropped without signalling (panicked or
+                // its runtime shut down); it can no longer append, so
+                // proceeding cannot reorder the chain.
+                let _ = prev.await;
+            }
+            let session_id = outcome.session_id.0.clone();
+            let action_id = outcome.builder.action_id;
+            if let Err(e) = this.append_synchronous_fallback(outcome) {
+                tracing::error!(
+                    session_id = %session_id,
+                    action_id = %action_id,
+                    error = %e,
+                    "receipt manifest append failed"
+                );
+            }
+            let _ = done_tx.send(());
         });
         Ok(())
     }
@@ -1169,5 +1203,113 @@ mod cookie_edge_case_tests {
         let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
         let s = String::from_utf8(bytes).unwrap();
         assert!(s.contains("\"matched\":false"));
+    }
+}
+
+#[cfg(test)]
+mod queue_order_tests {
+    use super::*;
+    use loom_core::benchmarks::harness::MockBudgetEnforcer;
+    use loom_core::manifest_writer::{AuditKind, ManifestEntry, WriterHandle};
+    use parking_lot::Mutex;
+
+    /// Records the action_id of every appended ActionReceipt, in arrival
+    /// order. The session's FIRST receipt sleeps before recording — without
+    /// the per-session ordering chain in `queue`, the later (fast) tasks
+    /// would land first and the order assertion below goes red.
+    #[derive(Default)]
+    struct RecordingWriter {
+        appended: Mutex<Vec<u64>>,
+    }
+
+    impl ManifestWriter for RecordingWriter {
+        fn open_manifest_with_started_at(
+            &self,
+            _session: SessionId,
+            _budgets: Option<loom_core::budget_enforcer::BudgetLimits>,
+            _started_at_ms_override: Option<u64>,
+            _capture_policy: Option<String>,
+            _seed: Option<u64>,
+            _determinism_enabled: bool,
+        ) -> Result<WriterHandle, LoomError> {
+            // WriterHandle paths are pub(crate) to loom-core — unbuildable
+            // here, and this test never opens a manifest.
+            Err(LoomError::internal("not used in queue_order_tests"))
+        }
+
+        fn append(&self, _session: SessionId, entry: ManifestEntry) -> Result<(), LoomError> {
+            if let ManifestEntry::ActionReceipt { action_id, .. } = entry {
+                if action_id == 1 {
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                self.appended.lock().push(action_id);
+            }
+            Ok(())
+        }
+
+        fn append_audit(
+            &self,
+            _session: SessionId,
+            _kind: AuditKind,
+            _canonical_bytes: Vec<u8>,
+        ) -> Result<(), LoomError> {
+            Ok(())
+        }
+
+        fn validate(&self, _session: SessionId) -> Result<(), LoomError> {
+            Ok(())
+        }
+
+        fn checkpoint(&self, _session: SessionId) -> Result<(), LoomError> {
+            Ok(())
+        }
+    }
+
+    // REGRESSION (NFR-DET-01): queue() used to fire-and-forget each append
+    // onto the runtime with no ordering, so same-session receipts could land
+    // in the WAL in scheduler order instead of dispatch order. Queue many
+    // outcomes for one session (the first one slow) and assert the appends
+    // applied in exactly queue order.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn queued_same_session_appends_apply_in_queue_order() {
+        let writer = Arc::new(RecordingWriter::default());
+        let marshaller = ReceiptMarshaller::new(writer.clone(), Arc::new(MockBudgetEnforcer));
+        let sid = SessionId("01HZQUEUE0ORDER0000000000F".into());
+
+        const N: u64 = 24;
+        for id in 1..=N {
+            marshaller
+                .queue(
+                    ActionOutcome {
+                        session_id: sid.clone(),
+                        builder: ReceiptBuilder {
+                            action_id: id,
+                            ..Default::default()
+                        },
+                        observed_costs: ObservedCosts::default(),
+                    },
+                    tokio::runtime::Handle::current(),
+                )
+                .unwrap();
+        }
+
+        // The append tasks are detached — poll the recorder until the chain
+        // drains (bounded; the chain is strictly sequential so N appends
+        // complete well inside the deadline).
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while (writer.appended.lock().len() as u64) < N {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "queued appends did not drain"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        let order = writer.appended.lock().clone();
+        assert_eq!(
+            order,
+            (1..=N).collect::<Vec<u64>>(),
+            "same-session receipt appends must apply in queue order"
+        );
     }
 }

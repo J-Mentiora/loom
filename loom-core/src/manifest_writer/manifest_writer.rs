@@ -186,26 +186,33 @@ pub struct LocalManifestWriter {
     /// falls back to reading the file, so a miss is always correct. Evicted on
     /// SessionTerminal.
     ///
-    /// PRECONDITION: a single logical writer per session, with its appends
-    /// serialized by the daemon's WasmBridge dispatch. In production this holds
-    /// — there is exactly one `LocalManifestWriter` Arc, shared daemon-wide.
+    /// Cache reads/writes happen under the session's `append_locks` entry
+    /// (see below), so the cached line is always the last line `append`
+    /// itself wrote. `DashMap` (per-key sharded) exists for SAFE CONCURRENCY
+    /// ACROSS different sessions, which DO append in parallel.
     ///
-    /// Two distinctions matter for correctness:
-    /// - CONCURRENT same-session appends: the cache adds NO new race — the
-    ///   pre-cache code already did read-last-line -> compute prev_hash -> append
-    ///   non-atomically, so two concurrent appends fork the chain with or without
-    ///   this cache. `DashMap` (per-key sharded) exists for SAFE CONCURRENCY
-    ///   ACROSS different sessions, which DO append in parallel.
-    /// - SEQUENTIAL appends from TWO writer INSTANCES on the same session: this
-    ///   is the one property the cache weakens vs the old full-file read. The
-    ///   file read always saw ground truth; a warm cache on instance A would not
-    ///   observe a line that instance B appended in between. No code path does
-    ///   this today (single Arc in prod; the startup-sweep two-writer test only
-    ///   ever goes header-by-A -> append-once-by-B, with B cold -> fallback). A
-    ///   cold/absent key always falls back to the file, so a fresh instance is
-    ///   always correct; only a STALE warm entry across instances would diverge,
-    ///   and `validate()` (which reads disk) is the backstop that catches it.
+    /// SEQUENTIAL appends from TWO writer INSTANCES on the same session are
+    /// the one property the cache weakens vs the old full-file read: the file
+    /// read always saw ground truth; a warm cache on instance A would not
+    /// observe a line that instance B appended in between. No code path does
+    /// this today (single Arc in prod; the startup-sweep two-writer test only
+    /// ever goes header-by-A -> append-once-by-B, with B cold -> fallback). A
+    /// cold/absent key always falls back to the file, so a fresh instance is
+    /// always correct; only a STALE warm entry across instances would diverge,
+    /// and `validate()` (which reads disk) is the backstop that catches it.
     pub(crate) last_line_cache: dashmap::DashMap<SessionId, String>,
+    /// Per-session append lock, held across the whole read-prev-hash ->
+    /// write+fsync -> cache-update sequence in `append` so same-session
+    /// appends never interleave (two appends chaining off one predecessor =
+    /// a forked hash chain, NFR-DET-01). Callers do NOT serialize appends:
+    /// receipt appends arrive on detached tokio tasks (`ReceiptMarshaller::
+    /// queue`) while BlockedUrl audits, SessionTerminal and vault audits
+    /// append from other tasks. Per-key, so different sessions never
+    /// serialize against each other. Entries are NOT evicted on terminal:
+    /// eviction would let a straggler holding the old `Arc` race a
+    /// post-eviction append on a fresh mutex; the residue is one
+    /// `Arc<Mutex<()>>` per session for the writer's lifetime.
+    pub(crate) append_locks: dashmap::DashMap<SessionId, Arc<parking_lot::Mutex<()>>>,
 }
 
 impl LocalManifestWriter {
@@ -215,6 +222,7 @@ impl LocalManifestWriter {
             checkpoint_every_n: 100,
             obs,
             last_line_cache: dashmap::DashMap::new(),
+            append_locks: dashmap::DashMap::new(),
         }
     }
 
@@ -258,6 +266,8 @@ pub trait ManifestWriter: Send + Sync {
 
     /// Append an entry. Atomic: WAL write + fsync; checkpoint to
     /// `manifest.jsonl` every `checkpoint_every_n` entries OR 1s.
+    /// Safe to call concurrently — same-session appends are serialized
+    /// internally so the hash chain never forks.
     /// Pre: session is Active. Post: hash chain extended.
     fn append(&self, session: SessionId, entry: ManifestEntry) -> Result<(), LoomError>;
 

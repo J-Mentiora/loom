@@ -7,6 +7,7 @@
 //   - structured error context: test_validate_corrupt_error_has_structured_context
 //   - atomic write: test_manifest_atomic_write_no_tmp_file
 //   - JCS compliance (HARD #3): test_manifest_jcs_not_serde_json
+//   - append serialization: concurrent_same_session_appends_never_fork_the_chain
 //
 // Each test gets its own `tempfile::TempDir` (auto-removed on drop) so a stale WAL
 // can never leak across runs — bind the returned dir (`let (mw, _tmp) = make_mw();`)
@@ -454,4 +455,81 @@ fn cold_cache_second_writer_falls_back_and_chain_validates() {
 
     mw2.validate(sid)
         .expect("cold-cache fallback append must produce a chain that validates");
+}
+
+// === per-session append serialization (chain-fork regression) ===
+
+// REGRESSION (NFR-DET-01): append() used to be an unlocked read-prev-hash ->
+// writeln+fsync sequence, so concurrent same-session appends could both read
+// the same predecessor and fork the chain (two WAL lines sharing one
+// prev_hash; validate() -> ManifestCorrupt). In production receipt appends
+// run on detached tokio tasks while audits/terminals append from other
+// tasks. Fire many appends in parallel and assert the chain stayed linear:
+// validate() re-derives every prev_hash from the on-disk predecessor, and
+// the manual scan below pins no-fork (all prev_hash unique) and no torn
+// lines (every line parses).
+#[test]
+fn concurrent_same_session_appends_never_fork_the_chain() {
+    let (mw, tmp) = make_mw();
+    let mw = std::sync::Arc::new(mw);
+    let sid = SessionId("01HZCONCURRENT0APPENDS000E".into());
+    mw.open_manifest(sid.clone(), None).unwrap();
+
+    const THREADS: u64 = 16;
+    const APPENDS_PER_THREAD: u64 = 4;
+    let handles: Vec<_> = (0..THREADS)
+        .map(|t| {
+            let mw = mw.clone();
+            let sid = sid.clone();
+            std::thread::spawn(move || {
+                for i in 0..APPENDS_PER_THREAD {
+                    let id = t * APPENDS_PER_THREAD + i + 1;
+                    mw.append(
+                        sid.clone(),
+                        ManifestEntry::ActionReceipt {
+                            action_id: id,
+                            emitted_at_ms: 1_714_000_000_000 + id,
+                            receipt_canonical_bytes: format!("action{id}").into_bytes(),
+                            prev_hash: "0".repeat(64), // overwritten by append()
+                        },
+                    )
+                    .unwrap();
+                }
+            })
+        })
+        .collect();
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    // Oracle 1: validate() re-derives each line's prev_hash from the hash of
+    // the previous on-disk line — a forked or interleaved chain fails here.
+    mw.validate(sid.clone())
+        .expect("concurrent same-session appends must produce a linear chain");
+
+    // Oracle 2: linearity, directly. Exactly header + N lines, every line
+    // parses (no torn writes), and no two entries share a prev_hash (a
+    // duplicate means two appends chained off the same predecessor — a fork
+    // validate() would also flag, pinned here without the hash round-trip).
+    let wal_path = tmp
+        .path()
+        .join("sessions")
+        .join(&sid.0)
+        .join("manifest.wal");
+    let contents = std::fs::read_to_string(&wal_path).unwrap();
+    let lines: Vec<&str> = contents.lines().collect();
+    assert_eq!(
+        lines.len() as u64,
+        THREADS * APPENDS_PER_THREAD + 1,
+        "header + one WAL line per append"
+    );
+    let mut seen_prev_hashes = std::collections::HashSet::new();
+    for line in &lines[1..] {
+        let v: serde_json::Value = serde_json::from_str(line).expect("no torn WAL lines");
+        let prev = v["prev_hash"].as_str().expect("entry has prev_hash");
+        assert!(
+            seen_prev_hashes.insert(prev.to_string()),
+            "two entries chained off the same predecessor (forked chain): {prev}"
+        );
+    }
 }
