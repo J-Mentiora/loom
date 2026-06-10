@@ -70,6 +70,47 @@ fn message_cap_constant_is_280() {
 }
 
 #[test]
+fn truncate_message_ascii_over_cap_keeps_byte_budget_and_ellipsis() {
+    let msg = "x".repeat(MAX_MESSAGE_LEN + 100);
+    let out = ErrorTranslator::truncate_message(&msg);
+    assert_eq!(out.len(), MAX_MESSAGE_LEN, "277 bytes + '...' == 280");
+    assert!(out.ends_with("..."));
+}
+
+#[test]
+fn truncate_message_at_or_under_cap_is_unchanged() {
+    let msg = "é".repeat(MAX_MESSAGE_LEN / 2); // exactly 280 bytes
+    assert_eq!(ErrorTranslator::truncate_message(&msg), msg);
+}
+
+#[test]
+fn truncate_message_multibyte_straddling_cut_point_does_not_panic() {
+    // Regression: the cut point used to be a fixed byte slice, which
+    // panics when byte 277 falls inside a multi-byte char — a
+    // whole-daemon abort under panic = "abort". 'é' is 2 bytes, so
+    // byte 277 is mid-char; '世' is 3 bytes, ditto.
+    for msg in [
+        "é".repeat(200),        // 400 bytes
+        "\u{4e16}".repeat(100), // 300 bytes of CJK
+        format!("unknown profile: {}", "界".repeat(100)),
+    ] {
+        let out = ErrorTranslator::truncate_message(&msg);
+        assert!(out.len() <= MAX_MESSAGE_LEN, "must respect the cap: {out}");
+        assert!(out.ends_with("..."), "must keep the ellipsis: {out}");
+    }
+}
+
+#[test]
+fn from_unknown_profile_with_long_multibyte_profile_does_not_panic() {
+    // End-to-end: the profile string is client-controlled and embeds
+    // straight into the message that truncate_message cuts.
+    let provided = "界".repeat(120);
+    let env = ErrorTranslator::from_unknown_profile(&provided, &["safe", "standard", "full"]);
+    assert!(env.message.len() <= MAX_MESSAGE_LEN);
+    assert_eq!(env.code, LoomErrorCode::UnknownProfile);
+}
+
+#[test]
 fn panic_payload_converts_to_internal_error_envelope() {
     fn _ck(p: Box<dyn Any + Send>) -> JsonRpcError {
         ErrorTranslator::catch_panic_into_envelope(p)

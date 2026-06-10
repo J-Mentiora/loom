@@ -278,6 +278,20 @@ impl RpcHandlers {
     }
 
     pub async fn content_get(&self, artifact_ref: String) -> HandlerResult<ContentData> {
+        // Reject implausible refs before they reach the content store:
+        // content.get is a builtin core method (no JSON-schema validation),
+        // so artifact_ref arrives here completely unconstrained. Same
+        // SchemaViolation shape as the import.playwright bad-hex arm.
+        if !is_plausible_sha256(&artifact_ref) {
+            return Err(JsonRpcError {
+                code: LoomErrorCode::SchemaViolation,
+                message: format!(
+                    "content.get: artifact_ref must be a 64-char lowercase hex sha256 (got {} bytes)",
+                    artifact_ref.len()
+                ),
+                data: None,
+            });
+        }
         self.core
             .content_get(&artifact_ref)
             .map_err(|code| JsonRpcError {
@@ -456,4 +470,10 @@ impl RpcHandlers {
                 data: None,
             })
     }
+}
+
+/// `true` when `r` is a plausible CAS reference: exactly 64 lowercase hex
+/// chars, the content store's addressing scheme (`sha256_hex`).
+fn is_plausible_sha256(r: &str) -> bool {
+    r.len() == 64 && r.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }

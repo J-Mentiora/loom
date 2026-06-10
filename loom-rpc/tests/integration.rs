@@ -540,3 +540,79 @@ async fn test_concurrent_connections_are_independent() {
         "conn1 must still work after conn2 fails; got: {v1}"
     );
 }
+
+// ─── Test 6: content.get rejects malformed artifact_refs without aborting ────
+
+/// Regression for the daemon-abort panic: `content.get` forwarded
+/// `artifact_ref` straight into the content store's `shard_path`, which
+/// byte-sliced refs shorter than the shard prefix out of bounds — with
+/// `panic = "abort"` that killed the whole daemon. Malformed refs must now
+/// come back as a typed `schema_violation` envelope on a live connection.
+#[tokio::test]
+async fn test_content_get_malformed_artifact_ref_returns_schema_violation() {
+    let (srv, _bg) = start_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut framed = connect(&srv.socket_path).await;
+    send_frame(&mut framed, format!("HELLO {}", srv.token.0).as_bytes()).await;
+
+    let bad_refs: Vec<serde_json::Value> = vec![
+        serde_json::json!(""),
+        serde_json::json!("a"),
+        serde_json::json!("abc"),
+        // 64 chars but not lowercase hex.
+        serde_json::json!("Z".repeat(64)),
+        // Over-long.
+        serde_json::json!("a".repeat(100)),
+        // Omitted param defaults to "" in the router.
+        serde_json::Value::Null,
+    ];
+    for (i, bad) in bad_refs.into_iter().enumerate() {
+        let params = match &bad {
+            serde_json::Value::Null => serde_json::json!({}),
+            v => serde_json::json!({ "artifact_ref": v }),
+        };
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": i + 1,
+            "method": "content.get",
+            "params": params,
+        });
+        send_frame(&mut framed, request.to_string().as_bytes()).await;
+
+        let resp_bytes = recv_frame(&mut framed).await;
+        let resp: serde_json::Value =
+            serde_json::from_slice(&resp_bytes).expect("daemon must answer, not abort");
+        let code = resp
+            .get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        assert_eq!(
+            code, "schema_violation",
+            "malformed ref {bad:?} must be rejected as schema_violation; got: {resp}"
+        );
+    }
+
+    // A well-formed (64-char lowercase hex) ref passes validation and
+    // reaches the core bridge — the stub returns internal_error, proving
+    // the guard doesn't over-block plausible refs.
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 99,
+        "method": "content.get",
+        "params": { "artifact_ref": "a".repeat(64) },
+    });
+    send_frame(&mut framed, request.to_string().as_bytes()).await;
+    let resp_bytes = recv_frame(&mut framed).await;
+    let resp: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap();
+    let code = resp
+        .get("error")
+        .and_then(|e| e.get("code"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert_eq!(
+        code, "internal_error",
+        "well-formed ref must reach the core bridge; got: {resp}"
+    );
+}
