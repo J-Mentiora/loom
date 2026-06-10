@@ -7,7 +7,6 @@ mod interface_tests;
 use crate::error_mapper::ErrorMapper;
 use crate::stdio_transport::{McpProtocolError, McpRequest, McpResponse};
 use loom_rpc::error::LoomError;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 impl McpDispatcher {
@@ -16,14 +15,14 @@ impl McpDispatcher {
         resource_tracker: Arc<crate::resource_tracker::ResourceTracker>,
         rpc: Arc<crate::rpc_client::RpcClient>,
         obs: Arc<crate::mcp_observability::McpObservability>,
-        shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+        shutdown: tokio_util::sync::CancellationToken,
     ) -> Arc<Self> {
         Arc::new(Self {
             tool_cache,
             resource_tracker,
             rpc,
             obs,
-            shutdown_flag,
+            shutdown,
             implicit_session: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
@@ -177,8 +176,11 @@ impl McpDispatcher {
         }
     }
 
+    /// Request orderly server shutdown: cancels the token that
+    /// `mcp_main::serve_until_shutdown` selects on, so the stdio loop
+    /// exits and `run` closes the implicit session before returning.
     pub fn shutdown(&self) {
-        self.shutdown_flag.store(true, Ordering::SeqCst);
+        self.shutdown.cancel();
     }
 
     pub async fn ping(&self) -> serde_json::Value {

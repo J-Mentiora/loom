@@ -32,6 +32,10 @@ dirs = { workspace = true }
 base64 = { workspace = true }
 hex = { workspace = true }
 
+[dev-dependencies]
+# Raises real SIGTERM/SIGINT at the test process in signal-handling tests.
+libc = { workspace = true }
+
 [features]
 default = []
 mock = []

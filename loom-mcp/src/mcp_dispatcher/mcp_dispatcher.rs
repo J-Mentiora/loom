@@ -82,7 +82,12 @@ pub struct McpDispatcher {
     pub(crate) rpc: Arc<RpcClient>,
     #[allow(dead_code)]
     pub(crate) obs: Arc<McpObservability>,
-    pub(crate) shutdown_flag: Arc<std::sync::atomic::AtomicBool>,
+    /// Cancelled when shutdown is requested — by the MCP `shutdown`
+    /// method or the process signal task. `mcp_main::serve_until_shutdown`
+    /// selects on it against the stdio loop, so cancelling actually
+    /// terminates the server (its `AtomicBool` predecessor was stored
+    /// into but never read by anything).
+    pub(crate) shutdown: tokio_util::sync::CancellationToken,
     /// Implicit session id auto-created on first tool call and reused
     /// across the MCP server's lifetime. Lets MCP clients call
     /// `loom.web.*` tools without first having to call session.create
