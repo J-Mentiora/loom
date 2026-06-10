@@ -26,7 +26,7 @@ import platform
 import socket
 import struct
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from loom._errors import LoomConnectionError, LoomRPCError, LoomTokenError
 
@@ -72,10 +72,15 @@ class LoomTransport:
         # future concurrent path. For cancellable / concurrent use, see
         # AsyncLoomTransport.
         self._next_id: int = 1
+        # Latched daemon-level protocol error (e.g. the HELLO auth-failure
+        # frame). Once set, every subsequent call() re-raises it instead of
+        # surfacing a generic connection error.
+        self._daemon_error: LoomRPCError | None = None
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             self._sock.connect(self._path)
         except OSError as exc:
+            self._sock.close()
             raise LoomConnectionError(
                 f"Cannot connect to loom socket at {self._path}: {exc}"
             ) from exc
@@ -91,23 +96,60 @@ class LoomTransport:
         """
         Send a JSON-RPC 2.0 request and return the ``result`` value.
 
-        Raises ``LoomRPCError`` if the response contains an ``"error"`` key.
+        Raises ``LoomRPCError`` if the response contains an ``"error"`` key,
+        or if the daemon sent a bare ``JsonRpcError`` frame (the HELLO
+        auth-failure shape — see ``LoomRPCError._from_bare_frame``).
 
         This transport is single-in-flight: ``call()`` blocks until the
         response arrives. For cancellable or concurrent use, use
         :class:`AsyncLoomTransport`.
         """
+        if self._daemon_error is not None:
+            raise self._daemon_error
         request_id = self._next_id
         self._next_id += 1
         request = json.dumps(
             {"jsonrpc": "2.0", "method": method, "params": params, "id": request_id}
         )
-        self._send_frame(request.encode("utf-8"))
-        response_bytes = self._recv_frame()
+        try:
+            self._send_frame(request.encode("utf-8"))
+        except OSError as exc:
+            # The daemon may have already sent a terminal error frame (e.g.
+            # the HELLO auth-failure frame) and closed the connection, so the
+            # write fails before we ever read it. Salvage that frame so the
+            # typed error surfaces instead of a bare BrokenPipeError.
+            self._raise_connection_lost(exc)
+        try:
+            response_bytes = self._recv_frame()
+        except LoomConnectionError:
+            raise
+        except OSError as exc:
+            raise LoomConnectionError(f"Connection to daemon lost: {exc}") from exc
         response = json.loads(response_bytes)
         if "error" in response:
             raise LoomRPCError._from_envelope(response)
+        bare = LoomRPCError._from_bare_frame(response)
+        if bare is not None:
+            # Daemon-level protocol error: on HELLO auth failure the daemon
+            # sends a BARE serialized JsonRpcError — {"code", "message"} with
+            # no {"error": ...} wrapper and no id — then closes. Latch it so
+            # later calls re-raise the same typed error.
+            self._daemon_error = bare
+            raise bare
         return response.get("result")
+
+    def _raise_connection_lost(self, cause: OSError) -> NoReturn:
+        """Send failed: drain a pending daemon error frame if there is one,
+        otherwise raise a connection error wrapping ``cause``."""
+        try:
+            pending = json.loads(self._recv_frame())
+        except Exception:
+            pending = None
+        bare = LoomRPCError._from_bare_frame(pending)
+        if bare is not None:
+            self._daemon_error = bare
+            raise bare from cause
+        raise LoomConnectionError(f"Connection to daemon lost: {cause}") from cause
 
     def close(self) -> None:
         """Close the socket connection."""

@@ -32,6 +32,7 @@ from loom.types import (
     GrantInfo,
     LoomErrorCode,
     Receipt,
+    ReceiptError,
     SchemaRegistry,
     SessionInfo,
     SessionInspection,
@@ -51,6 +52,7 @@ __all__ = [
     "SessionInfo",
     "SessionInspection",
     "Receipt",
+    "ReceiptError",
     "DiffReport",
     "ExportInfo",
     "ValidationResult",
@@ -142,12 +144,18 @@ class Session:
             params["budget"] = budget
         if no_determinism:
             params["no_determinism"] = True
-        result = transport.call("session.create", params)
-        return cls(
-            session_id=result["session_id"],
-            status=result.get("status", "active"),
-            transport=transport,
-        )
+        try:
+            result = transport.call("session.create", params)
+            return cls(
+                session_id=result["session_id"],
+                status=result.get("status", "active"),
+                transport=transport,
+            )
+        except Exception:
+            # Don't leak the connected socket when the RPC fails (schema
+            # violation, unknown profile, auth failure, …).
+            transport.close()
+            raise
 
     def navigate(
         self,
@@ -280,8 +288,11 @@ class Session:
         return Receipt._from_dict(r)
 
     def close(self) -> SessionInfo:
-        result = self._transport.call("session.close", {"session_id": self.session_id})
-        self._transport.close()
+        try:
+            result = self._transport.call("session.close", {"session_id": self.session_id})
+        finally:
+            # Always release the socket, even when the RPC fails.
+            self._transport.close()
         if result:
             return SessionInfo._from_dict(result)
         return SessionInfo(self.session_id, "closed", 0)
@@ -445,12 +456,18 @@ class AsyncSession:
             params["budget"] = budget
         if no_determinism:
             params["no_determinism"] = True
-        result = await transport.call("session.create", params)
-        return cls(
-            session_id=result["session_id"],
-            status=result.get("status", "active"),
-            transport=transport,
-        )
+        try:
+            result = await transport.call("session.create", params)
+            return cls(
+                session_id=result["session_id"],
+                status=result.get("status", "active"),
+                transport=transport,
+            )
+        except Exception:
+            # Don't leak the connected socket when the RPC fails (schema
+            # violation, unknown profile, auth failure, …).
+            await transport.close()
+            raise
 
     async def navigate(
         self,
@@ -490,8 +507,11 @@ class AsyncSession:
         return Receipt._from_dict(r)
 
     async def close(self) -> SessionInfo:
-        result = await self._transport.call("session.close", {"session_id": self.session_id})
-        await self._transport.close()
+        try:
+            result = await self._transport.call("session.close", {"session_id": self.session_id})
+        finally:
+            # Always release the socket, even when the RPC fails.
+            await self._transport.close()
         if result:
             return SessionInfo._from_dict(result)
         return SessionInfo(self.session_id, "closed", 0)

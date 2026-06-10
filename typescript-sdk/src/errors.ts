@@ -31,6 +31,23 @@ export class LoomRPCError extends LoomError {
       err.data ?? null,
     );
   }
+
+  /**
+   * Recognize the daemon's BARE `JsonRpcError` frame.
+   *
+   * On HELLO auth failure the daemon serializes the `JsonRpcError` struct
+   * directly — `{"code": ..., "message": ...}` with NO `{"error": ...}`
+   * wrapper and NO `id` (loom-rpc `connection_handler::send_error`) — then
+   * closes the connection. Returns `null` when the frame is not that shape
+   * (normal response envelopes carry `id` and `result`/`error`).
+   */
+  static fromBareFrame(envelope: Record<string, unknown>): LoomRPCError | null {
+    if ("id" in envelope || "result" in envelope || "error" in envelope) return null;
+    const code = envelope["code"];
+    const message = envelope["message"];
+    if (typeof code !== "string" || typeof message !== "string") return null;
+    return new LoomRPCError(code, message, envelope["data"] ?? null);
+  }
 }
 
 export class LoomConnectionError extends LoomError {

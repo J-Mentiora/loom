@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 
 class LoomErrorCode(StrEnum):
@@ -142,6 +143,24 @@ class GrantInfo:
 
 
 @dataclass
+class ReceiptError:
+    """Wire-shape error payload on a Receipt (host_service_adapter ReceiptError).
+
+    ``kind`` is a stable typed string (e.g. ``"http_status"``, ``"dns_failure"``,
+    ``"connect_refused"``, ``"tls_error"``, ``"url_blocked"``, ``"shim_failure"``);
+    ``detail`` carries kind-specific fields (e.g. ``{"status_code", "url"}`` for
+    ``http_status``). ``detail`` is None for kinds with no kind-specific data.
+    """
+
+    kind: str
+    detail: Any | None = None
+
+    @classmethod
+    def _from_dict(cls, d: dict) -> ReceiptError:
+        return cls(kind=d.get("kind", ""), detail=d.get("detail"))
+
+
+@dataclass
 class Receipt:
     """Action receipt returned by action.web.* methods (WIT receipt record)."""
 
@@ -157,15 +176,52 @@ class Receipt:
     # the bounded fallback fired (persistent connection / perpetual animation)
     # — the page never reached the requested readiness state.
     settle_outcome: str | None = None
+    # Receipt-level outcome: "success" | "error" | "aborted" (ReceiptStatus
+    # in loom-rpc host_service_adapter). Failed actions (DNS failure,
+    # HTTP 4xx/5xx, blocked URL, shim failure) return as a SUCCESSFUL
+    # JSON-RPC result whose receipt has status="error" — check ``ok`` /
+    # ``status`` instead of relying on an exception.
+    status: str = "success"
+    # Typed failure payload when status != "success"; None on success.
+    error: ReceiptError | None = None
+    # ---- navigate tier-2 fields (None for non-navigate verbs) ----
+    url: str | None = None
+    final_url: str | None = None
+    title: str | None = None
+    status_code: int | None = None
+    dom_snapshot_hash: str | None = None
+    screenshot_after_hash: str | None = None
+    # ---- evaluate tier fields ----
+    # JS expression result, canonical-JSON encoded. None means "not an
+    # evaluate action" or "result offloaded to the content store" (in which
+    # case return_value_blob_ref carries the SHA-256).
+    return_value_json: str | None = None
+    return_value_blob_ref: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        """True when the action succeeded (``status == "success"``)."""
+        return self.status == "success"
 
     @classmethod
     def _from_dict(cls, d: dict) -> Receipt:
+        error = d.get("error")
         return cls(
             action_hash=d.get("action_hash", ""),
             outcome_hash=d.get("outcome_hash", ""),
             emitted_at_ms=d.get("emitted_at_ms", 0),
             settle_until=d.get("settle_until"),
             settle_outcome=d.get("settle_outcome"),
+            status=d.get("status", "success"),
+            error=ReceiptError._from_dict(error) if isinstance(error, dict) else None,
+            url=d.get("url"),
+            final_url=d.get("final_url"),
+            title=d.get("title"),
+            status_code=d.get("status_code"),
+            dom_snapshot_hash=d.get("dom_snapshot_hash"),
+            screenshot_after_hash=d.get("screenshot_after_hash"),
+            return_value_json=d.get("return_value_json"),
+            return_value_blob_ref=d.get("return_value_blob_ref"),
         )
 
 
