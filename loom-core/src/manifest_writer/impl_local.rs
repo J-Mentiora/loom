@@ -340,8 +340,15 @@ impl ManifestWriter for LocalManifestWriter {
         // Capture the terminal flag before entry is consumed by set_prev_hash.
         let is_terminal = matches!(entry, ManifestEntry::SessionTerminal { .. });
 
-        // Compute prev_hash from the last line already in the WAL.
-        let prev_hash = match last_wal_line(&wal_path)? {
+        // Compute prev_hash from the last WAL line — cached per session, falling
+        // back to a full WAL read on a cold cache (first append after open, since
+        // the Header is written outside append(); resumed sessions; a fresh writer
+        // instance). The cache is a fast path only; a miss is always correct.
+        let prev_line: Option<String> = match self.last_line_cache.get(&session) {
+            Some(cached) => Some(cached.clone()),
+            None => last_wal_line(&wal_path)?,
+        };
+        let prev_hash = match prev_line {
             Some(last_line) => sha256_hex(&hashable_line(&last_line)),
             None => "0".repeat(64),
         };
@@ -356,9 +363,15 @@ impl ManifestWriter for LocalManifestWriter {
         writeln!(file, "{json_line}")?;
         file.sync_all()?;
 
-        // Produce manifest.json checkpoint when session closes.
         if is_terminal {
+            // Session closing: drop the cache entry, then write the public checkpoint.
+            self.last_line_cache.remove(&session);
             self.export_manifest_json(session)?;
+        } else {
+            // Warm the cache with exactly the line we just wrote. `writeln!` adds
+            // the trailing newline, which `last_wal_line`'s `lines().last()` would
+            // strip — so the newline-free `json_line` matches the fallback's bytes.
+            self.last_line_cache.insert(session, json_line);
         }
 
         Ok(())

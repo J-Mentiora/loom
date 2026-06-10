@@ -180,6 +180,32 @@ pub struct LocalManifestWriter {
     pub(crate) sessions_root: PathBuf,
     pub(crate) checkpoint_every_n: u64,
     pub(crate) obs: Arc<Observability>,
+    /// Per-session cache of the last raw WAL line (newline-free) so `append`
+    /// skips re-reading the whole WAL to compute `prev_hash` (O(n^2)->O(n)
+    /// amortized). Keyed by session ULID. Fast path only: a cold/absent key
+    /// falls back to reading the file, so a miss is always correct. Evicted on
+    /// SessionTerminal.
+    ///
+    /// PRECONDITION: a single logical writer per session, with its appends
+    /// serialized by the daemon's WasmBridge dispatch. In production this holds
+    /// — there is exactly one `LocalManifestWriter` Arc, shared daemon-wide.
+    ///
+    /// Two distinctions matter for correctness:
+    /// - CONCURRENT same-session appends: the cache adds NO new race — the
+    ///   pre-cache code already did read-last-line -> compute prev_hash -> append
+    ///   non-atomically, so two concurrent appends fork the chain with or without
+    ///   this cache. `DashMap` (per-key sharded) exists for SAFE CONCURRENCY
+    ///   ACROSS different sessions, which DO append in parallel.
+    /// - SEQUENTIAL appends from TWO writer INSTANCES on the same session: this
+    ///   is the one property the cache weakens vs the old full-file read. The
+    ///   file read always saw ground truth; a warm cache on instance A would not
+    ///   observe a line that instance B appended in between. No code path does
+    ///   this today (single Arc in prod; the startup-sweep two-writer test only
+    ///   ever goes header-by-A -> append-once-by-B, with B cold -> fallback). A
+    ///   cold/absent key always falls back to the file, so a fresh instance is
+    ///   always correct; only a STALE warm entry across instances would diverge,
+    ///   and `validate()` (which reads disk) is the backstop that catches it.
+    pub(crate) last_line_cache: dashmap::DashMap<SessionId, String>,
 }
 
 impl LocalManifestWriter {
@@ -188,6 +214,7 @@ impl LocalManifestWriter {
             sessions_root,
             checkpoint_every_n: 100,
             obs,
+            last_line_cache: dashmap::DashMap::new(),
         }
     }
 

@@ -1,0 +1,10 @@
+<svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+  <!-- V4: white bg, 3 navy warp lines (visible), blue shuttle — high contrast minimal -->
+  <rect x="0.75" y="0.75" width="62.5" height="62.5" rx="14" fill="#FFFFFF" stroke="#E8ECF2" stroke-width="1.5"/>
+  <line x1="20" y1="16" x2="20" y2="48" stroke="#0A2540" stroke-width="2" stroke-linecap="round" opacity="0.18"/>
+  <line x1="32" y1="16" x2="32" y2="48" stroke="#0A2540" stroke-width="2" stroke-linecap="round" opacity="0.18"/>
+  <line x1="44" y1="16" x2="44" y2="48" stroke="#0A2540" stroke-width="2" stroke-linecap="round" opacity="0.18"/>
+  <path d="M 12 32 Q 22 22, 27 32 T 37 32 T 47 32 T 52 32"
+        stroke="#0067E5" stroke-width="3.5" fill="none"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
