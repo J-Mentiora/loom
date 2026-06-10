@@ -146,19 +146,42 @@ fn builtin_core_methods_pass_validation_even_when_provider_has_only_one_method()
         request_schema: web_click_schema(),
     });
     let validator = SchemaValidator::new(provider);
+    // The full BUILTIN_CORE_METHODS set — every method with a
+    // hand-written `RequestRouter::dispatch` arm. Keep this list in
+    // lockstep with the const: the regression where `loom vault
+    // add-direct/delete/list-labels/diagnose` and `loom session reap`
+    // failed with `method_not_found` on any postinstalled daemon was
+    // exactly a router arm added without the matching validator-bypass
+    // entry (vault.set_secret / vault.delete_secret / vault.list_labels /
+    // vault.diagnose / vault.get_session_context / session.reap).
     for builtin in [
+        "health.ping",
+        "rpc.schemas",
         "session.create",
         "session.list",
+        "session.inspect",
         "session.close",
         "session.abort",
         "session.replay",
+        "session.diff",
+        "session.export",
+        "session.validate",
+        "session.kill",
+        "session.reap",
         "vault.grant",
         "vault.revoke",
+        "vault.list_grants",
         "vault.add",
-        "gc.run",
-        "rpc.schemas",
+        "vault.set_secret",
+        "vault.delete_secret",
+        "vault.list_labels",
+        "vault.diagnose",
+        "vault.get_session_context",
         "content.get",
-        "health.ping",
+        "gc.run",
+        "import.playwright",
+        "daemon.health",
+        "request.cancel",
     ] {
         let outcome = validator.validate_request(builtin, &json!({}));
         assert!(

@@ -73,7 +73,7 @@ impl CoreFacadeBridge for NoopCoreBridge {
     }
     fn create_session_raw(
         &self,
-        _: &str,
+        profile: &str,
         _: &str,
         _: Option<&str>,
         _: Option<u64>,
@@ -82,6 +82,14 @@ impl CoreFacadeBridge for NoopCoreBridge {
         _: bool,
         _: Option<u64>,
     ) -> Result<(String, u64), LoomErrorCode> {
+        // the handler must resolve the SDK
+        // `profile: "default"` alias to a canonical profile BEFORE
+        // delegating — a non-canonical name reaching the adapter would
+        // leak into downstream `profile == "safe"` consumers.
+        assert!(
+            loom_core::profile_registry::profile_registry::is_known_profile(profile),
+            "non-canonical profile '{profile}' leaked through to the core adapter"
+        );
         Err(LoomErrorCode::InternalError)
     }
     fn close_session_raw(&self, _: &str) -> Result<(), LoomErrorCode> {
@@ -323,5 +331,28 @@ async fn canonical_inputs_pass_validation_and_reach_adapter() {
     let p = create_params("safe", "live", None);
     let err = h.session_create(p).await.expect_err("noop adapter errors");
     // Adapter-side error — proves we got past validation.
+    assert_eq!(err.code, LoomErrorCode::InternalError);
+}
+
+// --- SDK zero-config compat: profile "default" -------------------------
+
+/// Both SDKs unconditionally send `profile: "default"` when the caller
+/// doesn't specify one, so the documented quick-start
+/// (`loom.Session.create()` with no args) hit `unknown_profile` on
+/// every real daemon. The handler must resolve the alias to the
+/// canonical server default ("safe") and reach the adapter — the
+/// NoopCoreBridge asserts only canonical profile names arrive.
+#[tokio::test]
+async fn sdk_default_profile_alias_passes_validation_and_reaches_adapter() {
+    let h = make_handlers();
+    let p = create_params("default", "live", None);
+    let err = h.session_create(p).await.expect_err("noop adapter errors");
+    assert_ne!(
+        err.code,
+        LoomErrorCode::UnknownProfile,
+        "profile \"default\" must not be rejected as unknown_profile"
+    );
+    // Adapter-side error — proves validation passed and the resolved
+    // (canonical) profile reached the adapter.
     assert_eq!(err.code, LoomErrorCode::InternalError);
 }
