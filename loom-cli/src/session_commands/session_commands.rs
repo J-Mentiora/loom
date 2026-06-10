@@ -227,13 +227,67 @@ pub struct AbortArgs {
     pub reason: Option<String>,
 }
 
+/// Parsed `--speed` value for `loom session replay`. The daemon's
+/// `session.replay` wire contract is a JSON *number* (the SDKs send e.g.
+/// `1.0`), so the documented CLI string forms are parsed at the clap
+/// boundary and mapped via [`ReplaySpeed::as_wire_f64`]. A `String`
+/// forwarded verbatim (the previous shape) never parsed daemon-side and
+/// was silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReplaySpeed {
+    /// Source pacing (wire value `1`).
+    Realtime,
+    /// `Nx` multiplier, e.g. `2x` or `1.5x` (wire value `N`).
+    Multiplier(f64),
+    /// Unpaced — as fast as the replay engine can drive (wire sentinel
+    /// `0`, consistent with the workspace's 0-means-unlimited budget
+    /// convention; the daemon accepts it explicitly).
+    Max,
+}
+
+impl ReplaySpeed {
+    /// Numeric wire form for the `session.replay` RPC `speed` param.
+    pub fn as_wire_f64(self) -> f64 {
+        match self {
+            ReplaySpeed::Realtime => 1.0,
+            ReplaySpeed::Multiplier(n) => n,
+            ReplaySpeed::Max => 0.0,
+        }
+    }
+}
+
+/// clap value parser for `--speed`. Accepts the documented forms
+/// `realtime`, `max`, and `Nx` (N > 0, finite; fractional allowed,
+/// e.g. `1.5x`). Anything else is a clap `InvalidValue` (exit 2) with
+/// the accepted forms in the message — no more silent discard.
+pub fn parse_replay_speed(s: &str) -> Result<ReplaySpeed, String> {
+    let s = s.trim();
+    if s.eq_ignore_ascii_case("realtime") {
+        return Ok(ReplaySpeed::Realtime);
+    }
+    if s.eq_ignore_ascii_case("max") {
+        return Ok(ReplaySpeed::Max);
+    }
+    let err = || format!("invalid speed {s:?}; expected `Nx` (e.g. `2x`), `max`, or `realtime`");
+    let n = s
+        .strip_suffix(['x', 'X'])
+        .ok_or_else(err)?
+        .parse::<f64>()
+        .map_err(|_| err())?;
+    if !n.is_finite() || n <= 0.0 {
+        return Err(err());
+    }
+    Ok(ReplaySpeed::Multiplier(n))
+}
+
 /// `loom session replay <id>` arguments.
 #[derive(Debug, Clone, Args, Serialize, Deserialize)]
 pub struct ReplayArgs {
     pub session_id: String,
-    /// `Nx`, `max`, or `realtime`.
-    #[arg(long, default_value = "realtime")]
-    pub speed: String,
+    /// `Nx` (e.g. `2x`, `1.5x`), `max`, or `realtime`.
+    #[arg(long, default_value = "realtime", value_parser = parse_replay_speed)]
+    pub speed: ReplaySpeed,
 }
 
 /// `loom session diff <a> <b>` arguments.
@@ -427,7 +481,9 @@ pub async fn replay(rpc: &RpcClient, cfg: &CliConfig, args: ReplayArgs) -> Resul
             "session.replay",
             serde_json::json!({
                 "session_id": args.session_id,
-                "speed": args.speed,
+                // Numeric per the daemon contract (request_router parses
+                // `as_f64`; the SDKs send numbers). See `ReplaySpeed`.
+                "speed": args.speed.as_wire_f64(),
             }),
         )
         .await?;

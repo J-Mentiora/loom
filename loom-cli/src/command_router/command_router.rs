@@ -164,6 +164,7 @@ pub enum VaultCmd {
 fn make_rpc_client(config: &CliConfig) -> RpcClient {
     RpcClient::new(RpcClientConfig {
         socket_path: config.socket_path.clone(),
+        auth_dir: config.auth_dir.clone(),
         request_timeout: config.request_timeout,
     })
 }
@@ -280,7 +281,13 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 skip_binaries: args.skip_binaries,
                 man_install_dir: None,
             };
-            crate::postinstall_runner::run(opts).await.map(|_| ())
+            let receipt = crate::postinstall_runner::run(opts).await?;
+            // Emit the documented canonical-JSON receipt to stdout (the
+            // doctor path's emit pattern). Progress/advisories already
+            // went to stderr; stdout carries exactly one receipt object.
+            let value = serde_json::to_value(&receipt)
+                .map_err(|e| CliError::Internal(format!("postinstall receipt serialize: {e}")))?;
+            crate::output_formatter::emit_to_stdout("postinstall", &value, config, None)
         }
 
         Command::Doctor(_args) => {

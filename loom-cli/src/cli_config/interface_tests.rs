@@ -199,6 +199,106 @@ fn test_precedence_file_wins_when_no_env_no_cli() {
     );
 }
 
+// === pretty: file + LOOM_PRETTY resolution (regression: cli_main used to
+// clobber the resolved value with the bare CLI flag, making both dead) ===
+
+#[test]
+fn test_pretty_resolves_from_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let mut f = std::fs::File::create(&config_path).unwrap();
+    writeln!(f, "pretty = true").unwrap();
+
+    let inputs = ResolveInputs {
+        cli_overrides: vec![],
+        env_vars: vec![],
+        config_path: Some(config_path),
+    };
+    let cfg = resolve(inputs, None).expect("resolve must succeed");
+    assert!(cfg.pretty, "config.toml `pretty = true` must be honoured");
+}
+
+#[test]
+fn test_pretty_env_wins_over_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let mut f = std::fs::File::create(&config_path).unwrap();
+    writeln!(f, "pretty = true").unwrap();
+
+    let inputs = ResolveInputs {
+        cli_overrides: vec![],
+        env_vars: vec![("LOOM_PRETTY".to_string(), "false".to_string())],
+        config_path: Some(config_path),
+    };
+    let cfg = resolve(inputs, None).expect("resolve must succeed");
+    assert!(
+        !cfg.pretty,
+        "LOOM_PRETTY=false must override the file value"
+    );
+}
+
+#[test]
+fn test_pretty_env_invalid_value_is_usage_error() {
+    let inputs = ResolveInputs {
+        cli_overrides: vec![],
+        env_vars: vec![("LOOM_PRETTY".to_string(), "garbage".to_string())],
+        config_path: Some(std::path::PathBuf::from(
+            "/tmp/does_not_exist_loom_test/config.toml",
+        )),
+    };
+    let err = resolve(inputs, None).expect_err("LOOM_PRETTY=garbage must fail");
+    assert!(matches!(err, CliError::Usage(_)), "got: {err:?}");
+}
+
+// === auth_dir: compiled default must equal where the daemon writes
+// hello.token (`<data_root>/auth/` = dirs::data_dir()/loom/auth) ===
+
+#[test]
+fn test_default_auth_dir_matches_daemon_token_location() {
+    let cfg = compiled_defaults();
+    let expected = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join("loom")
+        .join("auth");
+    assert_eq!(
+        cfg.auth_dir, expected,
+        "compiled auth_dir default must match the daemon's <data_root>/auth/ \
+         (and auth_manager::default_auth_paths)"
+    );
+    // And the AuthManager projection of that default must agree.
+    let paths = crate::auth_manager::default_auth_paths().unwrap();
+    assert_eq!(paths.token_path, cfg.auth_dir.join("hello.token"));
+}
+
+#[test]
+fn test_loom_auth_dir_env_overrides_default() {
+    let inputs = ResolveInputs {
+        cli_overrides: vec![],
+        env_vars: vec![("LOOM_AUTH_DIR".to_string(), "/custom/auth".to_string())],
+        config_path: Some(std::path::PathBuf::from(
+            "/tmp/does_not_exist_loom_test/config.toml",
+        )),
+    };
+    let cfg = resolve(inputs, None).expect("resolve must succeed");
+    assert_eq!(cfg.auth_dir, std::path::PathBuf::from("/custom/auth"));
+}
+
+#[test]
+fn test_auth_dir_file_value_applies() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let mut f = std::fs::File::create(&config_path).unwrap();
+    writeln!(f, r#"auth_dir = "/file/auth""#).unwrap();
+
+    let inputs = ResolveInputs {
+        cli_overrides: vec![],
+        env_vars: vec![],
+        config_path: Some(config_path),
+    };
+    let cfg = resolve(inputs, None).expect("resolve must succeed");
+    assert_eq!(cfg.auth_dir, std::path::PathBuf::from("/file/auth"));
+}
+
 // === startup validation ===
 
 #[test]

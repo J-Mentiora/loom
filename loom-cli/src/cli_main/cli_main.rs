@@ -119,10 +119,10 @@ async fn async_run(argv: Vec<String>) -> i32 {
     // precedence (quiet > json > pretty > auto-detect) and per-stream
     // color enablement per D-20 / D-22.
     let mut config = config;
-    config.pretty = cli.pretty;
+    config.pretty = merge_pretty_flag(config.pretty, cli.pretty);
     let stdout_is_tty = std::io::stdout().is_terminal();
     let stderr_is_tty = std::io::stderr().is_terminal();
-    config.output_mode = OutputMode::resolve(cli.quiet, cli.json, cli.pretty, stdout_is_tty);
+    config.output_mode = OutputMode::resolve(cli.quiet, cli.json, config.pretty, stdout_is_tty);
     let color_choice = if cli.no_color {
         ColorChoice::Never
     } else {
@@ -136,6 +136,20 @@ async fn async_run(argv: Vec<String>) -> i32 {
     // D-20: color the prose RED+BOLD when stderr is a TTY.
     crate::error_mapper::print_error_with_color(&result, config.stderr_color_enabled);
     map_exit_code(&result)
+}
+
+/// Merge the `--pretty` flag into the file/env-resolved `pretty` value.
+///
+/// `--pretty` is a clap `SetTrue` boolean: present means `true`, absent
+/// means "not passed" (never "force off"). So the flag may only force
+/// pretty ON; when absent, the value resolved from config.toml /
+/// `LOOM_PRETTY` must survive (documented precedence: CLI > env > file >
+/// defaults). The previous unconditional `config.pretty = cli.pretty`
+/// clobbered the resolved value with `false`, making the file/env knobs
+/// dead. `--quiet` / `--json` still take precedence downstream in
+/// `OutputMode::resolve`.
+pub fn merge_pretty_flag(resolved_pretty: bool, pretty_flag: bool) -> bool {
+    resolved_pretty || pretty_flag
 }
 
 /// Build the tokio runtime used by every async handler. Multi-threaded,

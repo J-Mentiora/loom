@@ -30,7 +30,12 @@ pub struct CliConfig {
     pub socket_path: PathBuf,
     /// Schemas root (default: `~/.config/loom/schemas/v1/`).
     pub schemas_dir: PathBuf,
-    /// Auth artefact dir (default: `~/.config/loom/auth/`).
+    /// Auth artefact dir holding `hello.token` + `daemon.pid`. The daemon
+    /// writes those under `<data_root>/auth/`, so the compiled default is
+    /// the platform data dir (macOS: `~/Library/Application Support/loom/auth/`,
+    /// Linux: `$XDG_DATA_HOME/loom/auth/`) — NOT `~/.config/loom/`.
+    /// Overridable via config.toml `auth_dir` / `LOOM_AUTH_DIR` for
+    /// custom `--data-root` daemon setups.
     pub auth_dir: PathBuf,
     /// Surfaces root (`.cwasm` cache + `.wasm` source).
     pub surfaces_dir: PathBuf,
@@ -184,10 +189,19 @@ pub fn compiled_defaults() -> CliConfig {
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from("/tmp"))
         .join("loom.sock");
+    // Auth artefacts live where the daemon writes them: `<data_root>/auth/`,
+    // with data_root defaulting to `dirs::data_dir()/loom` (see
+    // `loom-daemon::data_root_default` and `auth_manager::default_auth_paths`).
+    // The previous `~/.config/loom/auth` default contradicted the actual
+    // token location and was never read by the RPC client.
+    let auth_dir = dirs::data_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("loom")
+        .join("auth");
     CliConfig {
         socket_path,
         schemas_dir: config_base.join("schemas").join("v1"),
-        auth_dir: config_base.join("auth"),
+        auth_dir,
         surfaces_dir: config_base.join("surfaces"),
         chromium_dir: config_base.join("chromium"),
         pretty: false,

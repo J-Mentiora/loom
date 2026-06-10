@@ -72,6 +72,54 @@ fn postinstall_receipt_carries_steps_and_outcomes() {
     assert_eq!(r.steps.len(), 5);
 }
 
+// === receipt is emitted as canonical JSON on stdout (regression: the
+// dispatcher used to discard it with `.map(|_| ())`, so the documented
+// stdout receipt was silently dropped) ===
+
+#[test]
+fn postinstall_receipt_serialises_to_canonical_json() {
+    let r = PostinstallReceipt {
+        status: "ok".into(),
+        steps: STEP_LABELS.to_vec(),
+        compile_outcomes: vec![
+            StepOutcome::Compiled("/tmp/surfaces/loom_surface_web.cwasm".into()),
+            StepOutcome::Skipped,
+        ],
+        schemas: super::postinstall_runner::SchemaStepOutcome::Populated(17),
+        chromium: StepOutcome::Downloaded,
+        loom_binaries: None,
+        launchd: Some(StepOutcome::Wrote),
+        manpages: StepOutcome::Skipped,
+    };
+    let value = serde_json::to_value(&r).expect("receipt must serialise");
+    // Canonical-JSON path (RFC 8785) must accept the receipt — this is
+    // exactly what `emit_to_stdout("postinstall", ...)` runs in the
+    // default --json mode.
+    let canonical = crate::output_formatter::OutputFormatter::<
+        crate::output_formatter::StdoutSink,
+    >::canonical_json(&value)
+    .expect("canonical JSON must serialise");
+    assert!(canonical.contains(r#""status":"ok""#), "got: {canonical}");
+    // Unit variants are bare strings; data variants are tagged objects.
+    assert!(
+        canonical.contains(r#""chromium":"downloaded""#),
+        "got: {canonical}"
+    );
+    assert!(
+        canonical.contains(r#"{"compiled":"/tmp/surfaces/loom_surface_web.cwasm"}"#),
+        "got: {canonical}"
+    );
+    assert!(
+        canonical.contains(r#"{"populated":17}"#),
+        "got: {canonical}"
+    );
+    // `--skip-binaries` → null, distinguishable from "skipped".
+    assert!(
+        canonical.contains(r#""loom_binaries":null"#),
+        "got: {canonical}"
+    );
+}
+
 // === Tagless install warning (AC6 / R6) ===
 //
 // The warning must contain the stable substrings `non-release` and `--tag`

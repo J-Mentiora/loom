@@ -28,6 +28,23 @@ pub struct ImportPlaywrightArgs {
     pub trace_path: PathBuf,
 }
 
+/// Headroom reserved for the JSON-RPC envelope around `trace_hex`
+/// (`{"jsonrpc":"2.0","method":"import.playwright","params":...,"id":1}`
+/// is < 100 bytes; 1 KiB is comfortably conservative).
+const IMPORT_ENVELOPE_OVERHEAD_BYTES: usize = 1024;
+
+/// Largest trace.zip importable over the current wire protocol.
+///
+/// The daemon's `LengthDelimitedCodec` rejects frames over
+/// `MAX_FRAME_BYTES` (16 MiB) and the trace is hex-encoded (2x) into a
+/// single `import.playwright` frame, so the effective cap is just under
+/// half the frame cap. Checked BEFORE connecting so an oversized trace
+/// gets an actionable receipt instead of the misleading connection
+/// error a dropped oversized frame used to surface as.
+pub fn max_importable_trace_bytes() -> usize {
+    (loom_rpc::frame_handler::frame_handler::MAX_FRAME_BYTES - IMPORT_ENVELOPE_OVERHEAD_BYTES) / 2
+}
+
 /// Handler for `loom import playwright`. Reads trace bytes locally, hex-encodes,
 /// sends to daemon via `import.playwright` RPC, forwards receipt to stdout.
 pub async fn import_playwright(
@@ -59,6 +76,33 @@ pub async fn import_playwright(
             },
         }))
     })?;
+
+    // Pre-flight the wire-size cap before any connection or hex
+    // allocation: a trace over ~8 MiB hex-encodes past the daemon's
+    // 16 MiB frame cap, which drops the connection with a generic
+    // connection error pointing at the wrong fix ("no daemon running").
+    let max_trace = max_importable_trace_bytes();
+    if bytes.len() > max_trace {
+        return Err(CliError::Receipt(serde_json::json!({
+            "status": "error",
+            "code": "trace_too_large",
+            "message": format!(
+                "playwright trace at {} is {} bytes; the daemon's 16 MiB \
+                 frame cap limits hex-encoded imports to {} bytes. \
+                 Re-record the trace without screenshots/snapshots \
+                 (e.g. `tracing.start({{ screenshots: false, snapshots: false }})`) \
+                 or split the recording into smaller traces.",
+                args.trace_path.display(),
+                bytes.len(),
+                max_trace,
+            ),
+            "data": {
+                "path": args.trace_path.display().to_string(),
+                "trace_bytes": bytes.len(),
+                "max_trace_bytes": max_trace,
+            },
+        })));
+    }
 
     let trace_hex = hex::encode(&bytes);
 
