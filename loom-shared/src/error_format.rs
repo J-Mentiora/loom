@@ -124,9 +124,9 @@ pub enum LoomErrorCode {
     /// safe-profile denylist. **DEPRECATED for the safe-profile evaluate
     /// path** — production now emits `LoomErrorCode::ProfileRestricted`
     /// (wire kind `"profile_restricted"`) from the daemon-layer gate at
-    /// `loom-daemon::WasmBridge::dispatch_action_blocking`. The old emit
-    /// site at `loom-surfaces::evaluate_verb::EvaluateVerb::execute` is
-    /// dead code (see top-of-file notice).
+    /// `loom-daemon::WasmBridge::dispatch_action_blocking`. The old verb-side
+    /// emit site was removed with the retired `loom-surfaces` crate; the
+    /// daemon-layer gate is now the sole safe-profile evaluate path.
     ///
     /// **STILL USED at the JSON-RPC schema-validation boundary**
     /// (`loom-rpc::request_router`, `ConnectionHandler` wire-shape errors,
@@ -139,8 +139,7 @@ pub enum LoomErrorCode {
     /// model plus visibility handler** . Chromium now
     /// confines downloads to the session dir; rejection events route through
     /// `LoomErrorCode::ProfileRestricted` if the policy gains explicit-reject
-    /// semantics later. Schedule for removal alongside `EvaluateVerb::execute`
-    /// cleanup.
+    /// semantics later. Schedule for removal.
     SafeProfileDownloadBlocked,
     /// action rejected because the active session profile
     /// (e.g. `"safe"`) forbids it. Wire string: `"profile_restricted"`.
@@ -151,7 +150,7 @@ pub enum LoomErrorCode {
     /// Substring matching against `EVALUATE_DENYLIST` is broader than the
     /// operator's regex spec (e.g. matches `console.log(window.location)` —
     /// read access — not just write). For safe profile this is intentional
-    /// defense-in-depth. See `loom-surfaces::safety::EVALUATE_DENYLIST`.
+    /// defense-in-depth. See `crate::safety::EVALUATE_DENYLIST`.
     ProfileRestricted,
 
     // ---- Browser / launch ----

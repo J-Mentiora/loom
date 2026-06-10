@@ -9,7 +9,6 @@ members = [
     "loom-mcp",
     "loom-cli",
     "loom-daemon",
-    "loom-surfaces",
     "loom-shims",
     "loom-surface-web",
 ]
@@ -115,7 +114,6 @@ loom-host = { path = "loom-host", version = "0.10.1" }
 loom-rpc = { path = "loom-rpc", version = "0.10.1" }
 loom-mcp = { path = "loom-mcp", version = "0.10.1" }
 loom-daemon = { path = "loom-daemon", version = "0.10.1" }
-loom-surfaces = { path = "loom-surfaces", version = "0.10.1" }
 loom-shims = { path = "loom-shims", version = "0.10.1" }
 
 # Workspace-wide lint policy. Each member crate opts in via `[lints] workspace = true`

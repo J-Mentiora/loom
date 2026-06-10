@@ -1,5 +1,5 @@
 use super::cookie_types::*;
-use loom_shared::Redacted;
+use crate::Redacted;
 use serde_json::json;
 
 fn cookie_param(name: &str, value: &str) -> NetworkCookieParam {
@@ -328,7 +328,7 @@ fn cookie_keychain_blob_round_trips_through_serde() {
         schema_version: 1,
         cookies: vec![NetworkCookieParam {
             name: "sid".to_string(),
-            value: loom_shared::Redacted::new("v".to_string()),
+            value: crate::Redacted::new("v".to_string()),
             url: None,
             domain: Some("x.com".to_string()),
             path: None,

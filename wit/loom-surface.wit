@@ -1,5 +1,5 @@
 // Loom WASM surface ABI. wit-bindgen consumes this file to generate
-// host bindings (loom-host) and guest bindings (loom-surfaces).
+// host bindings (loom-host) and guest bindings (loom-surface-web).
 
 package loom:surface@1.0.0;
 
@@ -47,7 +47,7 @@ interface types {
         return-value-json: option<string>,
         return-value-blob-ref: option<content-ref>,
         // v0.9.6 web-cookie-injection cookie-result fields. Each is a
-        // JSON-encoded payload (loom-surfaces wraps in Vec<u8> on emit;
+        // JSON-encoded payload (the guest wraps in Vec<u8> on emit;
         // the host's decode_typed_receipt re-parses for shape).
         //   set-cookies-result:  Vec<SetCookieResult>
         //   get-cookies-result:  Vec<NetworkCookie> (raw values per D7

@@ -1010,7 +1010,7 @@ impl WasmHostBridge for WasmBridge {
         // be safe-gated will silently bypass this block until added here.
         match &action {
             Action::WebEvaluate { expression, .. } if session.profile == "safe" => {
-                if let Some(matched) = loom_surfaces::safety::EVALUATE_DENYLIST
+                if let Some(matched) = loom_shared::safety::EVALUATE_DENYLIST
                     .iter()
                     .find(|p| expression.contains(*p))
                 {
@@ -1031,8 +1031,10 @@ impl WasmHostBridge for WasmBridge {
         }
 
         // v0.9.7 follow-up A — Grant resolution + Follow-up B — per-cookie
-        // validation, both wired daemon-side because loom-surface-web
-        // (the WASM) doesn't yet depend on loom-surfaces. Together they
+        // validation, both performed daemon-side: under the settled
+        // daemon-owns-verbs architecture the WASM guest forwards opaquely and
+        // the daemon owns the safety/cookie checks (cookie types live in
+        // `loom_shared::cookie_types`). Together they
         // bring the cookie verbs up to the user-facing contract
         // documented in the v0.9.6 task spec:
         //
@@ -1059,7 +1061,7 @@ impl WasmHostBridge for WasmBridge {
             Action::WebSetCookies { session_id, source } => {
                 use loom_core::manifest_writer::SessionId;
                 use loom_core::vault::GrantId;
-                use loom_surfaces::cookie_types::CookieSource;
+                use loom_shared::cookie_types::CookieSource;
 
                 // Step 1: parse the `source` payload into the typed
                 // `CookieSource` enum so malformed shapes (missing
@@ -1079,39 +1081,36 @@ impl WasmHostBridge for WasmBridge {
                 // keychain blob is corrupt and we fail closed with
                 // `InternalError` rather than silently emitting an
                 // empty Network.setCookies envelope.
-                let cookies: Vec<loom_surfaces::cookie_types::NetworkCookieParam> =
-                    match typed_source {
-                        CookieSource::Inline { cookies } => cookies,
-                        CookieSource::Grant { grant_id } => {
-                            let bytes = self
-                                .core
-                                .vault
-                                .substitute_cookies(
-                                    GrantId(grant_id),
-                                    SessionId(session_id.clone()),
-                                )
-                                .map_err(|e| map_loom_error(&e))?;
+                let cookies: Vec<loom_shared::cookie_types::NetworkCookieParam> = match typed_source
+                {
+                    CookieSource::Inline { cookies } => cookies,
+                    CookieSource::Grant { grant_id } => {
+                        let bytes = self
+                            .core
+                            .vault
+                            .substitute_cookies(GrantId(grant_id), SessionId(session_id.clone()))
+                            .map_err(|e| map_loom_error(&e))?;
 
-                            #[derive(serde::Deserialize)]
-                            struct VaultCookieBlob {
-                                cookies: Vec<loom_surfaces::cookie_types::NetworkCookieParam>,
-                            }
-
-                            serde_json::from_slice::<VaultCookieBlob>(&bytes)
-                                .map_err(|e| {
-                                    tracing::error!(
-                                        "vault.substitute_cookies blob deserialise failed: {e}"
-                                    );
-                                    LoomErrorCode::InternalError
-                                })?
-                                .cookies
+                        #[derive(serde::Deserialize)]
+                        struct VaultCookieBlob {
+                            cookies: Vec<loom_shared::cookie_types::NetworkCookieParam>,
                         }
-                    };
+
+                        serde_json::from_slice::<VaultCookieBlob>(&bytes)
+                            .map_err(|e| {
+                                tracing::error!(
+                                    "vault.substitute_cookies blob deserialise failed: {e}"
+                                );
+                                LoomErrorCode::InternalError
+                            })?
+                            .cookies
+                    }
+                };
 
                 // Step 3: per-cookie validation. Failures short-circuit
                 // to a typed `cookie_validation` receipt with the
                 // snake_case taxonomy code from `cookie_validation_code`.
-                if let Err(e) = loom_surfaces::cookie_types::validate_cookie_params(&cookies) {
+                if let Err(e) = loom_shared::cookie_types::validate_cookie_params(&cookies) {
                     return Ok(cookie_validation_error_receipt(
                         session.allocate_action_id(),
                         session_id_str,
@@ -1411,9 +1410,9 @@ fn profile_restricted_evaluate_receipt(
 /// rejection in `web.set_cookies`. The typed `CookieValidationError`
 /// taxonomy is surfaced on the receipt's `error.kind` ("cookie_validation_error")
 /// and `error.detail.code` (one of `name_empty` / `name_invalid` /
-/// `value_too_large` / `too_many_cookies` / `invalid_expires`), mirroring
-/// the verb-side error mapper that runs when the
-/// `loom-surface-web ↔ loom-surfaces` wiring closes.
+/// `value_too_large` / `too_many_cookies` / `invalid_expires`). The daemon
+/// gate is the authoritative emitter under the daemon-owns-verbs architecture
+/// (the retired `loom-surfaces` verb-side error mapper is gone).
 /// Typed error receipt for `web.set_input_files` allow-list / cap rejections.
 /// `kind` is the discrete `UploadError::kind()` wire string (e.g.
 /// `upload_path_blocked`) — NOT a `js_throw` JSON blob (plan-council FND#8).
@@ -1560,8 +1559,8 @@ fn cookie_validation_error_receipt(
 
 /// v0.9.7 follow-up: map a typed `CookieValidationError` variant to the
 /// snake_case error-code string used on the wire error receipt.
-fn cookie_validation_code(e: &loom_surfaces::cookie_types::CookieValidationError) -> &'static str {
-    use loom_surfaces::cookie_types::CookieValidationError as E;
+fn cookie_validation_code(e: &loom_shared::cookie_types::CookieValidationError) -> &'static str {
+    use loom_shared::cookie_types::CookieValidationError as E;
     match e {
         E::NameEmpty => "name_empty",
         E::NameInvalid { .. } => "name_invalid",
@@ -1789,14 +1788,11 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         // reaches the chromium shim).
         //
         // Per-cookie validation (validate_cookie_params) is intentionally
-        // NOT performed here — daemon-side validation would require
-        // converting the raw JSON `source` into typed cookie_types
-        // structs, which adds a loom-surfaces dep to loom-daemon
-        // (currently absent). The chromium shim's
-        // Network.setCookies response surfaces individual cookie
-        // rejections; surface-side validation lands when the
-        // SetCookiesVerb::execute() path is wired (loom-surface-web
-        // doesn't currently depend on loom-surfaces).
+        // NOT performed on this raw-JSON `source` path — it would require
+        // converting the untyped `source` into typed `loom_shared::cookie_types`
+        // structs first. The inline path validates via the typed
+        // `validate_cookie_params` above; on this path the chromium shim's
+        // Network.setCookies response surfaces individual cookie rejections.
         //
         // Grant resolution is now performed upstream in
         // `dispatch_action_blocking` (v0.9.7 follow-up A) — by the
@@ -2942,7 +2938,7 @@ mod tests {
     #[test]
     fn evaluate_denylist_blocks_operator_reproducer_window_location_assignment() {
         let expr = "window.location.href = \"https://evil.example.com\"";
-        let matched = loom_surfaces::safety::EVALUATE_DENYLIST
+        let matched = loom_shared::safety::EVALUATE_DENYLIST
             .iter()
             .find(|p| expr.contains(*p));
         assert_eq!(matched, Some(&"window.location"));
@@ -2954,13 +2950,13 @@ mod tests {
         let register = "navigator.serviceWorker.register('/sw.js')";
         let detect = "if ('serviceWorker' in navigator) {}";
         assert!(
-            loom_surfaces::safety::EVALUATE_DENYLIST
+            loom_shared::safety::EVALUATE_DENYLIST
                 .iter()
                 .any(|p| register.contains(*p)),
             "registration must be blocked"
         );
         assert!(
-            !loom_surfaces::safety::EVALUATE_DENYLIST
+            !loom_shared::safety::EVALUATE_DENYLIST
                 .iter()
                 .any(|p| detect.contains(*p)),
             "feature detection must NOT be blocked"
@@ -2988,7 +2984,7 @@ mod tests {
     /// group by validation reason.
     #[test]
     fn cookie_validation_code_covers_all_variants() {
-        use loom_surfaces::cookie_types::CookieValidationError as E;
+        use loom_shared::cookie_types::CookieValidationError as E;
         assert_eq!(cookie_validation_code(&E::NameEmpty), "name_empty");
         assert_eq!(
             cookie_validation_code(&E::NameInvalid { ch: ';' }),

@@ -11,7 +11,7 @@
 //! proper heap wipe (via `Zeroizing<Vec<u8>>` at the boundary, or a manual
 //! `as_mut_vec().fill(0)` step) is a follow-up.
 
-use loom_shared::Redacted;
+use crate::Redacted;
 use serde::{Deserialize, Serialize};
 
 /// CDP `Network.CookieParam` — the input shape for `Network.setCookies`.

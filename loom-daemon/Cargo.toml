@@ -17,11 +17,6 @@ loom-keychain = { workspace = true }
 loom-core = { workspace = true }
 loom-host = { workspace = true }
 loom-rpc = { workspace = true }
-# Daemon-layer evaluate gate reads
-# `loom_surfaces::safety::EVALUATE_DENYLIST`. The gate runs BEFORE
-# host.dispatch so `EvaluateVerb::execute` (dead code in production
-# today) is bypassed entirely.
-loom-surfaces = { workspace = true }
 
 ciborium = { workspace = true }
 tokio = { workspace = true }

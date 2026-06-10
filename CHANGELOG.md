@@ -50,6 +50,8 @@ preserved.
   canonical enum.
 - **Extracted a shared `network_entries` offload-or-inline helper (#126).** The
   ≥64 KB offload + graceful-degrade logic now lives in one place.
+- **Removed the dead `loom-surfaces` crate (#137).** Relocated `safety` and
+  `cookie_types` into `loom-shared`; no functional change.
 
 ## [0.10.0] — 2026-06-08 — Network Entries + Readiness-Gated Capture
 

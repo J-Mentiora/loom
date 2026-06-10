@@ -2332,7 +2332,6 @@ dependencies = [
  "loom-keychain",
  "loom-rpc",
  "loom-shared",
- "loom-surfaces",
  "serde",
  "serde_jcs",
  "serde_json",
@@ -2491,21 +2490,6 @@ version = "0.10.1"
 dependencies = [
  "sha2 0.10.9",
  "wit-bindgen 0.57.1",
-]
-
-[[package]]
-name = "loom-surfaces"
-version = "0.10.1"
-dependencies = [
- "ciborium",
- "loom-shared",
- "serde",
- "serde_jcs",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.18",
- "wit-bindgen 0.57.1",
- "zeroize",
 ]
 
 [[package]]

@@ -7,17 +7,23 @@
 //! - `auth_token` — `HelloToken` shared by daemon + CLI + MCP.
 //! - `redacted` — `Redacted<T>` newtype hiding values in
 //!   Debug/Display/Serialize output (added v0.9.5 for cookie values).
+//! - `safety` — profile-based evaluate denylist + path-scoping checks
+//!   (relocated from the retired `loom-surfaces` crate).
+//! - `cookie_types` — CDP cookie wire types + `validate_cookie_params`
+//!   (relocated from the retired `loom-surfaces` crate).
 
 pub mod action_aliases;
 pub mod auth_token;
 pub mod binary_resolver;
 pub mod chromium_resolver;
+pub mod cookie_types;
 pub mod dom_normalize;
 pub mod error_format;
 pub mod llm_types;
 pub mod logging;
 pub mod navigate_outcome;
 pub mod redacted;
+pub mod safety;
 pub mod screenshot_decode;
 pub mod shim_protocol;
 pub mod types;
