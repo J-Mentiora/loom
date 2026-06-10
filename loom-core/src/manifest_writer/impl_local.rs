@@ -335,6 +335,21 @@ impl ManifestWriter for LocalManifestWriter {
     }
 
     fn append(&self, session: SessionId, entry: ManifestEntry) -> Result<(), LoomError> {
+        // Serialize same-session appends: prev_hash derivation and the WAL
+        // write must be one atomic step, or two racing appends both chain off
+        // the same predecessor and fork the chain (NFR-DET-01). Callers give
+        // no ordering — receipt appends arrive on detached tokio tasks while
+        // audits/terminals append from other tasks. The DashMap shard guard
+        // from `entry()` is dropped before `lock()`; only the per-session
+        // mutex is held across the file I/O below, so different sessions
+        // never serialize against each other.
+        let lock = self
+            .append_locks
+            .entry(session.clone())
+            .or_default()
+            .clone();
+        let _guard = lock.lock();
+
         let wal_path = self.sessions_root.join(&session.0).join("manifest.wal");
 
         // Capture the terminal flag before entry is consumed by set_prev_hash.
