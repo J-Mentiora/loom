@@ -6,6 +6,53 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-06-10 — Cross-Run Determinism + Session Reaper
+
+Cross-run hash equality lands: two independent fresh recordings of the same actions
+on a deterministic page now diff `field_diffs=0`, not just self-replay — making the
+manifest hash chain a true "did anything change?" oracle across runs. Plus a session
+reaper for long-lived daemons, a batch of determinism-capture fixes, and an
+error-code consolidation. All additive; the replay hash chain (NFR-DET-01) is
+preserved.
+
+### Added
+
+- **Cross-run determinism (#133).** New `loom session create --clock-anchor <epoch_ms>`
+  flag pins the injected browser clock (`Date.now`/`performance.now`) to a fixed epoch
+  via the existing `started_at_ms_override` seam, so two fresh `--seed`+`--clock-anchor`
+  recordings reproduce an identical `loom session diff` (`field_diffs=0`, incl.
+  `dom_snapshot_hash`). Under determinism, DOM capture now also awaits the CDP
+  virtual-time budget (`Emulation.virtualTimeBudgetExpired`) before snapshotting, so
+  `setTimeout`-driven DOM mutations fire deterministically; the budget is armed
+  after `Page.loadEventFired` (hang-safe) with a timeout fallback to the existing
+  settle. Composes with `--seed`; `--no-determinism` opts out. Documented recipe +
+  bounded-determinism caveat in the README.
+- **Session idle-TTL reaper + orphan-Chromium GC (#128).** The daemon reaps idle
+  sessions past their TTL and garbage-collects orphaned Chromium processes, surfaced
+  via `reap`/`doctor`.
+
+### Fixed
+
+- **Content-stable `dom_snapshot_hash` + replay-equal manifest chain (#129).** Strips
+  the ephemeral per-navigation CDP `frameId` from the DOM CBOR and projects ephemeral
+  top-level fields out of the chain hash, so byte-identical content hashes identically.
+- **Deterministic virtual-time entrance animations (#127).** Client-side entrance
+  animations render via deterministic virtual time instead of a frozen clock.
+- **Unify `DOM.getDocument` `pierce: true` across all captures (#135).** Consistent
+  pierced DOM capture so snapshots don't diverge by capture site.
+- **Manifest append O(n²) → cached last WAL line (#131).** The manifest writer caches
+  the last WAL line per session instead of re-reading the whole file on every append.
+
+### Changed
+
+- **Consolidated the three `LoomErrorCode` enums into one canonical enum (#125).**
+  Removes the hand-mirrored kebab/snake/string drift class; decode routes through the
+  canonical enum.
+- **Extracted a shared `network_entries` offload-or-inline helper (#126).** The
+  ≥64 KB offload + graceful-degrade logic now lives in one place.
+- **Removed the dead `loom-surfaces` crate (#137).** Relocated `safety` and
+  `cookie_types` into `loom-shared`; no functional change.
+
 ## [0.10.0] — 2026-06-08 — Network Entries + Readiness-Gated Capture
 
 Two capture features land together: per-request network entries surfaced from CDP
