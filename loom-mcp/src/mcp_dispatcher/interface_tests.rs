@@ -223,7 +223,7 @@ fn dispatcher_with_fake_caller(caller: Box<dyn JsonRpcCaller + Send + Sync>) -> 
         crate::resource_tracker::ResourceTracker::new(rpc.clone()),
         rpc,
         crate::mcp_observability::McpObservability::new(true),
-        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        tokio_util::sync::CancellationToken::new(),
     )
 }
 

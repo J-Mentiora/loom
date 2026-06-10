@@ -7,7 +7,7 @@ mod interface_tests;
 use crate::error_mapper::{DispatchPhase, ErrorMapper, McpContent, ToolResult};
 use base64::Engine as _;
 use loom_rpc::error::{LoomError, LoomErrorCode};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -32,6 +32,15 @@ pub(crate) fn is_64_hex(s: &str) -> bool {
 struct FramedCaller {
     stream: tokio::sync::Mutex<loom_rpc::frame_handler::FramedUnixStream>,
     next_id: AtomicU64,
+    /// Client-side per-call deadline (`RpcClientConfig::call_timeout`).
+    call_timeout: Duration,
+    /// Latched when a call hits the client-side deadline. The framed
+    /// protocol has no response-id matching: the daemon's late reply to the
+    /// timed-out request would be read as the reply to the NEXT request on
+    /// this connection. Once set, every subsequent call fails fast with
+    /// `TransportDropped` (PRE — nothing was sent) until `RpcClient::call`
+    /// rebuilds the connection.
+    dead: AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -52,28 +61,66 @@ impl JsonRpcCaller for FramedCaller {
         let req_bytes =
             serde_json::to_vec(&req).map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
         let mut stream = self.stream.lock().await;
-        // A send failure means the request never reached the daemon → PRE
-        // dispatch → safe to retry on a fresh connection for any verb.
-        stream
-            .send(bytes::Bytes::from(req_bytes))
-            .await
-            .map_err(|_| {
-                ErrorMapper::from_transport_dropped(
-                    "connection lost while sending",
-                    DispatchPhase::Pre,
-                )
-            })?;
-        // The send completed; a read failure here means the request may have
-        // been processed → POST dispatch → only idempotent verbs auto-retry.
-        let frame = stream
-            .next()
-            .await
-            .ok_or_else(|| {
-                ErrorMapper::from_transport_dropped("connection closed", DispatchPhase::Post)
-            })?
-            .map_err(|_| {
-                ErrorMapper::from_transport_dropped("connection reset", DispatchPhase::Post)
-            })?;
+        // An earlier call on this connection hit the client-side deadline:
+        // the connection is poisoned (see `dead` above) — fail fast so the
+        // caller reconnects instead of mis-correlating frames.
+        if self.dead.load(Ordering::SeqCst) {
+            return Err(ErrorMapper::from_transport_dropped(
+                "connection invalidated by an earlier timeout",
+                DispatchPhase::Pre,
+            ));
+        }
+        // Client-side deadline over the whole send+recv round trip. The
+        // daemon enforces its own per-request deadline
+        // (`LOOM_REQUEST_TIMEOUT_MS`, default 30 s) and answers with a typed
+        // `request_timeout` envelope, so under normal operation the server
+        // deadline wins this race; ours fires only when the daemon is wedged
+        // (SIGSTOPped, deadlocked event loop) and can't even time itself
+        // out — previously that hung the in-flight call, the keepalive
+        // queued behind this stream mutex, and therefore the whole MCP
+        // server, forever.
+        let round_trip = tokio::time::timeout(self.call_timeout, async {
+            // A send failure means the request never reached the daemon → PRE
+            // dispatch → safe to retry on a fresh connection for any verb.
+            stream
+                .send(bytes::Bytes::from(req_bytes))
+                .await
+                .map_err(|_| {
+                    ErrorMapper::from_transport_dropped(
+                        "connection lost while sending",
+                        DispatchPhase::Pre,
+                    )
+                })?;
+            // The send completed; a read failure here means the request may
+            // have been processed → POST dispatch → only idempotent verbs
+            // auto-retry.
+            stream
+                .next()
+                .await
+                .ok_or_else(|| {
+                    ErrorMapper::from_transport_dropped("connection closed", DispatchPhase::Post)
+                })?
+                .map_err(|_| {
+                    ErrorMapper::from_transport_dropped("connection reset", DispatchPhase::Post)
+                })
+        })
+        .await;
+        let frame = match round_trip {
+            // Deadline expired mid-round-trip: poison the connection and
+            // surface a possibly-dispatched (POST) transport drop so the
+            // reconnect/retry policy in `RpcClient::call` engages — the
+            // connection is marked dead, torn down, and rebuilt on the next
+            // attempt rather than blocked on.
+            Err(_elapsed) => {
+                self.dead.store(true, Ordering::SeqCst);
+                return Err(ErrorMapper::from_transport_dropped(
+                    "daemon unresponsive: client-side call deadline exceeded",
+                    DispatchPhase::Post,
+                ));
+            }
+            Ok(Err(e)) => return Err(e),
+            Ok(Ok(frame)) => frame,
+        };
         // A frame arrived but isn't valid JSON: the daemon responded, so the
         // request was dispatched — non-retryable protocol error, not transport.
         let resp: serde_json::Value =
@@ -97,6 +144,24 @@ impl JsonRpcCaller for FramedCaller {
 // RpcClientConfig
 // ---------------------------------------------------------------------------
 
+/// Headroom added on top of the daemon's server-side per-request deadline to
+/// form the default client-side `call_timeout`. Keeps the ordering invariant
+/// `client deadline > server deadline`, so the daemon's typed
+/// `request_timeout` envelope arrives first whenever the daemon is healthy
+/// enough to produce one.
+const CALL_TIMEOUT_HEADROOM_MS: u64 = 5_000;
+
+/// The daemon's server-side per-request deadline in milliseconds. Mirrors
+/// `loom-rpc::connection_handler::request_timeout` (`LOOM_REQUEST_TIMEOUT_MS`,
+/// default 30 000) so an operator raising the daemon deadline via the shared
+/// environment keeps the client deadline above it.
+fn daemon_request_deadline_ms() -> u64 {
+    std::env::var("LOOM_REQUEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(30_000)
+}
+
 impl RpcClientConfig {
     pub fn defaults() -> Self {
         // Defer to loom_rpc's resolver — the daemon is the binding side
@@ -117,6 +182,9 @@ impl RpcClientConfig {
             hello_token_path,
             backoff_initial: Duration::from_millis(100),
             backoff_cap: Duration::from_secs(5),
+            call_timeout: Duration::from_millis(
+                daemon_request_deadline_ms().saturating_add(CALL_TIMEOUT_HEADROOM_MS),
+            ),
         }
     }
 }
@@ -223,6 +291,8 @@ impl RpcClient {
         let caller = FramedCaller {
             stream: tokio::sync::Mutex::new(framed),
             next_id: AtomicU64::new(1),
+            call_timeout: self.cfg.call_timeout,
+            dead: AtomicBool::new(false),
         };
         {
             let mut inner = self.inner.write().await;

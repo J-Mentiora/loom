@@ -24,6 +24,14 @@ pub struct RpcClientConfig {
     pub hello_token_path: PathBuf,
     pub backoff_initial: Duration,
     pub backoff_cap: Duration,
+    /// Client-side deadline for one RPC round trip (send → response
+    /// frame). Sits above the daemon's server-side per-request deadline
+    /// (`LOOM_REQUEST_TIMEOUT_MS`, default 30 s) so a healthy daemon
+    /// always wins the race with its typed `request_timeout` envelope;
+    /// this only fires when the daemon is wedged (SIGSTOPped, stuck
+    /// event loop) and can't even time itself out. See
+    /// `RpcClientConfig::defaults`.
+    pub call_timeout: Duration,
 }
 
 /// Callback invoked after every successful handshake.

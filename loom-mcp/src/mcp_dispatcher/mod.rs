@@ -192,13 +192,31 @@ impl McpDispatcher {
     }
 
     pub async fn tools_list(self: &Arc<Self>) -> Vec<crate::tool_cache::Tool> {
+        let tools = self.tool_cache.list().await;
+        if !tools.is_empty() {
+            return tools;
+        }
+        // Lazy recovery: an empty cache means every prime so far failed
+        // (daemon down at launch and no reconnect yet). Try once more now —
+        // `prime` is idempotent and `RpcClient::call` reconnects first if
+        // needed — so a daemon that has come up since launch serves a real
+        // tool list instead of `[]` until the next reconnect. Failure
+        // degrades to the empty list exactly as before.
+        if let Err(e) = self.prime_tool_cache().await {
+            self.obs.info(
+                "tools_list_lazy_prime_failed",
+                serde_json::json!({ "code": e.code.as_wire() }),
+            );
+            return vec![];
+        }
         self.tool_cache.list().await
     }
 
     /// prime the tool cache from `rpc.schemas`.
-    /// Idempotent — repeated calls re-fetch and overwrite. Called once
-    /// at server startup by `mcp_main::run`; safe to retry on transient
-    /// daemon-down.
+    /// Idempotent — repeated calls re-fetch and overwrite. Called at
+    /// server startup by `mcp_main::run`, after every reconnect via the
+    /// `install_tool_cache_reprime` hook, and lazily by `tools_list`
+    /// when the cache is empty; safe to retry on transient daemon-down.
     pub async fn prime_tool_cache(self: &Arc<Self>) -> Result<(), LoomError> {
         self.tool_cache.prime().await
     }
