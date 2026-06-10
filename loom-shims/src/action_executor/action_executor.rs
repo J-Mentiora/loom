@@ -293,7 +293,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         msg: CdpMessage,
         budget: Option<Duration>,
     ) -> Result<ActionResult, ShimResponse> {
-        // Snapshot (and the loom-surfaces guest verbs) reach DOM.getDocument via
+        // Snapshot (and the other guest verbs) reach DOM.getDocument via
         // this generic path and hash the raw response; normalize it here too so
         // their `dom_snapshot_hash` is content-stable, just like navigate STEP 5.
         let is_dom_get_document = msg.method == "DOM.getDocument";

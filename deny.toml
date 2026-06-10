@@ -100,10 +100,10 @@ skip = [
 name = "chromiumoxide"
 wrappers = ["loom-shims"]
 
-# 2. WASM guests (loom-surfaces) MUST NOT depend on `getrandom` —
+# 2. The WASM guest (loom-surface-web) MUST NOT depend on `getrandom` —
 #    randomness comes from the host's `host::rng-next-u64` only.
 #    The wrappers list enumerates all current direct parents on the
-#    macOS+Linux host targets — none of which reach loom-surfaces,
+#    macOS+Linux host targets — none of which reach the guest,
 #    which is what enforces the architectural rule. New direct
 #    parents will fail this ban and require a review here.
 [[bans.deny]]

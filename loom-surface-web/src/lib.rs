@@ -513,9 +513,8 @@ impl exports::loom::surface::web_surface::Guest for SurfaceWebImpl {
     // path as click/type/etc. — the WIT-side action payload carries the
     // JCS-encoded Action enum, and the host's verb-dispatch table runs
     // the appropriate verb's `execute()`. Cookie verbs do not have
-    // surface-side custom routing (no `navigate_verb`-style helper)
-    // because they live entirely in loom-surfaces with no host-side
-    // typed-helper variant.
+    // surface-side custom routing (no `navigate_verb`-style helper) — they
+    // forward opaquely; the daemon owns cookie validation + typed handling.
     fn set_cookies(a: Action) -> Result<Receipt, HostError> {
         dispatch("set_cookies", a)
     }

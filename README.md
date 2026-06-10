@@ -590,7 +590,7 @@ exhausted budget surfaces as `kind: "shim-failure"`, not a hang.
 replay, vault, content store) imports zero macOS or Linux symbols.
 Anything platform-specific lives behind a stable seam in a sibling
 crate: `loom-keychain` for the OS keychain, `loom-shims` for the
-Chromium driver process, `loom-surfaces` for verb implementations.
+Chromium driver process, `loom-surface-web` for the WASM `web.*` guest.
 This is why the Linux x86_64/arm64 build doesn't fork — it's the same
 core with one fewer adapter linked. It's also why a hypothetical
 future `native.*` (macOS apps), `shell.*`, or `fs.*` surface would
@@ -619,7 +619,6 @@ other even by accident.
 | `loom-cli`           | `loom` binary — CLI commands + RPC client                      |
 | `loom-daemon`        | `loom-daemon` binary — long-lived daemon that owns sessions    |
 | `loom-mcp`           | `loom-mcp` binary — MCP server (stdio transport)               |
-| `loom-surfaces`      | Cross-target surface verb implementations                      |
 | `loom-shims`         | `loom-shim-chromium` binary + supervisor — out-of-process Chromium driver |
 | `loom-surface-web`   | WASM cdylib — the `web.*` surface guest                        |
 
