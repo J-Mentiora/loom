@@ -3,7 +3,6 @@
 
 use crate::rpc_client::RpcClient;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -16,8 +15,10 @@ pub struct Resource {
     pub mime_type: String,
 }
 
-/// Body of `resources/read`. Per the MCP spec a resource carries EITHER `text`
-/// (text resources) OR `blob` (base64 binary resources), never both.
+/// One element of the `resources/read` result's `contents` array (the
+/// dispatcher wraps it as `{ "contents": [...] }` per MCP 2024-11-05). Per
+/// the spec a resource carries EITHER `text` (text resources) OR `blob`
+/// (base64 binary resources), never both.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ResourceContents {
     pub uri: String,
@@ -57,10 +58,18 @@ pub struct CachedList {
     pub populated_at: Instant,
 }
 
-/// Module-local mirror of loom-rpc's SessionInfo.
+/// Module-local mirror of loom-rpc's wire `SessionInfo`
+/// (`loom-rpc/src/core_service_adapter`): the daemon serialises
+/// `session_id` / `status` / `created_at_ms` plus an optional `reason`.
+/// Field names must match that serialisation exactly — a drift here makes
+/// every `session.list` row fail to parse and empties `resources/list`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInfo {
-    pub id: String,
-    pub manifest_path: PathBuf,
+    pub session_id: String,
     pub status: String,
+    pub created_at_ms: u64,
+    /// Free-form reason carried by `session.abort`; absent for
+    /// active/closed/crashed sessions (the daemon skips it when `None`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub reason: Option<String>,
 }

@@ -5,7 +5,6 @@ use super::resource_tracker::{
     Resource, ResourceContents, ResourceTracker, SessionInfo, DEFAULT_TTL, SESSION_URI_PREFIX,
     SESSION_URI_SUFFIX,
 };
-use std::path::PathBuf;
 use std::time::Duration;
 
 // === URI scheme + round-trip ===
@@ -38,9 +37,10 @@ fn ulid_from_uri_returns_none_for_malformed_uri() {
 #[test]
 fn resource_from_session_uses_application_json_mime() {
     let info = SessionInfo {
-        id: "01HZ".into(),
-        manifest_path: PathBuf::from("/tmp/manifest.jsonl"),
+        session_id: "01HZ".into(),
         status: "active".into(),
+        created_at_ms: 1_718_000_000_000,
+        reason: None,
     };
     let r = ResourceTracker::resource_from_session(&info);
     assert_eq!(r.mime_type, "application/json");
@@ -118,17 +118,64 @@ fn read_takes_uri_returns_resource_contents() {
     let _ = _ck;
 }
 
-// === SessionInfo mirror has the fields we read ===
+// === SessionInfo mirror matches the daemon's wire shape ===
 
 #[test]
-fn session_info_has_id_manifest_path_status() {
+fn session_info_mirror_has_wire_fields() {
     let s = SessionInfo {
-        id: "01H".into(),
-        manifest_path: PathBuf::from("/x"),
+        session_id: "01H".into(),
         status: "active".into(),
+        created_at_ms: 1_718_000_000_000,
+        reason: None,
     };
     assert_eq!(s.status, "active");
-    assert!(!s.manifest_path.as_os_str().is_empty());
+    assert_eq!(s.session_id, "01H");
+}
+
+// Regression (mcp-resources): the mirror must deserialise the REAL daemon
+// wire JSON. The fixture is exactly what loom-rpc's core_service_adapter
+// SessionInfo serialises (`session_id`/`status`/`created_at_ms`, optional
+// `reason`); the old mirror required `id`/`manifest_path`, so every
+// non-empty session.list failed to parse and resources/list went empty.
+#[test]
+fn session_info_deserializes_daemon_wire_json() {
+    let wire = json!([
+        {
+            "session_id": "01HZAAAAAAAAAAAAAAAAAAAAAA",
+            "status": "active",
+            "created_at_ms": 1_718_000_000_000u64
+        },
+        {
+            "session_id": "01HZBBBBBBBBBBBBBBBBBBBBBB",
+            "status": "aborted",
+            "created_at_ms": 1_718_000_001_000u64,
+            "reason": "operator abort"
+        }
+    ]);
+    let sessions: Vec<SessionInfo> = serde_json::from_value(wire)
+        .expect("mirror must deserialise the daemon's SessionInfo wire JSON");
+    assert_eq!(sessions.len(), 2);
+    assert_eq!(sessions[0].session_id, "01HZAAAAAAAAAAAAAAAAAAAAAA");
+    assert_eq!(sessions[0].status, "active");
+    assert_eq!(sessions[0].reason, None);
+    assert_eq!(sessions[1].reason.as_deref(), Some("operator abort"));
+}
+
+// Belt-and-braces: a true round-trip through the loom-rpc wire type, so the
+// mirror can never silently drift from the daemon's serialisation again.
+#[test]
+fn session_info_round_trips_loom_rpc_wire_type() {
+    let wire = loom_rpc::core_service_adapter::SessionInfo {
+        session_id: "01HZCCCCCCCCCCCCCCCCCCCCCC".into(),
+        status: "active".into(),
+        created_at_ms: 1_718_000_002_000,
+        reason: None,
+    };
+    let raw = serde_json::to_value(&wire).unwrap();
+    let mirrored: SessionInfo =
+        serde_json::from_value(raw).expect("mirror must accept loom-rpc's serialised SessionInfo");
+    assert_eq!(mirrored.session_id, wire.session_id);
+    assert_eq!(mirrored.created_at_ms, wire.created_at_ms);
 }
 
 // === cache_snapshot lets us assert TTL behaviour without poking internals ===
@@ -206,5 +253,132 @@ async fn read_blob_uri_returns_png_bytes() {
         blob.starts_with("iVBORw0KGg"),
         "blob must be base64 of a PNG (prefix iVBORw0KGg); got {:?}",
         &blob.chars().take(12).collect::<String>()
+    );
+}
+
+// === Regression (mcp-resources): read() must send the param key the daemon
+// router actually reads. Every session.* router arm extracts "session_id"
+// with unwrap_or(""); the old {"id": ...} payload made the daemon inspect
+// the empty session on every manifest read. ===
+
+const SESSION_ULID: &str = "01HZDDDDDDDDDDDDDDDDDDDDDD";
+
+struct InspectFakeCaller;
+
+#[async_trait::async_trait]
+impl JsonRpcCaller for InspectFakeCaller {
+    async fn raw_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, LoomError> {
+        match method {
+            "session.inspect" => {
+                // Mirror the daemon router's extraction exactly:
+                // params.get("session_id").and_then(|v| v.as_str()).unwrap_or("")
+                let sid = params
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if sid != SESSION_ULID {
+                    return Err(LoomError::new(
+                        loom_rpc::error::LoomErrorCode::InvalidArgument,
+                        format!("router would inspect {sid:?}, not the requested session"),
+                    ));
+                }
+                Ok(json!({
+                    "session_id": sid,
+                    "at_action": null,
+                    "manifest_summary": { "action_count": 3 }
+                }))
+            }
+            other => Err(LoomError::new(
+                loom_rpc::error::LoomErrorCode::InvalidArgument,
+                format!("unexpected method in fake: {other}"),
+            )),
+        }
+    }
+}
+
+#[tokio::test]
+async fn read_session_manifest_sends_session_id_param_key() {
+    let rpc: Arc<RpcClient> = RpcClient::with_caller_for_test(Box::new(InspectFakeCaller));
+    let tracker = ResourceTracker::new(rpc);
+
+    let uri = ResourceTracker::uri_for_session(SESSION_ULID);
+    let contents = tracker
+        .read(&uri)
+        .await
+        .expect("resources/read of a session manifest must reach session.inspect via session_id");
+    assert_eq!(contents.mime_type, "application/json");
+    let text = contents.text.expect("manifest resource must carry text");
+    assert!(text.contains(SESSION_ULID), "got {text}");
+}
+
+// === Regression (mcp-resources): list() must parse the REAL daemon wire
+// shape and must surface — not swallow — a shape drift. ===
+
+struct ListFakeCaller {
+    result: serde_json::Value,
+}
+
+#[async_trait::async_trait]
+impl JsonRpcCaller for ListFakeCaller {
+    async fn raw_call(
+        &self,
+        method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, LoomError> {
+        match method {
+            "session.list" => Ok(self.result.clone()),
+            other => Err(LoomError::new(
+                loom_rpc::error::LoomErrorCode::InvalidArgument,
+                format!("unexpected method in fake: {other}"),
+            )),
+        }
+    }
+}
+
+#[tokio::test]
+async fn list_parses_daemon_wire_session_list() {
+    let rpc: Arc<RpcClient> = RpcClient::with_caller_for_test(Box::new(ListFakeCaller {
+        result: json!([
+            {
+                "session_id": SESSION_ULID,
+                "status": "active",
+                "created_at_ms": 1_718_000_000_000u64
+            }
+        ]),
+    }));
+    let tracker = ResourceTracker::new(rpc);
+
+    let resources = tracker
+        .list()
+        .await
+        .expect("list() must parse the daemon's SessionInfo wire JSON");
+    assert_eq!(resources.len(), 1, "wire-shaped session must surface");
+    assert_eq!(
+        resources[0].uri,
+        format!("loom://session/{SESSION_ULID}/manifest")
+    );
+}
+
+#[tokio::test]
+async fn list_surfaces_wire_shape_drift_as_error() {
+    // A response that doesn't match the mirror (the pre-fix daemon-drift
+    // scenario) must error out loudly, not cache an empty list.
+    let rpc: Arc<RpcClient> = RpcClient::with_caller_for_test(Box::new(ListFakeCaller {
+        result: json!([ { "id": "01HZ", "manifest_path": "/x", "status": "active" } ]),
+    }));
+    let tracker = ResourceTracker::new(rpc);
+
+    let err = tracker
+        .list()
+        .await
+        .expect_err("a SessionInfo shape drift must surface as an error, not an empty list");
+    assert!(
+        err.message.contains("SessionInfo wire shape"),
+        "got {}",
+        err.message
     );
 }

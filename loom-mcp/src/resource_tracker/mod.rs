@@ -36,7 +36,18 @@ impl ResourceTracker {
             .await
         {
             Ok(raw) => {
-                let sessions: Vec<SessionInfo> = serde_json::from_value(raw).unwrap_or_default();
+                // A shape drift between the daemon's wire SessionInfo and our
+                // mirror must surface as an error, never as a silently-empty
+                // resource list (it hid exactly that regression once).
+                let sessions: Vec<SessionInfo> = serde_json::from_value(raw).map_err(|e| {
+                    tracing::error!(
+                        error = %e,
+                        "session.list response did not match the SessionInfo wire shape"
+                    );
+                    crate::error_mapper::ErrorMapper::from_schema_parse(&format!(
+                        "session.list response did not match the SessionInfo wire shape: {e}"
+                    ))
+                })?;
                 let resources: Vec<Resource> =
                     sessions.iter().map(Self::resource_from_session).collect();
                 let mut cache = self.cache.write().await;
@@ -68,9 +79,12 @@ impl ResourceTracker {
                 format!("invalid resource URI: {uri}"),
             )
         })?;
+        // The daemon's request router extracts the session via the
+        // "session_id" key (every session.* arm does) — "id" would be
+        // dropped and the router would inspect "".
         let raw = self
             .rpc
-            .call("session.inspect", serde_json::json!({"id": ulid}))
+            .call("session.inspect", serde_json::json!({"session_id": ulid}))
             .await?;
         let text = serde_jcs::to_string(&raw).unwrap_or_else(|_| raw.to_string());
         Ok(ResourceContents {
@@ -136,8 +150,8 @@ impl ResourceTracker {
 
     pub fn resource_from_session(info: &SessionInfo) -> Resource {
         Resource {
-            uri: Self::uri_for_session(&info.id),
-            name: format!("Session {}", info.id),
+            uri: Self::uri_for_session(&info.session_id),
+            name: format!("Session {}", info.session_id),
             mime_type: "application/json".to_string(),
         }
     }
