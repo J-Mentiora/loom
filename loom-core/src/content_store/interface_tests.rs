@@ -34,6 +34,55 @@ fn shard_path_root_is_cas_subdir_of_provided_root() {
     assert!(s.starts_with("/var/loom/cas/aa/aa/"));
 }
 
+#[test]
+fn shard_path_is_bounds_safe_for_malformed_refs() {
+    // Regression: refs shorter than the shard prefix used to index out of
+    // bounds and panic — a whole-daemon abort under panic = "abort". Any
+    // ref, however malformed, must yield a path (sentinel-sharded for the
+    // missing components), never a panic.
+    let root = PathBuf::from("/var/loom");
+    for bad in ["", "a", "ab", "abc", "zz!!", "ZZZZ-not-hex"] {
+        let p = shard_path(&root, bad, 2);
+        assert!(
+            p.starts_with("/var/loom/cas"),
+            "ref {bad:?} must still map under cas/, got {p:?}"
+        );
+    }
+    // Multi-byte char straddling a slice boundary must not panic either.
+    let _ = shard_path(&root, "ééé", 2);
+    let _ = shard_path(&root, "ab\u{4e16}\u{754c}", 2);
+    // Over-long refs keep the normal aa/bb/rest layout.
+    let p = shard_path(&root, &"a".repeat(100), 2);
+    assert!(p.to_string_lossy().starts_with("/var/loom/cas/aa/aa/"));
+}
+
+#[test]
+fn shard_path_sentinel_never_collides_with_real_blob_paths() {
+    // The fallback components are non-hex, so a malformed ref can never
+    // resolve to a path a real (hex-addressed) blob occupies.
+    let p = shard_path(&PathBuf::from("/var/loom"), "abc", 2);
+    assert_eq!(p, PathBuf::from("/var/loom/cas/ab/zz/zz"));
+}
+
+#[test]
+fn get_returns_err_not_panic_for_malformed_refs() {
+    // Regression for the content.get daemon abort: a short / non-hex /
+    // over-long sha256 in a ContentRef must surface as Err, never panic.
+    let cs = fixture();
+    for bad in ["", "a", "abc", "ZZZZ-not-hex", "ééé"] {
+        let result = cs.get(&ContentRef {
+            sha256: bad.to_string(),
+            size_bytes: 0,
+        });
+        assert!(result.is_err(), "get({bad:?}) must return Err, not panic");
+    }
+    let result = cs.get(&ContentRef {
+        sha256: "a".repeat(100),
+        size_bytes: 0,
+    });
+    assert!(result.is_err(), "over-long ref must return Err, not panic");
+}
+
 // === verify-on-read ===
 
 #[test]

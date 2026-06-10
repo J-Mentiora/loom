@@ -107,6 +107,12 @@ pub fn sha256_hex(data: &[u8]) -> String {
 
 /// Compute the on-disk path for a blob given its sha256 hex and shard depth.
 /// Pure helper; no I/O. Useful for tests and StartupManager sweep.
+///
+/// Bounds-safe for malformed input: `sha256_hex` reaches here from untrusted
+/// RPC params (`content.get` artifact_ref) and the daemon builds with
+/// `panic = "abort"`, so short or non-char-boundary refs must never index out
+/// of bounds. They fall back to the `zz` sentinel shard components, which can
+/// never collide with a real blob path (shard components are lowercase hex).
 pub fn shard_path(root: &std::path::Path, sha256_hex: &str, depth: u8) -> PathBuf {
     let mut p = root.to_path_buf();
     p.push("cas");
@@ -114,8 +120,13 @@ pub fn shard_path(root: &std::path::Path, sha256_hex: &str, depth: u8) -> PathBu
     for i in 0..depth as usize {
         let start = i * 2;
         let end = start + 2;
-        p.push(std::str::from_utf8(&bytes[start..end]).unwrap_or("zz"));
+        p.push(
+            bytes
+                .get(start..end)
+                .and_then(|b| std::str::from_utf8(b).ok())
+                .unwrap_or("zz"),
+        );
     }
-    p.push(&sha256_hex[(depth as usize) * 2..]);
+    p.push(sha256_hex.get((depth as usize) * 2..).unwrap_or("zz"));
     p
 }

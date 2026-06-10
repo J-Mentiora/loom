@@ -100,8 +100,15 @@ impl ErrorTranslator {
         if s.len() <= MAX_MESSAGE_LEN {
             s.to_string()
         } else {
-            let truncated = &s[..MAX_MESSAGE_LEN.saturating_sub(3)];
-            format!("{}...", truncated)
+            // Back up to a char boundary: messages embed client-controlled
+            // strings (profile names, URLs), the fixed cut point can land
+            // inside a multi-byte char, and a str-slice panic aborts the
+            // daemon (panic = "abort").
+            let mut end = MAX_MESSAGE_LEN.saturating_sub(3);
+            while !s.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &s[..end])
         }
     }
 }
