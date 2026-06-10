@@ -243,6 +243,7 @@ async fn dispatcher_run_returns_on_shutdown_request() {
             _: Option<std::time::Duration>,
             _: bool,
             _: crate::readiness_monitor::SettleMode,
+            _: bool,
         ) -> Result<ActionResult, ShimResponse> {
             Ok(ActionResult::CdpResult {
                 result: CborValue::Null,

@@ -175,6 +175,7 @@ fn cli_create_includes_capture_policy_in_rpc_params() {
             capture_policy: Some(variant),
             no_blocklist: false,
             no_determinism: false,
+            clock_anchor: None,
         };
         // The CLI's `create()` handler turns `Some(variant)` into a JSON
         // `params["capture_policy"]: <wire>` entry. Assert via the

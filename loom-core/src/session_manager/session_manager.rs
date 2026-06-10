@@ -54,11 +54,14 @@ pub struct SessionCreateOpts {
     pub seed: Option<u64>,
     pub limits: Option<BudgetLimits>,
     pub replay_of: Option<SessionId>,
-    /// When set (replay path), forces the manifest Header's
-    /// `started_at_ms` to this exact value instead of `now_ms()`.
-    /// Required for hash-chain bit-equality: the chain
-    /// hashes over the canonical Header bytes, so a divergent
-    /// timestamp poisons every subsequent prev_hash.
+    /// When set (replay path, OR `--clock-anchor`), forces the manifest
+    /// Header's `started_at_ms` to this exact value instead of `now_ms()`,
+    /// and pins `epoch_ms` (→ CDP `initialVirtualTime`, i.e. the injected
+    /// `Date.now`/`performance.now`). Required for hash-chain bit-equality:
+    /// the chain hashes over the canonical Header bytes, so a divergent
+    /// timestamp poisons every subsequent prev_hash. `--clock-anchor` reuses
+    /// this field so a fresh anchored recording reproduces the same epoch
+    /// across runs (cross-run determinism) with no new opts/Header field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at_ms_override: Option<u64>,
     /// Operator-supplied `--capture-policy`.
