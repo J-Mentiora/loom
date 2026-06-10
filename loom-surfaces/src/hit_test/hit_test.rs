@@ -104,6 +104,10 @@ pub fn resolve_centre_for_selector(selector: &str) -> Result<(i64, i64), HostErr
     let doc_bytes = host::shim_call(
         "chromium",
         &CdpMessageEncoder::encode(&CdpMessage::DomGetDocument(DomGetDocument {
+            // depth:0 fetches only the root nodeId — pierce is intentionally false
+            // (meaningless at depth 0; nothing to inline). The full-tree captures
+            // (navigate/snapshot/selector verbs) use pierce:true; this is the one
+            // deliberate exception, not drift.
             depth: 0,
             pierce: false,
         })),

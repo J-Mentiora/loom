@@ -66,7 +66,7 @@ impl HoverVerb {
                 "chromium",
                 &CdpMessageEncoder::encode(&CdpMessage::DomGetDocument(DomGetDocument {
                     depth: -1,
-                    pierce: false,
+                    pierce: true,
                 })),
             )?;
             let dom_ref = host::blob_put(&dom_bytes)?;

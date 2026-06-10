@@ -750,22 +750,103 @@ fn canned_response(method: &str, params: &Value) -> Value {
             "frameId": "fake-frame-1",
             "loaderId": "fake-loader-1"
         }),
-        "DOM.getDocument" => json!({
-            "root": {
-                "nodeId": 1,
-                "backendNodeId": 1,
-                "nodeName": "#document",
-                "nodeType": 9,
-                "childNodeCount": 0,
-                // Ephemeral per-navigation frame id, mirroring real Chromium.
-                // Varies per call + per process so the determinism e2e proves
-                // `dom_snapshot_hash` normalization STRIPS it: two independent
-                // same-seed runs hash identically ONLY because the shim removes
-                // this id (see loom_shared::dom_normalize).
-                "frameId": ephemeral_frame_id(),
-                "children": []
+        "DOM.getDocument" => {
+            // Honor `pierce`: real Chromium inlines shadow-DOM + iframe
+            // contentDocument subtrees only when pierce:true. Each inlined document
+            // carries its OWN ephemeral frameId. Node ids are STABLE synthetic
+            // values; only the frameIds vary per call, so two captures of the same
+            // tree normalize (frameId stripped recursively) to identical bytes —
+            // which the pierced-path determinism e2e asserts.
+            //
+            // This fixture validates the normalization plumbing ONLY. It does NOT
+            // reproduce browser-enforced same-origin / CORS isolation that real
+            // Chromium applies to pierced subtrees.
+            let pierce = params
+                .get("pierce")
+                .and_then(|p| p.as_bool())
+                .unwrap_or(false);
+            if pierce {
+                json!({
+                    "root": {
+                        "nodeId": 1,
+                        "backendNodeId": 1,
+                        "nodeName": "#document",
+                        "nodeType": 9,
+                        "childNodeCount": 2,
+                        "frameId": ephemeral_frame_id(),
+                        "children": [
+                            // Shadow host — its shadowRoot subtree is inlined under pierce.
+                            {
+                                "nodeId": 2,
+                                "backendNodeId": 2,
+                                "nodeName": "DIV",
+                                "nodeType": 1,
+                                "shadowRoots": [
+                                    {
+                                        "nodeId": 3,
+                                        "backendNodeId": 3,
+                                        "nodeName": "#document-fragment",
+                                        "nodeType": 11,
+                                        "children": [
+                                            {
+                                                "nodeId": 4,
+                                                "backendNodeId": 4,
+                                                "nodeName": "SPAN",
+                                                "nodeType": 1,
+                                                "children": []
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "children": []
+                            },
+                            // Iframe — its contentDocument is inlined under pierce,
+                            // each level carrying its own ephemeral frameId.
+                            {
+                                "nodeId": 5,
+                                "backendNodeId": 5,
+                                "nodeName": "IFRAME",
+                                "nodeType": 1,
+                                "frameId": ephemeral_frame_id(),
+                                "contentDocument": {
+                                    "nodeId": 6,
+                                    "backendNodeId": 6,
+                                    "nodeName": "#document",
+                                    "nodeType": 9,
+                                    "frameId": ephemeral_frame_id(),
+                                    "children": [
+                                        {
+                                            "nodeId": 7,
+                                            "backendNodeId": 7,
+                                            "nodeName": "BODY",
+                                            "nodeType": 1,
+                                            "children": []
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                })
+            } else {
+                json!({
+                    "root": {
+                        "nodeId": 1,
+                        "backendNodeId": 1,
+                        "nodeName": "#document",
+                        "nodeType": 9,
+                        "childNodeCount": 0,
+                        // Ephemeral per-navigation frame id, mirroring real Chromium.
+                        // Varies per call + per process so the determinism e2e proves
+                        // `dom_snapshot_hash` normalization STRIPS it: two independent
+                        // same-seed runs hash identically ONLY because the shim removes
+                        // this id (see loom_shared::dom_normalize).
+                        "frameId": ephemeral_frame_id(),
+                        "children": []
+                    }
+                })
             }
-        }),
+        }
         "DOM.querySelector" => {
             let sel = params
                 .get("selector")
