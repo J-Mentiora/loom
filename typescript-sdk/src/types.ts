@@ -64,10 +64,54 @@ export interface GrantInfo {
   label: string;
 }
 
+/**
+ * Wire-shape error payload on a Receipt (host_service_adapter ReceiptError).
+ */
+export interface ReceiptError {
+  /**
+   * Stable typed failure kind, e.g. `"http_status"`, `"dns_failure"`,
+   * `"connect_refused"`, `"tls_error"`, `"url_blocked"`, `"shim_failure"`.
+   */
+  kind: string;
+  /**
+   * Kind-specific fields (e.g. `{status_code, url}` for `"http_status"`,
+   * `{url, chromium_error}` for transport-layer kinds). `undefined` for
+   * kinds with no kind-specific data.
+   */
+  detail?: unknown;
+}
+
 export interface Receipt {
   actionHash: string;
   outcomeHash: string;
   emittedAtMs: number;
+  /**
+   * Receipt-level outcome: `"success" | "error" | "aborted"` (ReceiptStatus
+   * in loom-rpc host_service_adapter). Failed actions (DNS failure,
+   * HTTP 4xx/5xx, blocked URL, shim failure) return as a SUCCESSFUL JSON-RPC
+   * result whose receipt has `status === "error"` — check `ok`/`status`
+   * instead of relying on a thrown error. Optional for backward
+   * compatibility; populated on every receipt the SDK parses.
+   */
+  status?: string;
+  /** Convenience: `status === "success"`. Populated on every receipt. */
+  ok?: boolean;
+  /** Typed failure payload when `status !== "success"`; absent on success. */
+  error?: ReceiptError;
+  // ---- navigate tier-2 fields (absent for non-navigate verbs) ----
+  url?: string;
+  finalUrl?: string;
+  title?: string;
+  statusCode?: number;
+  domSnapshotHash?: string;
+  screenshotAfterHash?: string;
+  /**
+   * Evaluate tier: JS expression result, canonical-JSON encoded. `undefined`
+   * means "not an evaluate action" or "result offloaded to the content
+   * store" (in which case `returnValueBlobRef` carries the SHA-256).
+   */
+  returnValueJson?: string;
+  returnValueBlobRef?: string;
   /**
    * settle-capture: the readiness mode the capture was gated on
    * (`"load" | "networkidle" | "settled"`). Present on `navigate` receipts;

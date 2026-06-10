@@ -74,6 +74,16 @@ function makeErrorEnvelope(code: string, message: string, id?: number): string {
   return JSON.stringify(env);
 }
 
+/**
+ * The real daemon's HELLO-failure shape: a BARE serialized JsonRpcError —
+ * `{"code", "message"}` with NO `{"error": ...}` wrapper and NO `id`
+ * (loom-rpc `connection_handler::send_error`; pinned by the daemon's own
+ * integration tests asserting top-level `resp["code"]`).
+ */
+function makeBareErrorFrame(code: string, message: string): string {
+  return JSON.stringify({ code, message });
+}
+
 function makeResult(result: unknown, id?: number): string {
   const env: Record<string, unknown> = { result };
   if (id !== undefined) env["id"] = id;
@@ -186,6 +196,13 @@ export class MockDaemon {
     this._handlers.set(method, fn);
   }
 
+  /** Number of client connections the daemon currently sees as open.
+   *  Used by socket-cleanup tests: a client-side `transport.close()`
+   *  (socket destroy) drops this back to zero. */
+  get openConnectionCount(): number {
+    return this._openConnections.size;
+  }
+
   private _registerDefaults(): void {
     this._handlers.set("session.create", () => {
       this._sessionCounter += 1;
@@ -233,12 +250,12 @@ export class MockDaemon {
       const hello = helloBytes.toString("utf8");
       const parts = hello.split(" ");
       if (parts.length !== 2 || parts[0] !== "HELLO") {
-        sendFrame(conn, makeErrorEnvelope("protocol_auth_required", "malformed hello"));
+        sendFrame(conn, makeBareErrorFrame("protocol_auth_required", "malformed hello"));
         conn.end();
         return;
       }
       if (parts[1] !== this.token) {
-        sendFrame(conn, makeErrorEnvelope("protocol_auth_required", "token mismatch"));
+        sendFrame(conn, makeBareErrorFrame("protocol_auth_required", "token mismatch"));
         conn.end();
         return;
       }
