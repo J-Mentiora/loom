@@ -10,6 +10,29 @@
 /// Canonical sandbox profile names. Glossary §Profile (Sandbox Profile).
 pub const KNOWN_PROFILES: &[&str] = &["safe", "standard", "full"];
 
+/// The server-default profile — the one applied when `session.create`
+/// omits the `profile` field entirely (mirrors
+/// `loom_rpc::core_service_adapter::CreateSessionParams::default_profile`
+/// and the CLI's no-`--profile` behavior).
+pub const DEFAULT_PROFILE: &str = "safe";
+
+/// SDK wire alias for the server-default profile. Both SDKs send
+/// `profile: "default"` when the caller doesn't pick one, so the
+/// daemon must resolve it to [`DEFAULT_PROFILE`] rather than reject
+/// it as `unknown_profile`.
+pub const PROFILE_ALIAS_DEFAULT: &str = "default";
+
+/// Resolve the SDK `"default"` profile alias to the canonical
+/// server-default profile. Canonical and unknown names pass through
+/// unchanged (unknowns are rejected downstream by the allowlist).
+pub fn resolve_profile_alias(s: &str) -> &str {
+    if s == PROFILE_ALIAS_DEFAULT {
+        DEFAULT_PROFILE
+    } else {
+        s
+    }
+}
+
 /// Canonical network-mode names. Glossary §Network Mode.
 pub const KNOWN_NETWORK_MODES: &[&str] = &["live", "recorded", "mixed"];
 

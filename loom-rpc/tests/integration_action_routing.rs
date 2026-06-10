@@ -3,11 +3,11 @@
 //! Verifies the full `request_router → rpc_handlers → HostServiceAdapter`
 //! dispatch chain for `web.*` action methods:
 //!
-//! - `rpc.schemas` response includes all 10 web.* methods.
+//! - `rpc.schemas` response includes all 11 web.* methods.
 //! - `web.navigate` dispatches through the chain and returns
 //!   a canned `Receipt` via JSON-RPC, NOT "method not found".
 //!
-//! Uses a `WebSchemas` stub (all 10 web.* method schemas in-memory) and a
+//! Uses a `WebSchemas` stub (all 11 web.* method schemas in-memory) and a
 //! `CannedHostBridge` that returns a fixed `Receipt` so the test is hermetic.
 
 use bytes::Bytes;
@@ -32,7 +32,7 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::net::UnixStream;
 
-// ─── Web schema definitions (all 10 web.* methods) ───────────────────────────
+// ─── Web schema definitions (all 11 web.* methods) ───────────────────────────
 //
 // Source: loom-cli/src/postinstall_runner/interfaces.rs (canonical schema spec).
 // Used inline here so the integration test is self-contained and doesn't
@@ -74,6 +74,13 @@ static WEB_SCHEMAS: &[(&str, &str, &str)] = &[
     (
         "web.wait",
         r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["selector"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
+    ),
+    (
+        // settle-capture readiness verb; the SDKs spell it
+        // `action.web.wait_for` (resolved via `loom_shared::action_aliases`).
+        "web.wait_for",
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"until":{"type":"string","enum":["load","networkidle","settled"]},"timeout_ms":{"type":"integer"}},"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
@@ -581,9 +588,9 @@ async fn test_action_routing_web_navigate_returns_receipt() {
     );
 }
 
-// ─── Test 2: rpc.schemas includes all 10 web.* methods ─────────
+// ─── Test 2: rpc.schemas includes all 11 web.* methods ─────────
 
-/// rpc.schemas response must list all 10 web.* methods.
+/// rpc.schemas response must list all 11 web.* methods.
 #[tokio::test(flavor = "multi_thread")]
 async fn test_rpc_schemas_includes_all_web_methods() {
     let (srv, _bg) = start_action_server().await;
@@ -631,6 +638,7 @@ async fn test_rpc_schemas_includes_all_web_methods() {
         // alias surfaced via `MethodSchema::aliases`, not as a separate row.
         "web.type",
         "web.wait",
+        "web.wait_for",
     ];
 
     for expected in &expected_web_methods {
@@ -645,8 +653,8 @@ async fn test_rpc_schemas_includes_all_web_methods() {
         .filter(|m| m.starts_with("web."))
         .count();
     assert_eq!(
-        web_count, 10,
-        "rpc.schemas must include exactly 10 web.* methods; got {web_count}: {method_names:?}"
+        web_count, 11,
+        "rpc.schemas must include exactly 11 web.* methods; got {web_count}: {method_names:?}"
     );
 }
 
@@ -776,5 +784,63 @@ async fn request_router_accepts_web_type_text_alias() {
     assert!(
         resp.get("result").is_some(),
         "web.type_text alias must reach action_dispatch (got error: {resp})"
+    );
+}
+
+// ─── Test 6: SDK `action.web.wait_for` alias routes end-to-end ────────────────
+
+/// Both SDKs spell the settle-capture verb `action.web.wait_for`
+/// (python `Session.wait_for`, typescript `Session.waitFor`) with the
+/// SDK envelope params shape. A missing METHOD_ALIASES row made every
+/// real-daemon call fail with `method_not_found` — the SDK test suites
+/// masked it by registering mock handlers under the literal alias
+/// string. Drive the exact SDK wire shape through canonicalise →
+/// envelope unwrap → schema validation → router → action_dispatch.
+#[tokio::test(flavor = "multi_thread")]
+async fn request_router_accepts_sdk_wait_for_alias() {
+    let (srv, _bg) = start_action_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    let mut framed = connect(&srv.socket_path).await;
+    send_frame(&mut framed, format!("HELLO {}", srv.token.0).as_bytes()).await;
+
+    // Mirror python-sdk `_build_action_params(session_id, "wait_for",
+    // {"until": "settled"}, deadline_ms)`: payload travels as a JSON
+    // byte array inside the envelope.
+    let payload: Vec<u8> = serde_json::json!({"until": "settled"})
+        .to_string()
+        .into_bytes();
+    let request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "action.web.wait_for",
+        "params": {
+            "session_id": "test-session-wait-for",
+            "action": {
+                "kind": "wait_for",
+                "payload": payload,
+                "deadline_ms": 30000
+            }
+        }
+    });
+    send_frame(&mut framed, request.to_string().as_bytes()).await;
+
+    let resp_bytes = recv_frame(&mut framed).await;
+    let resp: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap();
+
+    if let Some(error) = resp.get("error") {
+        let msg = error.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        assert!(
+            !msg.contains("method not found"),
+            "action.web.wait_for must not produce 'method not found'; got: {msg}"
+        );
+    }
+    let result = resp.get("result").unwrap_or_else(|| {
+        panic!("action.web.wait_for must reach action_dispatch (got error: {resp})")
+    });
+    assert_eq!(
+        result.get("action_id").and_then(|v| v.as_u64()),
+        Some(42),
+        "expected canned action_id=42 from CannedHostBridge; got: {result}"
     );
 }

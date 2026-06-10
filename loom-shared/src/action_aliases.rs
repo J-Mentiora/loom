@@ -36,6 +36,7 @@ pub const METHOD_ALIASES: &[(&str, &str)] = &[
     ("action.web.hover", "web.hover"),
     ("action.web.scroll", "web.scroll"),
     ("action.web.wait", "web.wait"),
+    ("action.web.wait_for", "web.wait_for"),
     ("action.web.evaluate", "web.evaluate"),
     ("action.web.screenshot", "web.screenshot"),
     ("action.web.snapshot", "web.snapshot"),
@@ -81,6 +82,15 @@ mod tests {
     #[test]
     fn canonicalise_resolves_known_alias() {
         assert_eq!(canonicalise("web.type_text"), "web.type");
+    }
+
+    /// Both SDKs spell the settle-capture verb
+    /// `action.web.wait_for` (python `Session.wait_for`, typescript
+    /// `Session.waitFor`); a missing row here surfaced as
+    /// `method_not_found` on every real-daemon call.
+    #[test]
+    fn canonicalise_resolves_sdk_wait_for_alias() {
+        assert_eq!(canonicalise("action.web.wait_for"), "web.wait_for");
     }
 
     #[test]

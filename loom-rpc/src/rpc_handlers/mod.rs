@@ -55,7 +55,16 @@ impl RpcHandlers {
 
     // === Session method stubs — implemented by session-* features ===
 
-    pub async fn session_create(&self, p: CreateSessionParams) -> HandlerResult<SessionInfo> {
+    pub async fn session_create(&self, mut p: CreateSessionParams) -> HandlerResult<SessionInfo> {
+        // SDK zero-config compat: both SDKs send `profile: "default"`
+        // when the caller doesn't choose one. Resolve the alias to the
+        // canonical server default ("safe" — identical to omitting the
+        // field, the CLI's no-`--profile` shape) BEFORE validation so
+        // the allowlist and every downstream `profile == "safe"`
+        // consumer only ever see canonical names.
+        p.profile =
+            loom_core::profile_registry::profile_registry::resolve_profile_alias(&p.profile)
+                .to_string();
         // Typed business validation runs before delegating to the adapter,
         // so bogus profile / network-mode / budget-key values are rejected
         // with typed envelopes carrying the canonical allowlist in `data`.
