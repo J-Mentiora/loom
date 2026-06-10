@@ -230,6 +230,97 @@ async fn naverr_dns_failure_emits_classified_error_event() {
     mgr.shutdown_session("naverr-dns").await;
 }
 
+// ── Iframe 404 must not contaminate the main document's verdict ────────────
+
+#[tokio::test]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn naverr_iframe_404_does_not_contaminate_main_status() {
+    assert_binaries_built();
+    let (mgr, id, _udd) = make_manager("naverr-iframe-404");
+
+    let outcome = navigate(&mgr, id.clone(), "http://fake.test/page-with-iframe-404").await;
+
+    assert_eq!(
+        outcome.status_code, 200,
+        "status_code must be the MAIN document's 200, not the iframe's 404"
+    );
+    let main_idx = outcome
+        .main_document_event_index
+        .expect("main_document_event_index must be set when the main document responded");
+    let main_ev = &outcome.network_events[main_idx as usize];
+    assert_eq!(main_ev.status, 200u16);
+    assert_eq!(main_ev.url, "http://fake.test/page-with-iframe-404");
+    // The iframe's 404 stays in network_events for observability.
+    let iframe_ev = outcome
+        .network_events
+        .iter()
+        .find(|e| e.status == 404)
+        .expect("iframe Document 404 event must be retained for observability");
+    assert_eq!(iframe_ev.url, "http://fake.test/embedded-iframe-404");
+
+    mgr.shutdown_session("naverr-iframe-404").await;
+}
+
+// ── Stale Document events must not leak into the next navigate ─────────────
+
+#[tokio::test]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn naverr_stale_document_events_do_not_leak_into_next_navigate() {
+    assert_binaries_built();
+    let (mgr, id, _udd) = make_manager("naverr-stale-leak");
+
+    // Establish a page first (also lazy-spawns the target).
+    let first = navigate(&mgr, id.clone(), "http://fake.test/status/200").await;
+    assert_eq!(first.status_code, 200);
+
+    // Simulate an in-session CLICK that triggers a real link navigation:
+    // the evaluate sentinel makes fake-chromium emit a Document
+    // requestWillBeSent + responseReceived(404) OUTSIDE any navigate.
+    // Those events land in the shim's hashed accumulator with no drain —
+    // exactly the contamination window from the audit.
+    let eval = tokio::time::timeout(
+        Duration::from_secs(45),
+        mgr.send_evaluate(
+            id.clone(),
+            "test-action".to_string(),
+            0,
+            0,
+            "__loom_test_emit_doc_event__:404".to_string(),
+            30_000,
+            loom_shared::types::Seed(0),
+            loom_shared::types::EpochMs(0),
+            true,
+        ),
+    )
+    .await
+    .expect("send_evaluate did not return within 45s");
+    assert!(
+        eval.is_ok(),
+        "stale-event injection evaluate failed: {eval:?}"
+    );
+
+    // Next navigate: must see ONLY its own events — the stale 404 from the
+    // click-induced load is discarded at navigate START (clear_events), so
+    // it cannot drive status_code or the host's failure verdict.
+    let outcome = navigate(&mgr, id.clone(), "http://fake.test/status/200").await;
+
+    assert_eq!(
+        outcome.status_code, 200,
+        "stale Document events from before the navigate must not drive status_code"
+    );
+    assert!(
+        !outcome.network_events.iter().any(|e| e.status == 404),
+        "stale 404 event leaked into the next navigate's network_events: {:?}",
+        outcome.network_events
+    );
+    let main_idx = outcome
+        .main_document_event_index
+        .expect("main_document_event_index must be set");
+    assert_eq!(outcome.network_events[main_idx as usize].status, 200u16);
+
+    mgr.shutdown_session("naverr-stale-leak").await;
+}
+
 // ── Connect-refused classifies separately ──────────────────────────────────
 
 #[tokio::test]

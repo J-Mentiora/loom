@@ -46,6 +46,20 @@ fn core_ref_to_wit(r: CoreContentRef) -> ContentRef {
     }
 }
 
+/// Resolve THIS navigation's main-document event from the shim's
+/// attribution index. `navigate_execute`'s failure verdict (HTTP 4xx/5xx,
+/// transport error) is scoped to this single event — an iframe's document
+/// error or a stale prior-load event must never fail the whole navigate
+/// (those events stay in `network_events` for observability). `None`
+/// (no events, only iframe documents, or a legacy pre-field shim payload)
+/// means no typed navigate failure is raised.
+pub(super) fn main_document_event(
+    events: &[loom_shared::navigate_outcome::LoomNetworkEvent],
+    main_document_event_index: Option<u32>,
+) -> Option<&loom_shared::navigate_outcome::LoomNetworkEvent> {
+    main_document_event_index.and_then(|i| events.get(i as usize))
+}
+
 // Convert a LoomError → WIT HostError (generated, string payload)
 fn loom_to_wit_error(err: loom_shared::error_format::LoomError) -> HostError {
     let msg = err.message.clone();
@@ -525,7 +539,14 @@ impl Host for HostState {
                 }
             }
 
-            // Surface typed network failures as a typed HostError. Order matters:
+            // Surface typed network failures as a typed HostError, scoped to
+            // THIS navigation's MAIN document only. The shim attributes each
+            // Document event to a frame/loader and reports the main-document
+            // event's index in `main_document_event_index`; an embedded
+            // iframe's 4xx document response, a blocklist-failed iframe
+            // document, or a stale/cancelled prior load must NOT fail the
+            // whole navigate — those events stay in `network_events` for
+            // observability only. Order matters:
             //   1. HTTP 4xx/5xx response: shim's CDP handler appends a
             //      `Network.responseReceived`-derived event whose
             //      `status` is the document's HTTP status. Prefer this
@@ -535,6 +556,8 @@ impl Host for HostState {
             //      (e.g. httpbin /status/404 + /status/500). Surfacing
             //      the actual `status_code` is more actionable than the
             //      `network_error: ERR_HTTP_RESPONSE_CODE_FAILURE` form.
+            //      (The shim's `find_main_document_index` mirrors this
+            //      HTTP-first preference when picking the main event.)
             //   2. Transport-layer failure (DNS / connect-refused / TLS):
             //      shim pushes a `LoomNetworkEvent` with `error_reason`
             //      from `Network.loadingFailed` OR from
@@ -552,8 +575,10 @@ impl Host for HostState {
             // failed navigates (4xx + transport errors).
             let network_events_value = serde_json::to_value(&outcome.network_events)
                 .unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
+            let main_document_event =
+                main_document_event(&outcome.network_events, outcome.main_document_event_index);
 
-            if let Some(ev) = outcome.network_events.iter().find(|e| e.status >= 400) {
+            if let Some(ev) = main_document_event.filter(|e| e.status >= 400) {
                 let detail = serde_json::json!({
                     "kind": "http_status",
                     "url": url,
@@ -565,11 +590,7 @@ impl Host for HostState {
                 .to_string();
                 return Err(HostError::ShimFailure(detail));
             }
-            if let Some(ev) = outcome
-                .network_events
-                .iter()
-                .find(|e| e.error_reason.is_some())
-            {
+            if let Some(ev) = main_document_event.filter(|e| e.error_reason.is_some()) {
                 let kind = ev.error_kind.as_deref().unwrap_or("network_error");
                 let chromium_error = ev.error_reason.as_deref().unwrap_or("unknown");
                 let detail = serde_json::json!({

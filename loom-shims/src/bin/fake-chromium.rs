@@ -229,6 +229,11 @@ async fn handle_connection(
         //                                   Page.navigate response AND emit
         //                                   Network.loadingFailed with
         //                                   type=Document, errorText=<CDP>
+        //   http://fake.test/page-with-iframe-404
+        //                                → main Document 200 + IFRAME
+        //                                   Document 404 (distinct frame/
+        //                                   loader ids) — navigate must
+        //                                   still succeed
         //   anything else                → bare canned response (legacy)
         let nav_url_pattern = if method == "Page.navigate" {
             params
@@ -294,6 +299,65 @@ async fn handle_connection(
         if method == "Page.navigate" {
             if let FakeUrlPattern::Error(ref code) = nav_url_pattern {
                 result["errorText"] = json!(code);
+            }
+        }
+
+        // Stale-event injection sentinel for Runtime.evaluate
+        // (`__loom_test_emit_doc_event__:<status>`): emit a Document
+        // requestWillBeSent + responseReceived BEFORE the evaluate
+        // response, modeling an in-session CLICK that triggered a real
+        // link navigation between two navigates. Those Document events
+        // accumulate in the shim's hashed path with NO drain until the
+        // next navigate — which must discard them at its START
+        // (`clear_events`) instead of letting them poison its
+        // status_code / network_events. Distinct loaderId so loader
+        // matching can also tell it apart from a current navigation.
+        if let Some(expr) = &expression {
+            if let Some(rest) = expr.strip_prefix("__loom_test_emit_doc_event__:") {
+                if let Ok(status) = rest.parse::<u16>() {
+                    let click_url = "http://fake.test/clicked-link";
+                    let mut click_req = json!({
+                        "method": "Network.requestWillBeSent",
+                        "params": {
+                            "requestId": "fake-req-click-1",
+                            "frameId": "fake-frame-1",
+                            "loaderId": "fake-loader-click-1",
+                            "timestamp": 2.0,
+                            "wallTime": 1_700_000_002.0,
+                            "type": "Document",
+                            "request": { "url": click_url, "method": "GET" },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        click_req["sessionId"] = json!(sid);
+                    }
+                    let _ = write
+                        .send(Message::Text(click_req.to_string().into()))
+                        .await;
+
+                    let mut click_resp = json!({
+                        "method": "Network.responseReceived",
+                        "params": {
+                            "requestId": "fake-req-click-1",
+                            "frameId": "fake-frame-1",
+                            "loaderId": "fake-loader-click-1",
+                            "timestamp": 2.1,
+                            "type": "Document",
+                            "response": {
+                                "url": click_url,
+                                "status": status,
+                                "statusText": "",
+                                "mimeType": "text/html",
+                            },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        click_resp["sessionId"] = json!(sid);
+                    }
+                    let _ = write
+                        .send(Message::Text(click_resp.to_string().into()))
+                        .await;
+                }
             }
         }
 
@@ -548,6 +612,95 @@ async fn handle_connection(
                     }
                     let _ = write.send(Message::Text(resp_evt.to_string().into())).await;
                 }
+                FakeUrlPattern::PageWithIframe404 => {
+                    // Main document loads fine (200) under the navigation's
+                    // frameId/loaderId (matching the canned Page.navigate
+                    // response), while an embedded iframe's document 404s
+                    // under its OWN frameId/loaderId. Real-Chromium shape:
+                    // both are type=Document Network events on one target.
+                    let mut main_req = json!({
+                        "method": "Network.requestWillBeSent",
+                        "params": {
+                            "requestId": "fake-req-1",
+                            "frameId": "fake-frame-1",
+                            "loaderId": "fake-loader-1",
+                            "timestamp": 1.0,
+                            "wallTime": 1_700_000_000.0,
+                            "type": "Document",
+                            "request": { "url": nav_url, "method": "GET" },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        main_req["sessionId"] = json!(sid);
+                    }
+                    let _ = write.send(Message::Text(main_req.to_string().into())).await;
+
+                    let mut main_resp = json!({
+                        "method": "Network.responseReceived",
+                        "params": {
+                            "requestId": "fake-req-1",
+                            "frameId": "fake-frame-1",
+                            "loaderId": "fake-loader-1",
+                            "timestamp": 1.0,
+                            "type": "Document",
+                            "response": {
+                                "url": nav_url,
+                                "status": 200,
+                                "statusText": "OK",
+                                "mimeType": "text/html",
+                            },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        main_resp["sessionId"] = json!(sid);
+                    }
+                    let _ = write
+                        .send(Message::Text(main_resp.to_string().into()))
+                        .await;
+
+                    let iframe_url = "http://fake.test/embedded-iframe-404";
+                    let mut iframe_req = json!({
+                        "method": "Network.requestWillBeSent",
+                        "params": {
+                            "requestId": "fake-req-iframe-1",
+                            "frameId": "fake-frame-iframe-1",
+                            "loaderId": "fake-loader-iframe-1",
+                            "timestamp": 1.1,
+                            "wallTime": 1_700_000_001.0,
+                            "type": "Document",
+                            "request": { "url": iframe_url, "method": "GET" },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        iframe_req["sessionId"] = json!(sid);
+                    }
+                    let _ = write
+                        .send(Message::Text(iframe_req.to_string().into()))
+                        .await;
+
+                    let mut iframe_resp = json!({
+                        "method": "Network.responseReceived",
+                        "params": {
+                            "requestId": "fake-req-iframe-1",
+                            "frameId": "fake-frame-iframe-1",
+                            "loaderId": "fake-loader-iframe-1",
+                            "timestamp": 1.2,
+                            "type": "Document",
+                            "response": {
+                                "url": iframe_url,
+                                "status": 404,
+                                "statusText": "Not Found",
+                                "mimeType": "text/html",
+                            },
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        iframe_resp["sessionId"] = json!(sid);
+                    }
+                    let _ = write
+                        .send(Message::Text(iframe_resp.to_string().into()))
+                        .await;
+                }
                 FakeUrlPattern::None => {}
             }
 
@@ -587,6 +740,14 @@ enum FakeUrlPattern {
     /// sub-resource event has `resourceType="Script"` and matches the
     /// default blocklist → must be answered with `Fetch.failRequest`.
     PageWithTracker,
+    /// `http://fake.test/page-with-iframe-404` → emit the MAIN
+    /// document's 200 responseReceived (frameId/loaderId matching the
+    /// canned `Page.navigate` response: fake-frame-1/fake-loader-1)
+    /// PLUS an IFRAME document's 404 responseReceived under a
+    /// different frameId/loaderId. The navigate must SUCCEED with
+    /// status_code=200 — the iframe 404 stays in `network_events` for
+    /// observability only (main-document failure scoping).
+    PageWithIframe404,
     /// Anything else — emit no synthetic Network event (status_code
     /// will remain 0 from the shim's perspective, mirroring real
     /// Chromium with caching disabled).
@@ -610,6 +771,10 @@ enum FakeUrlPattern {
 ///   `__loom_test_obj__`              → result.value = {"label":"Click here","count":42}
 ///   `__loom_test_throw__:<MSG>`      → exceptionDetails with description Error: <MSG>
 ///   `__loom_test_large__:<SIZE_KB>`  → result.value = "x" repeated SIZE_KB×1024 times
+///   `__loom_test_emit_doc_event__:<STATUS>` → result.value = 1; ALSO emits a
+///       Document requestWillBeSent + responseReceived(status=STATUS) BEFORE
+///       the response (handled in `handle_connection` — models a click-
+///       triggered link navigation between navigates; stale-event regression)
 ///
 /// Anything else → empty `{}` (caller treats as a no-op evaluate).
 fn build_fake_evaluate_response(expression: &str) -> Value {
@@ -657,6 +822,16 @@ fn build_fake_evaluate_response(expression: &str) -> Value {
                 "type": "string",
                 "value": big,
             },
+        });
+    }
+
+    // Stale-event injection sentinel:  __loom_test_emit_doc_event__:<status>
+    // The Document-event emission happens in `handle_connection` (it needs
+    // the websocket writer); here we just return a successful scalar so the
+    // evaluate round-trip completes cleanly.
+    if expression.starts_with("__loom_test_emit_doc_event__:") {
+        return json!({
+            "result": { "type": "number", "value": 1 },
         });
     }
 
@@ -733,6 +908,11 @@ fn parse_fake_url_pattern(url: &str) -> FakeUrlPattern {
     }
     if url == "http://fake.test/page-with-tracker" || url == "https://fake.test/page-with-tracker" {
         return FakeUrlPattern::PageWithTracker;
+    }
+    if url == "http://fake.test/page-with-iframe-404"
+        || url == "https://fake.test/page-with-iframe-404"
+    {
+        return FakeUrlPattern::PageWithIframe404;
     }
     FakeUrlPattern::None
 }

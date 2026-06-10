@@ -119,8 +119,23 @@ pub struct NavigateOutcome {
     /// Page title. Currently a stub: empty string.
     pub page_title: String,
     /// HTTP status code of the main document.
-    /// Falls back to 0 when `network_events` is empty.
+    /// Falls back to 0 when no main-document event was captured.
     pub status_code: u16,
+    /// Index into `network_events` of the event the shim attributed to
+    /// THIS navigation's main document (matched against the
+    /// `Page.navigate` response's loaderId/frameId; see
+    /// `find_main_document_index` in loom-shims). `None` = no event is
+    /// attributable to the main document — no events, or only iframe
+    /// documents. The host scopes the navigate failure verdict (HTTP
+    /// 4xx/5xx, transport error) to this event ONLY, so an embedded
+    /// iframe's document error never fails the whole navigate (the
+    /// event stays in `network_events` for observability). Control-flow
+    /// plumbing only: the index never enters the hashed receipt
+    /// (`side_effects_json` serializes the events alone). `serde(default)`
+    /// keeps pre-field CBOR payloads decoding — a legacy payload surfaces
+    /// as `None`, i.e. no typed navigate failure.
+    #[serde(default)]
+    pub main_document_event_index: Option<u32>,
     /// Raw bytes of the DOM snapshot (CBOR-encoded DOM.getDocument response).
     pub dom_bytes: Vec<u8>,
     /// Raw bytes of the screenshot (CBOR-encoded Page.captureScreenshot response).
