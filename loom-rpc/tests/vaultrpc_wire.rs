@@ -123,6 +123,7 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         _: Option<serde_json::Value>,
         _: bool,
         _: bool,
+        _: Option<u64>,
     ) -> Result<(String, u64), LoomErrorCode> {
         Err(LoomErrorCode::InternalError)
     }

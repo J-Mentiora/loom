@@ -15,6 +15,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
             params.budget.clone(),
             params.no_blocklist,
             params.no_determinism,
+            params.clock_anchor,
         )?;
         Ok(SessionInfo {
             session_id,

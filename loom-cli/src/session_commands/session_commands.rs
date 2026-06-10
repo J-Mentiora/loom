@@ -63,6 +63,18 @@ pub struct CreateArgs {
     /// Determinism seed (replay anchor).
     #[arg(long)]
     pub seed: Option<u64>,
+    /// Pin the page clock to a fixed time so repeat recordings match.
+    #[arg(
+        long = "clock-anchor",
+        long_help = "Pin the page clock to a fixed time so repeat recordings match.\n\n\
+            Value is Unix epoch milliseconds (e.g. 1700000000000 = 2023-11-14). Pass the \
+            same value across runs, together with --seed, to get an identical `loom session \
+            diff` (field_diffs=0). Without it, the wall-clock time leaks into the recording \
+            via Date.now()/performance.now() and two runs differ. Composes with --seed; \
+            works without it (the default seed already pins RNG). No effect under \
+            --no-determinism."
+    )]
+    pub clock_anchor: Option<u64>,
     /// Budget overrides, comma-separated key=value pairs.
     /// Keys: network=NMB, wall_clock=Ns, dom_nodes=N, js_heap=NMB.
     /// Example: --budget network=10MB,wall_clock=30s
@@ -305,6 +317,12 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
     }
     if let Some(seed) = args.seed {
         params.insert("seed".to_string(), serde_json::Value::Number(seed.into()));
+    }
+    if let Some(clock_anchor) = args.clock_anchor {
+        params.insert(
+            "clock_anchor".to_string(),
+            serde_json::Value::Number(clock_anchor.into()),
+        );
     }
     if let Some(budget_str) = &args.budget {
         // synthesize a typed `invalid_budget_key` receipt

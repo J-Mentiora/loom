@@ -447,6 +447,36 @@ deterministically even before the first navigate.
 + `started_at_ms`, so the replay session's manifest hash chain is bit-equal
 to the source's at every action_receipt entry.
 
+### Cross-run determinism (`--clock-anchor`)
+
+`--seed` pins RNG, but `epoch_ms` defaults to wall-clock at create time — so two
+*independent* fresh recordings of the same actions still differ (the clock leaks
+into the DOM via `Date.now()`). Pass `--clock-anchor <epoch_ms>` to pin the clock
+to a fixed value, and two fresh runs become identical:
+
+```bash
+# Record today, and again tomorrow from scratch — same flags, same actions:
+A=$(loom session create --profile standard --seed 42 --clock-anchor 1700000000000 | jq -r .session_id)
+loom action web.navigate --session "$A" --url https://example.com >/dev/null
+loom session close "$A"
+
+B=$(loom session create --profile standard --seed 42 --clock-anchor 1700000000000 | jq -r .session_id)
+loom action web.navigate --session "$B" --url https://example.com >/dev/null
+loom session close "$B"
+
+loom session diff "$A" "$B"   # field_diffs: []  → the two runs are identical
+```
+
+`--clock-anchor` is Unix epoch **milliseconds**; reuse the same value across runs.
+It composes with `--seed` and works without it (the default seed already pins RNG).
+Under determinism, DOM capture also waits for the page's virtual-time budget to
+drain, so `setTimeout`-driven DOM mutations fire deterministically before capture.
+**Bounded determinism:** cross-run equality is guaranteed for pages whose virtual-time
+budget elapses within the navigate timeout (the normal case). A pathological page
+(runaway timers / never-draining network) logs a warning and falls back to the
+real-time settle for that navigate — it never hangs, but that navigate may diverge.
+`--no-determinism` opts out entirely (real clock, non-replayable).
+
 ## Security
 
 - Path-traversal-safe session IDs (26 lowercase ASCII alphanumeric chars,

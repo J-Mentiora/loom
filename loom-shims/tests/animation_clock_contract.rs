@@ -75,3 +75,40 @@ fn clock_freeze_fallback_freezes_the_clock_deterministically() {
         "freeze fallback must substitute the epoch token: {frozen}"
     );
 }
+
+/// cross-run determinism (Cluster D): the per-navigation virtual-time budget
+/// params MUST carry a finite `budget` AND a `maxVirtualTimeTaskStarvationCount`.
+/// The starvation cap guarantees `virtualTimeBudgetExpired` always eventually
+/// fires (a busy-loop page can't pin virtual time), which the navigate path now
+/// AWAITS before DOM capture — so a missing cap would risk a hang.
+#[test]
+fn virtual_time_budget_params_have_budget_and_starvation_cap() {
+    use ciborium::value::Value;
+    use loom_shims::determinism_injector::determinism_injector::build_virtual_time_budget_params;
+
+    let params = build_virtual_time_budget_params();
+    let Value::Map(entries) = params else {
+        panic!("budget params must be a CBOR map");
+    };
+    let keys: Vec<String> = entries
+        .iter()
+        .filter_map(|(k, _)| match k {
+            Value::Text(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        keys.iter().any(|k| k == "budget"),
+        "budget params must set a finite virtual-time budget: {keys:?}"
+    );
+    assert!(
+        keys.iter()
+            .any(|k| k == "maxVirtualTimeTaskStarvationCount"),
+        "budget params must set maxVirtualTimeTaskStarvationCount so a busy page \
+         cannot starve virtualTimeBudgetExpired (which navigate now awaits): {keys:?}"
+    );
+    assert!(
+        keys.iter().any(|k| k == "policy"),
+        "budget params must set the virtual-time policy: {keys:?}"
+    );
+}

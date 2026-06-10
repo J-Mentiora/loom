@@ -429,6 +429,7 @@ impl CoreFacadeBridge for CoreBridge {
         budget: Option<serde_json::Value>,
         no_blocklist: bool,
         no_determinism: bool,
+        clock_anchor: Option<u64>,
     ) -> Result<(String, u64), AdapterError> {
         use loom_core::budget_enforcer::BudgetLimits;
         use loom_core::error::LoomErrorCode;
@@ -505,12 +506,24 @@ impl CoreFacadeBridge for CoreBridge {
             seed,
             limits,
             replay_of: None,
-            started_at_ms_override: None,
+            // --clock-anchor pins the session clock via the same override the
+            // replay path uses: started_at_ms_override → epoch_ms (impl_local.rs)
+            // → CDP initialVirtualTime + Header started_at_ms + replay round-trip.
+            // None → epoch falls back to wall-clock now_ms() (unchanged behavior).
+            started_at_ms_override: clock_anchor,
             capture_policy: capture_policy.map(|s| s.to_string()),
             no_blocklist,
             no_determinism,
             profile: profile.to_string(),
         };
+        if let Some(anchor) = clock_anchor {
+            // Greppable signal that a cross-run clock anchor was applied (the
+            // session's injected Date.now/performance.now epoch is pinned to this).
+            tracing::info!(
+                clock_anchor = anchor,
+                "session create: clock anchor applied"
+            );
+        }
         let session_id = self
             .core
             .session_manager

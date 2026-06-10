@@ -54,6 +54,18 @@ pub const RUN_IMMEDIATELY: bool = true;
 /// animations run to completion while staying replay-equal.
 pub const VIRTUAL_TIME_METHOD: &str = "Emulation.setVirtualTimePolicy";
 
+/// CDP event fired once the per-navigation virtual-time budget elapses. Awaited
+/// before DOM capture under determinism so all ≤budget virtual timers (e.g. a
+/// `setTimeout`-driven reveal) have deterministically fired — making the captured
+/// `dom_snapshot_hash` cross-run-stable. See `action_executor::page_navigate`.
+pub const VIRTUAL_TIME_BUDGET_EXPIRED_EVENT: &str = "Emulation.virtualTimeBudgetExpired";
+
+/// Deadlock guard for `build_virtual_time_budget_params`. A pathological page
+/// (busy `setInterval` loop) could otherwise pin virtual time so the budget never
+/// elapses; CDP forces virtual time forward after this many tasks. High enough not
+/// to perturb normal pages, finite so `virtualTimeBudgetExpired` always arrives.
+pub const VIRTUAL_TIME_MAX_TASK_STARVATION: i64 = 1_000_000;
+
 /// Virtual-time policy. `pauseIfNetworkFetchesPending` advances time through
 /// timers/rAF/animations but pauses while network fetches are in flight, so the
 /// page still loads its resources before the clock fast-forwards.
@@ -87,6 +99,12 @@ pub fn build_virtual_time_budget_params() -> ciborium::value::Value {
         (
             Value::Text("budget".into()),
             Value::Float(VIRTUAL_TIME_BUDGET_MS),
+        ),
+        // Forces virtual time forward after N tasks so a busy-loop page can't pin
+        // it and starve `virtualTimeBudgetExpired` (which we await before capture).
+        (
+            Value::Text("maxVirtualTimeTaskStarvationCount".into()),
+            Value::Integer(VIRTUAL_TIME_MAX_TASK_STARVATION.into()),
         ),
     ])
 }
