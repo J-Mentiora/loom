@@ -19,14 +19,14 @@
 //   Validate: test_validate_fails_on_missing_blob
 //   Tape:     test_tape_persisted_and_loaded
 
-use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
+use loom_core::budget_enforcer::{BudgetEnforcer, BudgetLimits, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
 use loom_core::determinism_harness::{DeterminismHarness, SideEffectTape, TapeFrame};
 use loom_core::error::LoomErrorCode;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestEntry, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
 use loom_core::replay_engine::{DiffOpts, LocalReplayEngine, ReplayEngine, ReplayOpts};
-use loom_core::session_manager::LocalSessionManager;
+use loom_core::session_manager::{LocalSessionManager, SessionStatus};
 use loom_core::vault::{KeychainAccess, LocalVault, Vault};
 use ring::digest::{digest, SHA256};
 use std::path::PathBuf;
@@ -1473,4 +1473,243 @@ fn replay_refuses_non_deterministic_session() {
         "refusal message must explain the non-determinism reason; got: {}",
         err.message
     );
+}
+
+// === replay Header fidelity: budgets + capture_policy (audit 2026-06-10) ===
+
+/// Read every WAL line's `prev_hash` field as a string ("" for the Header's
+/// null). The prev_hash chain seeds from the projected Header bytes, so two
+/// manifests with equal vectors have bit-equal chains at every line index.
+fn read_prev_hashes(sessions_root: &std::path::Path, id: &SessionId) -> Vec<String> {
+    let content = std::fs::read_to_string(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
+    content
+        .lines()
+        .map(|line| {
+            let v: serde_json::Value = serde_json::from_str(line).unwrap();
+            v.get("prev_hash")
+                .and_then(|p| p.as_str())
+                .unwrap_or("")
+                .to_string()
+        })
+        .collect()
+}
+
+/// First WAL line (the Header) parsed as JSON.
+fn read_header_json(sessions_root: &std::path::Path, id: &SessionId) -> serde_json::Value {
+    let content = std::fs::read_to_string(sessions_root.join(&id.0).join("manifest.wal")).unwrap();
+    serde_json::from_str(content.lines().next().expect("WAL has a Header line")).unwrap()
+}
+
+// Regression: a source recorded with --budget/--capture-policy must replay
+// with the SAME Header budgets/capture_policy. Both fields serialize with
+// `skip_serializing_if`, and hashable_line() only projects out
+// session_id/started_at_ms/emitted_at_ms — so dropping them (the pre-fix
+// `limits: None, capture_policy: None`) changed the projected Header hash and
+// poisoned every subsequent prev_hash in the replay chain.
+#[test]
+fn test_replay_header_preserves_budgets_and_capture_policy_chain_bit_equal() {
+    let tmp = tmp_path();
+    let obs = make_obs(&tmp);
+    let sessions_root = tmp.path().join("sessions");
+    let mw = make_manifest_writer(&tmp, obs.clone());
+    let cs = make_content_store(&tmp, obs.clone());
+    let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
+    let engine = make_engine(
+        &tmp,
+        cs.clone() as Arc<dyn ContentStore>,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        sm.clone(),
+    );
+
+    // Source recorded with explicit budgets + capture policy (+ seed, so the
+    // replay Header round-trips every skip-if-none field).
+    let limits = BudgetLimits {
+        session_walltime_ms: 120_000,
+        action_walltime_ms: 9_000,
+        network_bytes: 1_000_000,
+        dom_nodes: 7_000,
+        js_heap_bytes: 64 * 1024 * 1024,
+    };
+    let source_id = SessionId("01TESTHEADERFIDELITY0000AB".to_string());
+    std::fs::create_dir_all(sessions_root.join(&source_id.0)).unwrap();
+    mw.open_manifest_with_started_at(
+        source_id.clone(),
+        Some(limits),
+        None,
+        Some("minimal".to_string()),
+        Some(7),
+        true,
+    )
+    .unwrap();
+    for i in 0..2u64 {
+        mw.append(
+            source_id.clone(),
+            ManifestEntry::ActionReceipt {
+                action_id: i,
+                emitted_at_ms: 1_000_000 + i * 100,
+                receipt_canonical_bytes: serde_jcs::to_string(&serde_json::json!({"action_id": i}))
+                    .unwrap()
+                    .into_bytes(),
+                prev_hash: String::new(),
+            },
+        )
+        .unwrap();
+    }
+    mw.append(
+        source_id.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: 2,
+            emitted_at_ms: 1_000_300,
+            reason: "close".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+
+    let replay_id = engine
+        .replay(source_id.clone(), ReplayOpts::default())
+        .expect("replay of a budget/capture-policy session should succeed");
+
+    // The replay Header carries the source's recorded budgets + capture_policy.
+    let source_header = read_header_json(&sessions_root, &source_id);
+    let replay_header = read_header_json(&sessions_root, &replay_id);
+    assert_eq!(
+        replay_header.get("budgets"),
+        source_header.get("budgets"),
+        "replay Header must reproduce the source's recorded budgets"
+    );
+    assert!(
+        source_header.get("budgets").is_some(),
+        "precondition: source Header actually recorded budgets"
+    );
+    assert_eq!(
+        replay_header.get("capture_policy"),
+        source_header.get("capture_policy"),
+        "replay Header must reproduce the source's capture_policy"
+    );
+    assert_eq!(
+        source_header.get("capture_policy").and_then(|v| v.as_str()),
+        Some("minimal"),
+        "precondition: source Header actually recorded capture_policy"
+    );
+
+    // Header fidelity modulo the two projected ephemerals: stripping
+    // session_id + started_at_ms, the Headers must be IDENTICAL (JCS sorts
+    // keys, so Value equality == canonical-byte equality).
+    let strip = |mut v: serde_json::Value| {
+        let obj = v.as_object_mut().unwrap();
+        obj.remove("session_id");
+        obj.remove("started_at_ms");
+        v
+    };
+    assert_eq!(
+        strip(source_header),
+        strip(replay_header),
+        "replay Header must match the source Header on every non-ephemeral field"
+    );
+
+    // Chain bit-equality: the prev_hash at EVERY line index must match the
+    // source's (index 1 is sha256 of the projected Header — the chain seed).
+    assert_eq!(
+        read_prev_hashes(&sessions_root, &source_id),
+        read_prev_hashes(&sessions_root, &replay_id),
+        "replay prev_hash chain must be bit-equal to the source chain at every index"
+    );
+
+    mw.validate(replay_id)
+        .expect("replay manifest hash chain must validate");
+}
+
+// === replay closes its session coherently through the SessionManager ===
+
+// Regression (audit 2026-06-10): replay() used to append the
+// 'replay_complete' SessionTerminal directly via manifest_writer, leaving the
+// in-memory session Active with last_activity_ms pinned to the SOURCE's
+// original started_at_ms — instantly idle-reapable, so the reaper appended a
+// SECOND SessionTerminal{idle_ttl} over the completed replay manifest.
+#[test]
+fn test_replay_closes_session_in_fsm_and_reaper_cannot_double_terminal() {
+    let tmp = tmp_path();
+    let obs = make_obs(&tmp);
+    let sessions_root = tmp.path().join("sessions");
+    let mw = make_manifest_writer(&tmp, obs.clone());
+    let cs = make_content_store(&tmp, obs.clone());
+    let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
+    let engine = make_engine(
+        &tmp,
+        cs.clone() as Arc<dyn ContentStore>,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        sm.clone(),
+    );
+
+    let (source_id, _) = build_recorded_session(
+        mw.as_ref() as &dyn ManifestWriter,
+        &sessions_root,
+        2,
+        b"fsm-close",
+    );
+
+    let replay_id = engine
+        .replay(source_id, ReplayOpts::default())
+        .expect("replay should succeed");
+
+    // The in-memory FSM must be terminal, not Active.
+    let session = sm
+        .get(replay_id.clone())
+        .expect("replay session retained in-memory (bounded terminal retention)");
+    assert_eq!(
+        *session.status.lock(),
+        SessionStatus::Closed,
+        "replay() must close its session through the SessionManager FSM"
+    );
+
+    // Simulate the idle reaper hitting the session with an ancient
+    // last_activity clock: the two-phase guard must SPARE it (not Active),
+    // never appending a second terminal.
+    let far_future = 4_102_444_800_000u64; // 2100-01-01 — any 'now' past the source epoch
+    let evicted = sm
+        .evict_if_idle(replay_id.clone(), 1, far_future)
+        .expect("evict_if_idle on a closed session is not an error for the sweep");
+    assert!(
+        !evicted,
+        "idle reaper must spare the already-closed replay session"
+    );
+
+    // Exactly ONE SessionTerminal, with reason 'replay_complete'.
+    let content =
+        std::fs::read_to_string(sessions_root.join(&replay_id.0).join("manifest.wal")).unwrap();
+    let terminals: Vec<serde_json::Value> = content
+        .lines()
+        .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter(|v| v["kind"] == "session_terminal")
+        .collect();
+    assert_eq!(
+        terminals.len(),
+        1,
+        "replay manifest must contain exactly one SessionTerminal"
+    );
+    assert_eq!(
+        terminals[0]["reason"], "replay_complete",
+        "the single terminal must be the replay_complete one"
+    );
+
+    // Replay-of-replay stays allowed (the 1b abort-guard accepts
+    // reason=replay_complete; an idle_ttl double-terminal would refuse it).
+    engine
+        .replay(replay_id, ReplayOpts::default())
+        .expect("replaying a cleanly completed replay must stay allowed");
 }

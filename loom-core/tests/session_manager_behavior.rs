@@ -23,6 +23,7 @@ use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId}
 use loom_core::observability::Observability;
 use loom_core::session_manager::{
     AbortReason, LocalSessionManager, SessionCreateOpts, SessionError, SessionStatus,
+    TERMINAL_RETENTION_CAP,
 };
 use loom_core::vault::{KeychainAccess, LocalVault, Vault};
 use std::path::PathBuf;
@@ -387,5 +388,108 @@ fn test_abort_all_aborts_every_active_session() {
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+    }
+}
+
+// === bounded terminal retention (audit 2026-06-10) ===
+//
+// The in-memory session table used to have exactly one insert and zero
+// removes — every Arc<Session> lived for the daemon's lifetime. Terminal
+// sessions are now retained in a FIFO capped at TERMINAL_RETENTION_CAP;
+// overflow evicts the OLDEST terminal session from the table (disk stays
+// the source of truth for historical queries).
+
+#[test]
+fn terminal_sessions_evicted_beyond_retention_cap() {
+    let tmp = "/tmp/loom-test-terminal-retention";
+    let _ = std::fs::remove_dir_all(tmp);
+    let sm = make_sm(tmp);
+
+    // An ACTIVE session must survive any amount of terminal churn.
+    let active_id = sm.create(default_opts()).unwrap();
+
+    // Oldest terminal session — will be pushed out of the retention window.
+    let first_closed = sm.create(default_opts()).unwrap();
+    sm.close(first_closed.clone()).unwrap();
+
+    // Fill the retention window past the cap (mix close + abort: both are
+    // terminal transitions and both must count against the FIFO).
+    let mut recent = Vec::new();
+    for i in 0..TERMINAL_RETENTION_CAP {
+        let id = sm.create(default_opts()).unwrap();
+        if i % 2 == 0 {
+            sm.close(id.clone()).unwrap();
+        } else {
+            sm.abort(
+                id.clone(),
+                AbortReason {
+                    reason: "test-churn".into(),
+                },
+            )
+            .unwrap();
+        }
+        recent.push(id);
+    }
+
+    // The oldest terminal session is evicted: lookups degrade to the same
+    // SessionNotFound a daemon restart would produce.
+    let err = match sm.get(first_closed.clone()) {
+        Err(e) => e,
+        Ok(_) => panic!("oldest terminal session must be evicted from the in-memory table"),
+    };
+    assert_eq!(
+        err.code,
+        LoomErrorCode::SessionNotFound,
+        "evicted terminal session must answer SessionNotFound"
+    );
+    assert!(
+        !sm.live_session_ids().contains(&first_closed),
+        "evicted terminal session must leave live_session_ids (unshields orphan GC)"
+    );
+
+    // The MOST RECENT terminal sessions keep their typed-error behaviour.
+    let last_closed = recent.last().unwrap().clone();
+    assert!(
+        sm.get(last_closed.clone()).is_ok(),
+        "recent terminal sessions stay in the table"
+    );
+    let err = sm.close(last_closed).unwrap_err();
+    assert_eq!(
+        err.code,
+        LoomErrorCode::SessionAlreadyClosed,
+        "recent terminal sessions still answer SessionAlreadyClosed (not NotFound)"
+    );
+
+    // Active sessions are NEVER evicted by terminal churn.
+    let active = sm
+        .get(active_id)
+        .expect("active session must survive terminal churn");
+    assert_eq!(*active.status.lock(), SessionStatus::Active);
+
+    // The table is bounded: 1 active + at most TERMINAL_RETENTION_CAP terminal.
+    assert!(
+        sm.live_session_ids().len() <= TERMINAL_RETENTION_CAP + 1,
+        "table must stay bounded at cap + active sessions; got {}",
+        sm.live_session_ids().len()
+    );
+}
+
+#[test]
+fn terminal_retention_keeps_sessions_within_cap() {
+    let tmp = "/tmp/loom-test-terminal-retention-within";
+    let _ = std::fs::remove_dir_all(tmp);
+    let sm = make_sm(tmp);
+
+    // Closing FEWER than cap sessions evicts nothing — every terminal
+    // session stays addressable with its typed status.
+    let mut ids = Vec::new();
+    for _ in 0..3 {
+        let id = sm.create(default_opts()).unwrap();
+        sm.close(id.clone()).unwrap();
+        ids.push(id);
+    }
+    for id in ids {
+        let session = sm.get(id).expect("within-cap terminal session retained");
+        assert_eq!(*session.status.lock(), SessionStatus::Closed);
     }
 }
