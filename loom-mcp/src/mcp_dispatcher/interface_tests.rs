@@ -178,3 +178,88 @@ fn shutdown_signature_is_synchronous_unit() {
     }
     let _ = _ck;
 }
+
+// === Regression (mcp-resources): the resources/read RESULT must be the
+// MCP 2024-11-05 envelope { "contents": [TextResourceContents |
+// BlobResourceContents] }. A bare ResourceContents object is rejected by
+// strict clients (Claude Desktop/Code Zod validation). ===
+
+use crate::rpc_client::{JsonRpcCaller, RpcClient};
+use crate::stdio_transport::McpRequest;
+use loom_rpc::error::LoomError;
+use serde_json::json;
+use std::sync::Arc;
+
+const ENVELOPE_PNG_HEX: &str = "89504e470d0a1a0a0000000d49484452";
+const ENVELOPE_BLOB_HASH: &str = "3333333333333333333333333333333333333333333333333333333333333333";
+
+struct EnvelopeFakeCaller;
+
+#[async_trait::async_trait]
+impl JsonRpcCaller for EnvelopeFakeCaller {
+    async fn raw_call(
+        &self,
+        method: &str,
+        _params: serde_json::Value,
+    ) -> Result<serde_json::Value, LoomError> {
+        match method {
+            "content.get" => Ok(json!({
+                "artifact_ref": ENVELOPE_BLOB_HASH,
+                "data_hex": ENVELOPE_PNG_HEX,
+                "size_bytes": 16u64
+            })),
+            other => Err(LoomError::new(
+                loom_rpc::error::LoomErrorCode::InvalidArgument,
+                format!("unexpected method in fake: {other}"),
+            )),
+        }
+    }
+}
+
+fn dispatcher_with_fake_caller(caller: Box<dyn JsonRpcCaller + Send + Sync>) -> Arc<McpDispatcher> {
+    let rpc: Arc<RpcClient> = RpcClient::with_caller_for_test(caller);
+    McpDispatcher::new(
+        crate::tool_cache::ToolCache::new(rpc.clone()),
+        crate::resource_tracker::ResourceTracker::new(rpc.clone()),
+        rpc,
+        crate::mcp_observability::McpObservability::new(true),
+        Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    )
+}
+
+#[tokio::test]
+async fn resources_read_result_is_wrapped_in_contents_array() {
+    let dispatcher = dispatcher_with_fake_caller(Box::new(EnvelopeFakeCaller));
+
+    let req = McpRequest {
+        jsonrpc: "2.0".into(),
+        id: Some(json!(7)),
+        method: METHOD_RESOURCES_READ.into(),
+        params: json!({ "uri": format!("loom://blob/{ENVELOPE_BLOB_HASH}") }),
+    };
+    let resp = dispatcher
+        .dispatch(req)
+        .await
+        .expect("request with an id must get a response");
+    assert!(resp.error.is_none(), "got {:?}", resp.error);
+    let result = resp.result.expect("resources/read must carry a result");
+
+    let contents = result
+        .get("contents")
+        .and_then(|c| c.as_array())
+        .expect("result must be the MCP envelope { \"contents\": [...] }");
+    assert_eq!(contents.len(), 1, "exactly one resource was read");
+    let entry = &contents[0];
+    assert_eq!(
+        entry.get("uri").and_then(|u| u.as_str()),
+        Some(format!("loom://blob/{ENVELOPE_BLOB_HASH}").as_str())
+    );
+    assert_eq!(
+        entry.get("mimeType").and_then(|m| m.as_str()),
+        Some("image/png")
+    );
+    assert!(
+        entry.get("blob").and_then(|b| b.as_str()).is_some(),
+        "blob entry must carry base64 bytes"
+    );
+}

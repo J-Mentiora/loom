@@ -118,7 +118,11 @@ impl McpDispatcher {
                     .unwrap_or(ResourcesReadParams { uri: String::new() });
                 match self.resources_read(params).await {
                     Ok(contents) => {
-                        let v = serde_json::to_value(contents).unwrap_or(serde_json::Value::Null);
+                        // MCP 2024-11-05 defines the resources/read result as
+                        // { "contents": [TextResourceContents | BlobResourceContents] }
+                        // — strict clients reject a bare contents object.
+                        let c = serde_json::to_value(contents).unwrap_or(serde_json::Value::Null);
+                        let v = serde_json::json!({ "contents": [c] });
                         (Some(v), None)
                     }
                     Err(e) => {
