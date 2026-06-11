@@ -24,6 +24,7 @@ import * as fs from "node:fs";
 import {
   LoomAbortError,
   LoomConnectionError,
+  LoomError,
   LoomRPCError,
   LoomTokenError,
 } from "./errors.js";
@@ -86,6 +87,15 @@ export class LoomTransport {
   // generic connection error, even when no call was pending when the
   // frame arrived.
   private _daemonError: LoomRPCError | null = null;
+  // Latched terminal connection state. Set when the socket errors or the
+  // daemon hangs up (e.g. its ~300s authenticated-idle timeout silently
+  // closes the connection) and on client-side close(). Once set, call()
+  // fails fast with this typed error instead of writing to a destroyed
+  // stream and surfacing Node's misleading "Cannot call write after a
+  // stream was destroyed" an event-loop turn later. First cause wins
+  // (`??=`): a client close() is not re-labelled as a daemon hangup by
+  // the subsequent 'close' event.
+  private _closeReason: LoomConnectionError | null = null;
 
   constructor(socketPath?: string, token?: string) {
     this._path = socketPath ?? defaultSocketPath();
@@ -97,6 +107,10 @@ export class LoomTransport {
       const sock = net.createConnection({ path: this._path });
       sock.once("connect", () => {
         this._socket = sock;
+        // Reset terminal state + any stale partial frame from a previous
+        // connection so a reconnect on the same transport is usable.
+        this._closeReason = null;
+        this._recvBuffer = Buffer.alloc(0);
         // Install persistent listeners ONCE — they live for the
         // lifetime of the connection. Per-call listener attach/detach
         // would scramble frames when `request.cancel` is sent while
@@ -127,6 +141,9 @@ export class LoomTransport {
     if (this._daemonError) {
       throw this._daemonError;
     }
+    if (this._closeReason) {
+      throw this._closeReason;
+    }
     if (!this._socket) {
       throw new LoomConnectionError("Transport not connected. Call connect() first.");
     }
@@ -136,6 +153,22 @@ export class LoomTransport {
     }
 
     const id = this._nextId++;
+
+    // Serialize BEFORE mutating any transport state: JSON.stringify throws
+    // synchronously on circular references / BigInt (reachable via
+    // user-controlled params such as SessionCreateOptions.budget). If the
+    // pending entry were registered first, the throw would orphan it and a
+    // later transport close/error would reject a promise nobody awaits —
+    // an unhandledRejection that kills the process by default.
+    let request: string;
+    try {
+      request = JSON.stringify({ jsonrpc: "2.0", method, params, id });
+    } catch (err) {
+      throw new LoomError(
+        `params for '${method}' are not JSON-serializable: ${(err as Error).message}`,
+      );
+    }
+
     let abortListener: (() => void) | undefined;
 
     const settledFlag: PendingCall = {
@@ -178,13 +211,19 @@ export class LoomTransport {
       opts.signal.addEventListener("abort", abortListener, { once: true });
     }
 
-    const request = JSON.stringify({ jsonrpc: "2.0", method, params, id });
     this._sendFrame(Buffer.from(request, "utf8"));
     return promise;
   }
 
   async close(): Promise<void> {
+    this._closeReason ??= new LoomConnectionError("Transport closed");
     if (this._socket) {
+      // Detach the persistent listeners BEFORE destroying: the old
+      // socket's trailing 'close' event must not re-latch a dead state
+      // (or null a fresh socket) after a reconnect.
+      this._socket.off("data", this._onData);
+      this._socket.off("error", this._onError);
+      this._socket.off("close", this._onClose);
       this._socket.destroy();
       this._socket = null;
     }
@@ -238,10 +277,13 @@ export class LoomTransport {
   };
 
   private _onError = (err: Error): void => {
+    this._socket = null;
+    this._closeReason ??= new LoomConnectionError(
+      `Connection error: ${err.message} — transport is no longer usable; create a new transport`,
+    );
     // Prefer the latched daemon error (e.g. auth failure) — the daemon
     // closes right after sending it, so the socket error is a symptom.
-    const e =
-      this._daemonError ?? new LoomConnectionError(`Connection error mid-frame: ${err.message}`);
+    const e = this._daemonError ?? this._closeReason;
     for (const [, entry] of this._pending) {
       entry.reject(e);
     }
@@ -249,7 +291,11 @@ export class LoomTransport {
   };
 
   private _onClose = (): void => {
-    const e = this._daemonError ?? new LoomConnectionError("Connection closed by daemon");
+    this._socket = null;
+    this._closeReason ??= new LoomConnectionError(
+      "Connection closed by daemon — transport is no longer usable; create a new transport",
+    );
+    const e = this._daemonError ?? this._closeReason;
     for (const [, entry] of this._pending) {
       entry.reject(e);
     }

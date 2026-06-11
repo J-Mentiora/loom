@@ -103,3 +103,72 @@ describe("Session.create() returns a Session with matching sessionId", () => {
     await s2.close();
   });
 });
+
+// ─── close() idempotency ──────────────────────────────────────────────────
+// Disposable resources must tolerate double-dispose: the documented
+// `await using` pattern combined with an explicit close() inside the block
+// runs close() twice (the second via Symbol.asyncDispose at scope exit).
+describe("Session.close() idempotency", () => {
+  let daemon: MockDaemon;
+  let closeCalls: string[];
+
+  before(async () => {
+    daemon = new MockDaemon();
+    closeCalls = [];
+    daemon.registerHandler("session.close", (params) => {
+      const sid = (params["session_id"] as string) ?? "";
+      closeCalls.push(sid);
+      return { session_id: sid, status: "closed", created_at_ms: 0 };
+    });
+    await daemon.start();
+  });
+
+  after(async () => {
+    await daemon.stop();
+  });
+
+  test("double explicit close() returns the latched SessionInfo, RPC fires once", async () => {
+    const s = await Session.create({ socketPath: daemon.socketPath, token: daemon.token });
+    const before = closeCalls.length;
+    const first = await s.close();
+    const second = await s.close();
+    assert.deepStrictEqual(second, first);
+    assert.strictEqual(closeCalls.length, before + 1, "session.close RPC must fire exactly once");
+  });
+
+  test("await using + explicit close() inside the block does not throw at scope exit", async () => {
+    let info: { sessionId: string; status: string } | null = null;
+    {
+      await using session = await Session.create({
+        socketPath: daemon.socketPath,
+        token: daemon.token,
+      });
+      // Explicit close inside the block (e.g. to read the SessionInfo);
+      // disposal at scope exit must be a no-op, not a thrown
+      // LoomConnectionError / SuppressedError.
+      info = await session.close();
+    }
+    assert.ok(info);
+    assert.strictEqual(info.status, "closed");
+  });
+
+  test("failed close() still latches: second close() resolves with synthetic info", async () => {
+    daemon.registerHandler("session.close", () => {
+      throw new Error("boom");
+    });
+    try {
+      const s = await Session.create({ socketPath: daemon.socketPath, token: daemon.token });
+      await assert.rejects(() => s.close(), LoomRPCError);
+      // Double-dispose after a failed close must not throw again.
+      const info = await s.close();
+      assert.strictEqual(info.sessionId, s.sessionId);
+      assert.strictEqual(info.status, "closed");
+    } finally {
+      daemon.registerHandler("session.close", (params) => {
+        const sid = (params["session_id"] as string) ?? "";
+        closeCalls.push(sid);
+        return { session_id: sid, status: "closed", created_at_ms: 0 };
+      });
+    }
+  });
+});

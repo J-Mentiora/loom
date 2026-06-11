@@ -1,7 +1,8 @@
 /**
  * Error types for the loom TypeScript SDK.
  *
- * LoomErrorCode values mirror LoomErrorCode in loom-rpc/src/error_translator/interfaces.rs.
+ * LoomErrorCode values mirror `LoomErrorCode::as_wire` in
+ * loom-shared/src/error_format.rs (see LOOM_ERROR_CODES in types.ts).
  * All snake_case strings are stable wire values (BC-RPC-03).
  */
 
