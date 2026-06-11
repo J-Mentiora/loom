@@ -1,8 +1,11 @@
 """
 Error types for the loom Python SDK.
 
-LoomErrorCode values mirror LoomErrorCode in loom-rpc/src/error_translator/interfaces.rs.
-All snake_case strings are stable wire values (BC-RPC-03).
+LoomErrorCode values mirror ``loom_shared::LoomErrorCode::as_wire``
+(loom-shared/src/error_format.rs). All snake_case strings are stable wire
+values (BC-RPC-03). ``LoomRPCError.code`` is kept as the raw wire string;
+parse it with ``LoomErrorCode(err.code)``, which degrades unknown codes to
+``LoomErrorCode.internal`` instead of raising.
 """
 
 from typing import Any
