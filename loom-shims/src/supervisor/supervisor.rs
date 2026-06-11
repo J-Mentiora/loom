@@ -39,10 +39,10 @@ use crate::target_manager::target_manager::TargetManager;
 use async_trait::async_trait;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::Child;
 
 /// Restart budget configuration. Soft binding (defaults shown).
 #[derive(Debug, Clone, Copy)]
@@ -116,7 +116,12 @@ pub struct ChromiumSupervisor {
     pub(crate) dispatcher: Arc<dyn Dispatcher>,
     pub(crate) restart_history: parking_lot::Mutex<Vec<Instant>>,
     pub(crate) child_pid: parking_lot::Mutex<Option<u32>>,
-    pub(crate) child: tokio::sync::Mutex<Option<Child>>,
+    /// Set by `shutdown()` BEFORE it signals the process group. The
+    /// death-watcher task spawned in `start()` consults this after
+    /// reaping Chromium: a cooperative kill must not be misread as a
+    /// crash (which would `std::process::exit(2)` mid-shutdown and race
+    /// the Shutdown ack / IPC teardown).
+    pub(crate) shutting_down: Arc<AtomicBool>,
 }
 
 impl ChromiumSupervisor {
@@ -133,7 +138,7 @@ impl ChromiumSupervisor {
             dispatcher,
             restart_history: parking_lot::Mutex::new(Vec::new()),
             child_pid: parking_lot::Mutex::new(None),
-            child: tokio::sync::Mutex::new(None),
+            shutting_down: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -310,14 +315,23 @@ impl Supervisor for ChromiumSupervisor {
         //
         // Trade-off: we move ownership of the Child into this watcher
         // task, so shutdown() can no longer wait on it directly. That
-        // path now relies on `killpg` (which it already calls) plus a
-        // brief sleep. We also skip the `*self.child.lock().await =
-        // Some(child)` stash; if a future feature needs to interact
-        // with the child handle (beyond pgid kills which only need
-        // child_pid), threading it back through a watcher-task
-        // channel is the right move.
+        // path signals the process group via the recorded `child_pid`
+        // (pgid == pid thanks to `process_group(0)`) and polls for the
+        // pid to disappear — the watcher's wait() here is what reaps it.
+        // The `shutting_down` flag distinguishes a cooperative kill from
+        // a crash: on shutdown the watcher must NOT self-exit(2), or it
+        // would race the Shutdown ack / IPC teardown still in flight.
+        let shutting_down = self.shutting_down.clone();
         tokio::spawn(async move {
             let status = child.wait().await;
+            if shutting_down.load(Ordering::SeqCst) {
+                tracing::debug!(
+                    chromium_pid = pid,
+                    status = ?status,
+                    "chromium exited during cooperative shutdown (reaped)"
+                );
+                return;
+            }
             tracing::warn!(
                 chromium_pid = pid,
                 status = ?status,
@@ -340,47 +354,58 @@ impl Supervisor for ChromiumSupervisor {
     }
 
     async fn shutdown(&self) -> Result<(), SupervisorError> {
+        // Flag first: the death-watcher consults this after reaping so
+        // the cooperative kill below isn't misread as a crash (which
+        // would std::process::exit(2) mid-shutdown).
+        self.shutting_down.store(true, Ordering::SeqCst);
+
         // Close the CDP session so the writer task drains. After this,
         // the child should exit on its own after we send SIGTERM.
         self.cdp.invalidate_session();
 
-        let pid_opt = *self.child_pid.lock();
-        let mut child_guard = self.child.lock().await;
-        if let Some(mut child) = child_guard.take() {
-            // SIGTERM the entire process group via killpg(-pgid). This
-            // takes down Chromium AND all its helper processes (renderer,
-            // GPU, utility) in one call. Chromium was spawned with
-            // process_group(0) so its pgid == its pid.
-            if let Some(pid) = pid_opt {
-                #[cfg(unix)]
+        // start() moved the Child handle into the death-watcher task
+        // (wait()-based crash detection owns reaping), so the kill
+        // sequence is driven off the recorded pid: Chromium was spawned
+        // with process_group(0), so its pgid == its pid and killpg takes
+        // down the whole helper tree (renderer, GPU, utility) in one
+        // call. `take()` makes the second shutdown() call (signal path +
+        // run.rs STEP 6) a no-op.
+        let pid_opt = self.child_pid.lock().take();
+        if let Some(pid) = pid_opt {
+            #[cfg(unix)]
+            {
                 unsafe {
-                    // killpg sends to the entire process group named by
-                    // the negative pid. -SIGTERM is the cooperative
-                    // signal; helpers will exit cleanly within ~1s.
+                    // killpg(pgid, SIGTERM) is the cooperative signal;
+                    // helpers will exit cleanly within ~1s.
                     libc::killpg(pid as libc::pid_t, libc::SIGTERM);
                 }
-                #[cfg(not(unix))]
-                let _ = pid;
-            }
-            // Wait up to 2s for clean exit, then SIGKILL.
-            match tokio::time::timeout(Duration::from_secs(2), child.wait()).await {
-                Ok(Ok(_status)) => { /* clean */ }
-                Ok(Err(e)) => {
-                    tracing::warn!("supervisor: child wait error: {e}");
-                }
-                Err(_) => {
-                    // Timed out — SIGKILL the entire process group.
-                    if let Some(pid) = pid_opt {
-                        #[cfg(unix)]
-                        unsafe {
-                            libc::killpg(pid as libc::pid_t, libc::SIGKILL);
-                        }
+                // Up to 2s grace for a clean exit. The watcher reaps via
+                // wait(); once reaped, kill(pid, 0) reports ESRCH (a
+                // zombie still reports alive, so this also waits out the
+                // reap itself).
+                let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+                let mut exited = false;
+                while tokio::time::Instant::now() < deadline {
+                    if unsafe { libc::kill(pid as libc::pid_t, 0) } != 0 {
+                        exited = true;
+                        break;
                     }
-                    let _ = child.wait().await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+                if !exited {
+                    // Grace expired — SIGKILL the entire process group.
+                    tracing::warn!(
+                        chromium_pid = pid,
+                        "supervisor: chromium did not exit within grace; SIGKILL process group"
+                    );
+                    unsafe {
+                        libc::killpg(pid as libc::pid_t, libc::SIGKILL);
+                    }
                 }
             }
+            #[cfg(not(unix))]
+            let _ = pid;
         }
-        *self.child_pid.lock() = None;
         Ok(())
     }
 
