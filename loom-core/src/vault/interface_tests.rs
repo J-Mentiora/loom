@@ -69,6 +69,7 @@ fn req(origin: &str, scopes: Vec<&str>) -> NetRequest {
         url: format!("https://{origin}/api"),
         method: "GET".into(),
         headers: BTreeMap::new(),
+        authorization: None,
         body: vec![],
         origin: origin.into(),
         scopes: scopes.into_iter().map(String::from).collect(),
@@ -126,10 +127,17 @@ fn grant_accepts_oauth_credential_type() {
 
 #[test]
 fn substitute_signature_takes_mut_ref_to_net_request() {
-    // Critical: signature must be (&self, GrantId, &mut NetRequest) → Result<(), _>.
-    // This guarantees the secret never leaves via a return value.
-    fn _ck<V: Vault>(v: &V, g: GrantId, r: &mut NetRequest) -> Result<(), LoomError> {
-        v.substitute(g, r)
+    // Critical: signature must be (&self, &SessionId, GrantId, &mut NetRequest)
+    // → Result<(), _>. The unit return guarantees the secret never leaves via
+    // a return value; the session scopes the grant lookup (deterministic ids
+    // collide across same-seed sessions — NFR-DET-01).
+    fn _ck<V: Vault>(
+        v: &V,
+        s: &SessionId,
+        g: GrantId,
+        r: &mut NetRequest,
+    ) -> Result<(), LoomError> {
+        v.substitute(s, g, r)
     }
     let _ = _ck::<LocalVault>;
 }

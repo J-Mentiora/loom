@@ -102,7 +102,12 @@ impl Vault for BenchmarkVault {
         ))
     }
 
-    fn substitute(&self, _grant: GrantId, _req: &mut NetRequest) -> Result<(), LoomError> {
+    fn substitute(
+        &self,
+        _session: &SessionId,
+        _grant: GrantId,
+        _req: &mut NetRequest,
+    ) -> Result<(), LoomError> {
         Err(LoomError::new(
             loom_shared::error_format::LoomErrorCode::VaultRejection,
             "benchmark vault: no credentials configured",

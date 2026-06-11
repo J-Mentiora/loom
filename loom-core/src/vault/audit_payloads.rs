@@ -38,6 +38,10 @@ pub(crate) fn extract_cookie_names(blob: &[u8]) -> Vec<String> {
 /// Canonical audit payload for vault lifecycle events.
 /// Serialized to JCS bytes.
 /// NEVER contains raw secret bytes.
+///
+/// Every field is deterministic per session (NFR-DET-01): `grant_id` is the
+/// seeded per-session sequence; `ts_tick` is the 0-based session-relative
+/// vault event tick (`VaultSessionCtx::tick`), NOT wall-clock ms.
 #[derive(Serialize)]
 pub(crate) struct VaultAuditPayload<'a> {
     pub(crate) credential_label: &'a str,

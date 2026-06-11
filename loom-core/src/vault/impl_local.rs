@@ -3,20 +3,28 @@
 // Implements `Vault` for `LocalVault` declared in `interfaces.rs`.
 //
 // Invariants enforced here:
-//   - raw secret bytes appear ONLY in substitute(),
-//     written to req.headers["Authorization"], zeroized on drop via Zeroizing<Vec<u8>>.
+//   - raw secret bytes appear ONLY in substitute(), parked in
+//     req.authorization (Redacted<Zeroizing<String>>): zeroized on drop,
+//     [REDACTED] in Debug/Display, skipped by Serialize (G1/TB4).
 //   - OAuth-only at v1.
 //   - 4-check sequence in substitute(): revoked → origin → scopes → ttl.
 //   - every vault event appends a typed audit entry via ManifestWriter::append_audit.
+//   - audit payload material is deterministic per session (NFR-DET-01):
+//     seeded grant-id sequence + session-relative ts_tick — never now_ms()
+//     or OS entropy, which would poison the chain-hashed canonical bytes.
 
 use crate::error::{LoomError, LoomErrorCode};
 use crate::manifest_writer::manifest_writer::{AuditKind, SessionId};
 use crate::vault::vault::{
     size_bucket, AddCredentialOpts, AddCredentialReceipt, CredentialType, DeleteSecretOutcome,
     Grant, GrantId, GrantOpts, GrantSnapshot, LocalVault, NetRequest, RevokeReason, Vault,
-    OAUTH_PROVIDER_ALLOWLIST,
+    VaultSessionCtx, OAUTH_PROVIDER_ALLOWLIST,
 };
 use loom_keychain::{KeychainAccess, KeychainError, KeychainErrorKind};
+use loom_shared::Redacted;
+use rand::RngExt;
+use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
 use std::time::{SystemTime, UNIX_EPOCH};
 use zeroize::Zeroizing;
 
@@ -60,8 +68,24 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn new_grant_id() -> GrantId {
-    GrantId(ulid::Ulid::new().to_string())
+/// Domain separator for the per-session vault audit RNG — keeps the stream
+/// disjoint from the `DeterminismHarness` guest stream
+/// (`ChaCha20Rng::seed_from_u64(seed)`), so grant-id draws never shift the
+/// guest's `rng_next` sequence.
+const VAULT_RNG_DOMAIN: &[u8] = b"loom/vault-audit-v1";
+
+/// Derive the per-session ChaCha20 audit RNG:
+/// `from_seed(sha256(VAULT_RNG_DOMAIN || material))` — `material` is the LE
+/// session seed, or the session-id bytes for the unregistered fallback.
+fn vault_session_rng(material: &[u8]) -> ChaCha20Rng {
+    use ring::digest::{digest, SHA256};
+    let mut input = Vec::with_capacity(VAULT_RNG_DOMAIN.len() + material.len());
+    input.extend_from_slice(VAULT_RNG_DOMAIN);
+    input.extend_from_slice(material);
+    let d = digest(&SHA256, &input);
+    let mut key = [0u8; 32];
+    key.copy_from_slice(d.as_ref());
+    ChaCha20Rng::from_seed(key)
 }
 
 // Vault audit payload DTOs + JCS serialization moved to `audit_payloads.rs`
@@ -111,15 +135,20 @@ impl Vault for LocalVault {
             .get_secret(&opts.label)
             .map_err(from_keychain_err)?;
 
-        // Step 4: Generate opaque grant ID — ULID, no secret material
-        let grant_id = new_grant_id();
+        // Step 4: Mint the opaque grant ID — ULID-shaped, no secret
+        // material, drawn from the session's seeded audit RNG so the id is
+        // identical across two independent same-seed runs (NFR-DET-01).
+        // `issued_at_ms` stays wall clock: TTL enforcement only, never in
+        // chain-hashed audit bytes.
+        let grant_id = self.next_grant_id(&session);
         let issued_at_ms = now_ms();
 
-        // Step 5: Store grant record
+        // Step 5: Store grant record — keyed by (session, grant_id) since
+        // deterministic ids collide across same-seed sessions.
         {
             let mut grants = self.grants.write();
             grants.insert(
-                grant_id.clone(),
+                (session.clone(), grant_id.clone()),
                 Grant {
                     session_id: session.clone(),
                     label: opts.label.clone(),
@@ -140,7 +169,7 @@ impl Vault for LocalVault {
             requested_scopes: &opts.scopes,
             result: "issued",
             triggering_action_id: None,
-            ts_tick: issued_at_ms,
+            ts_tick: self.next_ts_tick(&session),
         };
         let _ = self.manifest_writer.append_audit(
             session,
@@ -151,13 +180,22 @@ impl Vault for LocalVault {
         Ok(grant_id)
     }
 
-    fn substitute(&self, grant: GrantId, req: &mut NetRequest) -> Result<(), LoomError> {
-        // Clone grant fields under READ lock — avoids TOCTOU between check and use.
-        let (label, grant_origin, grant_scopes, issued_at_ms, ttl_ms, revoked, session_id) = {
+    fn substitute(
+        &self,
+        session: &SessionId,
+        grant: GrantId,
+        req: &mut NetRequest,
+    ) -> Result<(), LoomError> {
+        // Clone grant fields under READ lock — avoids TOCTOU between check
+        // and use. Lookup is session-scoped: a grant issued to another
+        // session (or a predicted deterministic id) is not found here.
+        let (label, grant_origin, grant_scopes, issued_at_ms, ttl_ms, revoked) = {
             let grants = self.grants.read();
-            let g = grants.get(&grant).ok_or_else(|| {
-                LoomError::new(LoomErrorCode::VaultRejection, "vault-grant-not-found")
-            })?;
+            let g = grants
+                .get(&(session.clone(), grant.clone()))
+                .ok_or_else(|| {
+                    LoomError::new(LoomErrorCode::VaultRejection, "vault-grant-not-found")
+                })?;
             (
                 g.label.clone(),
                 g.origin.clone(),
@@ -165,10 +203,11 @@ impl Vault for LocalVault {
                 g.issued_at_ms,
                 g.ttl_ms,
                 g.revoked,
-                g.session_id.clone(),
             )
         };
 
+        // Wall clock — TTL enforcement only; audit ts_ticks below are the
+        // session-relative deterministic vault clock (NFR-DET-01).
         let now = now_ms();
 
         // 4-check sequence — revoked → origin → scopes → ttl
@@ -182,10 +221,10 @@ impl Vault for LocalVault {
                 requested_scopes: &req.scopes,
                 result: "denied",
                 triggering_action_id: None,
-                ts_tick: now,
+                ts_tick: self.next_ts_tick(session),
             };
             let _ = self.manifest_writer.append_audit(
-                session_id,
+                session.clone(),
                 AuditKind::GrantRejected,
                 audit_bytes(&payload),
             );
@@ -204,10 +243,10 @@ impl Vault for LocalVault {
                 requested_scopes: &req.scopes,
                 result: "denied",
                 triggering_action_id: None,
-                ts_tick: now,
+                ts_tick: self.next_ts_tick(session),
             };
             let _ = self.manifest_writer.append_audit(
-                session_id,
+                session.clone(),
                 AuditKind::GrantRejected,
                 audit_bytes(&payload),
             );
@@ -233,10 +272,10 @@ impl Vault for LocalVault {
                     requested_scopes: &req.scopes,
                     result: "denied",
                     triggering_action_id: None,
-                    ts_tick: now,
+                    ts_tick: self.next_ts_tick(session),
                 };
                 let _ = self.manifest_writer.append_audit(
-                    session_id,
+                    session.clone(),
                     AuditKind::GrantRejected,
                     audit_bytes(&payload),
                 );
@@ -263,10 +302,10 @@ impl Vault for LocalVault {
                 requested_scopes: &req.scopes,
                 result: "expired",
                 triggering_action_id: None,
-                ts_tick: now,
+                ts_tick: self.next_ts_tick(session),
             };
             let _ = self.manifest_writer.append_audit(
-                session_id,
+                session.clone(),
                 AuditKind::GrantExpired,
                 audit_bytes(&payload),
             );
@@ -288,12 +327,24 @@ impl Vault for LocalVault {
             .get_secret(&label)
             .map_err(from_keychain_err)?;
 
-        // Write Authorization header in-place — the SINGLE site for raw secret bytes.
-        // `secret` zeroizes when dropped at end of this scope.
-        req.headers.insert(
-            "Authorization".to_string(),
-            format!("Bearer {}", String::from_utf8_lossy(&secret)),
-        );
+        // Build the Authorization value inside zeroize-on-drop storage and
+        // park it in the dedicated redacted slot — the SINGLE site for raw
+        // secret bytes (G1). Never the plain `headers` map: that map is
+        // Debug/Serialize-able and survives the HTTP round-trip un-wiped,
+        // which is exactly the TB4 log/serialization leak.
+        let mut value = Zeroizing::new(String::with_capacity(7 + secret.len()));
+        value.push_str("Bearer ");
+        match std::str::from_utf8(&secret) {
+            Ok(s) => value.push_str(s),
+            Err(_) => {
+                // Non-UTF-8 secret: keep the historical lossy encoding on
+                // the wire, wiping the intermediate copy.
+                let mut lossy = String::from_utf8_lossy(&secret).into_owned();
+                value.push_str(&lossy);
+                loom_shared::wipe_string_buffer_in_place(&mut lossy);
+            }
+        }
+        req.authorization = Some(Redacted::new(value));
         drop(secret); // explicit zeroize
 
         // Emit GrantConsumed audit (also covers "secret_fetched_from_keychain")
@@ -304,10 +355,10 @@ impl Vault for LocalVault {
             requested_scopes: &req.scopes,
             result: "consumed",
             triggering_action_id: None,
-            ts_tick: now,
+            ts_tick: self.next_ts_tick(session),
         };
         let _ = self.manifest_writer.append_audit(
-            session_id,
+            session.clone(),
             AuditKind::GrantConsumed,
             audit_bytes(&payload),
         );
@@ -321,18 +372,36 @@ impl Vault for LocalVault {
         session: SessionId,
     ) -> Result<Zeroizing<Vec<u8>>, LoomError> {
         // Resolve grant under read lock — TOCTOU-free clone of fields.
-        let (label, issued_at_ms, ttl_ms, revoked, grant_session) = {
+        // Session binding (D5 / council FND-0008) is structural now: the map
+        // key is (session, grant). Cross-session use of an id that exists
+        // under another session keeps the typed `vault_session_mismatch`
+        // envelope for the MCP error surface.
+        let (label, issued_at_ms, ttl_ms, revoked) = {
             let grants = self.grants.read();
-            let g = grants.get(&grant).ok_or_else(|| {
-                LoomError::new(LoomErrorCode::VaultRejection, "vault-grant-not-found")
-            })?;
-            (
-                g.label.clone(),
-                g.issued_at_ms,
-                g.ttl_ms,
-                g.revoked,
-                g.session_id.clone(),
-            )
+            match grants.get(&(session.clone(), grant.clone())) {
+                Some(g) => (g.label.clone(), g.issued_at_ms, g.ttl_ms, g.revoked),
+                None => {
+                    let other_session = grants
+                        .keys()
+                        .find(|(_, gid)| gid == &grant)
+                        .map(|(s, _)| s.clone());
+                    return Err(match other_session {
+                        Some(expected) => {
+                            LoomError::new(LoomErrorCode::VaultRejection, "vault-session-mismatch")
+                                .with_context(serde_json::json!({
+                                    "code": "vault_session_mismatch",
+                                    "details": {
+                                        "expected_session": expected.0,
+                                        "observed_session": session.0,
+                                    }
+                                }))
+                        }
+                        None => {
+                            LoomError::new(LoomErrorCode::VaultRejection, "vault-grant-not-found")
+                        }
+                    });
+                }
+            }
         };
 
         let now = now_ms();
@@ -345,24 +414,7 @@ impl Vault for LocalVault {
             ));
         }
 
-        // Check 2: Session binding (D5 / council FND-0008).
-        // Cookie grants bind to a specific session_id; cross-session use is
-        // rejected with a typed envelope so the daemon can map it back to
-        // the MCP error surface.
-        if grant_session != session {
-            return Err(
-                LoomError::new(LoomErrorCode::VaultRejection, "vault-session-mismatch")
-                    .with_context(serde_json::json!({
-                        "code": "vault_session_mismatch",
-                        "details": {
-                            "expected_session": grant_session.0,
-                            "observed_session": session.0,
-                        }
-                    })),
-            );
-        }
-
-        // Check 3: TTL
+        // Check 2: TTL
         if now > issued_at_ms.saturating_add(ttl_ms) {
             return Err(LoomError::new(
                 LoomErrorCode::VaultGrantExpired,
@@ -381,10 +433,13 @@ impl Vault for LocalVault {
         // names requires parsing the JSON blob; we do that without holding
         // raw value bytes after the parse — names go to the audit, the blob
         // is returned to the caller which decodes once at the CDP boundary.
+        // The per-run session id is deliberately NOT in the payload: these
+        // bytes are chain-hashed and `hashable_line()` cannot project values
+        // inside the canonical_bytes number array — the same exclusion it
+        // applies to the Header's top-level session_id (NFR-DET-01).
         let cookie_names = extract_cookie_names(&secret);
         let payload = serde_json::json!({
             "grant_id": grant.0,
-            "session_id": session.0,
             "cookie_names": cookie_names,
         });
         let audit_payload = serde_jcs::to_string(&payload)
@@ -400,36 +455,45 @@ impl Vault for LocalVault {
     }
 
     fn revoke(&self, grant: GrantId, reason: RevokeReason) -> Result<(), LoomError> {
-        let (label, origin, scopes, session_id) = {
-            let mut grants = self.grants.write();
-            let g = grants.get_mut(&grant).ok_or_else(|| {
-                LoomError::new(LoomErrorCode::VaultRejection, "vault-grant-not-found")
-            })?;
-            let label = g.label.clone();
-            let origin = g.origin.clone();
-            let scopes = g.scopes.clone();
-            let session_id = g.session_id.clone();
-            g.revoked = true;
-            (label, origin, scopes, session_id)
+        // The public revoke surface (vault.revoke RPC) addresses grants by
+        // id only. Deterministic ids can repeat across same-seed sessions —
+        // revoke is an operator kill-switch, so EVERY matching entry is
+        // revoked (each audited on its own session chain); normally one.
+        let keys: Vec<(SessionId, GrantId)> = {
+            let grants = self.grants.read();
+            grants
+                .keys()
+                .filter(|(_, gid)| gid == &grant)
+                .cloned()
+                .collect()
         };
-
-        let now = now_ms();
-        let payload = VaultAuditPayload {
-            grant_id: &grant.0,
-            origin: &origin,
-            credential_label: &label,
-            requested_scopes: &scopes,
-            result: "revoked",
-            triggering_action_id: None,
-            ts_tick: now,
-        };
-        let _ = self.manifest_writer.append_audit(
-            session_id,
-            AuditKind::GrantRevoked,
-            audit_bytes(&payload),
-        );
+        if keys.is_empty() {
+            return Err(LoomError::new(
+                LoomErrorCode::VaultRejection,
+                "vault-grant-not-found",
+            ));
+        }
+        for key in &keys {
+            self.revoke_entry(key);
+        }
         drop(reason);
         Ok(())
+    }
+
+    fn begin_session(&self, session: &SessionId, seed: u64) {
+        // Idempotent: keep the existing context if the session was already
+        // registered (the rng/tick sequence must not restart mid-session).
+        self.det
+            .lock()
+            .entry(session.clone())
+            .or_insert_with(|| VaultSessionCtx {
+                rng: vault_session_rng(&seed.to_le_bytes()),
+                tick: 0,
+            });
+    }
+
+    fn end_session(&self, session: &SessionId) {
+        self.det.lock().remove(session);
     }
 
     fn add_credential(&self, opts: AddCredentialOpts) -> Result<AddCredentialReceipt, LoomError> {
@@ -468,7 +532,7 @@ impl Vault for LocalVault {
             .filter(|(_, g)| !g.revoked)
             .filter(|(_, g)| now <= g.issued_at_ms.saturating_add(g.ttl_ms)) // F-A7: TTL-aware
             .filter(|(_, g)| session.as_ref().is_none_or(|s| &g.session_id == s))
-            .map(|(gid, g)| GrantSnapshot {
+            .map(|((_, gid), g)| GrantSnapshot {
                 grant_id: gid.0.clone(),
                 session_id: g.session_id.0.clone(),
                 origin: g.origin.clone(),
@@ -595,15 +659,18 @@ impl Vault for LocalVault {
 
         // D29 cascade semantics: collect alive grants that reference this
         // label, then either error (default) or revoke them all (force).
+        // Full (session, grant) keys so the cascade revokes EXACTLY the
+        // label-referencing entries — never a same-id grant for a different
+        // label under another same-seed session.
         let now = now_ms();
-        let referencing_grants: Vec<GrantId> = {
+        let referencing_grants: Vec<(SessionId, GrantId)> = {
             let grants = self.grants.read();
             grants
                 .iter()
                 .filter(|(_, g)| {
                     g.label == label && !g.revoked && now < g.issued_at_ms.saturating_add(g.ttl_ms)
                 })
-                .map(|(id, _)| id.clone())
+                .map(|(key, _)| key.clone())
                 .collect()
         };
 
@@ -630,18 +697,8 @@ impl Vault for LocalVault {
             // Revoke each referencing grant. Mirrors `Vault::revoke` flow
             // (sets `revoked = true`, appends GrantRevoked audit per grant
             // to that grant's session manifest).
-            for gid in &referencing_grants {
-                if let Err(e) = self.revoke(
-                    gid.clone(),
-                    RevokeReason {
-                        reason: "credential_deleted".to_string(),
-                    },
-                ) {
-                    tracing::warn!(grant_id = %gid.0, error = %e, "cascade revoke failed");
-                    // Best-effort — D29 / plan §6 Non-Goals A-W8.6 #15: partial
-                    // failure mid-cascade leaves the keychain entry intact.
-                    return Err(e);
-                }
+            for key in &referencing_grants {
+                self.revoke_entry(key);
                 cascade_revoked = cascade_revoked.saturating_add(1);
             }
         }
@@ -721,6 +778,70 @@ enum SecretFailureSlot {
 }
 
 impl LocalVault {
+    /// Run `f` against the session's determinism context, lazily creating
+    /// a fallback context (RNG derived from the session-id bytes, tick 0)
+    /// when `begin_session` was never called — direct library use and
+    /// unit tests construct `LocalVault` without a session manager.
+    fn with_det_ctx<R>(&self, session: &SessionId, f: impl FnOnce(&mut VaultSessionCtx) -> R) -> R {
+        let mut det = self.det.lock();
+        let ctx = det
+            .entry(session.clone())
+            .or_insert_with(|| VaultSessionCtx {
+                rng: vault_session_rng(session.0.as_bytes()),
+                tick: 0,
+            });
+        f(ctx)
+    }
+
+    /// Next session-relative audit tick (0-based, one per audit-emitting
+    /// vault event) — what `VaultAuditPayload::ts_tick` records; the vault
+    /// analogue of the D9 action_id-derived receipt timestamps.
+    fn next_ts_tick(&self, session: &SessionId) -> u64 {
+        self.with_det_ctx(session, |ctx| {
+            let tick = ctx.tick;
+            ctx.tick += 1;
+            tick
+        })
+    }
+
+    /// Mint the next ULID-shaped grant id for `session` from the seeded
+    /// per-session audit RNG — deterministic across same-seed runs.
+    fn next_grant_id(&self, session: &SessionId) -> GrantId {
+        self.with_det_ctx(session, |ctx| {
+            let hi = ctx.rng.random::<u64>();
+            let lo = ctx.rng.random::<u64>();
+            let bits = (u128::from(hi) << 64) | u128::from(lo);
+            GrantId(ulid::Ulid::from(bits).to_string())
+        })
+    }
+
+    /// Revoke a single `(session, grant)` entry: flip `revoked` and append
+    /// the GrantRevoked audit to that session's chain. Used by `revoke`
+    /// (which pre-resolves keys) and the `delete_secret --force` cascade.
+    fn revoke_entry(&self, key: &(SessionId, GrantId)) {
+        let (label, origin, scopes) = {
+            let mut grants = self.grants.write();
+            let Some(g) = grants.get_mut(key) else { return };
+            g.revoked = true;
+            (g.label.clone(), g.origin.clone(), g.scopes.clone())
+        };
+        let (session, grant) = key;
+        let payload = VaultAuditPayload {
+            grant_id: &grant.0,
+            origin: &origin,
+            credential_label: &label,
+            requested_scopes: &scopes,
+            result: "revoked",
+            triggering_action_id: None,
+            ts_tick: self.next_ts_tick(session),
+        };
+        let _ = self.manifest_writer.append_audit(
+            session.clone(),
+            AuditKind::GrantRevoked,
+            audit_bytes(&payload),
+        );
+    }
+
     /// Append a G5b `SecretOpPending` audit for the named op. No-op when
     /// `session` is `None` (sessionless CLI flow). Failures to write the
     /// audit are logged-and-swallowed — same convention as the existing
@@ -931,6 +1052,7 @@ mod tests {
             url: format!("https://{origin}/api"),
             method: "GET".to_string(),
             headers: BTreeMap::new(),
+            authorization: None,
             body: vec![],
             origin: origin.to_string(),
             scopes: scopes.iter().map(|s| s.to_string()).collect(),
@@ -1070,16 +1192,13 @@ mod tests {
         let (vault, _mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req("api.gitlab.com", &["repo:read"]);
-        let err = vault.substitute(gid, &mut r).unwrap_err();
+        let err = vault.substitute(&sid, gid, &mut r).unwrap_err();
         assert_eq!(err.code, LoomErrorCode::VaultRejection);
         let ctx = err.context.unwrap();
         assert_eq!(ctx["code"], "vault_origin_mismatch");
         assert_eq!(ctx["details"]["expected_origin"], TEST_ORIGIN);
         assert_eq!(ctx["details"]["observed_origin"], "api.gitlab.com");
-        assert!(
-            !r.headers.contains_key("Authorization"),
-            "no header on rejection"
-        );
+        assert!(r.authorization.is_none(), "no token on rejection");
     }
 
     // ── Scope escalation rejection ─────────────────────────
@@ -1089,12 +1208,12 @@ mod tests {
         let (vault, _mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read", "repo:write"]);
-        let err = vault.substitute(gid, &mut r).unwrap_err();
+        let err = vault.substitute(&sid, gid, &mut r).unwrap_err();
         assert_eq!(err.code, LoomErrorCode::VaultRejection);
         let ctx = err.context.unwrap();
         assert_eq!(ctx["code"], "vault_scope_insufficient");
         assert_eq!(ctx["details"]["required_scope"], "repo:write");
-        assert!(!r.headers.contains_key("Authorization"));
+        assert!(r.authorization.is_none());
     }
 
     // ── TTL expiry rejection ───────────────────────────────
@@ -1107,7 +1226,7 @@ mod tests {
         {
             let mut grants = vault.grants.write();
             grants.insert(
-                gid.clone(),
+                (sid.clone(), gid.clone()),
                 Grant {
                     session_id: sid.clone(),
                     label: TEST_LABEL.to_string(),
@@ -1120,13 +1239,13 @@ mod tests {
             );
         }
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        let err = vault.substitute(gid, &mut r).unwrap_err();
+        let err = vault.substitute(&sid, gid, &mut r).unwrap_err();
         assert_eq!(err.code, LoomErrorCode::VaultGrantExpired);
         let ctx = err.context.unwrap();
         assert_eq!(ctx["code"], "vault_grant_expired");
         assert!(ctx["details"]["expired_at"].as_u64().unwrap() == 1);
         assert!(ctx["details"]["observed_at"].as_u64().unwrap() > 1);
-        assert!(!r.headers.contains_key("Authorization"));
+        assert!(r.authorization.is_none());
     }
 
     // ── substitute() success path ─────────────────────────────────────────
@@ -1136,13 +1255,51 @@ mod tests {
         let (vault, _mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        assert!(!r.headers.contains_key("Authorization"));
-        vault.substitute(gid, &mut r).unwrap();
-        let auth = r
-            .headers
-            .get("Authorization")
-            .expect("Authorization must be set");
-        assert!(auth.starts_with("Bearer "), "must be a Bearer token");
+        assert!(r.authorization.is_none());
+        vault.substitute(&sid, gid, &mut r).unwrap();
+        let auth = r.authorization.as_ref().expect("Authorization must be set");
+        assert!(
+            auth.expose().starts_with("Bearer "),
+            "must be a Bearer token"
+        );
+        assert!(
+            !r.headers.contains_key("Authorization"),
+            "token must not sit in the Debug/Serialize-able headers map"
+        );
+    }
+
+    // ── G1/TB4: bearer token never reaches Debug/Serialize ──────────────
+
+    #[test]
+    fn debug_and_serialize_of_substituted_request_redact_token() {
+        let (vault, _mw, sid) = fixture();
+        let gid = vault.grant(sid.clone(), default_opts()).unwrap();
+        let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
+        vault.substitute(&sid, gid, &mut r).unwrap();
+
+        let secret_str = std::str::from_utf8(TEST_SECRET).unwrap();
+        let dbg = format!("{r:?}");
+        assert!(!dbg.contains(secret_str), "Debug leaks the token: {dbg}");
+        assert!(dbg.contains("[REDACTED]"), "Debug shows redaction marker");
+
+        let json = serde_json::to_string(&r).unwrap();
+        assert!(!json.contains(secret_str), "Serialize leaks the token");
+        assert!(
+            !json.contains("authorization"),
+            "#[serde(skip)] must omit the slot entirely"
+        );
+    }
+
+    #[test]
+    fn substituted_authorization_wire_value_is_preserved() {
+        // Wire behavior is identical: loom-host's do_http_request sends
+        // exactly "Bearer <secret>" from the redacted slot.
+        let (vault, _mw, sid) = fixture();
+        let gid = vault.grant(sid.clone(), default_opts()).unwrap();
+        let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
+        vault.substitute(&sid, gid, &mut r).unwrap();
+        let auth = r.authorization.as_ref().expect("authorization set");
+        assert_eq!(auth.expose().as_str(), "Bearer secret-token-bytes");
     }
 
     #[test]
@@ -1151,7 +1308,7 @@ mod tests {
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
         // Return type is () — no secret in return value
-        let result: Result<(), LoomError> = vault.substitute(gid, &mut r);
+        let result: Result<(), LoomError> = vault.substitute(&sid, gid, &mut r);
         assert!(result.is_ok());
     }
 
@@ -1170,9 +1327,9 @@ mod tests {
             )
             .unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        let err = vault.substitute(gid, &mut r).unwrap_err();
+        let err = vault.substitute(&sid, gid, &mut r).unwrap_err();
         assert_eq!(err.code, LoomErrorCode::VaultGrantRevoked);
-        assert!(!r.headers.contains_key("Authorization"));
+        assert!(r.authorization.is_none());
     }
 
     // ── Audit entries in order ────────────────────────────
@@ -1182,7 +1339,7 @@ mod tests {
         let (vault, mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        vault.substitute(gid.clone(), &mut r).unwrap();
+        vault.substitute(&sid, gid.clone(), &mut r).unwrap();
         vault
             .revoke(
                 gid,
@@ -1234,7 +1391,7 @@ mod tests {
         let (vault, mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        vault.substitute(gid, &mut r).unwrap();
+        vault.substitute(&sid, gid, &mut r).unwrap();
 
         let entries = read_audit_entries(&mw, &sid);
         assert!(!entries.is_empty(), "must have audit entries");
@@ -1277,7 +1434,7 @@ mod tests {
         let (vault, mw, sid) = fixture();
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r = net_req(TEST_ORIGIN, &["repo:read"]);
-        vault.substitute(gid, &mut r).unwrap();
+        vault.substitute(&sid, gid, &mut r).unwrap();
 
         let entries = read_audit_entries(&mw, &sid);
         let secret_str = std::str::from_utf8(TEST_SECRET).unwrap();
@@ -1292,6 +1449,86 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── NFR-DET-01: audit canonical bytes are cross-run deterministic ──
+
+    fn audit_canonical_bytes(entry: &Value) -> Vec<u8> {
+        entry["canonical_bytes"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn same_seed_sessions_produce_identical_audit_canonical_bytes() {
+        // ts_tick (wall clock) and grant ids (random ULIDs) used to poison
+        // chain-hashed canonical_bytes. Same seed + same flow must now give
+        // byte-identical payloads despite different random session ids.
+        let run = || {
+            let (vault, mw, sid) = fixture();
+            vault.begin_session(&sid, 42);
+            let gid = vault.grant(sid.clone(), default_opts()).unwrap();
+            let mut ok = net_req(TEST_ORIGIN, &["repo:read"]);
+            vault.substitute(&sid, gid.clone(), &mut ok).unwrap();
+            // A denied attempt exercises the GrantRejected payload too.
+            let mut denied = net_req("api.gitlab.com", &["repo:read"]);
+            let _ = vault
+                .substitute(&sid, gid.clone(), &mut denied)
+                .unwrap_err();
+            let reason = RevokeReason {
+                reason: "test".to_string(),
+            };
+            vault.revoke(gid, reason).unwrap();
+            read_audit_entries(&mw, &sid)
+                .iter()
+                .map(audit_canonical_bytes)
+                .collect::<Vec<_>>()
+        };
+        let (a, b) = (run(), run());
+        assert!(a.len() >= 4, "issued/consumed/rejected/revoked expected");
+        assert_eq!(a, b, "same-seed sessions must emit identical audit bytes");
+        // ts_tick is the 0-based session-relative vault event clock — never
+        // wall-clock ms.
+        let ticks: Vec<u64> = a
+            .iter()
+            .filter_map(|bytes| serde_json::from_slice::<Value>(bytes).ok())
+            .filter_map(|p| p["ts_tick"].as_u64())
+            .collect();
+        assert_eq!(ticks, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn cookie_audit_omits_per_run_session_id_and_is_seed_stable() {
+        let run = || {
+            let (vault, mw, sid) = fixture();
+            vault.begin_session(&sid, 42);
+            let mut opts = default_opts();
+            opts.credential_type = CredentialType::Cookie;
+            let gid = vault.grant(sid.clone(), opts).unwrap();
+            // StubKeychain's blob is not cookie-JSON → cookie_names = [].
+            let _ = vault.substitute_cookies(gid, sid.clone()).unwrap();
+
+            let entries = read_audit_entries(&mw, &sid);
+            let cookie_entry = entries
+                .iter()
+                .find(|e| e["audit_kind"] == "cookies_substituted")
+                .expect("CookiesSubstituted audit");
+            let payload = audit_payload_from_entry(cookie_entry).expect("payload parses");
+            assert!(
+                payload.get("session_id").is_none(),
+                "per-run session_id must not be in chain-hashed cookie audit bytes: {payload}"
+            );
+            (audit_canonical_bytes(cookie_entry), sid)
+        };
+        let (bytes_a, sid_a) = run();
+        let (bytes_b, sid_b) = run();
+        assert_ne!(sid_a, sid_b, "fixture mints distinct session ids");
+        assert_eq!(bytes_a, bytes_b, "cookie audit bytes must be seed-stable");
     }
 
     // ── No plaintext store.bin ────────────────────────────
@@ -1461,7 +1698,7 @@ mod tests {
         {
             let mut grants = vault.grants.write();
             grants.insert(
-                gid.clone(),
+                (sid.clone(), gid.clone()),
                 Grant {
                     session_id: sid.clone(),
                     label: TEST_LABEL.to_string(),
@@ -1483,10 +1720,10 @@ mod tests {
         let gid = vault.grant(sid.clone(), default_opts()).unwrap();
         let mut r1 = net_req(TEST_ORIGIN, &["repo:read"]);
         let mut r2 = net_req(TEST_ORIGIN, &["repo:read"]);
-        vault.substitute(gid.clone(), &mut r1).unwrap();
-        vault.substitute(gid, &mut r2).unwrap();
-        assert!(r1.headers.contains_key("Authorization"));
-        assert!(r2.headers.contains_key("Authorization"));
+        vault.substitute(&sid, gid.clone(), &mut r1).unwrap();
+        vault.substitute(&sid, gid, &mut r2).unwrap();
+        assert!(r1.authorization.is_some());
+        assert!(r2.authorization.is_some());
     }
 
     // ── W5.12 credential-management methods (set/get/delete/list) ───────
@@ -1573,7 +1810,10 @@ mod tests {
         {
             let mut grants = vault.grants.write();
             grants.insert(
-                GrantId("01HZACTIVEGRANTAAAAAAAAAAAA".to_string()),
+                (
+                    sid.clone(),
+                    GrantId("01HZACTIVEGRANTAAAAAAAAAAAA".to_string()),
+                ),
                 Grant {
                     session_id: sid.clone(),
                     label: "with-grants".to_string(),
@@ -1603,7 +1843,10 @@ mod tests {
         // Grant is now revoked.
         let grants = vault.grants.read();
         let g = grants
-            .get(&GrantId("01HZACTIVEGRANTAAAAAAAAAAAA".to_string()))
+            .get(&(
+                sid.clone(),
+                GrantId("01HZACTIVEGRANTAAAAAAAAAAAA".to_string()),
+            ))
             .expect("grant still in map");
         assert!(g.revoked, "grant must be marked revoked");
     }
