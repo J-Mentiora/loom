@@ -607,7 +607,7 @@ pub async fn export(rpc: &RpcClient, _cfg: &CliConfig, args: ExportArgs) -> Resu
 
 pub async fn validate(
     rpc: &RpcClient,
-    _cfg: &CliConfig,
+    cfg: &CliConfig,
     args: ValidateArgs,
 ) -> Result<(), CliError> {
     let resp = rpc
@@ -622,20 +622,22 @@ pub async fn validate(
         passed: bool,
         reasons: Vec<String>,
     }
-    let result: ValidationResult = serde_json::from_value(resp)
+    let result: ValidationResult = serde_json::from_value(resp.clone())
         .map_err(|e| CliError::Internal(format!("validate response parse: {e}")))?;
 
-    if result.passed {
-        println!("PASS");
-    } else {
-        println!("FAIL");
-        for reason in &result.reasons {
-            println!("  - {reason}");
-        }
+    // Emit the full wire ValidationResult ({session_id, passed, reasons})
+    // through the output formatter — `--json` gets canonical JSON instead
+    // of a bare `PASS` string, `--pretty`/TTY keeps the human PASS/FAIL
+    // rendering via the curated `session.validate` renderer, and quiet
+    // mode yields the session id.
+    emit_to_stdout("session.validate", &resp, cfg, None)?;
+
+    if !result.passed {
         // validation failures (e.g. tampered envelope MAC)
         // belong in the receipt-error class (exit 1), not the internal-bug
         // class (exit 2). Construct a synthetic receipt so Display matches
-        // the action-error format ("Error: <code>: <message>").
+        // the action-error format ("Error: <code>: <message>") on stderr;
+        // stdout already carries the full ValidationResult above.
         return Err(CliError::Receipt(serde_json::json!({
             "status": "error",
             "code": "session-validation-failed",
