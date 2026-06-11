@@ -23,7 +23,9 @@ clients. (#138–#173)
   for the implicit session, self-heals it on idle eviction (recreate + retry once), and
   exposes `loom.session.reset` / `info` / `diff` (+ `validate`/`export`) tools — the
   cross-run regression oracle over MCP. The implicit-session `tools/call` path is now
-  allow-listed and stdio requests dispatch concurrently (no head-of-line blocking).
+  allow-listed; control-plane requests (`ping`/`initialize`/`tools-list`) dispatch
+  concurrently to avoid head-of-line blocking, while session-mutating tool calls stay
+  serialized in submission order (one browser per session).
 - **SDK `clockAnchor` / `clock_anchor`** in both SDKs; receipts now expose
   `status` / `error` / result fields so failed actions are distinguishable from
   successes; `ValidationResult.replayable`.
@@ -72,6 +74,10 @@ clients. (#138–#173)
 - The shim's fixed 10 s per-CDP-command timeout can trap navigates on a heavily-loaded
   host. Minor doc/contract items: checkpoint-cadence config, post-terminal cache
   tombstone, a profile-dir/pkill ordering race.
+- The daemon's per-connection concurrent dispatch shares the same-session action
+  reordering hazard class as the (now-fixed) MCP path, but it is unreachable by current
+  clients (CLI/SDK/MCP are all single-in-flight per connection); a defensive per-session
+  serialization guard is a planned follow-up.
 
 ## [0.10.1] — 2026-06-10 — Cross-Run Determinism + Session Reaper
 
