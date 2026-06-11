@@ -443,3 +443,29 @@ fn shim_manager_constructor_takes_observability_and_nothing_else_loom_host() {
     }
     let _ = _ck;
 }
+
+// === Session-scoped state cleanup (audit 2026-06-10) ===
+
+// (audit 2026-06-10, "ShimManager::host_session_ids grows unbounded"):
+// `shim_session_id_for` inserts one ULID -> wire-id entry per session;
+// `shutdown_session` now removes from `host_session_ids` alongside
+// `processes` / `states` / `configs` / `spawn_locks` so the map cannot grow
+// monotonically under session churn. FIXED.
+#[tokio::test]
+async fn shutdown_session_must_remove_host_session_ids_entry() {
+    let (mgr, _id) = fixture();
+    let ulid = "01HZTESTHOSTSESSIONIDLEAK0";
+    let _wire = mgr.shim_session_id_for(ulid);
+    assert!(
+        mgr.host_session_ids.contains_key(ulid),
+        "precondition: shim_session_id_for must have inserted the mapping"
+    );
+
+    mgr.shutdown_session(ulid).await;
+
+    assert!(
+        !mgr.host_session_ids.contains_key(ulid),
+        "shutdown_session must remove the session's host_session_ids entry \
+         alongside processes/states/configs, or the map grows unbounded"
+    );
+}

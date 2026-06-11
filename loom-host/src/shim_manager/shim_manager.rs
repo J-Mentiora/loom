@@ -1005,6 +1005,13 @@ impl ShimManager {
             self.configs.remove(&key);
             self.spawn_locks.remove(&key);
         }
+        // Drop the ULID -> wire-id mapping for this session. `host_session_ids`
+        // is keyed by the raw session ULID (not the `:<sid>`-suffixed ShimId),
+        // so it is removed here independently of the process/state/config maps.
+        // Without this the map grows monotonically under session churn — a
+        // small but unbounded leak, with stale mappings persisting forever
+        // (audit 2026-06-10).
+        self.host_session_ids.remove(session_id);
         // Remove the per-session chromium profile dir
         // (`<tmp>/loom-chromium-<session_id>`). Without this it leaks forever
         // and accumulates across a long-running daemon (a contributor to the

@@ -184,3 +184,33 @@ def test_handwritten_admin_types_field_drift():
         f"  Rust only: {rust_breaker - py_breaker}\n"
         f"  Py only:   {py_breaker - rust_breaker}\n"
     )
+
+
+# (audit 2026-06-10, "DaemonHealth wire struct grew orphan_browser_trees and
+# oldest_active_session_age_secs but both SDK mirrors lack them"): the Python
+# DaemonHealthResult dataclass now mirrors the full Rust struct (the TS mirror
+# was already updated in #163). This guard extends the same regex drift check
+# to DaemonHealth itself so the blind spot can't recur. FIXED.
+def test_daemon_health_mirror_field_drift():
+    rs_path = (
+        Path(__file__).parent.parent.parent
+        / "loom-rpc"
+        / "src"
+        / "rpc_handlers"
+        / "rpc_handlers.rs"
+    )
+    py_path = Path(__file__).parent.parent / "loom" / "_admin_types.py"
+    if not rs_path.exists():
+        pytest.skip("Rust source not co-located (running from installed wheel?)")
+    if not py_path.exists():
+        pytest.skip("Python _admin_types.py not found")
+
+    rust_fields = _extract_rust_struct_fields(rs_path, "DaemonHealth")
+    py_fields = _extract_python_dataclass_fields(py_path, "DaemonHealthResult")
+    assert rust_fields, "DaemonHealth struct missing from rpc_handlers.rs"
+    assert py_fields, "DaemonHealthResult dataclass missing from _admin_types.py"
+    assert rust_fields == py_fields, (
+        f"DaemonHealth field drift between Rust and Python:\n"
+        f"  Rust only: {rust_fields - py_fields}\n"
+        f"  Py only:   {py_fields - rust_fields}\n"
+    )

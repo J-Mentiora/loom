@@ -1230,6 +1230,78 @@ fn test_validate_fails_on_missing_blob() {
     );
 }
 
+// (audit 2026-06-10, "Blob-presence validation and replay pre-flight inspect a
+// 'content_refs' field that no production receipt contains"):
+// `collect_content_refs` now walks the real `ReceiptPayload` blob-ref fields
+// (`dom_after_blob_ref`, `dom_before_blob_ref`, `return_value_blob_ref`,
+// `screenshot_*_blob_ref`, `network_events[].response_body_ref`), so
+// `validate()` and the `ReplayMissingBlob` pre-flight detect missing CAS blobs
+// for real recordings — not just the phantom `content_refs` array. This test
+// pins that a missing `dom_after_blob_ref` blob fails validation. FIXED.
+#[test]
+fn validate_must_fail_on_missing_production_shape_blob_ref() {
+    let tmp = tmp_path();
+    let obs = make_obs(&tmp);
+    let sessions_root = tmp.path().join("sessions");
+    let mw = make_manifest_writer(&tmp, obs.clone());
+    let cs = make_content_store(&tmp, obs.clone()); // empty CAS — nothing present
+    let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
+    let engine = make_engine(
+        &tmp,
+        cs.clone() as Arc<dyn ContentStore>,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        sm.clone(),
+    );
+
+    let id = SessionId("01TESTVALIDPRODREF00".to_string());
+    std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
+    mw.open_manifest(id.clone(), None).unwrap();
+    // PRODUCTION receipt shape: named blob-ref fields, NO `content_refs`.
+    // This is what `ReceiptMarshaller` / `ReceiptPayload` actually emit.
+    let receipt = serde_jcs::to_string(&serde_json::json!({
+        "action_id": 0,
+        "dom_after_hash": "j".repeat(64),
+        "dom_after_blob_ref": {"sha256": "j".repeat(64), "size_bytes": 100}
+    }))
+    .unwrap()
+    .into_bytes();
+    mw.append(
+        id.clone(),
+        ManifestEntry::ActionReceipt {
+            action_id: 0,
+            emitted_at_ms: 1_000,
+            receipt_canonical_bytes: receipt,
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: 1,
+            emitted_at_ms: 1_100,
+            reason: "close".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+
+    let result = engine.validate(id).expect("validate call should not panic");
+    assert!(
+        !result.passed,
+        "a receipt whose dom_after_blob_ref points at a blob absent from the \
+         CAS must fail validation — production receipts never carry the \
+         legacy `content_refs` array this check currently looks for"
+    );
+}
+
 // ---- Tape persistence ----
 
 #[test]

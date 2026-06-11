@@ -255,3 +255,41 @@ fn matrix_covers_all_documented_subprocess_reachable_codes() {
          or update this guard if the code is no longer subprocess-reachable"
     );
 }
+
+// (audit 2026-06-10, "Any action argument whose value is exactly '-h'/'--help'
+// silently turns the command into a help printout with exit 0"):
+// `detect_per_action_help_request` now honors `--help`/`-h` only in KEY
+// position — a help token that is the VALUE of a preceding `--key` (typing the
+// literal text `--text -h`) flows through as the action argument and the
+// command executes (here: failing with the daemon-not-running error under the
+// hermetic HOME, exit != 0, no help text on stdout). FIXED.
+#[test]
+fn help_token_in_value_position_must_not_short_circuit() {
+    let home = TempDir::new().unwrap();
+    let out = spawn_loom(
+        &[
+            "action",
+            "web.type",
+            "--session",
+            "01HZTESTSESSIONHELPVAL0000",
+            "--selector",
+            "#q",
+            "--text",
+            "-h",
+        ],
+        &home.path().to_path_buf(),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "typing the literal text \"-h\" must execute the action (and fail \
+         against the absent daemon), never exit 0 via the help renderer; \
+         stdout was: {stdout:?}"
+    );
+    assert!(
+        !stdout.to_lowercase().contains("usage") && !stdout.to_lowercase().contains("--selector <"),
+        "stdout must not be the per-action help text when -h is a value; \
+         got: {stdout:?}"
+    );
+}

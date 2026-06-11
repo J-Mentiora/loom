@@ -205,6 +205,10 @@ impl CoreApiFacade {
                 &SessionId(session_id.to_string()),
             );
         }
+        // Walk the REAL production blob-ref fields via the shared
+        // `collect_content_refs` (audit 2026-06-10, F32: this previously read
+        // only the phantom `content_refs` array no production receipt carries,
+        // so blob-presence validation silently passed for real sessions).
         if let Ok(content) = std::fs::read_to_string(&wal_path) {
             for line in content.lines() {
                 if line.is_empty() {
@@ -215,32 +219,18 @@ impl CoreApiFacade {
                     ..
                 }) = serde_json::from_str::<ManifestEntry>(line)
                 {
-                    if let Ok(val) =
-                        serde_json::from_slice::<serde_json::Value>(&receipt_canonical_bytes)
+                    for (sha256, kind) in
+                        crate::replay_engine::collect_content_refs(&receipt_canonical_bytes)
                     {
-                        if let Some(refs) = val.get("content_refs").and_then(|r| r.as_array()) {
-                            for r in refs {
-                                let sha256 = r
-                                    .get("sha256")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                let kind = r
-                                    .get("kind")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                if kind != "screenshot" && !sha256.is_empty() {
-                                    let cr = ContentRef {
-                                        sha256: sha256.clone(),
-                                        size_bytes: 0,
-                                    };
-                                    if self.content_store.get(&cr).is_err() {
-                                        reasons.push(format!(
-                                            "StoreNotFound: missing blob {sha256} (kind: {kind})"
-                                        ));
-                                    }
-                                }
+                        if kind != "screenshot" && !sha256.is_empty() {
+                            let cr = ContentRef {
+                                sha256: sha256.clone(),
+                                size_bytes: 0,
+                            };
+                            if self.content_store.get(&cr).is_err() {
+                                reasons.push(format!(
+                                    "StoreNotFound: missing blob {sha256} (kind: {kind})"
+                                ));
                             }
                         }
                     }

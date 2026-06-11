@@ -157,6 +157,144 @@ fn interleaved_same_seed_sessions_do_not_bleed() {
     mw(tmp).validate(b).expect("B validates");
 }
 
+// === vault path (audit 2026-06-10) ==========================================
+//
+// Regression: vault audit payloads used to embed wall-clock `ts_tick`, random
+// grant ULIDs and (for cookie audits) the per-run `session_id` inside the
+// JCS-encoded `canonical_bytes` — values `hashable_line`'s top-level projection
+// cannot reach — so any session that touched the vault could never be
+// cross-run hash-equal. The fix derives grant ids from the session seed and
+// `ts_tick` from a session-relative event counter. The payload-level pin lives
+// in `loom-core/src/vault/impl_local.rs` tests; THIS test closes the loop at
+// the chain level: two independent same-seed runs of an identical
+// grant → substitute(ok) → substitute(denied) → revoke flow must produce a
+// byte-equal `prev_hash` chain through the audit entries (NFR-DET-01).
+
+#[test]
+fn vault_audit_path_two_same_seed_runs_chain_bit_equal() {
+    use loom_core::vault::{
+        CredentialType, GrantOpts, KeychainAccess, LocalVault, NetRequest, RevokeReason, Vault,
+    };
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    use zeroize::Zeroizing;
+
+    struct StubKc;
+    impl KeychainAccess for StubKc {
+        fn get_secret(
+            &self,
+            label: &str,
+        ) -> Result<Zeroizing<Vec<u8>>, loom_keychain::KeychainError> {
+            if label == "github.com/oauth_token" {
+                Ok(Zeroizing::new(b"secret-token-bytes".to_vec()))
+            } else {
+                Err(loom_keychain::KeychainError::new(
+                    loom_keychain::KeychainErrorKind::NotFound,
+                    "label not found",
+                ))
+            }
+        }
+        fn set_secret(
+            &self,
+            _label: &str,
+            _secret: Zeroizing<Vec<u8>>,
+        ) -> Result<(), loom_keychain::KeychainError> {
+            unreachable!("not exercised")
+        }
+        fn delete_secret(&self, _label: &str) -> Result<(), loom_keychain::KeychainError> {
+            unreachable!("not exercised")
+        }
+        fn list_labels(&self) -> Result<Vec<String>, loom_keychain::KeychainError> {
+            unreachable!("not exercised")
+        }
+    }
+
+    fn net_req(origin: &str) -> NetRequest {
+        NetRequest {
+            url: format!("https://{origin}/api"),
+            method: "GET".to_string(),
+            headers: BTreeMap::new(),
+            authorization: None,
+            body: vec![],
+            origin: origin.to_string(),
+            scopes: vec!["repo:read".to_string()],
+        }
+    }
+
+    let tmp = "/tmp/loom-xrun-vault";
+    let _ = std::fs::remove_dir_all(tmp);
+
+    // One identical vault flow per "run": different session_id +
+    // started_at_ms (the ephemeral, projected fields), same seed (42) and
+    // same event sequence (the deterministic part).
+    let run = |sid: &SessionId, started_override: u64| {
+        let w = Arc::new(mw(tmp));
+        w.open_manifest_with_started_at(
+            sid.clone(),
+            None,
+            Some(started_override),
+            None,
+            Some(42),
+            true,
+        )
+        .unwrap();
+        let obs = Observability::new(PathBuf::from(format!("{tmp}/loom.log")), false);
+        let vault = LocalVault::new(Arc::new(StubKc), w.clone() as Arc<dyn ManifestWriter>, obs);
+        vault.begin_session(sid, 42);
+        let gid = vault
+            .grant(
+                sid.clone(),
+                GrantOpts {
+                    credential_type: CredentialType::OAuth,
+                    label: "github.com/oauth_token".to_string(),
+                    origin: "api.github.com".to_string(),
+                    scopes: vec!["repo:read".to_string()],
+                    ttl_ms: 3_600_000,
+                    threat_model_acknowledged: true,
+                },
+            )
+            .expect("grant");
+        let mut ok = net_req("api.github.com");
+        vault
+            .substitute(sid, gid.clone(), &mut ok)
+            .expect("substitute (allowed)");
+        let mut denied = net_req("api.gitlab.com");
+        vault
+            .substitute(sid, gid.clone(), &mut denied)
+            .expect_err("substitute (origin mismatch) must be rejected");
+        vault
+            .revoke(
+                gid,
+                RevokeReason {
+                    reason: "user_request".to_string(),
+                },
+            )
+            .expect("revoke");
+    };
+
+    let a = SessionId("01vault-aaaaaaaaaaaaaaaaaaaa".into());
+    let b = SessionId("01vault-bbbbbbbbbbbbbbbbbbbb".into());
+    run(&a, 1_000_000);
+    run(&b, 2_222_222);
+
+    let chain_a = prev_hashes(tmp, &a);
+    let chain_b = prev_hashes(tmp, &b);
+    // Header + GrantIssued + GrantConsumed + GrantRejected + GrantRevoked.
+    assert_eq!(
+        chain_a.len(),
+        5,
+        "expected header + 4 vault audit entries, got {} lines",
+        chain_a.len()
+    );
+    assert_eq!(
+        chain_a, chain_b,
+        "two same-seed vault flows must yield a byte-equal prev_hash chain \
+         despite differing session_id / started_at_ms (NFR-DET-01)"
+    );
+    mw(tmp).validate(a).expect("run A validates");
+    mw(tmp).validate(b).expect("run B validates");
+}
+
 #[test]
 fn legacy_raw_hash_chain_still_validates_after_upgrade() {
     // Backward-compat (ship council C1/D16): a manifest written BEFORE this change

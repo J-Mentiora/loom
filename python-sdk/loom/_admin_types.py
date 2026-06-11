@@ -50,4 +50,12 @@ class DaemonHealthResult:
     active_sessions: int
     shim_breaker_states: list[ShimBreakerSnapshot]
     otel_exporter: str  # "enabled" | "disabled" | "unwired"
-    deep: Optional[list[ShimDeepHealth]]
+    # Count of orphan Chromium trees whose session is no longer live but whose
+    # browser process is still running — surfaces the wedge before it's fatal.
+    # `#[serde(default)]` on the Rust side; defaulted here for back-compat with
+    # older daemons that don't emit it.
+    orphan_browser_trees: int = 0
+    # Age in seconds of the oldest Active session (by last activity), or None
+    # if there are no active sessions. A large value flags leaked sessions.
+    oldest_active_session_age_secs: Optional[int] = None
+    deep: Optional[list[ShimDeepHealth]] = None
