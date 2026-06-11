@@ -19,13 +19,6 @@ use crate::replay_engine::replay_engine::{
 };
 use crate::session_manager::SessionCreateOpts;
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-}
-
 /// Read all manifest entries from a WAL file.
 fn read_wal_entries(wal_path: &std::path::Path) -> Result<Vec<ManifestEntry>, LoomError> {
     let content = match std::fs::read_to_string(wal_path) {
@@ -327,6 +320,35 @@ impl ReplayEngine for LocalReplayEngine {
             }
         });
 
+        // Header fidelity (audit 2026-06-10): reconstruct the source Header's
+        // recorded budgets + capture_policy the same way the seed is
+        // reconstructed above. Both fields serialize with
+        // `skip_serializing_if`, so a source recorded with `--budget` /
+        // `--capture-policy` has DIFFERENT canonical Header bytes than a
+        // default one; `hashable_line()` only projects out
+        // session_id/started_at_ms/emitted_at_ms, so dropping them here made
+        // the replay Header's projected hash diverge from the source's —
+        // poisoning every subsequent prev_hash in the replay chain. Passing
+        // `limits` through is Header-only on the replay path:
+        // `LocalSessionManager::create` skips budget enforcement entirely when
+        // `replay_of` is set, so no wall-clock timer or kill callback is
+        // re-armed for the replay session.
+        let (source_budgets, source_capture_policy) = entries
+            .iter()
+            .find_map(|e| {
+                if let ManifestEntry::Header {
+                    budgets,
+                    capture_policy,
+                    ..
+                } = e
+                {
+                    Some((*budgets, capture_policy.clone()))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or((None, None));
+
         // settle-capture (4b): REFUSE to replay a non-deterministic session.
         // A `--no-determinism` recording ran with real wall-clock + unseeded
         // RNG, so its receipts can never be reproduced — replaying it would
@@ -360,10 +382,12 @@ impl ReplayEngine for LocalReplayEngine {
             agent_id: "replay-engine".to_string(),
             surface: "replay".to_string(),
             seed: source_seed,
-            limits: None,
+            // Recorded source budgets — Header-only on the replay path (no
+            // enforcement is armed for `replay_of` sessions, see above).
+            limits: source_budgets,
             replay_of: Some(source.clone()),
             started_at_ms_override: source_started_at_ms,
-            capture_policy: None,
+            capture_policy: source_capture_policy,
             no_blocklist: false,
             // The replay session itself is deterministic by construction (we
             // refused non-deterministic sources above).
@@ -424,16 +448,20 @@ impl ReplayEngine for LocalReplayEngine {
             }
         }
 
-        // 7. Write SessionTerminal to close the replay session
-        self.manifest_writer.append(
-            replay_id.clone(),
-            ManifestEntry::SessionTerminal {
-                action_id: 0,
-                emitted_at_ms: now_ms(),
-                reason: "replay_complete".to_string(),
-                prev_hash: String::new(),
-            },
-        )?;
+        // 7. Close the replay session THROUGH the session manager so the
+        //    in-memory FSM transition (Active → Closed), the scope cancel,
+        //    and the SessionTerminal append happen once, coherently.
+        //    `close_with_reason` writes the exact same terminal payload this
+        //    step used to append directly via `manifest_writer` — bypassing
+        //    the manager left the in-memory session Active with
+        //    `last_activity_ms` pinned to the SOURCE's original
+        //    `started_at_ms` (the epoch of the recording!), so the daemon's
+        //    idle reaper saw it as instantly idle and appended a SECOND
+        //    SessionTerminal{idle_ttl} over the completed replay manifest,
+        //    flipping its on-disk status to `aborted:idle_ttl` and blocking
+        //    replay-of-replay.
+        self.session_manager
+            .close_with_reason(replay_id.clone(), "replay_complete")?;
 
         Ok(replay_id)
     }

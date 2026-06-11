@@ -309,9 +309,54 @@ impl Session {
     }
 }
 
+/// How many terminal (closed/aborted/killed) sessions the in-memory table
+/// retains before the oldest are evicted. See the eviction-policy note on
+/// `LocalSessionManager::sessions`.
+pub const TERMINAL_RETENTION_CAP: usize = 128;
+
 /// Concrete SessionManager implementation.
 pub struct LocalSessionManager {
+    /// In-memory session table.
+    ///
+    /// # Eviction policy (bounded terminal retention)
+    ///
+    /// Sessions are inserted at `create()` and stay in the table while
+    /// Active. On every transition to a terminal state (`close`/`abort`/
+    /// budget-kill) the id is recorded in `terminal_retention`, a FIFO
+    /// capped at [`TERMINAL_RETENTION_CAP`]; when the FIFO overflows, the
+    /// OLDEST terminal session is removed from this map. Rationale:
+    ///
+    /// - **Bounded memory.** Before this policy the map had exactly one
+    ///   insert and zero removes, so every `Arc<Session>` (manifest paths,
+    ///   counters, tape writer, scope) lived for the daemon's lifetime —
+    ///   unbounded growth proportional to total sessions ever created.
+    /// - **Recent terminal sessions keep their typed errors.** The daemon's
+    ///   dispatch path and `close()`/`abort()` look terminal sessions up
+    ///   here to return `SessionClosed`/`SessionAlreadyClosed`/
+    ///   `BudgetExceeded` instead of `SessionNotFound`; retaining the most
+    ///   recent CAP terminal sessions preserves that behaviour for the
+    ///   window in which callers realistically race a close.
+    /// - **Eviction degrades to the restart contract.** An evicted terminal
+    ///   session answers `SessionNotFound` from `get()` — exactly what the
+    ///   same lookup returns after a daemon restart (this table was never
+    ///   persisted). Historical queries (`session.list`, `session.inspect`)
+    ///   already read the on-disk manifests and are unaffected.
+    /// - **Terminal sessions stop shielding GC.** Evicted ids drop out of
+    ///   `live_session_ids()`, so the reaper's orphan-browser GC and
+    ///   `session.reap`'s corrupt-WAL quarantine can reclaim their
+    ///   leftovers instead of skipping them forever.
+    ///
+    /// The FSM is one-way (terminal states never revert to Active), so a
+    /// FIFO pop can remove its entry unconditionally — the id can never
+    /// belong to a live session again (ULIDs are never reused).
     pub(crate) sessions: dashmap::DashMap<SessionId, Arc<Session>>,
+    /// FIFO of sessions that reached a terminal state, oldest first.
+    /// Bounded at [`TERMINAL_RETENTION_CAP`]; overflow evicts from
+    /// `sessions`. Guarded by a sync mutex — pushes never cross await
+    /// points. Each session is pushed at most once: every terminal
+    /// transition happens under the session's status lock and only fires
+    /// from `Active`/`Created`.
+    pub(crate) terminal_retention: parking_lot::Mutex<std::collections::VecDeque<SessionId>>,
     pub(crate) content_store: Arc<dyn ContentStore>,
     pub(crate) manifest_writer: Arc<dyn ManifestWriter>,
     pub(crate) vault: Arc<dyn Vault>,
@@ -353,6 +398,7 @@ impl LocalSessionManager {
     ) -> Arc<Self> {
         Arc::new_cyclic(|me| Self {
             sessions: dashmap::DashMap::new(),
+            terminal_retention: parking_lot::Mutex::new(std::collections::VecDeque::new()),
             content_store,
             manifest_writer,
             vault,
@@ -366,6 +412,24 @@ impl LocalSessionManager {
     }
 
     // create(), get(), close(), abort(), abort_all() — implemented in impl_local.rs
+
+    /// Record that `id` reached a terminal state and evict the oldest
+    /// terminal sessions beyond [`TERMINAL_RETENTION_CAP`] from the
+    /// in-memory table. Called from every Active→terminal transition
+    /// (close/abort/budget-kill). See the eviction-policy note on
+    /// `sessions`.
+    pub(crate) fn note_terminal(&self, id: SessionId) {
+        let mut fifo = self.terminal_retention.lock();
+        fifo.push_back(id);
+        while fifo.len() > TERMINAL_RETENTION_CAP {
+            if let Some(victim) = fifo.pop_front() {
+                // One-way FSM: the victim is guaranteed still-terminal, so
+                // removal is unconditional. Disk remains the source of
+                // truth for historical queries.
+                self.sessions.remove(&victim);
+            }
+        }
+    }
 
     /// Internal helper: build the kill-callback closure registered with
     /// `BudgetEnforcer`. The closure interrupts the session's tokio task
@@ -423,11 +487,20 @@ impl LocalSessionManager {
 
             // Idempotent status transition: only flip if currently Active
             // or Created. Already-terminal sessions stay terminal.
-            {
+            let transitioned = {
                 let mut status = session.status.lock();
                 if matches!(*status, SessionStatus::Active | SessionStatus::Created) {
                     *status = SessionStatus::Killed;
+                    true
+                } else {
+                    false
                 }
+            };
+            // Bounded terminal retention: only the transition that actually
+            // flipped the status records the session (a kill racing an
+            // abort/close must not double-push the FIFO).
+            if transitioned {
+                manager.note_terminal(sid.clone());
             }
 
             // Append a SessionTerminal manifest entry tagged with the
