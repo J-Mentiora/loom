@@ -238,3 +238,52 @@ fn test_content_store_get_with_wrong_hash_fails() {
         err.code
     );
 }
+
+// ─── active_session_count restart seeding (daemon concurrency-cap source) ────
+
+/// The daemon's session cap counts `session_manager.active_session_count()`
+/// (in-memory) instead of re-parsing every WAL on disk. After a daemon crash
+/// the in-memory count restarts at zero — the startup recovery sweep must
+/// reconcile the on-disk "active" leftover to RuntimeCrash so disk and the
+/// cap source agree (no phantom slot consumption, no double-counting).
+#[test]
+fn test_recovery_sweep_reconciles_crashed_actives_with_in_memory_count() {
+    let dir = TempDir::new().unwrap();
+
+    // "Crashed daemon": create a session and drop the facade WITHOUT closing —
+    // the WAL has a Header but no terminal entry.
+    let session_id = {
+        let core = make_core(&dir);
+        let id = core
+            .session_manager
+            .create(default_session_opts())
+            .expect("create");
+        assert_eq!(core.session_manager.active_session_count(), 1);
+        id
+    };
+
+    // Fresh daemon over the same data root: in-memory cap source starts at 0.
+    let core2 = make_core(&dir);
+    assert_eq!(
+        core2.session_manager.active_session_count(),
+        0,
+        "a fresh process must not inherit phantom active sessions"
+    );
+
+    // Startup recovery stamps the orphaned-active WAL as crashed, so the
+    // on-disk view agrees with the in-memory count (nothing reads "active").
+    core2
+        .startup_manager
+        .perform_recovery_sweep()
+        .expect("recovery sweep");
+    let infos = core2.list_sessions_info().expect("list_sessions_info");
+    let status = infos
+        .iter()
+        .find(|(id, _, _)| *id == session_id.0)
+        .map(|(_, status, _)| status.clone())
+        .expect("crashed session must still be listed");
+    assert_eq!(
+        status, "crashed",
+        "recovery must terminal-mark the leftover so no source counts it active"
+    );
+}

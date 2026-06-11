@@ -493,3 +493,37 @@ fn terminal_retention_keeps_sessions_within_cap() {
         assert_eq!(*session.status.lock(), SessionStatus::Closed);
     }
 }
+// === active_session_count (daemon concurrency-cap source) ===
+
+#[test]
+fn test_active_session_count_tracks_fsm_transitions() {
+    // The daemon's session-cap check reads this count on EVERY session.create
+    // (instead of re-parsing every WAL on disk) — it must track the in-memory
+    // FSM exactly: create increments, close/abort immediately decrement.
+    let sm = make_sm("/tmp/loom-test-active-count");
+    assert_eq!(sm.active_session_count(), 0);
+
+    let id1 = sm.create(default_opts()).unwrap();
+    let id2 = sm.create(default_opts()).unwrap();
+    assert_eq!(sm.active_session_count(), 2);
+
+    sm.close(id1).unwrap();
+    assert_eq!(
+        sm.active_session_count(),
+        1,
+        "closed session must leave the active count (frees a cap slot)"
+    );
+
+    sm.abort(
+        id2,
+        AbortReason {
+            reason: "test".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        sm.active_session_count(),
+        0,
+        "aborted session must leave the active count (frees a cap slot)"
+    );
+}
