@@ -5,9 +5,10 @@ use crate::CliError;
 use serde_json::Value;
 use std::collections::HashSet;
 
-/// Note: the `session validate` HANDLER currently bypasses the formatter
-/// entirely (prints PASS/FAIL prose directly). This renderer exists for
-/// the synthetic error receipt path and for any future migration.
+/// Renders the wire ValidationResult ({session_id, passed, reasons}) as
+/// human PASS/FAIL prose for `--pretty`/TTY output. The `session validate`
+/// handler routes through `emit_to_stdout`, so `--json` gets the canonical
+/// JSON object and this renderer owns the human path.
 pub struct SessionValidate;
 
 impl CuratedRenderer for SessionValidate {

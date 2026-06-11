@@ -64,6 +64,11 @@ libc = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true }
+# tar + flate2: integration_export_tarball_manifest unpacks the
+# `session export --format tarball` artifact to assert its manifest.json
+# matches the json export (same crates the exporter itself uses).
+tar = { workspace = true }
+flate2 = { workspace = true }
 # integration_reaper.rs checks orphan-process liveness via libc::kill(pid, 0) on
 # every platform (the production macos-only libc dep above doesn't cover Linux tests).
 libc = { workspace = true }

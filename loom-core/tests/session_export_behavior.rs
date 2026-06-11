@@ -171,13 +171,6 @@ fn store_02_1_tarball_contains_manifest_and_blobs() {
 
     write_wal(&sessions_root, "01HZEXPORT003", &[receipt1, receipt2]);
 
-    // Write a manifest.json checkpoint (required by export_tarball).
-    fs::write(
-        sessions_root.join("01HZEXPORT003").join("manifest.json"),
-        serde_json::to_vec(&serde_json::json!({"entries": []})).unwrap(),
-    )
-    .unwrap();
-
     let exporter = Exporter::new(sessions_root, cs);
     let tarball = exporter.export_tarball("01HZEXPORT003").unwrap();
 
@@ -207,6 +200,59 @@ fn store_02_1_tarball_contains_manifest_and_blobs() {
 }
 
 #[test]
+fn store_02_1_tarball_manifest_matches_json_export() {
+    // Regression: the tarball's manifest.json used to fall back to a literal
+    // `{}` (the session-dir checkpoint only exists after a clean close), so a
+    // tarball alone could not identify what session/actions it contained. It
+    // must carry the same self-describing document as the json export.
+    let tmp = TempDir::new().unwrap();
+    let sessions_root = tmp.path().join("sessions");
+    fs::create_dir_all(&sessions_root).unwrap();
+    let cs = content_store_fixture(&tmp);
+
+    let blob = cs.put(b"blob-content-gamma").unwrap();
+    let receipt = serde_json::to_vec(&serde_json::json!({"sha256": blob.sha256})).unwrap();
+    write_wal(&sessions_root, "01HZEXPORT007", &[receipt]);
+
+    let exporter = Exporter::new(sessions_root, cs);
+    let json_export = exporter.export_json("01HZEXPORT007").unwrap();
+    let tarball = exporter.export_tarball("01HZEXPORT007").unwrap();
+
+    use flate2::read::GzDecoder;
+    use std::io::Read as _;
+    let gz = GzDecoder::new(std::io::Cursor::new(&tarball));
+    let mut archive = tar::Archive::new(gz);
+    let mut manifest_bytes = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        if entry.path().unwrap().to_str() == Some("manifest.json") {
+            entry.read_to_end(&mut manifest_bytes).unwrap();
+        }
+    }
+
+    assert_eq!(
+        manifest_bytes, json_export,
+        "tarball manifest.json must be byte-identical to the json export"
+    );
+    let doc: serde_json::Value = serde_json::from_slice(&manifest_bytes).unwrap();
+    assert_eq!(
+        doc["manifest"]["session_id"],
+        serde_json::json!("01HZEXPORT007"),
+        "got: {doc}"
+    );
+    assert_eq!(
+        doc["manifest"]["actions"].as_array().map(|a| a.len()),
+        Some(1),
+        "got: {doc}"
+    );
+    assert_eq!(
+        doc["content_blob_index"],
+        serde_json::json!([blob.sha256]),
+        "got: {doc}"
+    );
+}
+
+#[test]
 fn store_02_1_tarball_is_valid_gzip() {
     let tmp = TempDir::new().unwrap();
     let sessions_root = tmp.path().join("sessions");
@@ -214,11 +260,6 @@ fn store_02_1_tarball_is_valid_gzip() {
     let cs = content_store_fixture(&tmp);
 
     write_wal(&sessions_root, "01HZEXPORT004", &[dummy_receipt()]);
-    fs::write(
-        sessions_root.join("01HZEXPORT004").join("manifest.json"),
-        b"{}",
-    )
-    .unwrap();
 
     let exporter = Exporter::new(sessions_root, cs);
     let tarball = exporter.export_tarball("01HZEXPORT004").unwrap();

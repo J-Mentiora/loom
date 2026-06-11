@@ -88,13 +88,16 @@ impl Exporter {
     }
 
     /// Export session as gzip-compressed tar archive.
-    /// Contains `manifest.json` + `cas/<sha256>` blob entries.
+    /// Contains `manifest.json` + `cas/<sha256>` blob entries. The
+    /// `manifest.json` entry carries the same document as [`export_json`]
+    /// (`{"manifest": {...}, "content_blob_index": [...]}`), so a tarball is
+    /// self-describing.
+    ///
+    /// [`export_json`]: Self::export_json
     pub fn export_tarball(&self, session_id: &str) -> Result<Vec<u8>, LoomError> {
         use crate::content_store::ContentRef;
 
-        let session_dir = self.sessions_root.join(session_id);
-        let wal_path = session_dir.join("manifest.wal");
-        let manifest_json_path = session_dir.join("manifest.json");
+        let wal_path = self.sessions_root.join(session_id).join("manifest.wal");
 
         let content = std::fs::read_to_string(&wal_path)?;
         let mut blob_hashes: BTreeSet<String> = BTreeSet::new();
@@ -118,11 +121,11 @@ impl Exporter {
             }
         }
 
-        let manifest_bytes = if manifest_json_path.exists() {
-            std::fs::read(&manifest_json_path)?
-        } else {
-            b"{}".to_vec()
-        };
+        // Embed the export_json document rather than the session dir's
+        // `manifest.json` checkpoint: that checkpoint only exists after a
+        // clean close (the old fallback wrote a literal `{}`), which left
+        // the archive unable to identify what session/actions it contains.
+        let manifest_bytes = self.export_json(session_id)?;
 
         let output: Vec<u8> = Vec::new();
         let gz = GzEncoder::new(output, Compression::default());
