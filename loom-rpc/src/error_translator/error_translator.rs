@@ -39,7 +39,6 @@ pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 // Canonical code+message+context error, re-exported for the bridge paths
 // that must NOT degrade to a bare code (replay-refusal fidelity: the
 // compiled-in human refusal reason has to reach the wire `message`).
-pub use loom_shared::error_format::LoomError;
 
 /// Structured field detail for a `schema_violation` envelope.
 /// Wire-equal to the `data` block in `{error: {code: "schema_violation",
