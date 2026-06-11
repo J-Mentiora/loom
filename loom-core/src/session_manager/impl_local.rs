@@ -253,6 +253,11 @@ impl LocalSessionManager {
             *status = SessionStatus::Closed;
         }
 
+        // Bounded terminal retention: record the transition so the oldest
+        // terminal sessions are evicted from the in-memory table (see the
+        // eviction-policy note on `LocalSessionManager::sessions`).
+        self.note_terminal(id.clone());
+
         // Signal every scope-owned task (budget timer, shim-IPC tasks,
         // receipt spawns) to exit cooperatively. The actual drain (joining
         // them with a grace period) runs at the daemon bridge layer in
@@ -322,6 +327,9 @@ impl LocalSessionManager {
             session.abort_notify.notify_one();
             *status = SessionStatus::Aborted;
         }
+
+        // Bounded terminal retention (see `LocalSessionManager::sessions`).
+        self.note_terminal(id.clone());
 
         // Signal every scope-owned task (budget timer, shim-IPC tasks,
         // receipt spawns) to exit cooperatively. Actual drain happens at
