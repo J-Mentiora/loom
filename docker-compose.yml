@@ -18,7 +18,9 @@ services:
       - loom-data:/var/lib/loom
     # loom uses a Unix socket — no TCP port exposed
     healthcheck:
-      test: ["CMD", "/usr/local/bin/loom", "doctor"]
+      # Daemon-scoped: the image ships no Chromium/AOT artifacts until
+      # `loom postinstall` is run, so a full `loom doctor` always exits 1.
+      test: ["CMD", "/usr/local/bin/loom", "doctor", "--daemon-only"]
       interval: 30s
       timeout: 10s
       retries: 3

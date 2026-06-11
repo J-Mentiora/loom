@@ -31,8 +31,9 @@ fn check_names_are_in_stable_order() {
 }
 
 #[test]
-fn doctor_args_is_empty() {
-    let _ = DoctorArgs::default();
+fn doctor_args_default_is_full_probe() {
+    let args = DoctorArgs::default();
+    assert!(!args.daemon_only, "default must run the full 8-check probe");
 }
 
 #[test]

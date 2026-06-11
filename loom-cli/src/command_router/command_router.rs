@@ -290,7 +290,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
             crate::output_formatter::emit_to_stdout("postinstall", &value, config, None)
         }
 
-        Command::Doctor(_args) => {
+        Command::Doctor(args) => {
             let rpc = make_rpc_client(config);
             // Per-OS layout — must match `loom postinstall` and the launch
             // resolver. `chromium_binary_subpath()` is the shared source of
@@ -309,7 +309,7 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
                 chromium_expected_sha256: chromium_pin::CHROMIUM_SHA256.to_string(),
                 keychain_label: "com.loom.auth".to_string(),
             };
-            let result = crate::doctor_runner::run(&rpc, &chromium, &paths).await;
+            let result = crate::doctor_runner::run(&rpc, &chromium, &paths, &args).await;
             // Always emit the DoctorReport JSON to stdout (pass or fail).
             let report = match &result {
                 Ok(r) => r,

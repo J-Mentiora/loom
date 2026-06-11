@@ -1,0 +1,41 @@
+# Docker build-context filter. The builder stage runs `COPY . .` +
+# `cargo build --release -p loom-cli`, whose inputs are: Cargo.toml,
+# Cargo.lock, .cargo/config.toml, every workspace member crate
+# (including loom-cli/vendor/ — the vendored WASM guest), wit/ (the
+# wit-bindgen contract), docs/ (man pages embedded by loom-cli/build.rs),
+# and security/ (vault threat model, include_str! in loom-daemon).
+# Everything below is NOT build input — keep it out of the context
+# (target/ alone is tens of GB locally) and out of builder-stage layers.
+
+# Rust build output — the builder stage compiles from scratch.
+target/
+
+# VCS history. loom-cli/build.rs degrades gracefully without .git
+# (LOOM_GIT_SHA=unknown, same as cargo-dist source-tarball builds).
+.git
+
+# Env files can carry live credentials and must NEVER enter the build
+# context: anything COPY'd into the builder stage is recoverable from
+# its layers via `docker history`/`docker save`, even though the final
+# runtime stage drops it.
+**/.env*
+
+# Gitignored local working state — never build input.
+.claude/
+.feature-workflow/
+specs/
+council/
+marketing/
+
+# SDK dependency trees and build artifacts (the Python/TypeScript SDKs
+# are not part of the Rust build).
+**/node_modules
+**/__pycache__
+python-sdk/dist/
+python-sdk/.venv/
+
+# Docker artifacts themselves — editing them must not invalidate the
+# `COPY . .` layer cache (BuildKit reads the Dockerfile out-of-band).
+Dockerfile
+docker-compose.yml
+.dockerignore
