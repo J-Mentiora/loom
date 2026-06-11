@@ -236,6 +236,59 @@ fn validate_rejects_invalid_name_chars() {
     }
 }
 
+// === RFC 6265 token enforcement for names (audit 2026-06-10) ===
+// The validator runs only on the set_cookies WRITE path; names must be
+// HTTP tokens so control chars / separators never reach the CDP
+// envelope (Chromium drops such cookies silently while the receipt
+// would have claimed success).
+
+#[test]
+fn validate_rejects_control_chars_in_name() {
+    for bad in &['\n', '\r', '\0', '\x07', '\x1b', '\x7f'] {
+        let c = cookie_param(&format!("foo{bad}bar"), "v");
+        match validate_cookie_params(&[c]).unwrap_err() {
+            CookieValidationError::NameInvalid { ch } => assert_eq!(ch, *bad),
+            other => panic!("expected NameInvalid for {bad:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn validate_rejects_rfc6265_separators_in_name() {
+    for bad in &[
+        '(', ')', '<', '>', '@', ':', '\\', '/', '[', ']', '?', '{', '}',
+    ] {
+        let c = cookie_param(&format!("foo{bad}bar"), "v");
+        match validate_cookie_params(&[c]).unwrap_err() {
+            CookieValidationError::NameInvalid { ch } => assert_eq!(ch, *bad),
+            other => panic!("expected NameInvalid for {bad:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn validate_rejects_non_ascii_name() {
+    let c = cookie_param("séssion", "v");
+    match validate_cookie_params(&[c]).unwrap_err() {
+        CookieValidationError::NameInvalid { ch } => assert_eq!(ch, 'é'),
+        other => panic!("expected NameInvalid, got {other:?}"),
+    }
+}
+
+#[test]
+fn validate_accepts_all_token_special_chars_in_name() {
+    // Every non-alphanumeric char the token grammar allows — real-world
+    // names like `__Host-session.id` or `auth~v2$x` must keep working.
+    let c = cookie_param("aZ09!#$%&'*+-.^_`|~", "v");
+    assert!(validate_cookie_params(&[c]).is_ok());
+}
+
+#[test]
+fn validate_accepts_host_prefixed_name() {
+    let c = cookie_param("__Host-session.id", "v");
+    assert!(validate_cookie_params(&[c]).is_ok());
+}
+
 #[test]
 fn validate_rejects_oversized_value() {
     let huge = "x".repeat(4097);

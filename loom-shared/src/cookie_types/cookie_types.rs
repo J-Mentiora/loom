@@ -162,6 +162,33 @@ pub enum CookieValidationError {
     TooManyCookies(usize),
 }
 
+/// `true` iff `ch` is an RFC 6265 `cookie-name` character: an HTTP
+/// `token` char per RFC 2616 §2.2 — visible ASCII (0x21–0x7E) excluding
+/// the separators `( ) < > @ , ; : \ " / [ ] ? = { }`. SP, HT, control
+/// characters (including CR/LF/NUL), and non-ASCII are all non-token.
+fn is_cookie_token_char(ch: char) -> bool {
+    ch.is_ascii_graphic()
+        && !matches!(
+            ch,
+            '(' | ')'
+                | '<'
+                | '>'
+                | '@'
+                | ','
+                | ';'
+                | ':'
+                | '\\'
+                | '"'
+                | '/'
+                | '['
+                | ']'
+                | '?'
+                | '='
+                | '{'
+                | '}'
+        )
+}
+
 /// Validate the input cookie array. Council FND-0036/0044: enforce a 64-cookie
 /// cap (DoS guard); per-cookie name/value/expires checks; reject early so
 /// the CDP envelope never sees bad input.
@@ -175,11 +202,20 @@ pub fn validate_cookie_params(cookies: &[NetworkCookieParam]) -> Result<(), Cook
         if c.name.is_empty() {
             return Err(CookieValidationError::NameEmpty);
         }
-        // RFC 6265 token-char restriction — reject the common offenders.
-        for ch in c.name.chars() {
-            if matches!(ch, '=' | ';' | ',' | ' ' | '\t' | '"') {
-                return Err(CookieValidationError::NameInvalid { ch });
-            }
+        // RFC 6265 token-char restriction: cookie-name must be an HTTP
+        // `token`. Anything else — control characters (CR/LF/NUL are
+        // header/envelope smuggling vectors that Chromium silently drops
+        // while we'd report success:true), whitespace, the separator
+        // set, non-ASCII — rejects early so the CDP envelope never sees
+        // bad input.
+        //
+        // WRITE-path only by construction: this validator runs solely on
+        // `set_cookies` input (inline + grant-resolved vault blobs);
+        // cookies READ back from the browser (`Network.getCookies` →
+        // `NetworkCookie`) never pass through it, so leniently-parsed
+        // site-set cookies with non-token names stay readable/clearable.
+        if let Some(ch) = c.name.chars().find(|ch| !is_cookie_token_char(*ch)) {
+            return Err(CookieValidationError::NameInvalid { ch });
         }
         let value_len = c.value.expose().len();
         if value_len > 4096 {

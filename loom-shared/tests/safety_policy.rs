@@ -76,3 +76,32 @@ fn test_is_session_scoped_path_positive_and_negative() {
         "trailing-slash base must still match child paths"
     );
 }
+
+/// Contract: the path guards normalize `.` / `..` lexically before the
+/// containment comparison and compare on component boundaries — a `..`
+/// escape or a prefix-smuggled sibling dir is rejected (audit
+/// 2026-06-10).
+#[test]
+fn test_path_guards_reject_traversal_and_prefix_smuggling() {
+    let base = "/tmp/loom/sessions/s1/downloads";
+
+    assert!(
+        !SafetyPolicy::is_session_scoped_path(
+            "/tmp/loom/sessions/s1/downloads/../../../../etc/passwd",
+            base
+        ),
+        "`..` escape after the base prefix must NOT be scoped"
+    );
+    assert!(
+        !SafetyPolicy::is_session_scoped_path("/tmp/loom/sessions/s1/downloads2/file", base),
+        "prefix-without-separator sibling must NOT be scoped"
+    );
+    assert!(
+        SafetyPolicy::is_session_scoped_path("/tmp/loom/sessions/s1/downloads/a/../file.bin", base),
+        "`..` that resolves back inside the base must stay scoped"
+    );
+    assert!(
+        !SafetyPolicy::is_loom_data_path("/tmp/loom/../../etc/shadow", "/tmp/loom"),
+        "data-root `..` escape must NOT be in scope"
+    );
+}

@@ -1048,10 +1048,12 @@ impl WasmHostBridge for WasmBridge {
         // be safe-gated will silently bypass this block until added here.
         match &action {
             Action::WebEvaluate { expression, .. } if session.profile == "safe" => {
-                if let Some(matched) = loom_shared::safety::EVALUATE_DENYLIST
-                    .iter()
-                    .find(|p| expression.contains(*p))
-                {
+                // `find_denylist_match` = raw substring pass + a
+                // comment/whitespace-stripped pass (catches
+                // `document . cookie` / `eval/**/(…)` smuggling). It is
+                // a guardrail, not a sandbox — see the threat-model note
+                // on `loom_shared::safety::EVALUATE_DENYLIST`.
+                if let Some(matched) = loom_shared::safety::find_denylist_match(expression) {
                     tracing::warn!(
                         session_id = %session_id_str,
                         profile = "safe",
@@ -3027,14 +3029,30 @@ mod tests {
     }
 
     /// verify the operator's exact reproducer pattern
-    /// matches the daemon's denylist BEFORE shim dispatch.
+    /// matches the daemon's denylist BEFORE shim dispatch (through
+    /// `find_denylist_match`, the exact routine the gate calls).
     #[test]
     fn evaluate_denylist_blocks_operator_reproducer_window_location_assignment() {
         let expr = "window.location.href = \"https://evil.example.com\"";
-        let matched = loom_shared::safety::EVALUATE_DENYLIST
-            .iter()
-            .find(|p| expr.contains(*p));
-        assert_eq!(matched, Some(&"window.location"));
+        let matched = loom_shared::safety::find_denylist_match(expr);
+        assert_eq!(matched, Some("window.location"));
+    }
+
+    /// whitespace/comment-smuggled variants hit the same gate — the
+    /// normalized second pass of `find_denylist_match` (audit
+    /// 2026-06-10: the gate was raw-substring only).
+    #[test]
+    fn evaluate_denylist_blocks_token_separator_smuggling() {
+        for expr in [
+            "window . location = 'https://evil.example.com'",
+            "document/**/.cookie = ''",
+            "eval ('alert(1)')",
+        ] {
+            assert!(
+                loom_shared::safety::find_denylist_match(expr).is_some(),
+                "smuggled variant must be blocked: {expr:?}"
+            );
+        }
     }
 
     /// service-worker registration is gated; feature detection is allowed.
@@ -3043,15 +3061,11 @@ mod tests {
         let register = "navigator.serviceWorker.register('/sw.js')";
         let detect = "if ('serviceWorker' in navigator) {}";
         assert!(
-            loom_shared::safety::EVALUATE_DENYLIST
-                .iter()
-                .any(|p| register.contains(*p)),
+            loom_shared::safety::find_denylist_match(register).is_some(),
             "registration must be blocked"
         );
         assert!(
-            !loom_shared::safety::EVALUATE_DENYLIST
-                .iter()
-                .any(|p| detect.contains(*p)),
+            loom_shared::safety::find_denylist_match(detect).is_none(),
             "feature detection must NOT be blocked"
         );
     }
