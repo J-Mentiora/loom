@@ -186,21 +186,11 @@ def test_handwritten_admin_types_field_drift():
     )
 
 
-# KNOWN-BUG (audit 2026-06-10, "DaemonHealth wire struct grew
-# orphan_browser_trees and oldest_active_session_age_secs but both SDK
-# mirrors lack them, and the drift test cannot catch it"): the TS mirror was
-# brought up to date (typescript-sdk types.ts + toDaemonHealthResult, pinned
-# by test_admin_rpcs.ts), but the Python DaemonHealthResult dataclass in
-# _admin_types.py still drops both fields, and the drift guard above only
-# compares ShimDeepHealth/ShimBreakerSnapshot — exactly the blind spot the
-# audit called out. This test extends the same regex drift check to
-# DaemonHealth itself; un-skip once _admin_types.DaemonHealthResult mirrors
-# the full Rust struct.
-@pytest.mark.skip(
-    reason="KNOWN-BUG: python DaemonHealthResult lacks orphan_browser_trees / "
-    "oldest_active_session_age_secs (Rust DaemonHealth serializes both); "
-    "see audit 2026-06-10"
-)
+# (audit 2026-06-10, "DaemonHealth wire struct grew orphan_browser_trees and
+# oldest_active_session_age_secs but both SDK mirrors lack them"): the Python
+# DaemonHealthResult dataclass now mirrors the full Rust struct (the TS mirror
+# was already updated in #163). This guard extends the same regex drift check
+# to DaemonHealth itself so the blind spot can't recur. FIXED.
 def test_daemon_health_mirror_field_drift():
     rs_path = (
         Path(__file__).parent.parent.parent
