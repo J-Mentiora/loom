@@ -137,6 +137,11 @@ impl LocalSessionManager {
 
         self.sessions.insert(id.clone(), Arc::clone(&session));
 
+        // Bind the session's vault determinism context (NFR-DET-01): grant
+        // ids + audit ts_ticks derive from the session seed, keeping vault
+        // audit canonical_bytes cross-run hash-equal.
+        self.vault.begin_session(&id, seed.0);
+
         // Wire budget enforcement.
         // Replay sessions skip enforcement — the manifest header already
         // pins the original budget; rerunning the wall-clock timer would
@@ -277,6 +282,7 @@ impl LocalSessionManager {
         // existing call signature across the codebase + tests + benchmarks.
         session.scope.cancel();
         self.budget_enforcer.unregister_session(id.clone());
+        self.vault.end_session(&id);
 
         self.manifest_writer.append(
             id,
@@ -348,6 +354,7 @@ impl LocalSessionManager {
         // the daemon bridge layer.
         session.scope.cancel();
         self.budget_enforcer.unregister_session(id.clone());
+        self.vault.end_session(&id);
 
         self.manifest_writer.append(
             id,

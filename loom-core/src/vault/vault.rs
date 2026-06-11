@@ -3,12 +3,13 @@
 // # Contract semantics
 // - **Vault isolation.** Raw secret bytes
 //   appear in EXACTLY ONE call site: `Vault::substitute`. The bytes
-//   live in a `Zeroizing<Vec<u8>>` local, are written into the outbound
-//   `NetRequest::headers["Authorization"]` slot, and zeroize on drop.
-//   They never appear in the returned `NetResp`, never in logs, never
-//   in the manifest, never cross the WASM boundary.
+//   live in a `Zeroizing<Vec<u8>>` local and are parked in the outbound
+//   `NetRequest::authorization` slot — a `Redacted<Zeroizing<String>>`
+//   that zeroizes on drop and prints `[REDACTED]` from Debug/Serialize
+//   (threat model G1/TB4). They never appear in the returned `NetResp`,
+//   never in logs, never in the manifest, never cross the WASM boundary.
 // - **Substitution mutates in-place.** `substitute(&mut NetRequest)` per
-//   the per-task instructions: the substitution writes to `req.headers`
+//   the per-task instructions: the substitution writes into `req`
 //   directly so secret bytes never sit in a return value.
 // - **OAuth-only at v1.** `grant()` rejects non-OAuth
 //   credential types with `VaultCredentialTypeUnsupported`.
@@ -50,11 +51,23 @@ pub struct GrantId(pub String);
 
 /// Network request struct. WIT-derived. The shape shown
 /// here is the wit-bindgen output; all numeric fields are integers.
+/// `authorization` is host-side only (no WIT counterpart): the guest can
+/// never read the vault-substituted token back out of it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetRequest {
     pub url: String,
     pub method: String,
     pub headers: BTreeMap<String, String>,
+    /// Vault-substituted `Authorization` value, set ONLY by
+    /// `Vault::substitute`. Same wrapper stack as cookie values:
+    /// `Redacted` scrubs Debug/Display output, the inner `Zeroizing`
+    /// wipes the heap buffer on drop, and `#[serde(skip)]` keeps the
+    /// token out of every serialization entirely (threat model G1/TB4 —
+    /// a plain `String` in `headers` survived the whole HTTP round-trip
+    /// un-wiped and leaked via any `{:?}`/Serialize of the request).
+    /// loom-host's `do_http_request` is the single wire-out consumer.
+    #[serde(skip)]
+    pub authorization: Option<loom_shared::Redacted<Zeroizing<String>>>,
     pub body: Vec<u8>,
     pub origin: String,
     pub scopes: Vec<String>,
@@ -194,6 +207,25 @@ pub(crate) struct Grant {
     pub revoked: bool,
 }
 
+/// Per-session determinism context for vault AUDIT material (NFR-DET-01).
+///
+/// Audit payloads are JCS-encoded into `AuditEntry::canonical_bytes` (a
+/// number array in the WAL line), where `hashable_line()`'s projection
+/// cannot reach — so everything embedded there must be reproducible across
+/// two independent same-seed runs:
+///
+/// - `rng` (ChaCha20 from a domain-separated SHA-256 of the session seed)
+///   mints grant ids: pure function of (seed, draw index), not wall-clock
+///   + OS entropy.
+/// - `tick` is the session-relative vault event clock, recorded as the
+///   payload's `ts_tick` — mirroring the D9 receipt rule. Wall clock is
+///   still used for TTL *enforcement* (`Grant::issued_at_ms`); it just
+///   never enters chain-hashed bytes.
+pub(crate) struct VaultSessionCtx {
+    pub(crate) rng: rand_chacha::ChaCha20Rng,
+    pub(crate) tick: u64,
+}
+
 /// Concrete Vault implementation.
 ///
 /// `keychain` is wrapped in a `BlockingKeychain` (A-W5.1) so every backend
@@ -204,7 +236,17 @@ pub struct LocalVault {
     pub(crate) keychain: Arc<BlockingKeychain>,
     pub(crate) manifest_writer: Arc<dyn ManifestWriter>,
     pub(crate) obs: Arc<Observability>,
-    pub(crate) grants: parking_lot::RwLock<BTreeMap<GrantId, Grant>>,
+    /// Grants keyed by `(session, grant_id)`. Load-bearing: grant ids are
+    /// deterministic per session (NFR-DET-01), so two same-seed sessions
+    /// mint IDENTICAL id strings — a flat `GrantId` key would let one
+    /// session's insert overwrite (and its lookups resolve to) another
+    /// session's grant.
+    pub(crate) grants: parking_lot::RwLock<BTreeMap<(SessionId, GrantId), Grant>>,
+    /// Per-session determinism contexts, registered by
+    /// `Vault::begin_session` at session create and dropped at terminal.
+    /// Unregistered sessions (direct library use, unit tests) get a lazy
+    /// fallback derived from the session id instead of a seed.
+    pub(crate) det: parking_lot::Mutex<BTreeMap<SessionId, VaultSessionCtx>>,
 }
 
 impl LocalVault {
@@ -218,6 +260,7 @@ impl LocalVault {
             manifest_writer,
             obs,
             grants: parking_lot::RwLock::new(BTreeMap::new()),
+            det: parking_lot::Mutex::new(BTreeMap::new()),
         }
     }
 }
@@ -232,13 +275,23 @@ pub trait Vault: Send + Sync {
 
     /// Substitute the grant token with the real secret AT the network
     /// boundary, mutating `req` in-place. **The single call site for raw
-    /// secret bytes.** Called by `loom-host`'s `net_request` host-fn ONLY.
+    /// secret bytes.** Called by `loom-host`'s `net_request` host-fn ONLY,
+    /// which passes the dispatching session — grants are session-scoped
+    /// (deterministic ids collide across same-seed sessions), so the
+    /// lookup key is `(session, grant)` and a grant issued to another
+    /// session is reported as not-found.
     ///
-    /// Pre: grant alive ∧ origin match ∧ scopes ⊇ req.scopes ∧ ttl
-    /// not exceeded.
-    /// Post: req.headers["Authorization"] mutated; GrantConsumed audit
-    /// entry appended; secret bytes zeroized on function exit.
-    fn substitute(&self, grant: GrantId, req: &mut NetRequest) -> Result<(), LoomError>;
+    /// Pre: grant issued to `session` ∧ alive ∧ origin match ∧
+    /// scopes ⊇ req.scopes ∧ ttl not exceeded.
+    /// Post: `req.authorization` set (zeroize-on-drop, Debug/Serialize
+    /// redacted); GrantConsumed audit entry appended; the keychain
+    /// buffer zeroizes on function exit.
+    fn substitute(
+        &self,
+        session: &SessionId,
+        grant: GrantId,
+        req: &mut NetRequest,
+    ) -> Result<(), LoomError>;
 
     /// Cookie-specific substitution path (v0.9.5 / D5). Parallel to
     /// `substitute()` but for the web-cookie-injection feature: resolves
@@ -250,9 +303,12 @@ pub trait Vault: Send + Sync {
     /// function exit; they never cross MCP/WASM.
     ///
     /// Pre: grant alive ∧ stored session_id matches `session` ∧ ttl OK.
-    /// Post: `CookiesSubstituted{grant_id, session_id, cookie_names}`
-    /// audit appended; cookie *names* in the audit chain (deterministic,
-    /// replay-equal); cookie *values* are NEVER in audit / receipt / logs.
+    /// Post: `CookiesSubstituted{grant_id, cookie_names}` audit appended;
+    /// cookie *names* in the audit chain (deterministic, replay-equal);
+    /// the per-run session id is deliberately NOT in the payload (the
+    /// chain is already per-session, and the payload bytes are
+    /// chain-hashed — NFR-DET-01); cookie *values* are NEVER in audit /
+    /// receipt / logs.
     ///
     /// Returns: a `Vec<u8>` of the raw keychain blob bytes (JSON-encoded
     /// cookie array). The caller (daemon) deserializes into the typed
@@ -267,6 +323,19 @@ pub trait Vault: Send + Sync {
 
     /// Revoke a grant. Subsequent `substitute` returns VaultGrantRevoked.
     fn revoke(&self, grant: GrantId, reason: RevokeReason) -> Result<(), LoomError>;
+
+    /// Bind a session's determinism seed (NFR-DET-01). Called once by
+    /// `LocalSessionManager::create` so grant ids and audit ts_ticks derive
+    /// from the seed. Default no-op for mock vaults.
+    fn begin_session(&self, session: &SessionId, seed: u64) {
+        let _ = (session, seed);
+    }
+
+    /// Drop the per-session vault determinism context at session
+    /// terminal (close/abort). Default no-op.
+    fn end_session(&self, session: &SessionId) {
+        let _ = session;
+    }
 
     /// Add an OAuth-only credential. Session-less: the
     /// CLI `loom vault add` has no `--session` flag, and the receipt does

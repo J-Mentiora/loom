@@ -219,12 +219,16 @@ impl Host for HostState {
                 url: req.url.clone(),
                 method: req.method.clone(),
                 headers: req.headers.iter().cloned().collect(),
+                authorization: None,
                 body: req.body.clone(),
                 origin: req.url.clone(),
                 scopes: Vec::new(),
             };
-            // Vault credential substitution (grant_id "default" for now)
+            // Vault credential substitution (grant_id "default" for now).
+            // The dispatching session scopes the grant lookup (NFR-DET-01:
+            // grant ids are deterministic per session).
             let _ = self.core.vault.substitute(
+                &self.session_id,
                 loom_core::vault::GrantId("default".to_owned()),
                 &mut core_req,
             );
@@ -1032,6 +1036,13 @@ async fn do_http_request(req: NetRequest) -> Result<loom_core::vault::NetResp, S
     let mut rb = client.request(method, &req.url);
     for (k, v) in &req.headers {
         rb = rb.header(k.as_str(), v.as_str());
+    }
+    // Vault-substituted bearer token: applied AFTER the plain headers so it
+    // wins over any guest-supplied Authorization value (the historical
+    // overwrite-in-map semantics). `expose()` here is the single wire-out
+    // site; the value never reaches Debug/Serialize (G1/TB4).
+    if let Some(auth) = &req.authorization {
+        rb = rb.header("Authorization", auth.expose().as_str());
     }
     if !req.body.is_empty() {
         rb = rb.body(req.body.clone());
