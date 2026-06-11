@@ -189,3 +189,95 @@ def test_from_bare_frame_rejects_non_bare_shapes():
     assert LoomRPCError._from_bare_frame({"code": 401, "message": "nope"}) is None
     assert LoomRPCError._from_bare_frame({"code": "x"}) is None
     assert LoomRPCError._from_bare_frame("not a dict") is None
+
+
+# KNOWN-BUG (audit 2026-06-10, "AsyncLoomTransport never marks itself dead
+# after the reader loop exits, so later call()s can hang forever"): when the
+# daemon half-closes its write side (FIN — e.g. the 300s authenticated-idle
+# drop or a graceful shutdown) the reader loop exits via IncompleteReadError
+# and fails the futures pending AT THAT MOMENT, but never sets self._closed
+# or latches a terminal connection error. A LATER call() passes the guards,
+# writes into the still-open read direction, and awaits a future no reader
+# will ever resolve — an unbounded hang. The TS transport got the dead-latch
+# fix in #163 ("calls after daemon hangup fail with a typed connection-closed
+# error"); the python async transport did not. Un-skip once the reader-loop
+# exception handlers latch a terminal error consulted by call().
+@pytest.mark.skip(
+    reason="KNOWN-BUG: async call() after daemon half-close hangs forever "
+    "instead of raising LoomConnectionError; reader-loop exit never marks "
+    "the transport dead — see audit 2026-06-10"
+)
+async def test_async_call_after_daemon_half_close_raises_typed_error(tmp_path):
+    import asyncio
+
+    from loom._async_transport import AsyncLoomTransport
+    from loom._errors import LoomConnectionError
+
+    sock_path = tmp_path / "half-close.sock"
+    handshake_done = threading.Event()
+
+    def serve() -> None:
+        srv = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        srv.bind(str(sock_path))
+        srv.listen(1)
+        conn, _ = srv.accept()
+        try:
+            # Frame 1: HELLO <token> — accept silently (real-daemon shape).
+            _ = _read_frame(conn)
+            # Frame 2: the pipelined daemon.hello probe — answer like an old
+            # daemon (method_not_found envelope) so connect() authenticates.
+            probe = json.loads(_read_frame(conn))
+            reply = json.dumps(
+                {
+                    "error": {"code": "method_not_found", "message": "nope"},
+                    "id": probe["id"],
+                }
+            ).encode()
+            conn.sendall(struct.pack(">I", len(reply)) + reply)
+            # Half-close: FIN on the daemon's write side while the read
+            # direction stays open — the client's writes still succeed.
+            conn.shutdown(socket.SHUT_WR)
+            handshake_done.set()
+            # Keep draining whatever the client writes so its sends never
+            # error; never answer.
+            while conn.recv(4096):
+                pass
+        except OSError:
+            pass
+        finally:
+            conn.close()
+            srv.close()
+
+    def _read_frame(conn: socket.socket) -> bytes:
+        header = b""
+        while len(header) < 4:
+            chunk = conn.recv(4 - len(header))
+            if not chunk:
+                raise ConnectionError("closed before header")
+            header += chunk
+        (length,) = struct.unpack(">I", header)
+        data = b""
+        while len(data) < length:
+            chunk = conn.recv(length - len(data))
+            if not chunk:
+                raise ConnectionError("closed mid-frame")
+            data += chunk
+        return data
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    for _ in range(100):
+        if sock_path.exists():
+            break
+        time.sleep(0.01)
+
+    transport = await AsyncLoomTransport.connect(str(sock_path), "any-token")
+    assert handshake_done.wait(timeout=2), "mock daemon must finish handshake"
+    # Give the reader loop a moment to observe EOF and exit.
+    await asyncio.sleep(0.1)
+
+    # A call AFTER the reader died must fail fast and typed — never hang.
+    with pytest.raises(LoomConnectionError):
+        await asyncio.wait_for(transport.call("session.list", {}), timeout=2)
+
+    await transport.close()

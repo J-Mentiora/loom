@@ -443,3 +443,33 @@ fn shim_manager_constructor_takes_observability_and_nothing_else_loom_host() {
     }
     let _ = _ck;
 }
+
+// === Session-scoped state cleanup (audit 2026-06-10) ===
+
+// KNOWN-BUG (audit 2026-06-10, "ShimManager::host_session_ids grows
+// unbounded"): `shim_session_id_for` inserts one ULID -> wire-id entry per
+// session, but `shutdown_session` cleans up only `processes` / `states` /
+// `configs` / `spawn_locks` — it never removes from `host_session_ids`, so a
+// long-running daemon under session churn leaks one map entry per session
+// forever. This test pins the intended cleanup and is red until
+// `shutdown_session` also calls `self.host_session_ids.remove(session_id)`.
+#[tokio::test]
+#[ignore = "KNOWN-BUG: shutdown_session leaks the host_session_ids entry; \
+            unbounded growth under session churn — see audit 2026-06-10"]
+async fn known_bug_shutdown_session_must_remove_host_session_ids_entry() {
+    let (mgr, _id) = fixture();
+    let ulid = "01HZTESTHOSTSESSIONIDLEAK0";
+    let _wire = mgr.shim_session_id_for(ulid);
+    assert!(
+        mgr.host_session_ids.contains_key(ulid),
+        "precondition: shim_session_id_for must have inserted the mapping"
+    );
+
+    mgr.shutdown_session(ulid).await;
+
+    assert!(
+        !mgr.host_session_ids.contains_key(ulid),
+        "shutdown_session must remove the session's host_session_ids entry \
+         alongside processes/states/configs, or the map grows unbounded"
+    );
+}
