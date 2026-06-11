@@ -164,10 +164,10 @@ impl RequestRouterApi for RequestRouter {
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                let speed = params
-                    .get("speed")
-                    .and_then(|v| v.as_f64())
-                    .map(|f| f as f32);
+                let speed = match optional_replay_speed(&params) {
+                    Ok(s) => s,
+                    Err(e) => return error_bytes(&e),
+                };
                 let nm = params
                     .get("network_mode")
                     .and_then(|v| v.as_str())
@@ -476,6 +476,44 @@ fn required_str(params: &serde_json::Value, field: &str) -> Result<String, JsonR
             message: format!("missing field: {field}"),
             data: None,
         })
+}
+
+/// Parse the optional `session.replay` `speed` param.
+///
+/// The wire contract is a JSON number (the SDKs send e.g. `1.0`; `0` is
+/// the "max"/unpaced sentinel, matching the workspace's 0-means-unlimited
+/// budget convention). CLIs ≤ 0.10.1 forwarded the documented string
+/// forms (`"realtime"`, `"Nx"`, `"max"`) verbatim and the old `as_f64`
+/// parse silently dropped them — accept those spellings too so a
+/// version-skewed CLI doesn't lose the flag, and reject anything else
+/// loudly instead of coercing (same posture as `optional_settle_until`).
+fn optional_replay_speed(params: &serde_json::Value) -> Result<Option<f32>, JsonRpcError> {
+    let invalid = |got: &dyn std::fmt::Display| JsonRpcError {
+        code: LoomErrorCode::SchemaViolation,
+        message: format!(
+            "invalid `speed`: expected a number or one of \
+             \"Nx\", \"max\", \"realtime\"; got {got}"
+        ),
+        data: None,
+    };
+    match params.get("speed") {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::Number(n)) => Ok(n.as_f64().map(|f| f as f32)),
+        Some(serde_json::Value::String(s)) => {
+            let t = s.trim();
+            if t.eq_ignore_ascii_case("realtime") {
+                return Ok(Some(1.0));
+            }
+            if t.eq_ignore_ascii_case("max") {
+                return Ok(Some(0.0));
+            }
+            match t.strip_suffix(['x', 'X']).map(str::parse::<f32>) {
+                Some(Ok(n)) if n.is_finite() && n > 0.0 => Ok(Some(n)),
+                _ => Err(invalid(&format!("{s:?}"))),
+            }
+        }
+        Some(other) => Err(invalid(other)),
+    }
 }
 
 /// settle-capture: the readiness modes accepted by `until`.

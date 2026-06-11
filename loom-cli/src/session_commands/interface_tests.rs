@@ -2,8 +2,9 @@
 // flag-name parity, and receipt pass-through shape.
 
 use super::session_commands::{
-    parse_budget_string, AbortArgs, CapturePolicyArg, CloseArgs, CreateArgs, DiffArgs, ExportArgs,
-    ExportFormat, InspectArgs, ListArgs, ReplayArgs, ValidateArgs, SUBCOMMAND_RPC_MAP,
+    parse_budget_string, parse_replay_speed, AbortArgs, CapturePolicyArg, CloseArgs, CreateArgs,
+    DiffArgs, ExportArgs, ExportFormat, InspectArgs, ListArgs, ReplayArgs, ReplaySpeed,
+    ValidateArgs, SUBCOMMAND_RPC_MAP,
 };
 
 // === 10 session subcommands map to 10 RPC methods ===
@@ -178,16 +179,76 @@ fn abort_args_carries_optional_reason() {
     assert!(a.reason.is_none());
 }
 
+// === --speed parsing (regression: the CLI forwarded the raw string and
+// the daemon's `as_f64` parse silently dropped every documented value) ===
+
 #[test]
-fn replay_args_speed_default_is_realtime_string() {
-    // Default lives in the clap derive; runtime default is set when
-    // parsing argv. We assert the type is `String` so `Nx`, `max`,
-    // `realtime` are all expressible.
-    let r = ReplayArgs {
-        session_id: "id".into(),
-        speed: "max".into(),
-    };
-    assert_eq!(r.speed, "max");
+fn parse_replay_speed_accepts_documented_forms() {
+    assert_eq!(parse_replay_speed("realtime"), Ok(ReplaySpeed::Realtime));
+    assert_eq!(parse_replay_speed("max"), Ok(ReplaySpeed::Max));
+    assert_eq!(parse_replay_speed("2x"), Ok(ReplaySpeed::Multiplier(2.0)));
+    assert_eq!(parse_replay_speed("1.5x"), Ok(ReplaySpeed::Multiplier(1.5)));
+    // Case/whitespace tolerant.
+    assert_eq!(parse_replay_speed(" MAX "), Ok(ReplaySpeed::Max));
+    assert_eq!(parse_replay_speed("2X"), Ok(ReplaySpeed::Multiplier(2.0)));
+}
+
+#[test]
+fn parse_replay_speed_rejects_garbage_with_accepted_forms_in_message() {
+    for bad in ["fast", "2", "x", "0x", "-2x", "infx", "nanx", ""] {
+        let err = parse_replay_speed(bad).expect_err(&format!("speed {bad:?} must be rejected"));
+        assert!(
+            err.contains("max") && err.contains("realtime"),
+            "error must list accepted forms; got: {err}"
+        );
+    }
+}
+
+#[test]
+fn replay_speed_wire_form_is_numeric() {
+    // The daemon parses `speed` with `as_f64`; the SDKs send numbers.
+    assert_eq!(ReplaySpeed::Realtime.as_wire_f64(), 1.0);
+    assert_eq!(ReplaySpeed::Multiplier(2.5).as_wire_f64(), 2.5);
+    // `max` maps to the 0 = unpaced sentinel.
+    assert_eq!(ReplaySpeed::Max.as_wire_f64(), 0.0);
+    // And the params value built from it is a JSON number, not a string.
+    let v = serde_json::json!({ "speed": ReplaySpeed::Max.as_wire_f64() });
+    assert!(v["speed"].is_number(), "speed must be numeric on the wire");
+}
+
+#[test]
+fn clap_rejects_bogus_speed_with_exit_2() {
+    use clap::{CommandFactory, Parser};
+    #[derive(Parser, Debug)]
+    struct Wrap {
+        #[command(flatten)]
+        inner: ReplayArgs,
+    }
+    let err = Wrap::command()
+        .try_get_matches_from(["test", "sid", "--speed", "warp9"])
+        .expect_err("clap should reject bogus --speed");
+    assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+}
+
+#[test]
+fn clap_speed_default_is_realtime() {
+    use clap::{CommandFactory, FromArgMatches, Parser};
+    #[derive(Parser, Debug)]
+    struct Wrap {
+        #[command(flatten)]
+        inner: ReplayArgs,
+    }
+    let m = Wrap::command()
+        .try_get_matches_from(["test", "sid"])
+        .expect("no --speed should parse with default");
+    let parsed = Wrap::from_arg_matches(&m).expect("from_arg_matches");
+    assert_eq!(parsed.inner.speed, ReplaySpeed::Realtime);
+
+    let m = Wrap::command()
+        .try_get_matches_from(["test", "sid", "--speed", "2x"])
+        .expect("--speed 2x should parse");
+    let parsed = Wrap::from_arg_matches(&m).expect("from_arg_matches");
+    assert_eq!(parsed.inner.speed, ReplaySpeed::Multiplier(2.0));
 }
 
 #[test]

@@ -66,8 +66,11 @@ pub struct PostinstallOptions {
     pub man_install_dir: Option<PathBuf>,
 }
 
-/// Per-step outcome — used for the final stdout receipt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Per-step outcome — used for the final stdout receipt. Unit variants
+/// serialise as bare strings (`"skipped"`); `Compiled` carries the
+/// `.cwasm` destination path (`{"compiled": "<path>"}`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     Skipped,
     Compiled(PathBuf),
@@ -76,7 +79,8 @@ pub enum StepOutcome {
 }
 
 /// Outcome for the schema emission step.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SchemaStepOutcome {
     /// Schemas dir was created and populated with `count` method schema files.
     Populated(usize),
@@ -84,8 +88,9 @@ pub enum SchemaStepOutcome {
     Skipped,
 }
 
-/// Final receipt for `loom postinstall`. Emitted as canonical JSON.
-#[derive(Debug, Clone)]
+/// Final receipt for `loom postinstall`. Emitted as canonical JSON on
+/// stdout by `CommandRouter` (same `OutputFormatter` path as `doctor`).
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PostinstallReceipt {
     pub status: String,
     pub steps: Vec<&'static str>,

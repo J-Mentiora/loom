@@ -1,7 +1,7 @@
 // Interface tests for `AuthManager`. Verifies artefact
 // shape and the no-persistence contract.
 
-use super::auth_manager::{default_auth_paths, AuthManager, AuthPaths};
+use super::auth_manager::{auth_paths_in, default_auth_paths, AuthManager, AuthPaths};
 use crate::CliError;
 
 #[test]
@@ -45,6 +45,33 @@ fn default_auth_paths_signature() {
         default_auth_paths()
     }
     let _ = _ck;
+}
+
+#[test]
+fn auth_paths_in_joins_token_and_pid_under_dir() {
+    let p = auth_paths_in(std::path::Path::new("/custom/auth"));
+    assert_eq!(
+        p.token_path,
+        std::path::PathBuf::from("/custom/auth/hello.token")
+    );
+    assert_eq!(
+        p.pid_path,
+        std::path::PathBuf::from("/custom/auth/daemon.pid")
+    );
+}
+
+// `default_auth_paths` must stay the `auth_paths_in` projection of the
+// platform default dir (`dirs::data_dir()/loom/auth`) — the same dir the
+// daemon derives from `<data_root>/auth/` and the same compiled default
+// `CliConfig.auth_dir` carries (pinned in cli_config interface tests).
+#[test]
+fn default_auth_paths_match_platform_data_dir_layout() {
+    let expected_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join("loom/auth");
+    let p = default_auth_paths().expect("default_auth_paths must resolve");
+    assert_eq!(p.token_path, expected_dir.join("hello.token"));
+    assert_eq!(p.pid_path, expected_dir.join("daemon.pid"));
 }
 
 // === never persists across daemon restarts ===

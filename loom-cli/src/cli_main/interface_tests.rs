@@ -1,7 +1,7 @@
 // Interface tests for `main`. Verifies the binary entry signature,
 // library `run` test hook, and tokio runtime construction.
 
-use super::cli_main::{build_runtime, early_init, run};
+use super::cli_main::{build_runtime, early_init, merge_pretty_flag, run};
 use crate::{CliConfig, CliError};
 
 #[test]
@@ -26,6 +26,41 @@ fn early_init_returns_cli_config_or_error() {
         early_init(argv)
     }
     let _ = _ck;
+}
+
+// === --pretty flag merge (regression: cli_main unconditionally clobbered
+// the file/env-resolved `pretty` with the bare CLI flag, so config.toml
+// `pretty = true` and LOOM_PRETTY=true were dead) ===
+
+#[test]
+fn merge_pretty_flag_keeps_resolved_value_when_flag_absent() {
+    // Flag absent (false) must NOT clobber the env/file-resolved true.
+    assert!(merge_pretty_flag(true, false));
+    assert!(!merge_pretty_flag(false, false));
+}
+
+#[test]
+fn merge_pretty_flag_forces_on_when_passed() {
+    assert!(merge_pretty_flag(false, true));
+    assert!(merge_pretty_flag(true, true));
+}
+
+#[test]
+fn env_resolved_pretty_forces_pretty_into_a_pipe() {
+    use crate::cli_config::output_mode::OutputMode;
+    // LOOM_PRETTY=true / config.toml pretty=true, no flags, stdout piped:
+    // the merged value must reach OutputMode::resolve and yield pretty —
+    // this was the user-visible loss when the merge was clobbered.
+    let merged = merge_pretty_flag(true, false);
+    assert_eq!(
+        OutputMode::resolve(false, false, merged, false),
+        OutputMode::PrettyCurated
+    );
+    // --json (flag) still beats env/file pretty per CLI > env > file.
+    assert_eq!(
+        OutputMode::resolve(false, true, merged, false),
+        OutputMode::Json
+    );
 }
 
 // === main is sole std::process::exit caller ===

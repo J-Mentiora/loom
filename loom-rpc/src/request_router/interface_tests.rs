@@ -73,3 +73,61 @@ fn module_accessor_returns_arc_rpc_module_for_mcp_reuse() {
     }
     let _ = _ck;
 }
+
+// === session.replay `speed` param (regression: only `as_f64` was
+// accepted, so the string forms older CLIs forwarded were silently
+// dropped — speed was always None) ===
+
+#[test]
+fn replay_speed_accepts_numbers() {
+    let p = serde_json::json!({ "speed": 2.5 });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(2.5_f32));
+    let p = serde_json::json!({ "speed": 1 });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(1.0_f32));
+    // 0 is the documented "max"/unpaced sentinel — valid.
+    let p = serde_json::json!({ "speed": 0 });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(0.0_f32));
+}
+
+#[test]
+fn replay_speed_absent_or_null_is_none() {
+    assert_eq!(
+        super::optional_replay_speed(&serde_json::json!({})).unwrap(),
+        None
+    );
+    let p = serde_json::json!({ "speed": null });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), None);
+}
+
+#[test]
+fn replay_speed_accepts_legacy_cli_string_forms() {
+    // CLIs ≤ 0.10.1 forwarded the documented strings verbatim.
+    let p = serde_json::json!({ "speed": "realtime" });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(1.0_f32));
+    let p = serde_json::json!({ "speed": "2x" });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(2.0_f32));
+    let p = serde_json::json!({ "speed": "1.5x" });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(1.5_f32));
+    let p = serde_json::json!({ "speed": "max" });
+    assert_eq!(super::optional_replay_speed(&p).unwrap(), Some(0.0_f32));
+}
+
+#[test]
+fn replay_speed_rejects_garbage_loudly() {
+    use crate::error_translator::error_translator::LoomErrorCode;
+    for bad in [
+        serde_json::json!({ "speed": "fast" }),
+        serde_json::json!({ "speed": "-2x" }),
+        serde_json::json!({ "speed": true }),
+        serde_json::json!({ "speed": ["2x"] }),
+    ] {
+        let err = super::optional_replay_speed(&bad)
+            .expect_err(&format!("speed {bad} must be rejected, not coerced"));
+        assert_eq!(err.code, LoomErrorCode::SchemaViolation);
+        assert!(
+            err.message.contains("speed"),
+            "error must name the param: {}",
+            err.message
+        );
+    }
+}
