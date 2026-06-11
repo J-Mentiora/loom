@@ -109,6 +109,18 @@ impl DaemonTestHarness {
         self.tempdir.path()
     }
 
+    /// Pin an explicit data_root under the hermetic HOME and return its path.
+    /// The daemon's default data_root derives from `dirs::data_dir()`, which
+    /// differs across macOS/Linux; tests that need to locate the auth artefacts
+    /// (`<data_root>/auth/...`) deterministically call this before `start()`.
+    /// Builder-style.
+    pub fn with_data_root_under_home(mut self) -> (Self, PathBuf) {
+        let data_root = self.tempdir.path().join("loom-data");
+        self.extra_env
+            .push(("LOOM_DATA_ROOT".into(), data_root.clone().into_os_string()));
+        (self, data_root)
+    }
+
     /// The HELLO token disclosed by the daemon. `Some` after a successful
     /// `start()`, `None` before start or after `stop()`.
     pub fn hello_token(&self) -> Option<&str> {
@@ -118,6 +130,55 @@ impl DaemonTestHarness {
     /// Whether the daemon subprocess is currently running.
     pub fn is_running(&self) -> bool {
         self.child.is_some()
+    }
+
+    /// The OS pid of the running daemon subprocess, if started.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.as_ref().map(|c| c.id())
+    }
+
+    /// Send SIGTERM to the running daemon and block until it exits or
+    /// `timeout` elapses, returning the captured `ExitStatus`. This is the
+    /// GRACEFUL stop path the daemon's `shutdown_signal` future handles —
+    /// distinct from `stop()` which SIGKILLs. On timeout the daemon is
+    /// force-killed (so the harness never wedges) and `Err` is returned.
+    ///
+    /// # Panics
+    /// Panics if no daemon is running.
+    pub fn sigterm_and_wait(
+        &mut self,
+        timeout: Duration,
+    ) -> Result<std::process::ExitStatus, String> {
+        let mut child = self
+            .child
+            .take()
+            .expect("sigterm_and_wait called with no running daemon");
+        self.hello_token = None;
+        let pid = child.id() as libc::pid_t;
+        // SIGTERM — the launchd/systemd/`kill` default the daemon installs a
+        // graceful handler for.
+        unsafe {
+            libc::kill(pid, libc::SIGTERM);
+        }
+        // Poll for exit within the bound. try_wait avoids blocking forever on a
+        // daemon that ignores SIGTERM (which would itself be a test failure).
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            match child.try_wait() {
+                Ok(Some(status)) => return Ok(status),
+                Ok(None) => {
+                    if std::time::Instant::now() >= deadline {
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        return Err(format!(
+                            "daemon did not exit within {timeout:?} of SIGTERM (force-killed)"
+                        ));
+                    }
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(e) => return Err(format!("try_wait failed: {e}")),
+            }
+        }
     }
 
     /// Spawn the daemon and block until it announces readiness (`HELLO_TOKEN=`)
