@@ -372,6 +372,13 @@ fn test_replay_aborts_on_missing_non_screenshot_blob_with_correct_error() {
         "error code must be ReplayMissingBlob, got {:?}",
         err.code
     );
+    // Refusal-fidelity audit: the message names the missing blob + kind so
+    // the wire layer can pass it through verbatim.
+    assert!(
+        err.message.contains("pre-flight: missing blob"),
+        "missing-blob refusal must carry the pre-flight explanation; got: {}",
+        err.message
+    );
 }
 
 // Screenshot blobs missing → replay proceeds (not abort)
@@ -1466,13 +1473,149 @@ fn replay_refuses_non_deterministic_session() {
         .expect_err("replay MUST refuse a --no-determinism session (it can never be replay-equal)");
     assert_eq!(
         err.code,
-        loom_core::error::LoomErrorCode::InvalidArgument,
-        "refusal must be a typed InvalidArgument, got {err:?}"
+        loom_core::error::LoomErrorCode::NotReplayable,
+        "refusal must be a typed NotReplayable (NOT InvalidArgument, which \
+         degrades to schema_violation on the wire), got {err:?}"
     );
     assert!(
-        err.message.contains("no-determinism") || err.message.contains("not replayable"),
-        "refusal message must explain the non-determinism reason; got: {}",
+        err.message.contains("--no-determinism") && err.message.contains("NOT replayable"),
+        "refusal message must carry the full compiled-in explanation; got: {}",
         err.message
+    );
+    assert!(
+        err.message.contains(&source_id.0),
+        "refusal message must name the offending session; got: {}",
+        err.message
+    );
+}
+
+// ---- replay-refusal fidelity audit: every refusal path must emit its ----
+// ---- intended typed code + human message (no catch-all degradation). ----
+// The wire-level counterpart (code + message surviving to the JSON-RPC
+// envelope) is pinned by loom-rpc/tests/replay_refusal_wire.rs.
+
+/// Shorthand: full engine stack on a fresh tmp dir.
+fn make_refusal_stack(
+    tmp: &tempfile::TempDir,
+) -> (
+    std::path::PathBuf,
+    Arc<LocalManifestWriter>,
+    LocalReplayEngine,
+) {
+    let obs = make_obs(tmp);
+    let sessions_root = tmp.path().join("sessions");
+    let mw = make_manifest_writer(tmp, obs.clone());
+    let cs = make_content_store(tmp, obs.clone());
+    let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
+    let sm = make_session_manager(tmp, mw.clone() as Arc<dyn ManifestWriter>, dh.clone(), obs);
+    let engine = make_engine(
+        tmp,
+        cs as Arc<dyn ContentStore>,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh,
+        sm,
+    );
+    (sessions_root, mw, engine)
+}
+
+#[test]
+fn replay_refuses_crashed_source_with_typed_session_aborted() {
+    let tmp = tmp_path();
+    let (sessions_root, mw, engine) = make_refusal_stack(&tmp);
+
+    let id = SessionId("01TESTCRASHEDSOURCE000000".to_string());
+    std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
+    mw.open_manifest(id.clone(), None).unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::RuntimeCrash {
+            last_completed_action_id: 0,
+            emitted_at_ms: 1_000_100,
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+
+    let err = engine
+        .replay(id.clone(), ReplayOpts::default())
+        .expect_err("replay must refuse a crashed source");
+    assert_eq!(err.code, LoomErrorCode::SessionAborted);
+    assert_eq!(
+        err.message,
+        format!(
+            "session {} crashed mid-flow; replay refuses to reproduce a partial trace",
+            id.0
+        ),
+        "crashed-source refusal must carry its compiled-in explanation"
+    );
+}
+
+#[test]
+fn replay_refuses_aborted_source_with_typed_session_aborted() {
+    let tmp = tmp_path();
+    let (sessions_root, mw, engine) = make_refusal_stack(&tmp);
+
+    let id = SessionId("01TESTABORTEDSOURCE000000".to_string());
+    std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
+    mw.open_manifest(id.clone(), None).unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: 0,
+            emitted_at_ms: 1_000_100,
+            reason: "user-initiated".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+
+    let err = engine
+        .replay(id.clone(), ReplayOpts::default())
+        .expect_err("replay must refuse an aborted source");
+    assert_eq!(err.code, LoomErrorCode::SessionAborted);
+    assert_eq!(
+        err.message,
+        format!(
+            "session {} ended via abort (reason=user-initiated); \
+             replay refuses to reproduce an abandoned trace",
+            id.0
+        ),
+        "aborted-source refusal must carry the abort reason"
+    );
+}
+
+#[test]
+fn replay_refuses_broken_chain_with_typed_manifest_corrupt() {
+    let tmp = tmp_path();
+    let (sessions_root, mw, engine) = make_refusal_stack(&tmp);
+
+    let (id, _) = build_recorded_session(mw.as_ref(), &sessions_root, 1, b"chain-tamper-payload");
+
+    // Tamper: append a line whose prev_hash cannot match.
+    let wal_path = sessions_root.join(&id.0).join("manifest.wal");
+    use std::io::Write as _;
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&wal_path)
+        .unwrap();
+    writeln!(f, r#"{{"kind":"action_receipt","prev_hash":"bad_hash","action_id":99,"emitted_at_ms":9,"receipt_canonical_bytes":[]}}"#).unwrap();
+
+    let err = engine
+        .replay(id, ReplayOpts::default())
+        .expect_err("replay must refuse a broken hash chain");
+    assert_eq!(
+        err.code,
+        LoomErrorCode::ManifestCorrupt,
+        "broken chain must surface as ManifestCorrupt (NOT a store/internal catch-all)"
+    );
+    assert!(
+        err.message.contains("hash chain broken at index"),
+        "chain refusal must name the break point; got: {}",
+        err.message
+    );
+    assert!(
+        err.context.is_some(),
+        "chain refusal carries structured context (failed_at_index, hashes)"
     );
 }
 
@@ -1713,4 +1856,86 @@ fn test_replay_closes_session_in_fsm_and_reaper_cannot_double_terminal() {
     engine
         .replay(replay_id, ReplayOpts::default())
         .expect("replaying a cleanly completed replay must stay allowed");
+}
+
+// ---- ValidationResult.replayable: PASS ≠ replayable ----
+
+#[test]
+fn validate_reports_no_determinism_session_as_pass_but_not_replayable() {
+    let tmp = tmp_path();
+    let (sessions_root, mw, engine) = make_refusal_stack(&tmp);
+
+    let id = build_non_deterministic_session(mw.as_ref() as &dyn ManifestWriter, &sessions_root);
+
+    let result = engine
+        .validate(id.clone())
+        .expect("validate must not error");
+    assert!(
+        result.passed,
+        "a --no-determinism session has an intact chain → integrity PASSes"
+    );
+    assert!(
+        !result.replayable,
+        "PASS must not imply replayable for a --no-determinism session"
+    );
+    let reason = result.not_replayable_reason.expect("reason must be set");
+    assert!(
+        reason.contains("--no-determinism") && reason.contains(&id.0),
+        "reason must be the replay refusal explanation; got: {reason}"
+    );
+}
+
+#[test]
+fn validate_reports_clean_deterministic_session_as_replayable() {
+    let tmp = tmp_path();
+    let (sessions_root, mw, engine) = make_refusal_stack(&tmp);
+
+    // No content_refs → no blob requirements; clean close terminal.
+    let (id, _) = build_recorded_session(mw.as_ref(), &sessions_root, 1, b"replayable-payload");
+
+    let result = engine.validate(id).expect("validate must not error");
+    assert!(
+        result.passed,
+        "clean session must PASS: {:?}",
+        result.reasons
+    );
+    assert!(
+        result.replayable,
+        "clean deterministic session is replayable"
+    );
+    assert!(result.not_replayable_reason.is_none());
+}
+
+#[test]
+fn validate_reports_aborted_session_as_not_replayable() {
+    let tmp = tmp_path();
+    let (sessions_root, mw, engine) = make_refusal_stack(&tmp);
+
+    let id = SessionId("01TESTVALIDATEABORTED0000".to_string());
+    std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
+    mw.open_manifest(id.clone(), None).unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: 0,
+            emitted_at_ms: 1_000_100,
+            reason: "user-initiated".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+
+    let result = engine.validate(id).expect("validate must not error");
+    assert!(result.passed, "intact chain → integrity PASSes");
+    assert!(
+        !result.replayable,
+        "aborted source is refused by replay → not replayable"
+    );
+    assert!(
+        result
+            .not_replayable_reason
+            .expect("reason must be set")
+            .contains("ended via abort"),
+        "reason mirrors replay's abort refusal"
+    );
 }

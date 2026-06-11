@@ -87,12 +87,14 @@ fn abort_session_signature_carries_reason() {
 
 #[test]
 fn replay_session_signature() {
+    // Replay errors carry the full `LoomError` (code + message + context),
+    // not a bare `AdapterError` code — refusal-message fidelity.
     fn _ck<A: CoreServiceAdapterApi>(
         a: &A,
         s: &str,
         sp: Option<f32>,
         nm: Option<&str>,
-    ) -> Result<SessionInfo, AdapterError> {
+    ) -> Result<SessionInfo, LoomError> {
         a.replay_session(s, sp, nm)
     }
     let _ = _ck::<CoreServiceAdapter>;

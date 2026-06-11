@@ -143,6 +143,7 @@ impl From<LoomError> for HostError {
             | LoomErrorCode::ManifestCorrupt
             | LoomErrorCode::ReplayDivergence
             | LoomErrorCode::ReplayMissingBlob
+            | LoomErrorCode::NotReplayable
             | LoomErrorCode::LlmCacheMiss
             | LoomErrorCode::RpcInvalidRequest
             | LoomErrorCode::RpcAuthFailed

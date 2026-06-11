@@ -43,6 +43,92 @@ fn is_screenshot_field(field: &str) -> bool {
     field.contains("screenshot") || field == "screen_hash"
 }
 
+/// Replay refusal 1b — non-clean source. Returns the typed `SessionAborted`
+/// refusal when the source crashed mid-flow or ended via abort; `None` for
+/// clean (or unreadable — the chain validate owns that failure) sources.
+/// Shared by `replay()` and `validate()` so the `replayable` verdict can
+/// never drift from what replay actually refuses.
+pub fn unclean_source_refusal(
+    sessions_root: &std::path::Path,
+    source: &SessionId,
+) -> Option<LoomError> {
+    let source_wal = sessions_root.join(&source.0).join("manifest.wal");
+    let content = std::fs::read_to_string(&source_wal).ok()?;
+    let mut terminal_kind: Option<String> = None;
+    let mut crashed = false;
+    for line in content.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(entry) = serde_json::from_str::<ManifestEntry>(line) {
+            match entry {
+                ManifestEntry::SessionTerminal { reason, .. } => {
+                    terminal_kind = Some(reason);
+                }
+                ManifestEntry::RuntimeCrash { .. } => {
+                    crashed = true;
+                }
+                _ => {}
+            }
+        }
+    }
+    if crashed {
+        return Some(LoomError::new(
+            LoomErrorCode::SessionAborted,
+            format!(
+                "session {} crashed mid-flow; replay refuses to reproduce a partial trace",
+                source.0
+            ),
+        ));
+    }
+    if let Some(reason) = terminal_kind {
+        if reason != "close" && reason != "replay_complete" {
+            return Some(LoomError::new(
+                LoomErrorCode::SessionAborted,
+                format!(
+                    "session {} ended via abort (reason={reason}); replay refuses to reproduce an abandoned trace",
+                    source.0
+                ),
+            ));
+        }
+    }
+    None
+}
+
+/// Replay refusal 4b — non-deterministic source (settle-capture). A
+/// `--no-determinism` recording ran with real wall-clock + unseeded RNG, so
+/// its receipts can never be reproduced. `None`/`Some(true)` Header flags
+/// (legacy + deterministic) replay normally. Typed `NotReplayable` so the
+/// wire never degrades this to a request-shape error. Shared by `replay()`
+/// and `validate()` (see `unclean_source_refusal`).
+pub fn non_deterministic_refusal(
+    entries: &[ManifestEntry],
+    source: &SessionId,
+) -> Option<LoomError> {
+    let source_determinism_enabled = entries.iter().find_map(|e| {
+        if let ManifestEntry::Header {
+            determinism_enabled,
+            ..
+        } = e
+        {
+            *determinism_enabled
+        } else {
+            None
+        }
+    });
+    if source_determinism_enabled == Some(false) {
+        return Some(LoomError::new(
+            LoomErrorCode::NotReplayable,
+            format!(
+                "session {} was recorded with --no-determinism (real clock + unseeded RNG) \
+                 and is NOT replayable: a non-deterministic run can never be replay-equal",
+                source.0
+            ),
+        ));
+    }
+    None
+}
+
 /// Collect (sha256, kind) pairs from `content_refs` array in a receipt.
 fn collect_content_refs(receipt_bytes: &[u8]) -> Vec<(String, String)> {
     let Ok(val) = serde_json::from_slice::<serde_json::Value>(receipt_bytes) else {
@@ -161,6 +247,10 @@ impl LocalReplayEngine {
     }
 
     /// Validate hash chain integrity + blob presence for a session.
+    ///
+    /// `passed` covers integrity only; `replayable` additionally applies
+    /// the replay-refusal checks (crashed/aborted source, `--no-determinism`
+    /// recording), so PASS ≠ replayable.
     pub fn validate(&self, session_id: SessionId) -> Result<ValidationResult, LoomError> {
         let mut reasons = Vec::new();
 
@@ -170,6 +260,7 @@ impl LocalReplayEngine {
         }
 
         // 2. Blob presence check
+        let mut determinism_refusal = None;
         let wal_path = self.sessions_root.join(&session_id.0).join("manifest.wal");
         if let Ok(entries) = read_wal_entries(&wal_path) {
             for entry in &entries {
@@ -193,12 +284,29 @@ impl LocalReplayEngine {
                     }
                 }
             }
+            determinism_refusal = non_deterministic_refusal(&entries, &session_id);
         }
+
+        // 3. Replayability verdict — mirrors `replay()`'s refusal order
+        // (unclean source, then determinism) via the shared helpers, then
+        // folds in integrity: a failed chain/blob check is refused by
+        // replay's own pre-flight too.
+        let refusal = unclean_source_refusal(&self.sessions_root, &session_id)
+            .or(determinism_refusal)
+            .map(|e| e.message);
+        let passed = reasons.is_empty();
+        let (replayable, not_replayable_reason) = match refusal {
+            Some(reason) => (false, Some(reason)),
+            None if !passed => (false, Some("validation failed (see reasons)".to_string())),
+            None => (true, None),
+        };
 
         Ok(ValidationResult {
             session_id: session_id.0,
-            passed: reasons.is_empty(),
+            passed,
             reasons,
+            replayable,
+            not_replayable_reason,
         })
     }
 }
@@ -219,47 +327,10 @@ impl ReplayEngine for LocalReplayEngine {
         // deny here surfaces a typed `SessionAborted` error; operators
         // who genuinely want to replay an abandoned trace can reopen
         // the source session's WAL and re-issue the actions explicitly.
-        // Late-stage testing finding.
-        let source_wal = self.sessions_root.join(&source.0).join("manifest.wal");
-        if let Ok(content) = std::fs::read_to_string(&source_wal) {
-            let mut terminal_kind: Option<String> = None;
-            let mut crashed = false;
-            for line in content.lines() {
-                if line.is_empty() {
-                    continue;
-                }
-                if let Ok(entry) = serde_json::from_str::<ManifestEntry>(line) {
-                    match entry {
-                        ManifestEntry::SessionTerminal { reason, .. } => {
-                            terminal_kind = Some(reason);
-                        }
-                        ManifestEntry::RuntimeCrash { .. } => {
-                            crashed = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            if crashed {
-                return Err(LoomError::new(
-                    LoomErrorCode::SessionAborted,
-                    format!(
-                        "session {} crashed mid-flow; replay refuses to reproduce a partial trace",
-                        source.0
-                    ),
-                ));
-            }
-            if let Some(reason) = terminal_kind {
-                if reason != "close" && reason != "replay_complete" {
-                    return Err(LoomError::new(
-                        LoomErrorCode::SessionAborted,
-                        format!(
-                            "session {} ended via abort (reason={reason}); replay refuses to reproduce an abandoned trace",
-                            source.0
-                        ),
-                    ));
-                }
-            }
+        // Late-stage testing finding. (Shared with `validate()`'s
+        // `replayable` verdict via `unclean_source_refusal`.)
+        if let Some(refusal) = unclean_source_refusal(&self.sessions_root, &source) {
+            return Err(refusal);
         }
 
         // 2. Load side-effect tape
@@ -353,28 +424,14 @@ impl ReplayEngine for LocalReplayEngine {
         // A `--no-determinism` recording ran with real wall-clock + unseeded
         // RNG, so its receipts can never be reproduced — replaying it would
         // silently echo the recorded bytes and imply a reproducibility the run
-        // never had. `None`/`Some(true)` (legacy + deterministic) replay
-        // normally. This is the safety pair of the Header flag (NFR-DET-01).
-        let source_determinism_enabled = entries.iter().find_map(|e| {
-            if let ManifestEntry::Header {
-                determinism_enabled,
-                ..
-            } = e
-            {
-                *determinism_enabled
-            } else {
-                None
-            }
-        });
-        if source_determinism_enabled == Some(false) {
-            return Err(LoomError::new(
-                LoomErrorCode::InvalidArgument,
-                format!(
-                    "session {} was recorded with --no-determinism (real clock + unseeded RNG) \
-                     and is NOT replayable: a non-deterministic run can never be replay-equal",
-                    source.0
-                ),
-            ));
+        // never had. This is the safety pair of the Header flag (NFR-DET-01).
+        // Typed `NotReplayable` (replay-refusal fidelity): this used to be
+        // `InvalidArgument`, which the daemon wire degraded to a generic
+        // `schema_violation` — pointing the caller at the wrong fix. (Shared
+        // with `validate()`'s `replayable` verdict via
+        // `non_deterministic_refusal`.)
+        if let Some(refusal) = non_deterministic_refusal(&entries, &source) {
+            return Err(refusal);
         }
 
         // 5. Create replay session via SessionManager

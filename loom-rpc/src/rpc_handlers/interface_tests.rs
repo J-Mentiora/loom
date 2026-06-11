@@ -257,7 +257,7 @@ mod vault_grant_response_validation {
         fn list_sessions(&self) -> Result<Vec<SessionInfo>, AdapterError> { unimplemented!() }
         fn close_session(&self, _: &str) -> Result<SessionInfo, AdapterError> { unimplemented!() }
         fn abort_session(&self, _: &str, _: &str) -> Result<SessionInfo, AdapterError> { unimplemented!() }
-        fn replay_session(&self, _: &str, _: Option<f32>, _: Option<&str>) -> Result<SessionInfo, AdapterError> { unimplemented!() }
+        fn replay_session(&self, _: &str, _: Option<f32>, _: Option<&str>) -> Result<SessionInfo, crate::core_service_adapter::core_service_adapter::LoomError> { unimplemented!() }
         fn diff_sessions(&self, _: &str, _: &str, _: bool, _: bool) -> Result<DiffReport, AdapterError> { unimplemented!() }
         fn export_session(&self, _: &str, _: &str) -> Result<ExportInfo, AdapterError> { unimplemented!() }
         fn content_get(&self, _: &str) -> Result<ContentData, AdapterError> { unimplemented!() }

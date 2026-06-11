@@ -73,6 +73,12 @@ pub enum LoomErrorCode {
     ManifestCorrupt,
     ReplayDivergence,
     ReplayMissingBlob,
+    /// Source session is non-replayable by design (recorded with
+    /// `--no-determinism`: real clock + unseeded RNG, so its receipts can
+    /// never be replay-equal). Distinct from request-shape errors
+    /// (`SchemaViolation`/`InvalidArgument`) — the caller's fix is to
+    /// re-record with determinism on, not to change the request.
+    NotReplayable,
 
     // ---- LLM cache ----
     /// Recorded-mode cache miss — no stored response for key.
@@ -238,6 +244,7 @@ impl LoomErrorCode {
             LoomErrorCode::ManifestCorrupt => "manifest_corrupt",
             LoomErrorCode::ReplayDivergence => "replay_divergence",
             LoomErrorCode::ReplayMissingBlob => "replay_missing_blob",
+            LoomErrorCode::NotReplayable => "not_replayable",
             LoomErrorCode::ShimFailure => "shim_failure",
             LoomErrorCode::ShimTimeout => "shim_timeout",
             LoomErrorCode::ShimBreakerOpen => "shim_breaker_open",
@@ -312,6 +319,7 @@ impl LoomErrorCode {
             "manifest-corrupt" | "manifest_corrupt" => ManifestCorrupt,
             "replay-divergence" | "replay_divergence" => ReplayDivergence,
             "replay-missing-blob" | "replay_missing_blob" => ReplayMissingBlob,
+            "not-replayable" | "not_replayable" => NotReplayable,
             "shim-failure" | "shim_failure" => ShimFailure,
             "surface_unavailable" => SurfaceUnavailable,
             "shim-timeout" | "shim_timeout" => ShimTimeout,
@@ -464,6 +472,7 @@ mod tests {
             LoomErrorCode::SchemaViolation,
             LoomErrorCode::SafeProfileDownloadBlocked,
             LoomErrorCode::ProfileRestricted,
+            LoomErrorCode::NotReplayable,
             LoomErrorCode::BrowserNotFound,
             LoomErrorCode::Io,
             LoomErrorCode::Internal,

@@ -56,6 +56,7 @@ class LoomErrorCode(StrEnum):
     manifest_corrupt = "manifest_corrupt"
     replay_divergence = "replay_divergence"
     replay_missing_blob = "replay_missing_blob"
+    not_replayable = "not_replayable"
     # ---- Shim / transport ----
     shim_failure = "shim_failure"
     shim_timeout = "shim_timeout"
@@ -177,11 +178,20 @@ class ExportInfo:
 
 @dataclass
 class ValidationResult:
-    """Response type for session.validate."""
+    """Response type for session.validate.
+
+    ``passed`` covers integrity only (hash chain + blob presence);
+    ``replayable`` additionally applies the replay-refusal checks
+    (crashed/aborted source, ``--no-determinism`` recording), so PASS does
+    NOT imply replayable. ``replayable`` defaults to True when an older
+    daemon omits the field (the pre-field meaning of PASS).
+    """
 
     session_id: str
     passed: bool
     reasons: list[str]
+    replayable: bool = True
+    not_replayable_reason: str | None = None
 
     @classmethod
     def _from_dict(cls, d: dict) -> ValidationResult:
@@ -189,6 +199,8 @@ class ValidationResult:
             session_id=d["session_id"],
             passed=d.get("passed", False),
             reasons=d.get("reasons", []),
+            replayable=d.get("replayable", True),
+            not_replayable_reason=d.get("not_replayable_reason"),
         )
 
 
