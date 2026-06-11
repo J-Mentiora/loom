@@ -133,6 +133,116 @@ fn default_profile_allows_window_location_assignment_regression_guard() {
     assert_eq!(result, None);
 }
 
+// --- Denylist bypass variants (audit 2026-06-10) ---
+// The gate was raw-substring only; whitespace and comments are JS token
+// separators that don't change the semantics of a member access, so the
+// normalized second pass of `find_denylist_match` must catch them.
+
+#[test]
+fn safe_profile_blocks_whitespace_split_member_access() {
+    // `document . cookie` is semantically identical to `document.cookie`.
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document . cookie = 'x'");
+    assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
+}
+
+#[test]
+fn safe_profile_blocks_newline_split_member_access() {
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document\n  .cookie = 'x'");
+    assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
+}
+
+#[test]
+fn safe_profile_blocks_block_comment_split_member_access() {
+    // `document/**/.cookie` — a block comment is a token separator.
+    let result = SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document/**/.cookie = 'x'");
+    assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
+}
+
+#[test]
+fn safe_profile_blocks_line_comment_split_member_access() {
+    let result =
+        SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document. // hop\ncookie = 'x'");
+    assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
+}
+
+#[test]
+fn safe_profile_blocks_whitespace_before_call_paren() {
+    assert_eq!(
+        SafetyPolicy::check_evaluate(SafetyProfile::Safe, "eval ('alert(1)')"),
+        Some(PolicyViolation::EvaluateDenylistMatch)
+    );
+    assert_eq!(
+        SafetyPolicy::check_evaluate(SafetyProfile::Safe, "document.write ('<b>x</b>')"),
+        Some(PolicyViolation::EvaluateDenylistMatch)
+    );
+}
+
+#[test]
+fn safe_profile_blocks_comment_split_window_location() {
+    let result = SafetyPolicy::check_evaluate(
+        SafetyProfile::Safe,
+        "window/* sneak */. location = 'https://evil.example.com'",
+    );
+    assert_eq!(result, Some(PolicyViolation::EvaluateDenylistMatch));
+}
+
+#[test]
+fn find_denylist_match_reports_the_matched_pattern() {
+    // The daemon's authoritative gate puts the matched pattern in the
+    // receipt detail — pin the returned value for both passes.
+    use super::safety::find_denylist_match;
+    assert_eq!(
+        find_denylist_match("window.location = 'x'"),
+        Some("window.location")
+    );
+    assert_eq!(
+        find_denylist_match("window . location = 'x'"),
+        Some("window.location")
+    );
+    assert_eq!(find_denylist_match("document.title"), None);
+}
+
+#[test]
+fn safe_profile_allows_benign_division_and_comments() {
+    // The comment/whitespace stripper must not flag ordinary code.
+    assert_eq!(
+        SafetyPolicy::check_evaluate(SafetyProfile::Safe, "const r = a / b / c;"),
+        None
+    );
+    assert_eq!(
+        SafetyPolicy::check_evaluate(
+            SafetyProfile::Safe,
+            "document.title /* read-only probe */ // end",
+        ),
+        None
+    );
+}
+
+#[test]
+fn safe_profile_feature_detect_carveout_survives_normalization() {
+    // The serviceWorker feature-detect carve-out must hold for the
+    // normalized pass too.
+    let result = SafetyPolicy::check_evaluate(
+        SafetyProfile::Safe,
+        "if ('serviceWorker' in navigator) { /* nothing */ }",
+    );
+    assert_eq!(result, None);
+}
+
+#[test]
+fn denylist_does_not_catch_dynamic_property_access_by_design() {
+    // Honest threat-model pin: dynamic property access is a KNOWN,
+    // ACCEPTED bypass (this gate is a guardrail, not a sandbox — see
+    // the EVALUATE_DENYLIST doc). If this test ever starts failing,
+    // the matching strategy changed fundamentally; re-read the threat
+    // model before celebrating.
+    let result = SafetyPolicy::check_evaluate(
+        SafetyProfile::Safe,
+        "window['loc' + 'ation'] = 'https://evil.example.com'",
+    );
+    assert_eq!(result, None);
+}
+
 // --- Safe profile restricts download paths ---
 
 #[test]
@@ -167,6 +277,120 @@ fn download_path_check_handles_trailing_slash() {
         "/Users/alice/.loom/sessions/01abc/downloads/sub/file.bin",
         "/Users/alice/.loom/sessions/01abc/downloads/",
     ));
+}
+
+// --- Traversal / normalization regressions (audit 2026-06-10) ---
+// Both guards are lexical security checks; a `..` that escapes the base
+// after normalization, or a sibling dir sharing the base as a raw string
+// prefix, must be rejected.
+
+#[test]
+fn download_dotdot_escape_is_not_scoped() {
+    // Starts with the base prefix as a raw string, but normalizes to
+    // /etc/passwd — the audit's exact escape shape.
+    assert!(!SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloads/../../../../../../etc/passwd",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_single_dotdot_to_sibling_is_not_scoped() {
+    assert!(!SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloads/../manifest.wal",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_dotdot_resolving_back_inside_is_scoped() {
+    // `sub/../file.pdf` normalizes to `<base>/file.pdf` — still inside.
+    assert!(SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloads/sub/../file.pdf",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_dotdot_back_to_base_itself_is_not_scoped() {
+    // `<base>/sub/..` normalizes to the base dir itself, not a file
+    // inside it — strict containment required.
+    assert!(!SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloads/sub/..",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_prefix_without_separator_is_not_scoped() {
+    // The prefix-without-separator trap: /foo/barbaz must not match a
+    // /foo/bar base.
+    assert!(!SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloadsevil/file.pdf",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_curdir_and_double_slash_components_are_scoped() {
+    assert!(SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloads/./file.pdf",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+    assert!(SafetyPolicy::is_session_scoped_path(
+        "/Users/alice/.loom/sessions/01abc/downloads//file.pdf",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_relative_path_is_not_scoped() {
+    // Containment can't be proven lexically for a relative path — fail
+    // closed.
+    assert!(!SafetyPolicy::is_session_scoped_path(
+        "downloads/file.pdf",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn download_path_climbing_above_root_is_not_scoped() {
+    assert!(!SafetyPolicy::is_session_scoped_path(
+        "/../Users/alice/.loom/sessions/01abc/downloads/file.pdf",
+        "/Users/alice/.loom/sessions/01abc/downloads",
+    ));
+}
+
+#[test]
+fn loom_data_path_rejects_dotdot_escape() {
+    // The audit's exact escape shape for the data-root guard.
+    assert!(!SafetyPolicy::is_loom_data_path(
+        "/Users/alice/.loom/../../etc/shadow",
+        "/Users/alice/.loom",
+    ));
+}
+
+#[test]
+fn loom_data_path_rejects_prefix_smuggled_sibling() {
+    assert!(!SafetyPolicy::is_loom_data_path(
+        "/Users/alice/.loom-evil/store/blob",
+        "/Users/alice/.loom",
+    ));
+}
+
+#[test]
+fn loom_data_path_accepts_internal_dotdot_that_stays_inside() {
+    assert!(SafetyPolicy::is_loom_data_path(
+        "/Users/alice/.loom/sessions/../store/ab/cdef.blob",
+        "/Users/alice/.loom",
+    ));
+}
+
+#[test]
+fn loom_data_path_rejects_base_that_escapes_after_normalization() {
+    // A base that itself climbs above root can't anchor a containment
+    // claim — fail closed.
+    assert!(!SafetyPolicy::is_loom_data_path("/etc/passwd", "/../etc"));
 }
 
 // --- All session data stays under ~/.loom/ ---
