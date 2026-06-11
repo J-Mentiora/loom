@@ -1230,22 +1230,16 @@ fn test_validate_fails_on_missing_blob() {
     );
 }
 
-// KNOWN-BUG (audit 2026-06-10, "Blob-presence validation and replay
-// pre-flight inspect a 'content_refs' field that no production receipt
-// contains"): `collect_content_refs` only reads a top-level `content_refs`
-// array, but production receipts carry blob references exclusively in named
-// fields (`dom_after_blob_ref`, `screenshot_*_blob_ref`,
-// `return_value_blob_ref`, `network_events[].response_body_ref`) — the only
-// `content_refs` producers are test fixtures and the hardcoded empty array in
-// `export_manifest_json`. So `loom validate` silently PASSES when CAS blobs
-// referenced by a real session are missing, and the `ReplayMissingBlob`
-// pre-flight can never fire for real recordings. This test pins the intended
-// behavior (validate must fail on a missing `dom_after_blob_ref` blob) and is
-// red until `collect_content_refs` walks the real `ReceiptPayload` fields.
+// (audit 2026-06-10, "Blob-presence validation and replay pre-flight inspect a
+// 'content_refs' field that no production receipt contains"):
+// `collect_content_refs` now walks the real `ReceiptPayload` blob-ref fields
+// (`dom_after_blob_ref`, `dom_before_blob_ref`, `return_value_blob_ref`,
+// `screenshot_*_blob_ref`, `network_events[].response_body_ref`), so
+// `validate()` and the `ReplayMissingBlob` pre-flight detect missing CAS blobs
+// for real recordings — not just the phantom `content_refs` array. This test
+// pins that a missing `dom_after_blob_ref` blob fails validation. FIXED.
 #[test]
-#[ignore = "KNOWN-BUG: validate() ignores production blob-ref fields (dom_after_blob_ref et al); \
-            blob-presence checking is vacuous for real sessions — see audit 2026-06-10"]
-fn known_bug_validate_must_fail_on_missing_production_shape_blob_ref() {
+fn validate_must_fail_on_missing_production_shape_blob_ref() {
     let tmp = tmp_path();
     let obs = make_obs(&tmp);
     let sessions_root = tmp.path().join("sessions");

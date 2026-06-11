@@ -129,25 +129,82 @@ pub fn non_deterministic_refusal(
     None
 }
 
-/// Collect (sha256, kind) pairs from `content_refs` array in a receipt.
-fn collect_content_refs(receipt_bytes: &[u8]) -> Vec<(String, String)> {
+/// Collect `(sha256, kind)` blob references from a receipt.
+///
+/// Production receipts (`ReceiptPayload`, see receipt_builder.rs) carry blob
+/// references in NAMED `{sha256, size_bytes}` fields, NOT in a `content_refs`
+/// array — the only `content_refs` producer in the workspace is
+/// `export_manifest_json`'s hardcoded empty array and test fixtures. Reading
+/// only `content_refs` (as this did before audit 2026-06-10, F32) made
+/// blob-presence validation vacuous for real sessions: `validate()` silently
+/// passed and the `ReplayMissingBlob` pre-flight could never fire when a CAS
+/// blob referenced by a real recording was missing.
+///
+/// This now walks the actual `ReceiptPayload` blob-ref fields:
+/// `dom_after_blob_ref` / `dom_before_blob_ref` (kind "dom"),
+/// `return_value_blob_ref` (kind "return_value"),
+/// `network_events[].response_body_ref` (kind "network"), and
+/// `screenshot_after_blob_ref` / `screenshot_before_blob_ref` (kind
+/// "screenshot").
+///
+/// The "screenshot" kind is load-bearing: callers skip screenshots when
+/// deciding whether a missing blob aborts replay (screenshots are excluded
+/// from the integrity gate by design — NFR-DET-01). The legacy `content_refs`
+/// array is still honored so existing fixtures keep working.
+///
+/// Shared by `LocalReplayEngine::validate`, the `replay()` pre-flight, and
+/// `CoreApiFacade::validate_session_result` so all three agree on the real
+/// receipt shape.
+pub fn collect_content_refs(receipt_bytes: &[u8]) -> Vec<(String, String)> {
     let Ok(val) = serde_json::from_slice::<serde_json::Value>(receipt_bytes) else {
         return vec![];
     };
-    let Some(refs) = val.get("content_refs").and_then(|r| r.as_array()) else {
-        return vec![];
+    let mut out = Vec::new();
+
+    // A named `{sha256, size_bytes}` blob-ref field.
+    let mut push_named = |field: &str, kind: &str| {
+        if let Some(sha256) = val
+            .get(field)
+            .and_then(|r| r.get("sha256"))
+            .and_then(|s| s.as_str())
+        {
+            out.push((sha256.to_string(), kind.to_string()));
+        }
     };
-    refs.iter()
-        .filter_map(|r| {
-            let sha256 = r.get("sha256")?.as_str()?.to_string();
-            let kind = r
-                .get("kind")
-                .and_then(|k| k.as_str())
-                .unwrap_or("")
-                .to_string();
-            Some((sha256, kind))
-        })
-        .collect()
+    push_named("dom_after_blob_ref", "dom");
+    push_named("dom_before_blob_ref", "dom");
+    push_named("return_value_blob_ref", "return_value");
+    push_named("screenshot_after_blob_ref", "screenshot");
+    push_named("screenshot_before_blob_ref", "screenshot");
+
+    // Per-request response-body blobs on navigate-tier receipts.
+    if let Some(events) = val.get("network_events").and_then(|e| e.as_array()) {
+        for ev in events {
+            if let Some(sha256) = ev
+                .get("response_body_ref")
+                .and_then(|r| r.get("sha256"))
+                .and_then(|s| s.as_str())
+            {
+                out.push((sha256.to_string(), "network".to_string()));
+            }
+        }
+    }
+
+    // Legacy `content_refs` array (export_manifest_json + test fixtures).
+    if let Some(refs) = val.get("content_refs").and_then(|r| r.as_array()) {
+        for r in refs {
+            if let Some(sha256) = r.get("sha256").and_then(|s| s.as_str()) {
+                let kind = r
+                    .get("kind")
+                    .and_then(|k| k.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                out.push((sha256.to_string(), kind));
+            }
+        }
+    }
+
+    out
 }
 
 /// Compare two JSON objects field by field, collecting diffs.
