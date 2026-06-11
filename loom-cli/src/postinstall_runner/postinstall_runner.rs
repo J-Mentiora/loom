@@ -84,7 +84,10 @@ pub enum StepOutcome {
 pub enum SchemaStepOutcome {
     /// Schemas dir was created and populated with `count` method schema files.
     Populated(usize),
-    /// Schemas dir already existed and contained schema files — skipped.
+    /// At least one existing schema file was stale (content differed from the
+    /// builtin) and was refreshed; `populated` counts newly written files.
+    Refreshed { populated: usize, refreshed: usize },
+    /// Schemas dir already existed and every file matched the builtins — skipped.
     Skipped,
 }
 
@@ -519,43 +522,53 @@ pub fn plist_step(writer: &LaunchdPlistWriter) -> Result<StepOutcome, CliError> 
 /// Create and populate the schemas directory with JSON schemas for all known
 /// loom action methods.
 ///
-/// Idempotent: if the directory already contains `*.json` files, returns
-/// `SchemaStepOutcome::Skipped` without overwriting. This matches the
-/// idempotence contract for all postinstall steps.
+/// Per-method idempotence (v0.9.6) writes any missing schema file; content
+/// refresh (v0.11.1) additionally overwrites a file whose content no longer
+/// matches the builtin. The old "leave existing ones alone" rule froze a
+/// pre-settle-capture `web.navigate.json` (no `until`/`timeout_ms`) across
+/// upgrades while newer method files were written fresh — the daemon then
+/// rejected documented navigate args while wait_for accepted them. The disk
+/// copy is a mirror for CLI use; the daemon validates from the embedded
+/// builtins (`SchemaProvider::load_embedded_with_overlay`).
 ///
 /// Schemas are derived from the WIT surface interface (`wit/loom-surface.wit`)
 /// and embedded as compile-time const data (WIT is source of truth).
 pub fn schema_step(schemas_dir: &std::path::Path) -> Result<SchemaStepOutcome, CliError> {
     std::fs::create_dir_all(schemas_dir).map_err(|e| CliError::Internal(e.to_string()))?;
 
-    // v0.9.6: per-method idempotence. The previous "skip entire dir
-    // if any *.json present" guard prevented schema upgrades — a
-    // v0.9.5 install populated 11 web verb schemas; a v0.9.6 upgrade
-    // would skip and the 4 new cookie verb schemas would never land,
-    // making the daemon reject `web.set_cookies` etc. as unknown
-    // methods. Write any missing schema, leave existing ones alone
-    // (preserves operator hand-edits where applicable).
     let mut populated = 0usize;
-    let mut skipped = 0usize;
+    let mut refreshed = 0usize;
     for (method, json_str) in BUILTIN_SCHEMAS {
         let file_path = schemas_dir.join(format!("{}.json", method));
-        if file_path.exists() {
-            skipped += 1;
-            continue;
+        let existing = std::fs::read_to_string(&file_path).ok();
+        match existing {
+            Some(current) if current == *json_str => continue,
+            Some(_) => {
+                // Stale mirror: write atomically (tmp + rename) so a crashed
+                // postinstall can't leave a torn schema file.
+                let tmp = schemas_dir.join(format!(".{}.json.tmp", method));
+                std::fs::write(&tmp, json_str.as_bytes())
+                    .map_err(|e| CliError::Internal(format!("schema write {}: {}", method, e)))?;
+                std::fs::rename(&tmp, &file_path)
+                    .map_err(|e| CliError::Internal(format!("schema rename {}: {}", method, e)))?;
+                refreshed += 1;
+            }
+            None => {
+                std::fs::write(&file_path, json_str.as_bytes())
+                    .map_err(|e| CliError::Internal(format!("schema write {}: {}", method, e)))?;
+                populated += 1;
+            }
         }
-        std::fs::write(&file_path, json_str.as_bytes())
-            .map_err(|e| CliError::Internal(format!("schema write {}: {}", method, e)))?;
-        populated += 1;
     }
 
-    if populated == 0 {
-        // Every schema was already present — preserve the prior
-        // "Skipped" wire-receipt value so callers that match on it
-        // still see the same outcome.
-        Ok(SchemaStepOutcome::Skipped)
-    } else {
-        let _ = skipped;
-        Ok(SchemaStepOutcome::Populated(populated))
+    match (populated, refreshed) {
+        // Preserve the prior wire-receipt values for the existing cases.
+        (0, 0) => Ok(SchemaStepOutcome::Skipped),
+        (n, 0) => Ok(SchemaStepOutcome::Populated(n)),
+        (n, r) => Ok(SchemaStepOutcome::Refreshed {
+            populated: n,
+            refreshed: r,
+        }),
     }
 }
 
@@ -570,107 +583,12 @@ pub fn schema_step(schemas_dir: &std::path::Path) -> Result<SchemaStepOutcome, C
 /// Built-in JSON schemas for all loom action methods.
 /// Format: (method_name, json_schema_string).
 /// Each JSON has top-level "request" and "response" keys (JSON Schema objects).
-pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
-    // web.navigate response documents the navigate-tier-2 wire
-    // fields. `additionalProperties` is intentionally NOT declared on
-    // the response so the wire receipt can grow further fields without
-    // invalidating older schemas.
-    (
-        "web.navigate",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"url":{"type":"string"},"until":{"type":"string","enum":["load","networkidle","settled"]},"timeout_ms":{"type":"integer"}},"required":["session","url"],"additionalProperties":false},"response":{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"},"timing_ticks":{"type":"integer"},"side_effects":{"type":"array"},"error":{"type":["object","null"]},"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"url":{"type":"string"},"final_url":{"type":"string"},"title":{"type":"string"},"status_code":{"type":"integer"},"dom_snapshot_hash":{"type":"string"},"screenshot_after_hash":{"type":"string"},"console_count":{"type":"integer"},"console_lines":{"type":"array"},"network_count":{"type":"integer"},"network_summary":{"type":"object","properties":{"total_count":{"type":"integer"},"total_bytes":{"type":"integer"},"error_count":{"type":"integer"}}},"settle_until":{"type":"string"},"settle_outcome":{"type":"string"}}}}"#,
-    ),
-    (
-        "web.click",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    // Canonical name `web.type` (was `web.type_text`); the legacy
-    // `web.type_text` spelling resolves here via
-    // `loom_shared::action_aliases::METHOD_ALIASES`.
-    (
-        "web.type",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"text":{"type":"string"}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.select",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"value":{"type":"string"}},"required":["session","selector","value"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.hover",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.scroll",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"delta_x":{"type":"integer"},"delta_y":{"type":"integer"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.wait",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    // settle-capture slice 2: standalone readiness wait on the current page.
-    (
-        "web.wait_for",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"until":{"type":"string","enum":["load","networkidle","settled"]},"timeout_ms":{"type":"integer"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"settle_until":{"type":"string"},"settle_outcome":{"type":"string"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.evaluate",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"expression":{"type":"string"}},"required":["session","expression"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"return_value_json":{"type":"string","description":"Canonical-JSON of the evaluated value. Numerics serialize as JSON strings (1+1 -> \"2\", Math.PI -> \"3.141...\"). Absent when value > 64KB and offloaded to content store; see return_value_blob_ref."},"return_value_blob_ref":{"type":"object","description":"ContentRef when canonical-JSON > 64KB. Truncation discriminator = this field present.","properties":{"sha256":{"type":"string"},"size_bytes":{"type":"integer"}},"required":["sha256","size_bytes"]}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    // web.set_input_files: `paths` is a required array of absolute file-path
-    // strings. Daemon-side `upload_guard` validates them against
-    // LOOM_UPLOAD_ROOT (fail-closed, canonicalized, capped) before dispatch.
-    (
-        "web.set_input_files",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"},"paths":{"type":"array","items":{"type":"string"}}},"required":["session","selector","paths"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.screenshot",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"selector":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.snapshot",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.network_log",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    // `rpc.schemas` — JSON-RPC introspection. Wire-side
-    // schema_validator treats it as a built-in (no param check); this
-    // CLI-side schema is permissive so `loom action rpc.schemas` reaches
-    // the daemon. `session` is accepted but ignored — `action_commands`
-    // unconditionally inserts it, and rpc.schemas tolerates the extra
-    // field. The response declares no required fields because the
-    // SchemaRegistry envelope is shape-stable but field names are
-    // implementation-defined.
-    (
-        "rpc.schemas",
-        r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#,
-    ),
-    // v0.9.6 web-cookie-injection: 4 cookie verbs. Request shapes
-    // mirror the `parse_action` arms in
-    // `loom-rpc::request_router::parse_action` and the `ActionMeta`
-    // entries in `action_registry`. `source` for set_cookies is the
-    // typed XOR `CookieSource` JSON object (validated daemon-side);
-    // the JSON-Schema here accepts an object loosely so the wire
-    // contract isn't over-tight. Response shape is the standard
-    // hash-only triple plus the verb-specific result field.
-    (
-        "web.set_cookies",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"source":{"type":"object"}},"required":["session","source"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"set_cookies_result":{"type":"array"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.get_cookies",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"urls":{"type":"array","items":{"type":"string"}}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"get_cookies_result":{"type":"array"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.clear_cookies",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"clear_cookies_result":{"type":"object","properties":{"cleared_count":{"type":"integer"}}}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-    (
-        "web.delete_cookies",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"name":{"type":"string"},"url":{"type":"string"},"domain":{"type":"string"},"path":{"type":"string"}},"required":["session","name"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"delete_cookies_result":{"type":"object","properties":{"name":{"type":"string"},"matched":{"type":"boolean"}}}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
-    ),
-];
+///
+/// The const itself lives in `loom_shared::builtin_schemas` (single source of
+/// truth, embedded into the daemon for validation — see
+/// `SchemaProvider::load_embedded_with_overlay`); re-exported here so
+/// postinstall and the schema_registry_drift tests keep their import path.
+pub use loom_shared::builtin_schemas::BUILTIN_SCHEMAS;
 
 /// The 5 step labels in stable order. Used by the final receipt and
 /// by interface tests.

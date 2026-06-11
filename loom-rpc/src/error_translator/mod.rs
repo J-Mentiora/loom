@@ -17,10 +17,36 @@ impl ErrorTranslator {
     }
 
     pub fn from_schema_violation(detail: SchemaViolationDetail) -> JsonRpcError {
-        let message = Self::truncate_message(&format!(
-            "schema violation: field '{}' expected {} got {}",
-            detail.field, detail.expected, detail.actual
-        ));
+        // Name the method and the real offending field so the consumer can
+        // act on the error without daemon-side log access. `method` is empty
+        // only for legacy constructors that predate the field.
+        let context = if detail.method.is_empty() {
+            String::new()
+        } else {
+            format!("{}: ", detail.method)
+        };
+        let message = match detail.expected.as_str() {
+            "field_unknown" => {
+                let allowed = detail
+                    .allowed
+                    .as_ref()
+                    .map(|a| format!(" (schema allows: {})", a.join(", ")))
+                    .unwrap_or_default();
+                format!(
+                    "schema violation: {context}unknown field '{}'{allowed}",
+                    detail.field
+                )
+            }
+            "field_missing" => format!(
+                "schema violation: {context}missing required field '{}'",
+                detail.field
+            ),
+            _ => format!(
+                "schema violation: {context}field '{}' expected {} got {}",
+                detail.field, detail.expected, detail.actual
+            ),
+        };
+        let message = Self::truncate_message(&message);
         JsonRpcError {
             code: LoomErrorCode::SchemaViolation,
             message,

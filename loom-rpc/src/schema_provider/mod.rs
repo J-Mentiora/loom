@@ -10,6 +10,142 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 impl SchemaProvider {
+    /// Build the registry from the binary's embedded `BUILTIN_SCHEMAS` —
+    /// no disk involved. Binary version == schema version, always: a
+    /// v0.11.x daemon can never validate `web.navigate` against a v0.9.x
+    /// schema (the stale-mirror regression this replaced disk-first
+    /// loading over). A builtin that fails to compile is a programming
+    /// error surfaced as the same typed fail-closed `SchemaLoadError`.
+    pub fn load_embedded() -> Result<Arc<Self>, SchemaLoadError> {
+        Self::load_embedded_with_overlay(None).map(|(provider, _)| provider)
+    }
+
+    /// Embedded baseline + optional disk overlay.
+    ///
+    /// - Builtin methods ALWAYS validate against the embedded schema.
+    ///   A disk file for a builtin whose content differs is recorded as a
+    ///   [`StaleMirror`] and ignored (the caller logs the remediation hint —
+    ///   `loom postinstall` refreshes mirrors).
+    /// - Disk files for methods NOT in the embedded set are compiled
+    ///   fail-closed and added (operator-extension escape hatch, unchanged
+    ///   from the disk-first loader).
+    pub fn load_embedded_with_overlay(
+        schema_dir: Option<&std::path::Path>,
+    ) -> Result<(Arc<Self>, Vec<StaleMirror>), SchemaLoadError> {
+        let mut request_schemas: HashMap<String, Arc<CompiledJsonSchema>> = HashMap::new();
+        let mut response_schemas: HashMap<String, Arc<CompiledJsonSchema>> = HashMap::new();
+        let mut method_schemas: Vec<MethodSchema> = Vec::new();
+        let mut hasher_input = Vec::<u8>::new();
+        let mut stale: Vec<StaleMirror> = Vec::new();
+
+        // Embedded baseline. BUILTIN_SCHEMAS is method-sorted at the source;
+        // hash input follows that order so `source_wit_sha256` is identical
+        // across machines for stock installs.
+        for (method, json_str) in loom_shared::builtin_schemas::BUILTIN_SCHEMAS {
+            hasher_input.extend_from_slice(json_str.as_bytes());
+            let doc: serde_json::Value =
+                serde_json::from_str(json_str).map_err(|e| SchemaLoadError::InvalidSchema {
+                    method: method.to_string(),
+                    reason: format!("embedded schema is invalid JSON: {e}"),
+                })?;
+            let embedded_path = std::path::Path::new("<embedded>");
+            let req = doc["request"].clone();
+            let resp = doc["response"].clone();
+            let compiled_req = compile_or_fail("request", method, embedded_path, req.clone())?;
+            let compiled_resp = compile_or_fail("response", method, embedded_path, resp.clone())?;
+            request_schemas.insert(method.to_string(), Arc::new(compiled_req));
+            response_schemas.insert(method.to_string(), Arc::new(compiled_resp));
+            let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(method)
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect();
+            method_schemas.push(MethodSchema {
+                method: method.to_string(),
+                request: req,
+                response: resp,
+                aliases,
+            });
+        }
+
+        // Disk overlay: extras compile fail-closed; builtin mismatches are
+        // detected, recorded, and ignored. A missing/empty dir is normal
+        // (fresh machine before postinstall) — the embedded baseline already
+        // covers every builtin method.
+        if let Some(dir) = schema_dir {
+            let mut entries: Vec<_> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
+                .collect();
+            entries.sort_by_key(|e| e.path());
+
+            for entry in entries {
+                let path = entry.path();
+                let contents =
+                    std::fs::read_to_string(&path).map_err(|e| SchemaLoadError::InvalidSchema {
+                        method: path.display().to_string(),
+                        reason: e.to_string(),
+                    })?;
+                let method = match path.file_stem().and_then(|s| s.to_str()) {
+                    Some(s) => s.to_string(),
+                    None => continue,
+                };
+                if let Some((_, builtin)) = loom_shared::builtin_schemas::BUILTIN_SCHEMAS
+                    .iter()
+                    .find(|(m, _)| *m == method)
+                {
+                    if contents != *builtin {
+                        stale.push(StaleMirror {
+                            method: method.clone(),
+                            path: path.clone(),
+                        });
+                    }
+                    continue;
+                }
+                hasher_input.extend_from_slice(contents.as_bytes());
+                let doc: serde_json::Value = serde_json::from_str(&contents).map_err(|e| {
+                    SchemaLoadError::InvalidSchema {
+                        method: path.display().to_string(),
+                        reason: e.to_string(),
+                    }
+                })?;
+                let req = doc["request"].clone();
+                let resp = doc["response"].clone();
+                let compiled_req = compile_or_fail("request", &method, &path, req.clone())?;
+                let compiled_resp = compile_or_fail("response", &method, &path, resp.clone())?;
+                request_schemas.insert(method.clone(), Arc::new(compiled_req));
+                response_schemas.insert(method.clone(), Arc::new(compiled_resp));
+                let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(&method)
+                    .into_iter()
+                    .map(|s| s.to_string())
+                    .collect();
+                method_schemas.push(MethodSchema {
+                    method,
+                    request: req,
+                    response: resp,
+                    aliases,
+                });
+            }
+        }
+
+        method_schemas.sort_by(|a, b| a.method.cmp(&b.method));
+        let source_wit_sha256 = loom_core::content_store::sha256_hex(&hasher_input);
+        let snapshot = SchemaRegistry {
+            methods: method_schemas,
+            source_wit_sha256,
+        };
+
+        Ok((
+            Arc::new(Self {
+                request_schemas,
+                response_schemas,
+                snapshot,
+            }),
+            stale,
+        ))
+    }
+
     pub fn load_at_startup(schema_dir: &PathBuf) -> Result<Arc<Self>, SchemaLoadError> {
         if !schema_dir.exists() {
             return Err(SchemaLoadError::DirectoryMissing {

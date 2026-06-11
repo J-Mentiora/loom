@@ -60,6 +60,8 @@ fn schema_violation_carries_field_expected_actual() {
         field: "params.session_id".into(),
         expected: "string".into(),
         actual: "null".into(),
+        method: "web.navigate".into(),
+        allowed: None,
     };
     let _: String = d.field;
 }

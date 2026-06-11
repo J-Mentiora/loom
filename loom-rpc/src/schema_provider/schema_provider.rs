@@ -110,6 +110,17 @@ pub struct SchemaProvider {
     pub(crate) snapshot: SchemaRegistry,
 }
 
+/// A disk schema file for a builtin method whose content no longer matches
+/// the binary's embedded schema. Detected (and IGNORED — the embedded schema
+/// wins) by `SchemaProvider::load_embedded_with_overlay`; returned to the
+/// caller so the daemon can log a remediation hint and tests can assert
+/// detection without log capture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleMirror {
+    pub method: String,
+    pub path: PathBuf,
+}
+
 /// Errors that can occur during startup load. Mapped by the daemon
 /// startup harness to `LoomErrorCode::InternalError` with structured
 /// `data` describing which method file failed.

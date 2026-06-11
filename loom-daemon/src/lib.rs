@@ -2657,19 +2657,19 @@ async fn async_main() -> Result<()> {
         }
     }
 
-    // 4. Build schema provider. The schema directory holds per-method
-    //    JSON Schema files emitted at build time .
-    //    If the directory is empty / missing, the daemon starts with an
-    //    empty registry — `rpc.schemas` returns an empty method list
-    //    and schema validation is bypassed (no method schemas = pass).
+    // 4. Build schema provider — EMBEDDED-FIRST (mcp-navigate-schema-regression).
+    //    Builtin action methods validate against the schemas compiled into
+    //    THIS binary (`loom_shared::builtin_schemas`), so the validator can
+    //    never enforce a stale on-disk schema from an earlier install (the
+    //    v0.11.0 regression: a pre-settle-capture web.navigate.json rejected
+    //    the documented `until`/`timeout_ms` args forever, while the fresher
+    //    web.wait_for.json accepted them). Disk files act only as an OVERLAY
+    //    for methods unknown to the binary; a builtin-method file whose
+    //    content differs is reported below and ignored.
     //
-    //..03: try the data_root location first
-    //    (~/Library/Application Support/loom on macOS) then fall back
-    //    to the postinstall-installed location (~/.config/loom). The
-    //    `loom postinstall` runner historically writes to ~/.config/loom
-    //    on macOS for cross-platform parity with the Linux build, while
-    //    the daemon's data_root follows platform conventions. Allow
-    //    either to satisfy the snapshot so `rpc.schemas` populates.
+    //    Overlay dir search keeps the historical order: data_root first
+    //    (~/Library/Application Support/loom on macOS), then the
+    //    postinstall-installed location (~/.config/loom).
     let primary_schema_dir = args.data_root.join("schemas").join("v1");
     // The `loom postinstall` runner installs to ~/.config/loom on every
     // platform (cross-platform parity with the Linux build). On macOS,
@@ -2685,13 +2685,42 @@ async fn async_main() -> Result<()> {
                 .join("v1")
         })
         .unwrap_or_else(|| std::path::PathBuf::from(".loom-schemas"));
+    let overlay_dir = if primary_schema_dir.is_dir() {
+        Some(primary_schema_dir.as_path())
+    } else if postinstall_schema_dir.is_dir() {
+        Some(postinstall_schema_dir.as_path())
+    } else {
+        None
+    };
     let schemas: Arc<dyn loom_rpc::schema_provider::schema_provider::SchemaProviderApi> =
-        match SchemaProvider::load_at_startup(&primary_schema_dir) {
-            Ok(s) => s,
-            Err(_) => match SchemaProvider::load_at_startup(&postinstall_schema_dir) {
-                Ok(s) => s,
-                Err(_) => Arc::new(EmptySchemas),
-            },
+        match SchemaProvider::load_embedded_with_overlay(overlay_dir) {
+            Ok((provider, stale_mirrors)) => {
+                for stale in &stale_mirrors {
+                    tracing::warn!(
+                        method = %stale.method,
+                        path = %stale.path.display(),
+                        "stale schema mirror ignored — this file no longer matches the \
+                         schema embedded in this binary, which is what the daemon \
+                         validates against. Run `loom postinstall` to refresh the \
+                         mirror (or delete the file)."
+                    );
+                }
+                provider
+            }
+            Err(e) => {
+                // An unreadable/uncompilable OVERLAY file must not brick
+                // startup OR silently disable validation (the pre-fix
+                // EmptySchemas fallback bypassed validation entirely).
+                // Degrade to the pure embedded baseline — strictly stronger
+                // than both old behaviors.
+                tracing::error!(
+                    error = ?e,
+                    "schema overlay load failed — continuing with embedded builtin \
+                     schemas only (overlay extras unavailable)"
+                );
+                SchemaProvider::load_embedded()
+                    .map_err(|e| anyhow::anyhow!("embedded schema load failed: {:?}", e))?
+            }
         };
 
     // 5. Wire DI graph.
@@ -3004,35 +3033,6 @@ fn build_host_bridge(
                 "WasmHost unavailable — run `loom postinstall` to compile surface modules"
             );
             (Arc::new(StubHostBridge), None)
-        }
-    }
-}
-
-// ─── Minimal empty schema provider ──────────────────────────────────────────
-
-/// Used when the schema directory doesn't exist yet (pre-postinstall).
-struct EmptySchemas;
-
-impl loom_rpc::schema_provider::schema_provider::SchemaProviderApi for EmptySchemas {
-    fn lookup_request_schema(
-        &self,
-        _method: &str,
-    ) -> Option<Arc<loom_rpc::schema_provider::schema_provider::CompiledJsonSchema>> {
-        None
-    }
-    fn lookup_response_schema(
-        &self,
-        _method: &str,
-    ) -> Option<Arc<loom_rpc::schema_provider::schema_provider::CompiledJsonSchema>> {
-        None
-    }
-    fn registered_methods(&self) -> Vec<String> {
-        vec![]
-    }
-    fn get_registry_snapshot(&self) -> loom_rpc::schema_provider::schema_provider::SchemaRegistry {
-        loom_rpc::schema_provider::schema_provider::SchemaRegistry {
-            methods: vec![],
-            source_wit_sha256: String::new(),
         }
     }
 }
