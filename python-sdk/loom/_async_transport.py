@@ -50,12 +50,24 @@ class AsyncLoomTransport:
         self._next_id: int = 1
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._reader_task: asyncio.Task[None] | None = None
+        # `_closed` gates call(): set by close() AND by the reader-loop death
+        # latch (_mark_dead) so a post-hangup call() fails fast. `_torn_down`
+        # tracks the one-shot writer/reader teardown so close() stays
+        # idempotent and still runs even when _mark_dead set _closed first.
         self._closed = False
+        self._torn_down = False
         # Latched daemon-level protocol error (e.g. the HELLO auth-failure
         # frame — a bare JsonRpcError with no id, after which the daemon
         # closes). Once set, every subsequent call() re-raises it instead
         # of surfacing a generic connection error.
         self._daemon_error: LoomRPCError | None = None
+        # Latched terminal connection error. Set when the reader loop exits
+        # for ANY reason (EOF / half-close / framing error): without it a
+        # later call() — after the reader died — would write into the
+        # still-open write side and await a future no reader will ever
+        # resolve, hanging forever. Once set, call() fails immediately.
+        # Mirrors the TS transport's dead-latch fix (#163).
+        self._terminal_err: LoomConnectionError | None = None
 
     @classmethod
     async def connect(
@@ -115,6 +127,11 @@ class AsyncLoomTransport:
         """
         if self._daemon_error is not None:
             raise self._daemon_error
+        if self._terminal_err is not None:
+            # The reader loop already died (daemon hangup / half-close). Fail
+            # fast and typed instead of writing into a dead connection and
+            # awaiting a future nothing will ever resolve.
+            raise self._terminal_err
         if self._closed:
             raise LoomConnectionError("Transport is closed")
         request_id = self._next_id
@@ -135,10 +152,20 @@ class AsyncLoomTransport:
             # reader latched over a raw BrokenPipeError.
             if self._daemon_error is not None:
                 raise self._daemon_error from exc
+            if self._terminal_err is not None:
+                raise self._terminal_err from exc
             raise LoomConnectionError(f"Connection to daemon lost: {exc}") from exc
         except Exception:
             self._pending.pop(request_id, None)
             raise
+
+        # Close the race window: the reader may have died (and latched a
+        # terminal error) AFTER our guard checks but while our write was in
+        # flight — on a clean half-close the write succeeds with no error.
+        # Without this the future below would never be resolved by any reader.
+        if self._terminal_err is not None or self._daemon_error is not None:
+            self._pending.pop(request_id, None)
+            raise self._daemon_error or self._terminal_err  # type: ignore[misc]
 
         try:
             response = await future
@@ -161,8 +188,12 @@ class AsyncLoomTransport:
         return response.get("result")
 
     async def close(self) -> None:
-        if self._closed:
+        # Idempotent on the actual writer/reader teardown — note _closed may
+        # already be True because the reader-loop death latch (_mark_dead) set
+        # it, in which case the socket still needs an explicit close here.
+        if self._torn_down:
             return
+        self._torn_down = True
         self._closed = True
         if self._reader_task is not None:
             self._reader_task.cancel()
@@ -257,20 +288,30 @@ class AsyncLoomTransport:
                 if not fut.done():
                     fut.set_result(envelope)
         except asyncio.IncompleteReadError:
-            # Prefer the latched daemon error (e.g. auth failure) over a
-            # generic close error — the daemon closes right after sending it.
-            err: Exception = self._daemon_error or LoomConnectionError(
-                "Connection closed by daemon mid-frame"
-            )
-            for fut in list(self._pending.values()):
-                if not fut.done():
-                    fut.set_exception(err)
-            self._pending.clear()
+            # EOF / half-close. Prefer the latched daemon error (e.g. auth
+            # failure) over a generic close error — the daemon closes right
+            # after sending it.
+            close_err = LoomConnectionError("Connection closed by daemon mid-frame")
+            self._mark_dead(close_err)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            err = LoomConnectionError(f"Reader loop error: {exc}")
-            for fut in list(self._pending.values()):
-                if not fut.done():
-                    fut.set_exception(err)
-            self._pending.clear()
+            self._mark_dead(LoomConnectionError(f"Reader loop error: {exc}"))
+
+    def _mark_dead(self, close_err: LoomConnectionError) -> None:
+        """Latch a terminal error and fail every pending future.
+
+        Called from the reader-loop exit handlers. Marks the transport closed
+        and stashes ``close_err`` so a LATER call() — after the reader has
+        died — fails fast and typed instead of writing into a dead connection
+        and awaiting a future no reader will ever resolve (the half-close hang;
+        audit 2026-06-10, F67). A latched daemon protocol error (auth failure)
+        takes precedence as the surfaced exception.
+        """
+        self._closed = True
+        self._terminal_err = close_err
+        err: Exception = self._daemon_error or close_err
+        for fut in list(self._pending.values()):
+            if not fut.done():
+                fut.set_exception(err)
+        self._pending.clear()

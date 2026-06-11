@@ -191,29 +191,24 @@ def test_from_bare_frame_rejects_non_bare_shapes():
     assert LoomRPCError._from_bare_frame("not a dict") is None
 
 
-# KNOWN-BUG (audit 2026-06-10, "AsyncLoomTransport never marks itself dead
-# after the reader loop exits, so later call()s can hang forever"): when the
-# daemon half-closes its write side (FIN — e.g. the 300s authenticated-idle
-# drop or a graceful shutdown) the reader loop exits via IncompleteReadError
-# and fails the futures pending AT THAT MOMENT, but never sets self._closed
-# or latches a terminal connection error. A LATER call() passes the guards,
-# writes into the still-open read direction, and awaits a future no reader
-# will ever resolve — an unbounded hang. The TS transport got the dead-latch
-# fix in #163 ("calls after daemon hangup fail with a typed connection-closed
-# error"); the python async transport did not. Un-skip once the reader-loop
-# exception handlers latch a terminal error consulted by call().
-@pytest.mark.skip(
-    reason="KNOWN-BUG: async call() after daemon half-close hangs forever "
-    "instead of raising LoomConnectionError; reader-loop exit never marks "
-    "the transport dead — see audit 2026-06-10"
-)
-async def test_async_call_after_daemon_half_close_raises_typed_error(tmp_path):
+# (audit 2026-06-10, "AsyncLoomTransport never marks itself dead after the
+# reader loop exits, so later call()s can hang forever"): when the daemon
+# half-closes its write side (FIN — e.g. the 300s authenticated-idle drop or a
+# graceful shutdown) the reader loop now latches a terminal connection error
+# (_mark_dead) consulted by call(), mirroring the TS dead-latch fix (#163), so
+# a LATER call() fails fast and typed instead of awaiting a future no reader
+# will ever resolve. FIXED.
+async def test_async_call_after_daemon_half_close_raises_typed_error():
     import asyncio
+    import tempfile
 
     from loom._async_transport import AsyncLoomTransport
     from loom._errors import LoomConnectionError
 
-    sock_path = tmp_path / "half-close.sock"
+    # tempfile.mkdtemp keeps the AF_UNIX path under the 104-byte cap
+    # (pytest's tmp_path can exceed it on macOS — same fix as the wedged
+    # daemon test above).
+    sock_path = Path(tempfile.mkdtemp()) / "half-close.sock"
     handshake_done = threading.Event()
 
     def serve() -> None:
