@@ -23,14 +23,30 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// Opaque compiled-schema handle. The real implementation defers to
-/// `jsonschema::JSONSchema`; this wrapper keeps the struct nominal so
-/// we can swap implementations without breaking callers.
+/// Compiled-schema handle: the raw JSON Schema document plus the
+/// pre-compiled `jsonschema::Validator` built from it. Compilation
+/// happens exactly once — in `SchemaProvider::load_at_startup` (and so
+/// also on every SIGHUP reload, which reruns that path) — and the
+/// request hot path only executes the already-compiled validator.
+///
+/// Construction is only possible via [`CompiledJsonSchema::compile`],
+/// so any `CompiledJsonSchema` that exists is backed by a schema
+/// document that actually compiled. An uncompilable (e.g. corrupted
+/// postinstall) schema fails the load with a typed `SchemaLoadError`
+/// instead of silently disabling validation for its method.
 pub struct CompiledJsonSchema {
     pub inner: serde_json::Value,
+    pub(crate) validator: jsonschema::Validator,
 }
 
 impl CompiledJsonSchema {
+    /// Compile `inner` into a reusable validator. Errors when the
+    /// document is not a valid JSON Schema (e.g. `{"type": 123}`).
+    pub fn compile(inner: serde_json::Value) -> Result<Self, String> {
+        let validator = jsonschema::validator_for(&inner).map_err(|e| e.to_string())?;
+        Ok(Self { inner, validator })
+    }
+
     /// Return the underlying JSON Schema document. Used by the
     /// `rpc.schemas` registry snapshot.
     pub fn as_json(&self) -> &serde_json::Value {

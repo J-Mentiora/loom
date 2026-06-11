@@ -66,6 +66,65 @@ fn default_socket_path_resolves_per_platform() {
     let _ = _ck;
 }
 
+/// Bind-window regression: the socket must be 0600 the
+/// instant bind(2) creates it — BEFORE `apply_permissions` runs — even
+/// under a fully-permissive process umask, because connect() is gated
+/// by the listen backlog, not accept(). Also asserts the umask guard
+/// restores the caller's umask.
+#[test]
+fn try_bind_creates_socket_0600_before_chmod_under_permissive_umask() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("loom.sock");
+
+    // Worst case: fully permissive umask.
+    let prev = unsafe { libc::umask(0) };
+    let _listener = super::try_bind(&path).expect("bind must succeed");
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+    // Guard must have restored our umask (0) after try_bind returned.
+    let restored = unsafe { libc::umask(prev) };
+
+    assert_eq!(
+        mode, 0o600,
+        "socket must be 0600 at bind time, before any chmod"
+    );
+    assert_eq!(restored, 0, "umask guard must restore the caller's umask");
+}
+
+/// Fallback-path regression: when XDG_RUNTIME_DIR is
+/// unset (or empty), the non-macOS default must land in a per-user
+/// directory — never the pre-squattable shared `/tmp/loom.sock`.
+#[test]
+fn non_macos_socket_path_never_falls_back_to_shared_tmp() {
+    // XDG_RUNTIME_DIR set → socket lives inside it (0700 per XDG spec).
+    assert_eq!(
+        super::non_macos_socket_path(
+            Some(PathBuf::from("/run/user/1000")),
+            Some(PathBuf::from("/home/u/.local/share")),
+        ),
+        PathBuf::from("/run/user/1000/loom.sock")
+    );
+    // Unset → per-user data dir, NOT /tmp/loom.sock.
+    assert_eq!(
+        super::non_macos_socket_path(None, Some(PathBuf::from("/home/u/.local/share"))),
+        PathBuf::from("/home/u/.local/share/loom/loom.sock")
+    );
+    // Empty XDG_RUNTIME_DIR treated as unset.
+    assert_eq!(
+        super::non_macos_socket_path(
+            Some(PathBuf::new()),
+            Some(PathBuf::from("/home/u/.local/share")),
+        ),
+        PathBuf::from("/home/u/.local/share/loom/loom.sock")
+    );
+    // No data dir either (no HOME) → per-uid /tmp dir, never bare /tmp.
+    let last_resort = super::non_macos_socket_path(None, None);
+    assert_ne!(last_resort, PathBuf::from("/tmp/loom.sock"));
+    let uid = unsafe { libc::getuid() };
+    assert!(last_resort.starts_with(format!("/tmp/loom-{uid}")));
+}
+
 #[test]
 fn serve_signature_takes_runtime_handle_and_shutdown_future() {
     // shared multi-threaded runtime (no fresh runtime

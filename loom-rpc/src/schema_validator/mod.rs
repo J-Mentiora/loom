@@ -67,8 +67,13 @@ impl SchemaValidator {
         schema: &CompiledJsonSchema,
         instance: &serde_json::Value,
     ) -> Option<SchemaViolationDetail> {
-        let validator = jsonschema::validator_for(&schema.inner).ok()?;
-        if let Err(err) = validator.validate(instance) {
+        // The validator was compiled exactly once, at schema-load time
+        // (`CompiledJsonSchema::compile`). An uncompilable schema can
+        // never reach this hot path: `SchemaProvider::load_at_startup`
+        // fails CLOSED with `SchemaLoadError::InvalidSchema` — the old
+        // per-request `validator_for(..).ok()?` here mapped a compile
+        // failure to `None` (= Pass), silently disabling validation.
+        if let Err(err) = schema.validator.validate(instance) {
             let field = build_field_path(err.instance_path());
             let (expected, actual) = classify_violation(&err);
             return Some(SchemaViolationDetail {

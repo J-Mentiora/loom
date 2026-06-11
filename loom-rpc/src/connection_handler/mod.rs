@@ -215,10 +215,27 @@ pub(crate) fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Valu
         Some(arr) => arr,
         None => return params,
     };
-    let bytes: Vec<u8> = payload_bytes
+    // Strict byte decode: every element must be an integer in 0..=255.
+    // The old `as u8` cast wrapped values > 255 (256 → 0, 300 → 44) and
+    // `filter_map` silently dropped negative/float entries — a malformed
+    // payload could decode to *valid but different* JSON than the client
+    // sent and dispatch as a real action. Reject via the same
+    // malformed-envelope path as the UTF-8/JSON branches below.
+    let bytes: Option<Vec<u8>> = payload_bytes
         .iter()
-        .filter_map(|v| v.as_u64().map(|n| n as u8))
+        .map(|v| v.as_u64().and_then(|n| u8::try_from(n).ok()))
         .collect();
+    let bytes = match bytes {
+        Some(b) => b,
+        None => {
+            tracing::warn!(
+                "SDK envelope: action.payload contains a non-byte element \
+                 (expected integer in 0..=255) — passing params through \
+                 unchanged; validator will reject"
+            );
+            return params;
+        }
+    };
     let inner_str = match std::str::from_utf8(&bytes) {
         Ok(s) => s,
         Err(_) => {

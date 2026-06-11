@@ -90,7 +90,36 @@ impl SocketServer {
     }
 }
 
+/// RAII guard: set the process umask, restore the previous value on drop.
+struct UmaskGuard {
+    prev: libc::mode_t,
+}
+
+impl UmaskGuard {
+    fn set(mask: libc::mode_t) -> Self {
+        // SAFETY: umask(2) is always successful, affects only this
+        // process, and has no memory-safety preconditions.
+        let prev = unsafe { libc::umask(mask) };
+        Self { prev }
+    }
+}
+
+impl Drop for UmaskGuard {
+    fn drop(&mut self) {
+        unsafe { libc::umask(self.prev) };
+    }
+}
+
 fn try_bind(path: &Path) -> Result<StdUnixListener, BindError> {
+    // Bind under a restrictive umask so the socket inode is created
+    // 0600 (0777 & !0o177) from the very first instant — previously the
+    // socket existed with umask-default (commonly world-connectable)
+    // permissions between bind(2) and `apply_permissions`, and connect()
+    // is gated by the listen backlog, not by accept(), so another local
+    // user could connect during that window. `apply_permissions` still
+    // runs afterwards as belt-and-braces; the unlink-and-rebind
+    // recovery path below is covered by the same guard.
+    let _umask = UmaskGuard::set(0o177);
     match StdUnixListener::bind(path) {
         Ok(l) => Ok(l),
         Err(e) if e.kind() == ErrorKind::AddrInUse => match StdUnixStream::connect(path) {
@@ -134,9 +163,37 @@ pub fn default_socket_path() -> std::path::PathBuf {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        std::env::var("XDG_RUNTIME_DIR")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"))
-            .join("loom.sock")
+        non_macos_socket_path(
+            std::env::var_os("XDG_RUNTIME_DIR").map(std::path::PathBuf::from),
+            dirs::data_dir(),
+        )
     }
+}
+
+/// Non-macOS resolution order: `$XDG_RUNTIME_DIR/loom.sock` when the
+/// runtime dir is set and non-empty (it is per-user mode 0700 by the
+/// XDG spec), else the per-user data dir
+/// (`~/.local/share/loom/loom.sock`), else a per-uid `/tmp/loom-<uid>`
+/// directory. Never bare shared `/tmp`, whose predictable `loom.sock`
+/// name another local user could pre-squat to deny daemon startup or
+/// impersonate the daemon to a connecting client.
+///
+/// Compiled on every platform so the resolution order stays
+/// unit-testable from macOS dev machines.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+fn non_macos_socket_path(
+    xdg_runtime_dir: Option<std::path::PathBuf>,
+    data_dir: Option<std::path::PathBuf>,
+) -> std::path::PathBuf {
+    if let Some(dir) = xdg_runtime_dir.filter(|d| !d.as_os_str().is_empty()) {
+        return dir.join("loom.sock");
+    }
+    data_dir
+        .map(|d| d.join("loom"))
+        .unwrap_or_else(|| {
+            // SAFETY: getuid(2) cannot fail.
+            let uid = unsafe { libc::getuid() };
+            std::path::PathBuf::from(format!("/tmp/loom-{uid}"))
+        })
+        .join("loom.sock")
 }
