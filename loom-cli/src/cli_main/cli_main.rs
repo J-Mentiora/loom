@@ -179,13 +179,50 @@ pub fn early_init(argv: &[String]) -> Result<CliConfig, CliError> {
 /// (or `-h`) where `method` is a non-flag positional. Used to short-circuit
 /// to the registry-driven per-action help renderer before clap consumes
 /// `--help` at the subcommand level.
+///
+/// `--help`/`-h` is honored ONLY in KEY position. The per-action args use
+/// `allow_hyphen_values` (see `action_commands::parse_extra_to_json_typed`),
+/// so a `-h` that is the VALUE of a preceding `--key` — e.g. typing the
+/// literal text `--text -h` — must flow through as the action argument, NOT
+/// short-circuit to help with exit 0 (audit 2026-06-10, F81).
 fn detect_per_action_help_request(argv: &[String]) -> Option<String> {
     let mut iter = argv.iter().skip(1).peekable();
     if iter.next().map(String::as_str) != Some("action") {
         return None;
     }
-    let method = iter.find(|a| !a.starts_with('-'))?;
-    let has_help = argv.iter().any(|a| a == "--help" || a == "-h");
+    // Locate the method positional (first non-flag token after `action`),
+    // then scan only the tokens AFTER it for a key-position help flag.
+    let after_action: Vec<&String> = iter.collect();
+    let method_idx = after_action.iter().position(|a| !a.starts_with('-'))?;
+    let method = after_action[method_idx];
+
+    // Walk the post-method tokens, pairing `--key` with its value the same
+    // way `parse_extra_to_json_typed` does: a token following a `--key` that
+    // does not itself start with `--` is consumed as that key's value and so
+    // is NOT a flag position. Only a help token that is itself a key counts.
+    let post_method = &after_action[method_idx + 1..];
+    let mut has_help = false;
+    let mut i = 0;
+    while i < post_method.len() {
+        let tok = post_method[i].as_str();
+        if tok == "--help" || tok == "-h" {
+            has_help = true;
+            break;
+        }
+        if tok.starts_with("--") {
+            // A `--key`: the next token is its VALUE iff it does not itself
+            // start with `--` (mirrors parse_extra_to_json_typed). That value
+            // — even a literal `-h` — is then skipped, never read as a flag.
+            if let Some(next) = post_method.get(i + 1) {
+                if !next.starts_with("--") {
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        i += 1;
+    }
+
     if has_help {
         Some(method.clone())
     } else {

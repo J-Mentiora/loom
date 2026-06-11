@@ -256,21 +256,15 @@ fn matrix_covers_all_documented_subprocess_reachable_codes() {
     );
 }
 
-// KNOWN-BUG (audit 2026-06-10, "Any action argument whose value is exactly
-// '-h'/'--help' silently turns the command into a help printout with exit
-// 0"): `detect_per_action_help_request` scans the ENTIRE argv for
-// `--help`/`-h`, including option VALUES. So typing the literal text "-h"
-// (`web.type ... --text -h`) short-circuits to the per-action help renderer
-// and exits 0 without contacting the daemon — a script observing exit 0
-// believes the action succeeded while the manifest records nothing. The
-// intended behavior is that help tokens are only honored in KEY position;
-// a `-h` value must flow through as the action argument (here: failing with
-// the daemon-not-running error under the hermetic HOME, exit != 0, and no
-// help text on stdout). Red until the help scan skips `--key` values.
+// (audit 2026-06-10, "Any action argument whose value is exactly '-h'/'--help'
+// silently turns the command into a help printout with exit 0"):
+// `detect_per_action_help_request` now honors `--help`/`-h` only in KEY
+// position — a help token that is the VALUE of a preceding `--key` (typing the
+// literal text `--text -h`) flows through as the action argument and the
+// command executes (here: failing with the daemon-not-running error under the
+// hermetic HOME, exit != 0, no help text on stdout). FIXED.
 #[test]
-#[ignore = "KNOWN-BUG: '-h' in option-value position triggers per-action help with exit 0 \
-            instead of executing the action — see audit 2026-06-10"]
-fn known_bug_help_token_in_value_position_must_not_short_circuit() {
+fn help_token_in_value_position_must_not_short_circuit() {
     let home = TempDir::new().unwrap();
     let out = spawn_loom(
         &[
