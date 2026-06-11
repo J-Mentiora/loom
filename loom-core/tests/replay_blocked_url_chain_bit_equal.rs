@@ -82,7 +82,6 @@ fn make_engine_and_writer() -> (
         mw_dyn.clone(),
         v,
         be,
-        dh.clone(),
         Observability::new(PathBuf::from("/dev/null"), false),
         0,
         sessions_root.clone(),

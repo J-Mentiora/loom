@@ -105,24 +105,6 @@ fn assemble_canonical_bytes_is_pub_static_returns_vec_u8() {
     let _ = _ck;
 }
 
-// === Trap fast-path entry ===
-
-#[test]
-fn emit_trap_receipt_signature_carries_session_action_surface_and_frames() {
-    fn _ck(
-        m: &Arc<ReceiptMarshaller>,
-        s: SessionId,
-        a: u64,
-        surface: String,
-        trap: String,
-        frames: u32,
-        h: TokioHandle,
-    ) -> Result<(), LoomError> {
-        m.emit_trap_receipt(s, a, surface, trap, frames, h)
-    }
-    let _ = _ck;
-}
-
 // === Status enum — three states (Ok, Error, Trapped) ===
 
 #[test]

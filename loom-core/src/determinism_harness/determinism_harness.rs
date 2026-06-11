@@ -105,9 +105,14 @@ impl Default for TapeWriter {
 /// and `timing_ticks > 0`.
 pub const DETERMINISTIC_ACTION_DELTA_MS: u64 = 1;
 
-/// The DeterminismHarness module. Held by `CoreApiFacade` as
-/// `Arc<DeterminismHarness>`; per-session tape writers are minted via
-/// `new_tape_writer`.
+/// The DeterminismHarness module. Instances are PER-SESSION: minted at
+/// `LocalSessionManager::create` seeded with the session's resolved seed
+/// (explicit `--seed N`, else the facade's `default_seed`) and stored on
+/// `Session.determinism`, so concurrent sessions own disjoint RNG
+/// streams + virtual clocks. The `CoreApiFacade` keeps one facade-level
+/// instance for the stateless helpers only (`canonicalize`,
+/// `hash_canonical`, `install_replay_mode`) — live per-action RNG/clock
+/// state always comes from the session's own harness.
 pub struct DeterminismHarness {
     pub(crate) seed: u64,
     pub(crate) virtual_clock_enabled: bool,

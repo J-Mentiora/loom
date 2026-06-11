@@ -141,7 +141,7 @@ impl WasmHost {
         }
         let obs = HostObservability::new(config.redaction_enabled);
         let receipts = ReceiptMarshaller::new(core.manifest_writer(), core.budget_enforcer());
-        let trap_handler = TrapHandler::new(obs.clone(), receipts.clone());
+        let trap_handler = TrapHandler::new(obs.clone());
         let executor = SessionExecutor::new(
             runtime.clone(),
             library.clone(),
@@ -196,10 +196,12 @@ impl WasmHost {
     ///   - `core.session_manager().get(session_id)` is `SessionStatus::Active`.
     ///
     /// **Post-conditions:**
-    ///   - On `Ok(ActionOutcome)`: receipt already queued via
-    ///     `ReceiptMarshaller::queue` on `session.receipt_pool`.
-    ///   - On `Err(LoomError)`: receipt was emitted (trap path) or
-    ///     surface unavailable.
+    ///   - On `Ok(ActionOutcome)`: the action's SINGLE receipt is queued
+    ///     via `ReceiptMarshaller::queue` on `session.receipt_pool` —
+    ///     for `Trapped`/`Aborted` outcomes the builder carries the
+    ///     truthful non-Ok status (no separate trap-handler append).
+    ///   - On `Err(LoomError)`: surface unavailable / non-trap dispatch
+    ///     failure; no receipt is queued.
     ///
     /// Tear down all shim subprocesses bound to `session_id`. Called by
     /// the daemon's session-close handler. Sends a Shutdown frame to
@@ -228,8 +230,11 @@ impl WasmHost {
         let mode = self.default_mode;
         let linker = self.registry.linker_for(mode);
 
-        // 3. Build per-action HostState
-        let determinism = self.core.determinism();
+        // 3. Build per-action HostState. The determinism harness is the
+        // SESSION's own (seeded from Session.seed) — never the facade
+        // singleton — so rng_next_u64/clock_now draws are isolated per
+        // session and reproducible from the Header-recorded seed.
+        let determinism = session.determinism.clone();
         let tape_writer = determinism.new_tape_writer();
         let host_state = crate::host_function_table::HostState {
             core: self.core.clone(),

@@ -27,7 +27,7 @@
 use crate::host_function_table::HostState;
 use crate::host_observability::HostObservability;
 use crate::module_library::{ModuleLibrary, SurfaceName};
-use crate::receipt_marshaller::{ObservedCosts, ReceiptBuilder};
+use crate::receipt_marshaller::{ObservedCosts, ReceiptBuilder, ReceiptStatus};
 use crate::trap_handler::TrapHandler;
 use crate::wasm_runtime::WasmRuntime;
 use crate::wit_type_marshaller::Mode;
@@ -79,6 +79,14 @@ pub struct SessionHandle {
     /// HostState at dispatch time and onto the shim wire via
     /// `ShimRequest::PageNavigate.seed`.
     pub seed: loom_shared::types::Seed,
+    /// The session's OWN determinism harness (virtual clock + ChaCha20
+    /// RNG seeded with the resolved `seed`), threaded from
+    /// `Session.determinism` into `HostState.determinism` at dispatch
+    /// time. Per-session — never the facade singleton — so concurrent
+    /// sessions cannot interleave RNG draws or bleed clock state, and
+    /// the same Header-recorded seed reproduces the same stream on
+    /// record and replay.
+    pub determinism: Arc<loom_core::determinism_harness::DeterminismHarness>,
     /// Per-session Unix epoch milliseconds. Substituted into the shim
     /// JS template's `Date.now` constant.
     pub epoch_ms: loom_shared::types::EpochMs,
@@ -246,9 +254,25 @@ impl SessionExecutor {
                             "elapsed_ms": observed,
                             "limit": limit,
                         }));
+                        // Truthful receipt status: the queued builder is the
+                        // action's single receipt, and ReceiptStatus defaults
+                        // to Ok — without this stamp a budget-killed action
+                        // would be recorded as a success.
+                        builder.status = ReceiptStatus::Trapped;
+                        builder.error_code = Some(format!("{:?}", loom_error.code));
+                        builder.error_details = Some(loom_error.message.clone());
                         Ok(ActionOutcome::Trapped { builder, loom_error })
                     }
-                    _ => Ok(ActionOutcome::Aborted { builder }),
+                    _ => {
+                        // User-initiated abort: non-Ok status so the manifest
+                        // receipt never reads as a completed action.
+                        builder.status = ReceiptStatus::Error;
+                        builder.error_code =
+                            Some(format!("{:?}", LoomErrorCode::SessionAborted));
+                        builder.error_details =
+                            Some("session aborted before action completed".to_string());
+                        Ok(ActionOutcome::Aborted { builder })
+                    }
                 };
             }
         };
@@ -273,10 +297,25 @@ impl SessionExecutor {
                     builder,
                     observed_costs: ObservedCosts::default(),
                 }),
-                Err(loom_error) => Ok(ActionOutcome::Trapped {
-                    builder,
-                    loom_error,
-                }),
+                Err(loom_error) => {
+                    // Guest returned a host-error (or an undecodable shape).
+                    // The queued builder is the action's single receipt —
+                    // stamp the truthful status. decode_typed_receipt already
+                    // staged the WIT variant name/detail on the error fields
+                    // for variant errors; fill them from the LoomError only
+                    // when it didn't.
+                    builder.status = ReceiptStatus::Trapped;
+                    if builder.error_code.is_none() {
+                        builder.error_code = Some(format!("{:?}", loom_error.code));
+                    }
+                    if builder.error_details.is_none() {
+                        builder.error_details = Some(loom_error.message.clone());
+                    }
+                    Ok(ActionOutcome::Trapped {
+                        builder,
+                        loom_error,
+                    })
+                }
             },
             Err(e) => {
                 if let Some(&trap) = e.downcast_ref::<wasmtime::Trap>() {
@@ -286,9 +325,11 @@ impl SessionExecutor {
                         surface: action.surface,
                         dwp_path: None,
                     };
-                    let loom_error = self
-                        .trap_handler
-                        .handle_trap(trap, ctx, session.receipt_pool);
+                    // handle_trap stamps status=Trapped + trap details on the
+                    // builder; the SINGLE receipt is queued by
+                    // WasmHost::dispatch after this returns (no handler-side
+                    // append — exactly one ActionReceipt per action).
+                    let loom_error = self.trap_handler.handle_trap(trap, ctx, &mut builder);
                     Ok(ActionOutcome::Trapped {
                         builder,
                         loom_error,

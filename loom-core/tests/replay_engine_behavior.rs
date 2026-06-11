@@ -92,7 +92,9 @@ fn make_content_store(tmp: &tempfile::TempDir, obs: Arc<Observability>) -> Arc<L
 fn make_session_manager(
     tmp: &tempfile::TempDir,
     mw: Arc<dyn ManifestWriter>,
-    dh: Arc<DeterminismHarness>,
+    // Sessions mint their own per-session DeterminismHarness at create()
+    // now; the parameter is kept so the ~20 call sites stay untouched.
+    _dh: Arc<DeterminismHarness>,
     obs: Arc<Observability>,
 ) -> Arc<LocalSessionManager> {
     let cs: Arc<dyn ContentStore> = Arc::new(LocalContentStore::new(
@@ -107,7 +109,6 @@ fn make_session_manager(
         mw,
         v,
         be,
-        dh,
         Observability::new(PathBuf::from("/dev/null"), false),
         0,
         PathBuf::from("/tmp/loom-test/sessions"),
