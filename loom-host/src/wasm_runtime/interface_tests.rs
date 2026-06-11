@@ -26,6 +26,22 @@ fn default_config_is_sensible() {
         c.opt_level.as_str(),
         "speed" | "speed_and_size" | "none"
     ));
+    // Epoch preemption defaults: 10ms abort granularity, 30s guest-CPU
+    // runaway backstop. Both must be non-zero or preemption degrades.
+    assert_eq!(c.epoch_tick_ms, 10);
+    assert_eq!(c.guest_cpu_deadline_ms, 30_000);
+}
+
+#[test]
+fn epoch_fields_deserialize_with_defaults_when_absent() {
+    // Backward compat: configs serialized before the epoch knobs existed
+    // must still deserialize (serde defaults fill in tick + deadline).
+    let c: WasmRuntimeConfig = serde_json::from_str(
+        r#"{"mem_limit_mib":64,"fuel_per_invocation":null,"opt_level":"none"}"#,
+    )
+    .expect("pre-epoch config JSON must deserialize");
+    assert_eq!(c.epoch_tick_ms, 10);
+    assert_eq!(c.guest_cpu_deadline_ms, 30_000);
 }
 
 // === Engine accessor returns &wasmtime::Engine, not Arc<Engine> ===
@@ -69,9 +85,8 @@ fn config_is_immutable_after_construction() {
 fn fuel_per_invocation_is_optional_u64() {
     // Fuel-aware execution per design §4 / contract SLA. None = disabled.
     let c = WasmRuntimeConfig {
-        mem_limit_mib: 64,
         fuel_per_invocation: Some(10_000_000),
-        opt_level: "speed_and_size".into(),
+        ..WasmRuntimeConfig::default()
     };
     assert_eq!(c.fuel_per_invocation, Some(10_000_000));
 }
