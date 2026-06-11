@@ -8,11 +8,12 @@ use crate::mcp_dispatcher::McpDispatcher;
 use crate::mcp_observability::McpObservability;
 use crate::resource_tracker::ResourceTracker;
 use crate::rpc_client::{RpcClient, RpcClientConfig};
-use crate::stdio_transport::{McpResponse, StdioTransport};
+use crate::stdio_transport::{Dispatch, McpResponse, StdioTransport};
 use crate::tool_cache::ToolCache;
 use loom_rpc::error::LoomError;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio_util::sync::CancellationToken;
 
 pub fn config_from_args(args: &ServeArgs) -> RpcClientConfig {
     let mut cfg = RpcClientConfig::defaults();
@@ -30,10 +31,10 @@ pub async fn run(args: ServeArgs) -> Result<(), LoomError> {
     let obs = crate::mcp_observability::init_subscriber(redact);
     let cfg = config_from_args(&args);
     let rpc = RpcClient::new(cfg, obs.clone());
-    let shutdown_flag = Arc::new(AtomicBool::new(false));
-    install_signal_handler(shutdown_flag.clone(), obs.clone())?;
+    let shutdown = CancellationToken::new();
+    install_signal_handler(shutdown.clone(), obs.clone())?;
     install_panic_hook(obs.clone());
-    let dispatcher = build_dispatcher(rpc.clone(), obs.clone(), shutdown_flag.clone()).await;
+    let dispatcher = build_dispatcher(rpc.clone(), obs.clone(), shutdown.clone()).await;
     // Attempt initial connect; proceed even if daemon is down (graceful degradation).
     let _ = rpc.connect().await;
     // Keepalive: a long-lived MCP server would otherwise sit idle and the daemon
@@ -61,24 +62,52 @@ pub async fn run(args: ServeArgs) -> Result<(), LoomError> {
         })
     };
     let transport = StdioTransport::stdio();
-    let result = transport.run(dispatch).await;
+    let result = serve_until_shutdown(transport, dispatch, shutdown).await;
     // Best-effort: close the implicit session created on first tool
     // call so the daemon-side WAL gets a clean SessionTerminal entry
     // and the underlying chromium subprocess gets reaped via
     // `LocalSessionManager::close`. Daemon-down paths swallow the
-    // error.
-    dispatcher.close_implicit_session().await;
+    // error. Bounded by SHUTDOWN_DRAIN_TIMEOUT so a hung daemon can't
+    // stall process exit past the drain window.
+    let _ = tokio::time::timeout(SHUTDOWN_DRAIN_TIMEOUT, dispatcher.close_implicit_session()).await;
     result
 }
 
+/// Drive the stdio loop until stdin EOF **or** until `shutdown` is
+/// cancelled — by the signal task (`install_signal_handler`) or the MCP
+/// `shutdown` method (`McpDispatcher::shutdown`). Both exits fall
+/// through to `run`'s teardown, so `kill <pid>` closes the implicit
+/// session as cleanly as a client disconnect. Split out of `run` so
+/// tests can exercise the shutdown race without a real stdin or daemon.
+pub async fn serve_until_shutdown<R, W>(
+    transport: StdioTransport<R, W>,
+    dispatch: Dispatch,
+    shutdown: CancellationToken,
+) -> Result<(), LoomError>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::select! {
+        result = transport.run(dispatch) => result,
+        () = shutdown.cancelled() => Ok(()),
+    }
+}
+
+/// Spawn the signal task: on SIGINT/SIGTERM, cancel `shutdown` so
+/// `serve_until_shutdown` unwinds through the same teardown as stdin
+/// EOF. Registering tokio handlers replaces the default kill
+/// disposition, so the cancel MUST actually terminate the server — the
+/// previous shape (store into a flag nothing read) left the process
+/// unkillable except by SIGKILL, leaking the implicit session.
 pub fn install_signal_handler(
-    flag: Arc<AtomicBool>,
+    shutdown: CancellationToken,
     obs: Arc<McpObservability>,
 ) -> Result<(), LoomError> {
     tokio::spawn(async move {
         signal_wait().await;
-        flag.store(true, Ordering::SeqCst);
         obs.info("shutdown signal received", serde_json::json!({}));
+        shutdown.cancel();
     });
     Ok(())
 }
@@ -86,11 +115,11 @@ pub fn install_signal_handler(
 pub async fn build_dispatcher(
     rpc: Arc<RpcClient>,
     obs: Arc<McpObservability>,
-    shutdown_flag: Arc<AtomicBool>,
+    shutdown: CancellationToken,
 ) -> Arc<McpDispatcher> {
     let tool_cache = ToolCache::new(rpc.clone());
     let resource_tracker = ResourceTracker::new(rpc.clone());
-    McpDispatcher::new(tool_cache, resource_tracker, rpc, obs, shutdown_flag)
+    McpDispatcher::new(tool_cache, resource_tracker, rpc, obs, shutdown)
 }
 
 /// Keepalive interval. Kept well under the daemon's 300s authenticated idle

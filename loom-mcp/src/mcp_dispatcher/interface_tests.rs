@@ -169,7 +169,7 @@ fn ping_returns_value_no_error_path() {
     let _ = _ck;
 }
 
-// === shutdown is fire-and-forget (sets a flag) ===
+// === shutdown is fire-and-forget (cancels the serve token) ===
 
 #[test]
 fn shutdown_signature_is_synchronous_unit() {

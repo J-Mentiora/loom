@@ -2634,12 +2634,13 @@ async fn async_main() -> Result<()> {
     // 8. Print HELLO_TOKEN to stdout .
     println!("HELLO_TOKEN={}", server.token.0);
 
-    // 9. Signal handler for graceful shutdown.
-    let shutdown = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl-C handler");
-    };
+    // 9. Signal handler for graceful shutdown. SIGTERM is what launchd
+    //    stop, systemd stop, and a plain `kill` against daemon.pid all
+    //    deliver; SIGINT covers interactive Ctrl-C. Both resolve the same
+    //    future so every routine service stop takes the graceful path
+    //    below (drain accept loop, abort reaper, remove auth artefacts)
+    //    instead of a hard kill that tears in-flight WAL appends.
+    let shutdown = shutdown_signal();
 
     // 9b. Periodic reaper sweep: idle-session eviction + zombie detection + orphan-Chromium
     //     GC on a fixed cadence so a long-running daemon under churn stays healthy without
@@ -2702,6 +2703,43 @@ async fn async_main() -> Result<()> {
     let _ = std::fs::remove_file(&pid_path);
 
     Ok(())
+}
+
+/// Future that resolves when a shutdown signal arrives: SIGINT (Ctrl-C)
+/// or — on unix — SIGTERM (the launchd/systemd/`kill` default). Fulfils
+/// the module-doc contract "Block on the accept loop until SIGINT /
+/// SIGTERM". Handler-installation failure logs and falls back to the
+/// other signal instead of panicking: an `.expect()` here would panic
+/// the shutdown future inside `SocketServer::serve`'s `select!` and
+/// tear down the accept loop.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %e, "failed to install Ctrl-C handler; relying on SIGTERM");
+            std::future::pending::<()>().await;
+        }
+    };
+    #[cfg(unix)]
+    {
+        let sigterm = async {
+            use tokio::signal::unix::{signal, SignalKind};
+            match signal(SignalKind::terminate()) {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to install SIGTERM handler; relying on Ctrl-C");
+                    std::future::pending::<()>().await;
+                }
+            }
+        };
+        tokio::select! {
+            () = ctrl_c => {}
+            () = sigterm => {}
+        }
+    }
+    #[cfg(not(unix))]
+    ctrl_c.await;
 }
 
 /// Build a WasmHostBridge. Tries to create a real `WasmHost`; if the
@@ -3674,5 +3712,42 @@ mod tests {
             serde_json::to_value(&default).unwrap(),
             "unknown policy must fall back to Default, not strip / no-op differently"
         );
+    }
+
+    // ─── Graceful shutdown signals (SIGINT + SIGTERM) ──────────
+    // `kill <daemon.pid>` (SIGTERM — what launchd stop, systemd stop and a
+    // plain `kill` deliver) must resolve the shutdown future so
+    // `SocketServer::serve` drains instead of the process being hard-killed
+    // mid-WAL-append. The tests raise a real signal at this test process:
+    // once tokio's handler is installed the default kill disposition is
+    // replaced, so the signal is observed by the stream rather than
+    // terminating the test binary (workspace tests run --test-threads=1).
+
+    #[tokio::test]
+    async fn shutdown_signal_resolves_on_sigterm() {
+        let task = tokio::spawn(shutdown_signal());
+        // Let the spawned future poll once so the handlers are registered
+        // before the signal is raised.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        unsafe {
+            libc::kill(std::process::id() as libc::pid_t, libc::SIGTERM);
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("shutdown future must resolve on SIGTERM")
+            .expect("shutdown future must not panic");
+    }
+
+    #[tokio::test]
+    async fn shutdown_signal_resolves_on_sigint() {
+        let task = tokio::spawn(shutdown_signal());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        unsafe {
+            libc::kill(std::process::id() as libc::pid_t, libc::SIGINT);
+        }
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("shutdown future must resolve on SIGINT")
+            .expect("shutdown future must not panic");
     }
 }

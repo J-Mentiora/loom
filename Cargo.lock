@@ -2402,6 +2402,7 @@ dependencies = [
  "dirs",
  "futures",
  "hex",
+ "libc",
  "loom-rpc",
  "loom-shared",
  "parking_lot",
