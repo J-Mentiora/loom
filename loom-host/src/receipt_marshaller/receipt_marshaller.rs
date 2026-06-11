@@ -16,9 +16,10 @@
 //   write latency only — assembly is in-memory string + integer ops.
 // - **Canonical JSON.** Final payload is
 //   `serde_jcs::to_string(receipt)` — never `serde_json::to_string`.
-// - **Trap-receipt fast path.** `emit_trap_receipt` is the entry point
-//   for `TrapHandler`; assembles a typed `LoomErrorCode::SurfaceTrap`
-//   receipt and queues it identically.
+// - **One receipt per action.** Trapped/aborted actions do NOT get a
+//   separate marshaller entry point: `TrapHandler`/`SessionExecutor`
+//   stamp the truthful status on the action's `ReceiptBuilder` and
+//   `WasmHost::dispatch` queues it exactly once.
 
 use crate::wit_type_marshaller::Marshaller;
 use loom_core::error::LoomError;
@@ -218,40 +219,6 @@ impl ReceiptMarshaller {
             let _ = done_tx.send(());
         });
         Ok(())
-    }
-
-    /// Trap-fast-path entrypoint. Called by `TrapHandler` to emit a
-    /// `SurfaceTrap` receipt without going through `ReceiptBuilder`.
-    pub fn emit_trap_receipt(
-        self: &Arc<Self>,
-        session_id: SessionId,
-        action_id: u64,
-        surface: String,
-        trap_code: String,
-        frames_count: u32,
-        pool: TokioHandle,
-    ) -> Result<(), LoomError> {
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        let builder = ReceiptBuilder {
-            action_id,
-            started_at_ms: now_ms,
-            finished_at_ms: now_ms,
-            status: ReceiptStatus::Trapped,
-            side_effects_count: 0,
-            host_call_count: 0,
-            error_code: Some(trap_code),
-            error_details: Some(format!("surface={surface} frames={frames_count}")),
-            ..Default::default()
-        };
-        let outcome = ActionOutcome {
-            session_id,
-            builder,
-            observed_costs: ObservedCosts::default(),
-        };
-        self.queue(outcome, pool)
     }
 
     /// Synchronous assemble step. Pure: takes a builder, returns

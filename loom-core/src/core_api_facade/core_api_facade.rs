@@ -64,6 +64,11 @@ pub struct CoreApiFacade {
     pub manifest_writer: Arc<dyn ManifestWriter>,
     pub vault: Arc<dyn Vault>,
     pub budget_enforcer: Arc<dyn BudgetEnforcer>,
+    /// Facade-level harness, seeded with `config.default_seed`. Used for
+    /// the STATELESS helpers only (`canonicalize`/`hash_canonical` +
+    /// `install_replay_mode`). Live per-action RNG/clock state is owned
+    /// by each session's own harness (`Session.determinism`, seeded from
+    /// the session's resolved seed at `LocalSessionManager::create`).
     pub determinism: Arc<DeterminismHarness>,
     pub replay_engine: Arc<dyn ReplayEngine>,
     pub startup_manager: Arc<StartupManager>,
@@ -115,7 +120,6 @@ impl CoreApiFacade {
             Arc::clone(&manifest_writer),
             Arc::clone(&vault),
             Arc::clone(&budget_enforcer),
-            Arc::clone(&determinism),
             Arc::clone(&obs),
             config.default_seed,
             sessions_root.clone(),
@@ -157,7 +161,11 @@ impl CoreApiFacade {
         self.startup_manager.perform_recovery_sweep()
     }
 
-    /// Accessor for `loom-host` to install determinism host-fns.
+    /// Accessor for the facade-level harness (stateless
+    /// canonicalize/hash helpers + replay-table install). NOT the source
+    /// of live per-action RNG/clock — `loom-host` wires
+    /// `HostState.determinism` from the session's own harness so
+    /// concurrent sessions never share RNG state.
     pub fn determinism(&self) -> Arc<DeterminismHarness> {
         Arc::clone(&self.determinism)
     }

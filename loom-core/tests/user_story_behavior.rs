@@ -131,13 +131,11 @@ fn make_session_manager(
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
     LocalSessionManager::new(
         cs,
         mw,
         v,
         be,
-        dh,
         obs,
         0,
         std::path::PathBuf::from("/tmp/loom-test/sessions"),

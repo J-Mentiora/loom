@@ -7,7 +7,6 @@ use super::session_manager::{
 };
 use loom_core::budget_enforcer::{BudgetEnforcer, BudgetLimits, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
-use loom_core::determinism_harness::DeterminismHarness;
 use loom_core::error::LoomError;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
@@ -59,13 +58,11 @@ fn fixture() -> Arc<LocalSessionManager> {
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
     LocalSessionManager::new(
         cs,
         mw,
         v,
         be,
-        dh,
         obs,
         0,
         PathBuf::from("/tmp/loom-test/sessions"),

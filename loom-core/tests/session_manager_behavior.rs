@@ -17,7 +17,6 @@
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
-use loom_core::determinism_harness::DeterminismHarness;
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
@@ -74,13 +73,11 @@ fn make_sm(tmp: &str) -> Arc<LocalSessionManager> {
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
     LocalSessionManager::new(
         cs,
         mw,
         v,
         be,
-        dh,
         obs,
         0,
         std::path::PathBuf::from("/tmp/loom-test/sessions"),

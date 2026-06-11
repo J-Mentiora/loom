@@ -5,7 +5,6 @@ use crate::budget_enforcer::{
     Action, BudgetEnforcer, BudgetLimits, KillCallback, ResourceKind, SessionCounters,
 };
 use crate::content_store::{ContentRef, ContentStore, GcReport};
-use crate::determinism_harness::DeterminismHarness;
 use crate::error::LoomError;
 use crate::manifest_writer::{AuditKind, ManifestEntry, ManifestWriter, SessionId, WriterHandle};
 use crate::observability::Observability;
@@ -270,13 +269,14 @@ impl ManifestWriter for MockManifestWriter {
 /// - caller-supplied manifest_writer (allows latency injection in tests)
 /// - BenchmarkVault (no-op)
 /// - MockBudgetEnforcer (no-op)
-/// - DeterminismHarness (virtual clock, seed=42)
 /// - Observability (logs to /dev/null, otel disabled)
+///
+/// Each created session mints its own DeterminismHarness (virtual
+/// clock + ChaCha20) seeded with default_seed=42.
 pub fn build_session_manager(manifest_writer: Arc<dyn ManifestWriter>) -> Arc<LocalSessionManager> {
     let content_store = BenchmarkContentStore::new() as Arc<dyn ContentStore>;
     let vault = Arc::new(BenchmarkVault) as Arc<dyn Vault>;
     let budget_enforcer = Arc::new(MockBudgetEnforcer) as Arc<dyn BudgetEnforcer>;
-    let determinism = Arc::new(DeterminismHarness::new(42, manifest_writer.clone()));
     let obs = Observability::new(PathBuf::from("/dev/null"), false);
 
     LocalSessionManager::new(
@@ -284,7 +284,6 @@ pub fn build_session_manager(manifest_writer: Arc<dyn ManifestWriter>) -> Arc<Lo
         manifest_writer,
         vault,
         budget_enforcer,
-        determinism,
         obs,
         42, // default_seed for benchmarks
         PathBuf::from("/tmp/loom-bench/sessions"),

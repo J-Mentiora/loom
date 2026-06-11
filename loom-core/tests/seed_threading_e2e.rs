@@ -12,7 +12,6 @@
 
 use loom_core::budget_enforcer::{BudgetEnforcer, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
-use loom_core::determinism_harness::DeterminismHarness;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestEntry, ManifestWriter};
 use loom_core::observability::Observability;
 use loom_core::session_manager::{LocalSessionManager, SessionCreateOpts};
@@ -64,13 +63,11 @@ fn make_sm(tmp: &str, default_seed: u64) -> Arc<LocalSessionManager> {
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    let dh = Arc::new(DeterminismHarness::new(default_seed, mw.clone()));
     LocalSessionManager::new(
         cs,
         mw,
         v,
         be,
-        dh,
         obs,
         default_seed,
         std::path::PathBuf::from("/tmp/loom-test/sessions"),
@@ -315,4 +312,99 @@ fn seed_zero_is_not_a_sentinel_for_default() {
         "explicit Seed(0) MUST NOT collapse to default_seed=99"
     );
     assert_ne!(session.seed, Seed(99));
+}
+
+// === Per-session DeterminismHarness (audit: the harness used to be a
+//     daemon-wide singleton seeded once with default_seed, so the host
+//     RNG ignored --seed and interleaved draws across concurrent
+//     sessions) ===
+
+#[test]
+fn explicit_seed_seeds_the_sessions_own_harness() {
+    // `--seed 42` must reach the session's host-RNG harness — not just
+    // the in-Chromium JS template. The Header records the same resolved
+    // value, so replay reconstructs an identically-seeded harness.
+    let tmp = tempfile::tempdir().unwrap();
+    let sm = make_sm(tmp.path().to_str().unwrap(), 99);
+    let with_seed = sm.get(sm.create(opts(Some(42))).unwrap()).unwrap();
+    assert_eq!(
+        with_seed.determinism.seed(),
+        42,
+        "Session.determinism must be seeded with the session's resolved seed"
+    );
+    // Documented default: no explicit --seed → a FRESH harness seeded
+    // with the manager's default_seed (still per-session state).
+    let defaulted = sm.get(sm.create(opts(None)).unwrap()).unwrap();
+    assert_eq!(
+        defaulted.determinism.seed(),
+        99,
+        "sessions without --seed get a harness seeded with default_seed"
+    );
+    assert!(
+        !Arc::ptr_eq(&with_seed.determinism, &defaulted.determinism),
+        "each session must own a distinct harness instance (no shared singleton)"
+    );
+}
+
+#[test]
+fn concurrent_sessions_get_independent_reproducible_rng_streams() {
+    // RUN 1: two sessions with different seeds draw concurrently from
+    // two threads — with a shared singleton harness the interleaving
+    // would split one global ChaCha20 stream between them.
+    let tmp = tempfile::tempdir().unwrap();
+    let sm = make_sm(tmp.path().to_str().unwrap(), 99);
+    let a = sm.get(sm.create(opts(Some(7))).unwrap()).unwrap();
+    let b = sm.get(sm.create(opts(Some(1234))).unwrap()).unwrap();
+    let (a_th, b_th) = (Arc::clone(&a), Arc::clone(&b));
+    let ta = std::thread::spawn(move || {
+        (0..256)
+            .map(|_| a_th.determinism.rng_next())
+            .collect::<Vec<u64>>()
+    });
+    let tb = std::thread::spawn(move || {
+        (0..256)
+            .map(|_| b_th.determinism.rng_next())
+            .collect::<Vec<u64>>()
+    });
+    let run1_a = ta.join().unwrap();
+    let run1_b = tb.join().unwrap();
+    assert_ne!(
+        run1_a, run1_b,
+        "different seeds must yield different streams"
+    );
+
+    // RUN 2: same seeds, fresh manager, plain sequential draws — must
+    // reproduce run 1 exactly, proving the concurrent interleaving in
+    // run 1 could not perturb either session's stream.
+    let tmp2 = tempfile::tempdir().unwrap();
+    let sm2 = make_sm(tmp2.path().to_str().unwrap(), 99);
+    let a_again = sm2.get(sm2.create(opts(Some(7))).unwrap()).unwrap();
+    let b_again = sm2.get(sm2.create(opts(Some(1234))).unwrap()).unwrap();
+    let run2_a: Vec<u64> = (0..256).map(|_| a_again.determinism.rng_next()).collect();
+    let run2_b: Vec<u64> = (0..256).map(|_| b_again.determinism.rng_next()).collect();
+    assert_eq!(
+        run1_a, run2_a,
+        "seed=7 stream must be reproducible regardless of concurrent sessions"
+    );
+    assert_eq!(
+        run1_b, run2_b,
+        "seed=1234 stream must be reproducible regardless of concurrent sessions"
+    );
+}
+
+#[test]
+fn session_virtual_clocks_do_not_bleed_across_sessions() {
+    // The singleton harness also shared action_clock_ms, so one
+    // session's begin_action() advanced every session's clock.
+    let tmp = tempfile::tempdir().unwrap();
+    let sm = make_sm(tmp.path().to_str().unwrap(), 99);
+    let a = sm.get(sm.create(opts(Some(7))).unwrap()).unwrap();
+    let b = sm.get(sm.create(opts(Some(7))).unwrap()).unwrap();
+    a.determinism.begin_action(50);
+    assert_eq!(a.determinism.clock_now(), 50);
+    assert_eq!(
+        b.determinism.clock_now(),
+        0,
+        "advancing one session's virtual clock must not move another session's"
+    );
 }

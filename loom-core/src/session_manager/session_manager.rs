@@ -244,6 +244,18 @@ pub struct Session {
     /// shim wire, target_manager, determinism_injector, JS template)
     /// carry concrete `Seed(u64)` only.
     pub seed: Seed,
+    /// Per-session determinism harness (virtual clock + ChaCha20 RNG),
+    /// seeded with the RESOLVED `seed` above. The same resolved value is
+    /// recorded in the manifest Header, and replay re-creates its session
+    /// from that Header seed — so the harness seed is authoritative and
+    /// identical on record and replay. Sessions created without an
+    /// explicit `--seed` get a harness seeded with the facade's
+    /// `default_seed` (each such session starts a FRESH stream from that
+    /// seed — deterministic, and isolated from every other session).
+    /// Threaded into `HostState.determinism` per dispatch, so the
+    /// `rng_next_u64`/`clock_now` host fns never interleave draws across
+    /// concurrent sessions.
+    pub determinism: Arc<DeterminismHarness>,
     /// Per-session Unix epoch milliseconds. Substituted into the shim
     /// JS template's `Date.now` constant. Defaults to `now_ms()` at
     /// session create when `opts.started_at_ms_override` is not set,
@@ -361,7 +373,6 @@ pub struct LocalSessionManager {
     pub(crate) manifest_writer: Arc<dyn ManifestWriter>,
     pub(crate) vault: Arc<dyn Vault>,
     pub(crate) budget_enforcer: Arc<dyn BudgetEnforcer>,
-    pub(crate) determinism: Arc<DeterminismHarness>,
     pub(crate) obs: Arc<Observability>,
     /// Fallback seed for sessions created without an explicit
     /// `SessionCreateOpts.seed`. Read once from the daemon config at
@@ -381,17 +392,14 @@ pub struct LocalSessionManager {
 }
 
 impl LocalSessionManager {
-    // 8 args is one over clippy's threshold. Refactoring to a Config
-    // struct would reshape every call site (tests + benchmarks +
-    // CoreApiFacade) for no semantic gain — the constructor stays
-    // dependency-injected per the existing pattern.
-    #[allow(clippy::too_many_arguments)]
+    // No facade-level DeterminismHarness dependency: each session mints
+    // its own harness at `create()` (seeded with the session's resolved
+    // seed) so concurrent sessions never share RNG/clock state.
     pub fn new(
         content_store: Arc<dyn ContentStore>,
         manifest_writer: Arc<dyn ManifestWriter>,
         vault: Arc<dyn Vault>,
         budget_enforcer: Arc<dyn BudgetEnforcer>,
-        determinism: Arc<DeterminismHarness>,
         obs: Arc<Observability>,
         default_seed: u64,
         sessions_root: std::path::PathBuf,
@@ -403,7 +411,6 @@ impl LocalSessionManager {
             manifest_writer,
             vault,
             budget_enforcer,
-            determinism,
             obs,
             default_seed,
             sessions_root,

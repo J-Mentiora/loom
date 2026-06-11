@@ -64,7 +64,6 @@ fn fixture() -> LocalReplayEngine {
         mw.clone(),
         v,
         be,
-        dh.clone(),
         obs.clone(),
         0,
         std::path::PathBuf::from("/tmp/loom-test/sessions"),

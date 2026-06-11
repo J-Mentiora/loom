@@ -16,7 +16,6 @@
 
 use loom_core::budget_enforcer::{BudgetEnforcer, BudgetLimits, LocalBudgetEnforcer};
 use loom_core::content_store::{ContentStore, LocalContentStore};
-use loom_core::determinism_harness::DeterminismHarness;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter};
 use loom_core::observability::Observability;
 use loom_core::session_manager::{LocalSessionManager, SessionCreateOpts, SessionStatus};
@@ -72,8 +71,7 @@ fn make_env() -> Env {
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
-    let sm = LocalSessionManager::new(cs, mw, v, be, dh, obs, 0, root.join("sessions"));
+    let sm = LocalSessionManager::new(cs, mw, v, be, obs, 0, root.join("sessions"));
     Env { sm, _tmp: tmp }
 }
 

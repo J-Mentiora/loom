@@ -98,7 +98,18 @@ impl LocalSessionManager {
             !no_determinism,
         )?;
 
-        let tape_writer = self.determinism.new_tape_writer();
+        // Per-session determinism harness, seeded with the RESOLVED seed
+        // (explicit --seed N, else default_seed). The same resolved value
+        // was recorded in the manifest Header above, and the replay engine
+        // re-creates its session with that Header seed — so the harness
+        // seed is authoritative and identical on record and replay, while
+        // concurrent sessions own disjoint ChaCha20 streams + virtual
+        // clocks (no cross-session interleaving; --seed actually isolates).
+        let determinism = Arc::new(crate::determinism_harness::DeterminismHarness::new(
+            seed.0,
+            Arc::clone(&self.manifest_writer),
+        ));
+        let tape_writer = determinism.new_tape_writer();
         let counters = Arc::new(SessionCounters::default());
         let scope = SessionScope::new();
         let session = Arc::new(Session {
@@ -118,6 +129,7 @@ impl LocalSessionManager {
             no_blocklist,
             no_determinism,
             seed,
+            determinism,
             epoch_ms,
             profile,
             downloads_dir,

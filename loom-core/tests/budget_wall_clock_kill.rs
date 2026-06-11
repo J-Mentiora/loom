@@ -14,7 +14,6 @@ use loom_core::budget_enforcer::{
     BudgetEnforcer, BudgetLimits, KillReason, LocalBudgetEnforcer, ResourceKind,
 };
 use loom_core::content_store::{ContentStore, LocalContentStore};
-use loom_core::determinism_harness::DeterminismHarness;
 use loom_core::error::LoomErrorCode;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
@@ -74,13 +73,11 @@ fn make_env() -> Env {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be_concrete = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = be_concrete.clone();
-    let dh = Arc::new(DeterminismHarness::new(42, mw.clone()));
     let sm = LocalSessionManager::new(
         cs,
         mw,
         v,
         be.clone(),
-        dh,
         obs,
         0,
         std::path::PathBuf::from("/tmp/loom-test/sessions"),

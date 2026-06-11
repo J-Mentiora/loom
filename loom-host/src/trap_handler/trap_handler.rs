@@ -1,11 +1,19 @@
 // TrapHandler — catches `wasmtime::Trap`, resolves `.dwp` debug info,
-// converts to `LoomErrorCode::SurfaceTrap` typed receipt.
+// converts to `LoomErrorCode::SurfaceTrap` + stamps the trap verdict on
+// the action's receipt builder.
 //
 // # Contract semantics
 // - **Trap containment.** Wasmtime surface traps NEVER unwind into the
 //   daemon. They are caught at the `Func::call` boundary inside
 //   `SessionExecutor`, handed to this module, and converted into a
-//   typed `LoomError::SurfaceTrap` + queued trap receipt.
+//   typed `LoomError::SurfaceTrap`.
+// - **Exactly one receipt per action.** `handle_trap` does NOT append a
+//   receipt of its own — it stamps `status = Trapped` + the trap
+//   details onto the action's `ReceiptBuilder`, and `WasmHost::dispatch`
+//   queues that builder ONCE via `ReceiptMarshaller::queue` (preserving
+//   per-session append order). A second, handler-side append would
+//   produce two ActionReceipts with the same action_id racing on the
+//   manifest hash chain — one of them falsely `status=ok`.
 // - **`.dwp` debug-info resolution.** Per-surface `.dwp` companion file
 //   sits next to the `.cwasm` artifact in
 //   `~/Library/Application Support/loom/surfaces/<name>.dwp`. If
@@ -16,17 +24,16 @@
 //   `LoomError` upwards as the dispatch result.
 // - **Observability hook.** Every trap event is logged via
 //   `HostObservability::record_trap_event` with the resolved frames
-//   before the receipt is queued.
+//   before the builder is stamped.
 
 use crate::error_mapper::TrapFrame;
 use crate::host_observability::HostObservability;
-use crate::receipt_marshaller::ReceiptMarshaller;
+use crate::receipt_marshaller::{ReceiptBuilder, ReceiptStatus};
 use loom_core::error::LoomError;
 use loom_core::manifest_writer::SessionId;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::runtime::Handle as TokioHandle;
 
 /// Per-trap context. Built by `SessionExecutor` and handed to
 /// `handle_trap`.
@@ -41,25 +48,23 @@ pub struct TrapContext {
 
 pub struct TrapHandler {
     pub(crate) obs: Arc<HostObservability>,
-    pub(crate) receipts: Arc<ReceiptMarshaller>,
 }
 
 impl TrapHandler {
-    pub fn new(obs: Arc<HostObservability>, receipts: Arc<ReceiptMarshaller>) -> Arc<Self> {
-        Arc::new(Self { obs, receipts })
+    pub fn new(obs: Arc<HostObservability>) -> Arc<Self> {
+        Arc::new(Self { obs })
     }
 
     /// Convert a wasmtime trap to a typed `LoomError::SurfaceTrap` and
-    /// queue a trap receipt. Returns the LoomError; `SessionExecutor`
-    /// returns it as the dispatch failure.
-    ///
-    /// The `pool` is the session's `receipt_pool` —
-    /// the trap-receipt spawn happens off the dispatch task.
+    /// stamp the trap verdict on the action's receipt `builder`. Returns
+    /// the LoomError; `SessionExecutor` returns it inside
+    /// `ActionOutcome::Trapped` and `WasmHost::dispatch` queues the
+    /// stamped builder as the action's single receipt.
     pub fn handle_trap(
         self: &Arc<Self>,
         trap: wasmtime::Trap,
         ctx: TrapContext,
-        pool: TokioHandle,
+        builder: &mut ReceiptBuilder,
     ) -> LoomError {
         let frames = self
             .resolve_frames(ctx.dwp_path.as_ref(), &[])
@@ -79,22 +84,21 @@ impl TrapHandler {
             ctx.surface.clone(),
             frames.clone(),
         );
-        let this = self.clone();
-        let session_id = ctx.session_id.clone();
-        let action_id = ctx.action_id;
-        let surface = ctx.surface.clone();
-        let err_code = format!("{:?}", err.code);
-        let pool2 = pool.clone();
-        pool.spawn(async move {
-            let _ = this.receipts.emit_trap_receipt(
-                session_id,
-                action_id,
-                surface,
-                err_code,
-                frames.len() as u32,
-                pool2,
-            );
-        });
+        // Trap verdict on the single per-action receipt: truthful status
+        // + the details the old handler-side trap receipt carried.
+        // Timestamps are deliberately NOT touched: the builder keeps the
+        // executor's deterministic per-action clock values
+        // (started = action_id * DETERMINISTIC_ACTION_DELTA_MS,
+        // finished = (action_id + 1) * DELTA under determinism; the
+        // per-session virtual clock under --no-determinism) — the same
+        // source ordinary receipts use. Wall-clock here would serialize
+        // INTO the hash-chained receipt_canonical_bytes (hashable_line
+        // projects only the WAL line's top-level fields, never inside
+        // the receipt blob), so a deterministic trap reproduced in two
+        // same-seed runs would diverge the chain (NFR-DET-01).
+        builder.status = ReceiptStatus::Trapped;
+        builder.error_code = Some(format!("{:?}", err.code));
+        builder.error_details = Some(format!("surface={} frames={}", ctx.surface, frames.len()));
         err
     }
 

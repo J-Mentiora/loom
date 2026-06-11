@@ -1243,6 +1243,9 @@ impl WasmHostBridge for WasmBridge {
             abort_signal: session.abort_notify.clone(),
             kill_reason: session.kill_reason.clone(),
             seed: session.seed,
+            // The session's OWN harness — per-session RNG/clock isolation
+            // (never the facade singleton).
+            determinism: session.determinism.clone(),
             epoch_ms: session.epoch_ms,
             no_blocklist: session.no_blocklist,
             // settle-capture (4b): thread the determinism toggle through.
