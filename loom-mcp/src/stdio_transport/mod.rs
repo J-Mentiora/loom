@@ -26,21 +26,48 @@ where
         Self { reader, writer }
     }
 
+    /// Drive the NDJSON request loop until stdin EOF.
+    ///
+    /// Requests are dispatched CONCURRENTLY — one task per frame, bounded
+    /// by `MAX_CONCURRENT_REQUESTS` — so a long `tools/call` (a slow page
+    /// navigate) no longer head-of-line blocks `ping`/`initialize`
+    /// (audit 2026-06-10). MCP correlates responses by `id`, so
+    /// out-of-order responses are legal. Stdout stays well-formed because
+    /// a single writer task owns the writer: dispatch tasks hand finished
+    /// responses to it over an mpsc channel and frames are written whole,
+    /// never interleaved.
+    ///
+    /// On EOF the loop stops reading, drops its channel sender, and awaits
+    /// the writer task — which drains every already-dispatched response
+    /// (the in-flight tasks hold sender clones) before the transport
+    /// returns. Cancellation via `mcp_main::serve_until_shutdown` is
+    /// unchanged: dropping this future abandons the loop immediately while
+    /// the detached tasks die with the process.
     pub async fn run(self, dispatch: Dispatch) -> Result<(), LoomError> {
         let mut buf_reader = BufReader::new(self.reader);
         let mut writer = self.writer;
         let mut line = String::new();
 
-        loop {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<McpResponse>(MAX_CONCURRENT_REQUESTS);
+        let writer_task: tokio::task::JoinHandle<Result<(), LoomError>> =
+            tokio::spawn(async move {
+                while let Some(resp) = rx.recv().await {
+                    Self::write_frame(&mut writer, &resp).await?;
+                }
+                Ok(())
+            });
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_REQUESTS));
+
+        let read_result: Result<(), LoomError> = loop {
             line.clear();
-            let n = buf_reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?;
+            let n = match buf_reader.read_line(&mut line).await {
+                Ok(n) => n,
+                Err(e) => break Err(ErrorMapper::from_rpc_io(&e.to_string())),
+            };
 
             if n == 0 {
                 // EOF
-                break;
+                break Ok(());
             }
             if n == 1 && line == "\n" {
                 tracing::warn!("blank MCP frame, skipping");
@@ -60,16 +87,41 @@ where
                             data: None,
                         }),
                     };
-                    Self::write_frame(&mut writer, &err_resp).await?;
+                    // A send failure means the writer task died (stdout
+                    // closed/broken): the client is gone, stop serving.
+                    if tx.send(err_resp).await.is_err() {
+                        break Err(ErrorMapper::from_rpc_io("stdout writer closed"));
+                    }
                     continue;
                 }
             };
 
-            if let Some(resp) = dispatch(req).await {
-                Self::write_frame(&mut writer, &resp).await?;
-            }
+            // Backpressure: at MAX_CONCURRENT_REQUESTS in-flight dispatches,
+            // pause reading until one completes. The semaphore is never
+            // closed, so acquire_owned can only fail if it were — treat
+            // that defensively as shutdown.
+            let Ok(permit) = semaphore.clone().acquire_owned().await else {
+                break Ok(());
+            };
+            let dispatch = dispatch.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                if let Some(resp) = dispatch(req).await {
+                    // Writer gone (stdout closed) — nothing to do but drop
+                    // the response; the read loop notices on its next send.
+                    let _ = tx.send(resp).await;
+                }
+            });
+        };
+
+        // Stop accepting new frames but drain in-flight ones: the writer
+        // task exits once every sender clone (loop + dispatch tasks) drops.
+        drop(tx);
+        match writer_task.await {
+            Ok(write_result) => read_result.and(write_result),
+            Err(join_err) => read_result.and(Err(ErrorMapper::from_rpc_io(&join_err.to_string()))),
         }
-        Ok(())
     }
 
     pub async fn write_frame(writer: &mut W, response: &McpResponse) -> Result<(), LoomError> {

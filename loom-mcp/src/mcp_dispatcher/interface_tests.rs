@@ -217,6 +217,13 @@ impl JsonRpcCaller for EnvelopeFakeCaller {
 }
 
 fn dispatcher_with_fake_caller(caller: Box<dyn JsonRpcCaller + Send + Sync>) -> Arc<McpDispatcher> {
+    dispatcher_with_options(caller, super::SessionOptions::default())
+}
+
+fn dispatcher_with_options(
+    caller: Box<dyn JsonRpcCaller + Send + Sync>,
+    options: super::SessionOptions,
+) -> Arc<McpDispatcher> {
     let rpc: Arc<RpcClient> = RpcClient::with_caller_for_test(caller);
     McpDispatcher::new(
         crate::tool_cache::ToolCache::new(rpc.clone()),
@@ -224,7 +231,576 @@ fn dispatcher_with_fake_caller(caller: Box<dyn JsonRpcCaller + Send + Sync>) -> 
         rpc,
         crate::mcp_observability::McpObservability::new(true),
         tokio_util::sync::CancellationToken::new(),
+        options,
     )
+}
+
+// === Implicit-session determinism options + self-heal (audit 2026-06-10:
+// the idle reaper evicted the implicit session and every subsequent tool
+// call failed with session_not_found forever; and seed/clock_anchor were
+// unreachable over MCP). ===
+
+use super::mcp_dispatcher::SessionOptions;
+use loom_rpc::error::LoomErrorCode;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+/// Records every (method, params) pair and serves a scripted daemon:
+/// `rpc.schemas` → a one-method registry (web.navigate), `session.create`
+/// → sequential ids `fixture-session-<n>`, `web.navigate` → the scripted
+/// error for ids in `dead`, otherwise a receipt-shaped Ok.
+struct RecordingFakeCaller {
+    calls: Mutex<Vec<(String, serde_json::Value)>>,
+    created: std::sync::atomic::AtomicUsize,
+    dead: Mutex<HashMap<String, LoomErrorCode>>,
+}
+
+impl RecordingFakeCaller {
+    fn new(dead: HashMap<String, LoomErrorCode>) -> Self {
+        Self {
+            calls: Mutex::new(vec![]),
+            created: std::sync::atomic::AtomicUsize::new(0),
+            dead: Mutex::new(dead),
+        }
+    }
+
+    fn calls_for(
+        calls: &Mutex<Vec<(String, serde_json::Value)>>,
+        method: &str,
+    ) -> Vec<serde_json::Value> {
+        calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(m, _)| m == method)
+            .map(|(_, p)| p.clone())
+            .collect()
+    }
+}
+
+#[async_trait::async_trait]
+impl JsonRpcCaller for RecordingFakeCaller {
+    async fn raw_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, LoomError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((method.to_string(), params.clone()));
+        match method {
+            "rpc.schemas" => Ok(json!({
+                "methods": [{
+                    "method": "web.navigate",
+                    "request": {
+                        "type": "object",
+                        "properties": {
+                            "session": { "type": "string" },
+                            "url": { "type": "string" }
+                        },
+                        "required": ["session", "url"]
+                    },
+                    "response": { "type": "object" }
+                }],
+                "source_wit_sha256": null
+            })),
+            "session.create" => {
+                let n = self
+                    .created
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    + 1;
+                Ok(json!({
+                    "session_id": format!("fixture-session-{n}"),
+                    "status": "active",
+                    "created_at_ms": 1_700_000_000_000_u64 + n as u64,
+                }))
+            }
+            "session.close" => Ok(json!({
+                "session_id": params.get("session_id").cloned().unwrap_or_default(),
+                "status": "closed",
+                "created_at_ms": 0,
+            })),
+            "web.navigate" => {
+                let sid = params
+                    .get("session")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                if let Some(code) = self.dead.lock().unwrap().get(sid) {
+                    return Err(LoomError::new(*code, format!("session gone: {sid}")));
+                }
+                Ok(json!({ "outcome_hash": "fixture-outcome", "session": sid }))
+            }
+            "session.diff" => Ok(json!({
+                "a": params.get("a").cloned().unwrap_or_default(),
+                "b": params.get("b").cloned().unwrap_or_default(),
+                "diff": {
+                    "field_diffs": [],
+                    "screenshot_diffs": [],
+                    "action_count_delta": 0,
+                },
+            })),
+            "session.validate" => Ok(json!({
+                "session_id": params.get("session_id").cloned().unwrap_or_default(),
+                "passed": true,
+                "reasons": [],
+            })),
+            "session.export" => Ok(json!({
+                "session_id": params.get("session_id").cloned().unwrap_or_default(),
+                "format": params.get("format").cloned().unwrap_or_default(),
+                "artifact_ref": "fixture-artifact-ref",
+            })),
+            other => Err(LoomError::new(
+                loom_rpc::error::LoomErrorCode::InvalidArgument,
+                format!("unexpected method in fake: {other}"),
+            )),
+        }
+    }
+}
+
+/// Build a dispatcher over a `RecordingFakeCaller` with a primed tool
+/// cache (the advertised-tool gate requires web.navigate to be listed).
+async fn primed_dispatcher(
+    options: SessionOptions,
+    dead: HashMap<String, LoomErrorCode>,
+) -> (Arc<McpDispatcher>, Arc<RecordingFakeCaller>) {
+    let caller = Arc::new(RecordingFakeCaller::new(dead));
+    let dispatcher = dispatcher_with_options(Box::new(SharedCaller(caller.clone())), options);
+    dispatcher.prime_tool_cache().await.expect("prime succeeds");
+    (dispatcher, caller)
+}
+
+/// Box-able adapter so the test can keep a handle on the shared caller.
+struct SharedCaller(Arc<RecordingFakeCaller>);
+
+#[async_trait::async_trait]
+impl JsonRpcCaller for SharedCaller {
+    async fn raw_call(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, LoomError> {
+        self.0.raw_call(method, params).await
+    }
+}
+
+fn navigate_params() -> ToolsCallParams {
+    ToolsCallParams {
+        name: "loom.web.navigate".into(),
+        arguments: json!({ "url": "https://example.test" }),
+    }
+}
+
+#[tokio::test]
+async fn implicit_session_create_forwards_seed_clock_anchor_profile() {
+    let options = SessionOptions {
+        seed: Some(42),
+        clock_anchor: Some(1_700_000_000_000),
+        profile: Some("full".into()),
+    };
+    let (dispatcher, caller) = primed_dispatcher(options, HashMap::new()).await;
+    let result = dispatcher.tools_call(navigate_params()).await;
+    assert!(!result.is_error, "navigate must succeed: {result:?}");
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates,
+        vec![json!({ "profile": "full", "seed": 42, "clock_anchor": 1_700_000_000_000_u64 })],
+        "env-derived options must reach session.create"
+    );
+}
+
+#[tokio::test]
+async fn implicit_session_create_with_default_options_is_unchanged() {
+    // Acceptance: no env vars set → byte-identical wire behavior to the
+    // pre-feature dispatcher (`{"profile":"standard"}`, nothing else).
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    let result = dispatcher.tools_call(navigate_params()).await;
+    assert!(!result.is_error, "navigate must succeed: {result:?}");
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(creates, vec![json!({ "profile": "standard" })]);
+}
+
+#[test]
+fn session_options_parse_valid_invalid_and_empty_values() {
+    assert_eq!(
+        SessionOptions::from_values(None, None, None).unwrap(),
+        SessionOptions::default()
+    );
+    assert_eq!(
+        SessionOptions::from_values(
+            Some("42".into()),
+            Some("1700000000000".into()),
+            Some("standard".into())
+        )
+        .unwrap(),
+        SessionOptions {
+            seed: Some(42),
+            clock_anchor: Some(1_700_000_000_000),
+            profile: Some("standard".into()),
+        }
+    );
+    // Shell `VAR=` (empty/whitespace) means unset, not an error.
+    assert_eq!(
+        SessionOptions::from_values(Some(String::new()), Some("  ".into()), Some(String::new()))
+            .unwrap(),
+        SessionOptions::default()
+    );
+    // Malformed numerics fail loudly — a silently-dropped seed would
+    // yield non-deterministic captures that look deterministic.
+    let err = SessionOptions::from_values(Some("not-a-number".into()), None, None).unwrap_err();
+    assert_eq!(err.code, LoomErrorCode::InvalidArgument);
+    assert!(err.message.contains("LOOM_MCP_SESSION_SEED"), "{err}");
+    let err = SessionOptions::from_values(None, Some("-5".into()), None).unwrap_err();
+    assert!(
+        err.message.contains("LOOM_MCP_SESSION_CLOCK_ANCHOR"),
+        "{err}"
+    );
+}
+
+#[test]
+fn session_options_from_env_reads_process_env() {
+    // Safe under the workspace's `--test-threads=1` discipline; these
+    // vars are only read here and in `mcp_main::run`.
+    std::env::set_var(super::ENV_SESSION_SEED, "7");
+    std::env::set_var(super::ENV_SESSION_CLOCK_ANCHOR, "1700000000001");
+    std::env::set_var(super::ENV_SESSION_PROFILE, "standard");
+    let opts = SessionOptions::from_env().unwrap();
+    std::env::remove_var(super::ENV_SESSION_SEED);
+    std::env::remove_var(super::ENV_SESSION_CLOCK_ANCHOR);
+    std::env::remove_var(super::ENV_SESSION_PROFILE);
+    assert_eq!(
+        opts,
+        SessionOptions {
+            seed: Some(7),
+            clock_anchor: Some(1_700_000_000_001),
+            profile: Some("standard".into()),
+        }
+    );
+    assert_eq!(
+        SessionOptions::from_env().unwrap(),
+        SessionOptions::default()
+    );
+}
+
+#[tokio::test]
+async fn evicted_implicit_session_recreates_with_same_options_and_retries() {
+    for gone in [
+        LoomErrorCode::SessionNotFound,
+        LoomErrorCode::SessionClosed,
+        LoomErrorCode::SessionAborted,
+    ] {
+        let options = SessionOptions {
+            seed: Some(9),
+            clock_anchor: None,
+            profile: None,
+        };
+        let dead = HashMap::from([("fixture-session-1".to_string(), gone)]);
+        let (dispatcher, caller) = primed_dispatcher(options, dead).await;
+        let result = dispatcher.tools_call(navigate_params()).await;
+        assert!(
+            !result.is_error,
+            "self-heal must make the call succeed for {gone:?}: {result:?}"
+        );
+        let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+        assert_eq!(creates.len(), 2, "evicted session must be recreated once");
+        assert_eq!(
+            creates[0], creates[1],
+            "recreate must reuse the same options"
+        );
+        let navigates = RecordingFakeCaller::calls_for(&caller.calls, "web.navigate");
+        assert_eq!(navigates.len(), 2, "the failed call must be retried once");
+        assert_eq!(
+            navigates[1].get("session").and_then(|v| v.as_str()),
+            Some("fixture-session-2"),
+            "the retry must carry the fresh session id"
+        );
+    }
+}
+
+#[tokio::test]
+async fn self_heal_retries_exactly_once_then_surfaces_the_error() {
+    let dead = HashMap::from([
+        (
+            "fixture-session-1".to_string(),
+            LoomErrorCode::SessionNotFound,
+        ),
+        (
+            "fixture-session-2".to_string(),
+            LoomErrorCode::SessionNotFound,
+        ),
+    ]);
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), dead).await;
+    let result = dispatcher.tools_call(navigate_params()).await;
+    assert!(result.is_error, "second failure must surface, not loop");
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "session.create").len(),
+        2,
+        "exactly one heal-recreate"
+    );
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "web.navigate").len(),
+        2,
+        "exactly one retry"
+    );
+}
+
+#[tokio::test]
+async fn caller_pinned_session_is_never_healed() {
+    let dead = HashMap::from([("user-pinned".to_string(), LoomErrorCode::SessionNotFound)]);
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), dead).await;
+    let result = dispatcher
+        .tools_call(ToolsCallParams {
+            name: "loom.web.navigate".into(),
+            arguments: json!({ "session": "user-pinned", "url": "https://example.test" }),
+        })
+        .await;
+    assert!(result.is_error, "pinned-session failure must surface");
+    assert!(
+        RecordingFakeCaller::calls_for(&caller.calls, "session.create").is_empty(),
+        "a caller-pinned session is not ours to recreate"
+    );
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "web.navigate").len(),
+        1,
+        "no retry for a pinned session"
+    );
+}
+
+#[tokio::test]
+async fn non_session_errors_do_not_trigger_recreate() {
+    let dead = HashMap::from([(
+        "fixture-session-1".to_string(),
+        LoomErrorCode::InvalidArgument,
+    )]);
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), dead).await;
+    let result = dispatcher.tools_call(navigate_params()).await;
+    assert!(result.is_error);
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "session.create").len(),
+        1,
+        "a page/argument error must not churn the implicit session"
+    );
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "web.navigate").len(),
+        1
+    );
+}
+
+// === loom.session.* tools: the determinism/session surface over MCP
+// (reset/info/diff/validate/export; schema-driven, server-local) ===
+
+use super::mcp_dispatcher::{
+    TOOL_SESSION_DIFF, TOOL_SESSION_EXPORT, TOOL_SESSION_INFO, TOOL_SESSION_RESET,
+    TOOL_SESSION_VALIDATE,
+};
+
+/// Parse the JSON receipt out of a successful ToolResult's text block.
+fn result_json(result: &ToolResult) -> serde_json::Value {
+    assert!(!result.is_error, "expected success: {result:?}");
+    match &result.content[0] {
+        crate::error_mapper::McpContent::Text { text } => {
+            serde_json::from_str(text).expect("text block must be JSON")
+        }
+        other => panic!("expected text content, got {other:?}"),
+    }
+}
+
+fn call(name: &str, arguments: serde_json::Value) -> ToolsCallParams {
+    ToolsCallParams {
+        name: name.into(),
+        arguments,
+    }
+}
+
+#[tokio::test]
+async fn tools_list_includes_server_local_session_tools() {
+    let (dispatcher, _caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    let names: Vec<String> = dispatcher
+        .tools_list()
+        .await
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert!(
+        names.contains(&"loom.web.navigate".to_string()),
+        "{names:?}"
+    );
+    for tool in [
+        TOOL_SESSION_RESET,
+        TOOL_SESSION_INFO,
+        TOOL_SESSION_DIFF,
+        TOOL_SESSION_VALIDATE,
+        TOOL_SESSION_EXPORT,
+    ] {
+        assert!(
+            names.contains(&tool.to_string()),
+            "missing {tool}: {names:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn session_tools_advertised_even_when_daemon_derived_cache_is_cold() {
+    // EnvelopeFakeCaller errors on rpc.schemas → prime fails → the
+    // daemon-derived catalog is empty, but the server-local session
+    // tools are still advertised.
+    let dispatcher = dispatcher_with_fake_caller(Box::new(EnvelopeFakeCaller));
+    let names: Vec<String> = dispatcher
+        .tools_list()
+        .await
+        .into_iter()
+        .map(|t| t.name)
+        .collect();
+    assert_eq!(names.len(), 5, "{names:?}");
+    assert!(names.iter().all(|n| n.starts_with("loom.session.")));
+}
+
+#[tokio::test]
+async fn session_reset_closes_old_session_and_merges_options_over_env_baseline() {
+    let baseline = SessionOptions {
+        seed: Some(1),
+        clock_anchor: Some(2),
+        profile: None,
+    };
+    let (dispatcher, caller) = primed_dispatcher(baseline, HashMap::new()).await;
+    // First tool call creates fixture-session-1 with the baseline.
+    assert!(!dispatcher.tools_call(navigate_params()).await.is_error);
+
+    // Reset with an explicit seed: other knobs fall back to the baseline.
+    let result = dispatcher
+        .tools_call(call(TOOL_SESSION_RESET, json!({ "seed": 9 })))
+        .await;
+    assert_eq!(
+        result_json(&result),
+        json!({ "session_id": "fixture-session-2" })
+    );
+    let closes = RecordingFakeCaller::calls_for(&caller.calls, "session.close");
+    assert_eq!(closes, vec![json!({ "session_id": "fixture-session-1" })]);
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates[1],
+        json!({ "profile": "standard", "seed": 9, "clock_anchor": 2 })
+    );
+
+    // A later argument-less reset is hermetic: back to the env baseline,
+    // NOT the previous reset's seed override.
+    let result = dispatcher
+        .tools_call(call(TOOL_SESSION_RESET, json!({})))
+        .await;
+    assert_eq!(
+        result_json(&result),
+        json!({ "session_id": "fixture-session-3" })
+    );
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates[2],
+        json!({ "profile": "standard", "seed": 1, "clock_anchor": 2 })
+    );
+
+    // Subsequent web calls ride the new session.
+    assert!(!dispatcher.tools_call(navigate_params()).await.is_error);
+    let navigates = RecordingFakeCaller::calls_for(&caller.calls, "web.navigate");
+    assert_eq!(
+        navigates
+            .last()
+            .unwrap()
+            .get("session")
+            .and_then(|v| v.as_str()),
+        Some("fixture-session-3")
+    );
+}
+
+#[tokio::test]
+async fn session_reset_rejects_malformed_arguments_without_daemon_calls() {
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    let result = dispatcher
+        .tools_call(call(TOOL_SESSION_RESET, json!({ "seed": "not-a-number" })))
+        .await;
+    assert!(result.is_error);
+    let non_prime: Vec<String> = caller
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(m, _)| m.clone())
+        .filter(|m| m != "rpc.schemas")
+        .collect();
+    assert!(
+        non_prime.is_empty(),
+        "malformed args must be rejected before any RPC; got {non_prime:?}"
+    );
+}
+
+#[tokio::test]
+async fn session_info_reports_id_options_and_created_at() {
+    let baseline = SessionOptions {
+        seed: Some(5),
+        clock_anchor: Some(7),
+        profile: None,
+    };
+    let (dispatcher, _caller) = primed_dispatcher(baseline, HashMap::new()).await;
+    let result = dispatcher
+        .tools_call(call(TOOL_SESSION_INFO, json!({})))
+        .await;
+    assert_eq!(
+        result_json(&result),
+        json!({
+            "session_id": "fixture-session-1",
+            "seed": 5,
+            "clock_anchor": 7,
+            "profile": "standard",
+            "created_at_ms": 1_700_000_000_001_u64,
+        })
+    );
+}
+
+#[tokio::test]
+async fn session_diff_proxies_current_session_against_other() {
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    assert!(!dispatcher.tools_call(navigate_params()).await.is_error);
+    let result = dispatcher
+        .tools_call(call(
+            TOOL_SESSION_DIFF,
+            json!({ "other_session_id": "prev-run-session" }),
+        ))
+        .await;
+    let body = result_json(&result);
+    assert_eq!(body["diff"]["field_diffs"], json!([]));
+    let diffs = RecordingFakeCaller::calls_for(&caller.calls, "session.diff");
+    assert_eq!(
+        diffs,
+        vec![json!({
+            "a": "prev-run-session",
+            "b": "fixture-session-1",
+            "include_screenshots": false,
+            "show_dom_diffs": false,
+        })]
+    );
+}
+
+#[tokio::test]
+async fn session_validate_and_export_default_to_current_session() {
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    let result = dispatcher
+        .tools_call(call(TOOL_SESSION_VALIDATE, json!({})))
+        .await;
+    assert_eq!(result_json(&result)["passed"], json!(true));
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "session.validate"),
+        vec![json!({ "session_id": "fixture-session-1" })]
+    );
+
+    let result = dispatcher
+        .tools_call(call(TOOL_SESSION_EXPORT, json!({ "format": "har" })))
+        .await;
+    assert_eq!(
+        result_json(&result)["artifact_ref"],
+        json!("fixture-artifact-ref")
+    );
+    assert_eq!(
+        RecordingFakeCaller::calls_for(&caller.calls, "session.export"),
+        vec![json!({ "session_id": "fixture-session-1", "format": "har" })]
+    );
 }
 
 #[tokio::test]
@@ -261,5 +837,77 @@ async fn resources_read_result_is_wrapped_in_contents_array() {
     assert!(
         entry.get("blob").and_then(|b| b.as_str()).is_some(),
         "blob entry must carry base64 bytes"
+    );
+}
+
+// === Advertised-tool gate (audit 2026-06-10): tools/call must not reach
+// daemon methods that tools/list never advertised. Pre-fix, the bare
+// "loom." prefix strip forwarded vault.*, session.kill, gc.run,
+// content.get, import.playwright … straight to the daemon's router. ===
+
+#[tokio::test]
+async fn tools_call_rejects_non_advertised_daemon_methods() {
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    for name in [
+        "loom.vault.grant",
+        "loom.vault.set_secret",
+        "loom.session.kill",
+        "loom.gc.run",
+        "loom.content.get",
+        "loom.import.playwright",
+        "loom.rpc.schemas",
+    ] {
+        let result = dispatcher
+            .tools_call(call(name, json!({ "session_id": "any" })))
+            .await;
+        assert!(result.is_error, "{name} must be rejected, got {result:?}");
+        let body = match &result.content[0] {
+            crate::error_mapper::McpContent::Text { text } => text.clone(),
+            other => panic!("expected text content, got {other:?}"),
+        };
+        assert!(
+            body.contains("unknown tool"),
+            "{name} must surface as unknown tool, got {body}"
+        );
+    }
+    // None of the rejected names ever reached the daemon: the only
+    // recorded call is the tool-cache prime itself.
+    let methods: Vec<String> = caller
+        .calls
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(m, _)| m.clone())
+        .collect();
+    assert_eq!(
+        methods,
+        vec!["rpc.schemas".to_string()],
+        "non-advertised tools/call names must never be forwarded"
+    );
+    // Advertised web tools and the server-local session tools still work.
+    assert!(!dispatcher.tools_call(navigate_params()).await.is_error);
+    assert!(
+        !dispatcher
+            .tools_call(call(TOOL_SESSION_INFO, json!({})))
+            .await
+            .is_error
+    );
+}
+
+#[tokio::test]
+async fn tools_call_with_cold_cache_surfaces_prime_error_not_unknown_tool() {
+    // EnvelopeFakeCaller fails rpc.schemas, so the lazy prime inside the
+    // gate fails: a daemon-down loom.web.navigate must surface the
+    // transport/prime error, NOT a misleading "unknown tool".
+    let dispatcher = dispatcher_with_fake_caller(Box::new(EnvelopeFakeCaller));
+    let result = dispatcher.tools_call(navigate_params()).await;
+    assert!(result.is_error);
+    let body = match &result.content[0] {
+        crate::error_mapper::McpContent::Text { text } => text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
+    assert!(
+        !body.contains("unknown tool"),
+        "cold-cache failure must not masquerade as unknown tool: {body}"
     );
 }

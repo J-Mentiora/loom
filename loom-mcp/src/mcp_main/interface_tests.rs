@@ -109,13 +109,14 @@ fn shutdown_drain_timeout_is_2s() {
 // === Dispatcher factory: lets integration tests skip the stdio loop ===
 
 #[test]
-fn build_dispatcher_takes_rpc_obs_shutdown_token() {
+fn build_dispatcher_takes_rpc_obs_shutdown_token_and_session_options() {
     fn _ck(
         rpc: Arc<RpcClient>,
         obs: Arc<McpObservability>,
         t: CancellationToken,
+        opts: crate::mcp_dispatcher::SessionOptions,
     ) -> Box<dyn std::future::Future<Output = Arc<McpDispatcher>>> {
-        Box::new(async move { build_dispatcher(rpc, obs, t).await })
+        Box::new(async move { build_dispatcher(rpc, obs, t, opts).await })
     }
     let _ = _ck;
 }
@@ -168,7 +169,13 @@ async fn dispatcher_shutdown_cancels_serve_token() {
     let obs = McpObservability::new(true);
     let rpc = RpcClient::new(RpcClientConfig::defaults(), obs.clone());
     let token = CancellationToken::new();
-    let dispatcher = build_dispatcher(rpc, obs, token.clone()).await;
+    let dispatcher = build_dispatcher(
+        rpc,
+        obs,
+        token.clone(),
+        crate::mcp_dispatcher::SessionOptions::default(),
+    )
+    .await;
     assert!(!token.is_cancelled(), "token starts uncancelled");
     dispatcher.shutdown();
     assert!(

@@ -35,6 +35,12 @@ pub struct McpProtocolError {
     pub data: Option<serde_json::Value>,
 }
 
+/// Maximum number of concurrently dispatched in-flight requests. Bounds
+/// the per-request task spawn (a frame flood can't grow unbounded tasks);
+/// at capacity the read loop pauses until a slot frees. Small but
+/// comfortably above what an interactive MCP client pipelines.
+pub const MAX_CONCURRENT_REQUESTS: usize = 32;
+
 pub const ERROR_PARSE: i32 = -32700;
 pub const ERROR_INVALID_REQUEST: i32 = -32600;
 pub const ERROR_METHOD_NOT_FOUND: i32 = -32601;

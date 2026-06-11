@@ -65,6 +65,103 @@ pub struct ResourcesReadParams {
     pub uri: String,
 }
 
+/// Env var: optional `u64` seed forwarded to the implicit session's
+/// `session.create` (cross-run determinism).
+pub const ENV_SESSION_SEED: &str = "LOOM_MCP_SESSION_SEED";
+/// Env var: optional fixed Unix epoch (ms) forwarded as `clock_anchor`
+/// so the injected browser clock is pinned across runs.
+pub const ENV_SESSION_CLOCK_ANCHOR: &str = "LOOM_MCP_SESSION_CLOCK_ANCHOR";
+/// Env var: optional profile override for the implicit session.
+pub const ENV_SESSION_PROFILE: &str = "LOOM_MCP_SESSION_PROFILE";
+
+/// Profile used for the implicit session when no override is configured.
+/// `standard` so denylist surprises don't confuse MCP clients (the
+/// safe-profile evaluate denylist would bounce `window.location` and
+/// friends; that's a CLI safety preset, not an MCP-default expectation).
+pub const IMPLICIT_SESSION_PROFILE: &str = "standard";
+
+/// Creation options for the implicit session. The env baseline is read
+/// once at startup (`SessionOptions::from_env`); `loom.session.reset`
+/// can override per-reset. `None` fields are omitted from the
+/// `session.create` wire params, so the all-default shape stays
+/// byte-identical to the pre-feature `{"profile":"standard"}`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionOptions {
+    pub seed: Option<u64>,
+    pub clock_anchor: Option<u64>,
+    pub profile: Option<String>,
+}
+
+/// Live implicit-session record: the daemon-assigned id plus the exact
+/// options it was created with (self-heal recreates with these) and the
+/// daemon-reported creation timestamp (surfaced by `loom.session.info`).
+#[derive(Debug, Clone)]
+pub struct ImplicitSession {
+    pub id: String,
+    pub created_at_ms: u64,
+    pub options: SessionOptions,
+}
+
+/// Mutex-guarded implicit-session state. One lock covers both the live
+/// session and the options for the next `session.create`, so a reset
+/// (close + recreate) is atomic w.r.t. concurrent tool calls.
+#[derive(Debug, Default)]
+pub struct ImplicitSessionState {
+    /// The live session, if one has been created.
+    pub session: Option<ImplicitSession>,
+    /// Options for the NEXT `session.create` (env baseline at startup).
+    pub options: SessionOptions,
+}
+
+/// MCP names of the server-local session tools. Unlike the `web.*`
+/// family these are NOT derived from the daemon's `rpc.schemas`
+/// registry (session.* RPCs are BUILTIN_CORE_METHODS without schemas) —
+/// the MCP server defines their schemas itself and proxies to the
+/// corresponding session.* RPCs.
+pub const TOOL_SESSION_RESET: &str = "loom.session.reset";
+pub const TOOL_SESSION_INFO: &str = "loom.session.info";
+pub const TOOL_SESSION_DIFF: &str = "loom.session.diff";
+pub const TOOL_SESSION_VALIDATE: &str = "loom.session.validate";
+pub const TOOL_SESSION_EXPORT: &str = "loom.session.export";
+
+/// Arguments of `loom.session.reset`. Absent fields fall back to the
+/// env baseline (NOT a previous reset's overrides), so each reset is
+/// hermetic: its outcome depends only on the environment + this call.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionResetParams {
+    pub seed: Option<u64>,
+    pub clock_anchor: Option<u64>,
+    pub profile: Option<String>,
+}
+
+/// Arguments of `loom.session.diff`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionDiffParams {
+    /// The session to diff the current implicit session against
+    /// (typically a previous run's id from `loom.session.info`/`reset`).
+    pub other_session_id: String,
+    #[serde(default)]
+    pub include_screenshots: bool,
+    #[serde(default)]
+    pub show_dom_diffs: bool,
+}
+
+/// Arguments of `loom.session.validate`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionValidateParams {
+    /// Session to validate; defaults to the current implicit session.
+    pub session_id: Option<String>,
+}
+
+/// Arguments of `loom.session.export`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SessionExportParams {
+    /// Session to export; defaults to the current implicit session.
+    pub session_id: Option<String>,
+    /// Export format; defaults to `json` (the daemon default).
+    pub format: Option<String>,
+}
+
 pub const METHOD_INITIALIZE: &str = "initialize";
 pub const METHOD_SHUTDOWN: &str = "shutdown";
 pub const METHOD_PING: &str = "ping";
@@ -87,11 +184,17 @@ pub struct McpDispatcher {
     /// terminates the server (its `AtomicBool` predecessor was stored
     /// into but never read by anything).
     pub(crate) shutdown: tokio_util::sync::CancellationToken,
-    /// Implicit session id auto-created on first tool call and reused
+    /// Implicit session auto-created on first tool call and reused
     /// across the MCP server's lifetime. Lets MCP clients call
     /// `loom.web.*` tools without first having to call session.create
     /// (which isn't even in the tool list because `rpc.schemas` only
     /// returns schema-driven methods, not the BUILTIN_CORE_METHODS
-    /// that session.* belongs to). Closed on shutdown.
-    pub(crate) implicit_session: Arc<tokio::sync::Mutex<Option<String>>>,
+    /// that session.* belongs to). Closed on shutdown. Carries the
+    /// creation options so an idle-evicted session can be transparently
+    /// recreated with the same determinism knobs (self-heal).
+    pub(crate) implicit_session: Arc<tokio::sync::Mutex<ImplicitSessionState>>,
+    /// Env-derived options snapshot taken at startup. `loom.session.reset`
+    /// merges its explicit arguments over THIS baseline (never over a
+    /// previous reset's overrides) so every reset is hermetic.
+    pub(crate) baseline_options: SessionOptions,
 }

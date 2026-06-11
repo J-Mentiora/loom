@@ -120,6 +120,7 @@ class Session:
         network_mode: str = "live",
         capture: bool = True,
         seed: int | None = None,
+        clock_anchor: int | None = None,
         budget: Any = None,
         socket_path: str | None = None,
         token: str | None = None,
@@ -131,6 +132,13 @@ class Session:
         byte-reproducible captures). Pass ``no_determinism=True`` for
         live/non-reproducible capture; such a session is recorded as
         NON-REPLAYABLE (``replay`` refuses it).
+
+        ``clock_anchor`` is a fixed Unix epoch in milliseconds that pins the
+        injected browser clock for cross-run determinism: two recordings with
+        the same ``seed`` + ``clock_anchor`` capture identical
+        dom/screenshot/outcome hashes, so ``diff`` between them reports zero
+        field diffs. Default ``None`` → wall-clock epoch (unchanged
+        behavior). No effect under ``no_determinism``.
         """
         transport = LoomTransport(socket_path, token)
         params: dict[str, Any] = {
@@ -140,6 +148,8 @@ class Session:
         }
         if seed is not None:
             params["seed"] = seed
+        if clock_anchor is not None:
+            params["clock_anchor"] = clock_anchor
         if budget is not None:
             params["budget"] = budget
         if no_determinism:
@@ -439,6 +449,7 @@ class AsyncSession:
         network_mode: str = "live",
         capture: bool = True,
         seed: int | None = None,
+        clock_anchor: int | None = None,
         budget: Any = None,
         socket_path: str | None = None,
         token: str | None = None,
@@ -452,6 +463,8 @@ class AsyncSession:
         }
         if seed is not None:
             params["seed"] = seed
+        if clock_anchor is not None:
+            params["clock_anchor"] = clock_anchor
         if budget is not None:
             params["budget"] = budget
         if no_determinism:

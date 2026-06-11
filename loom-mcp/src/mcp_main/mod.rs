@@ -34,7 +34,13 @@ pub async fn run(args: ServeArgs) -> Result<(), LoomError> {
     let shutdown = CancellationToken::new();
     install_signal_handler(shutdown.clone(), obs.clone())?;
     install_panic_hook(obs.clone());
-    let dispatcher = build_dispatcher(rpc.clone(), obs.clone(), shutdown.clone()).await;
+    // Implicit-session determinism knobs (LOOM_MCP_SESSION_SEED /
+    // LOOM_MCP_SESSION_CLOCK_ANCHOR / LOOM_MCP_SESSION_PROFILE). A
+    // malformed value fails startup loudly — silently dropping a seed
+    // would yield non-deterministic captures that look deterministic.
+    let session_options = crate::mcp_dispatcher::SessionOptions::from_env()?;
+    let dispatcher =
+        build_dispatcher(rpc.clone(), obs.clone(), shutdown.clone(), session_options).await;
     // Re-prime the tool cache after EVERY successful (re)connect — registered
     // BEFORE the initial connect so the hook covers all of them. Without it,
     // a daemon that was down at launch (typical when the MCP client
@@ -122,10 +128,18 @@ pub async fn build_dispatcher(
     rpc: Arc<RpcClient>,
     obs: Arc<McpObservability>,
     shutdown: CancellationToken,
+    session_options: crate::mcp_dispatcher::SessionOptions,
 ) -> Arc<McpDispatcher> {
     let tool_cache = ToolCache::new(rpc.clone());
     let resource_tracker = ResourceTracker::new(rpc.clone());
-    McpDispatcher::new(tool_cache, resource_tracker, rpc, obs, shutdown)
+    McpDispatcher::new(
+        tool_cache,
+        resource_tracker,
+        rpc,
+        obs,
+        shutdown,
+        session_options,
+    )
 }
 
 /// Register the `on_connected` hook that re-primes the tool cache after
