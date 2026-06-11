@@ -72,7 +72,7 @@ impl CdpConnection for NetworkHandlerCdp {
         if filter.method_prefix.starts_with("Network") {
             *self.network_handler.lock().unwrap() = Some(handler);
         }
-        EventRegistration { handler_id: 0 }
+        EventRegistration::detached(0)
     }
 
     fn invalidate_session(&self) {}

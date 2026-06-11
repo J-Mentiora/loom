@@ -94,7 +94,7 @@ impl CdpConnection for RecordingCdp {
         _filter: EventFilter,
         _handler: EventHandler,
     ) -> EventRegistration {
-        EventRegistration { handler_id: 0 }
+        EventRegistration::detached(0)
     }
 
     fn invalidate_session(&self) {}
@@ -125,7 +125,7 @@ impl CdpConnection for FailingCdp {
         _filter: EventFilter,
         _handler: EventHandler,
     ) -> EventRegistration {
-        EventRegistration { handler_id: 0 }
+        EventRegistration::detached(0)
     }
     fn invalidate_session(&self) {}
     fn is_connected(&self) -> bool {

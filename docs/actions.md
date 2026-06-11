@@ -195,7 +195,10 @@ URL allowlist: only `http`, `https`, and `about:blank` are accepted. Other schem
 
 Typed errors: HTTP error responses surface as `kind: "http_status"` with the integer status code; DNS resolution failures surface as `kind: "dns_failure"` with the underlying Chromium error name (e.g. `net::ERR_NAME_NOT_RESOLVED`); other low-level network failures (TLS, timeout) surface as `kind: "network_failure"`. None of these are generic 500s.
 
-Readiness: the DOM + screenshot are captured once the page reaches the `until` state (default `settled`), not at navigation commit. `settled` waits for `load`, network-idle, a stable final URL after client-side redirects, and a quiescent DOM, so SPA shells and mid-animation frames are never captured. The receipt records `until` and `settle_outcome` (`reached`|`timeout`|`dom_unstable`).
+Readiness: the DOM + screenshot are captured once the page reaches the `until` state (default `settled`), not at navigation commit. `settled` waits for `load`, network-idle, a stable final URL after client-side redirects, and a quiescent DOM, so SPA shells and mid-animation frames are never captured. The receipt records `until` and `settle_outcome`:
+- `reached` — the requested readiness state was satisfied before the bound; the capture is gated on a genuinely ready page. A loaded, request-quiet, mutation-quiet page settles well inside the default timeout.
+- `timeout` — the bound (tick ceiling or wall-clock budget) was hit while the load/network condition never went quiet (e.g. a persistent connection or perpetual polling). The action still SUCCEEDS and the capture proceeds; the verdict only describes how the wait ended.
+- `dom_unstable` — the bound was hit while the network was quiet and the document complete but the DOM kept mutating (perpetual animation / re-render). Distinct from `timeout` so consumers can tell the two apart. Like `timeout`, the action still succeeds.
 
 **Parameters**
 
@@ -473,7 +476,7 @@ Use after a `web.navigate` (or an interaction that triggers async re-render) to 
 | `until` | `string` | optional | Readiness state to wait for: `load` \| `networkidle` \| `settled`. Optional; defaults to `settled`. |
 | `timeout_ms` | `u64` | optional | Maximum wait time in milliseconds before the bounded fallback returns a typed `timeout`/`dom_unstable` receipt. Optional; defaults to the daemon's navigate budget. |
 
-**Returns:** Receipt with `settle_until` (the requested mode) and `settle_outcome` (`reached` | `timeout` | `dom_unstable`). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.
+**Returns:** Receipt with `settle_until` (the requested mode) and `settle_outcome`: `reached` (the requested state was satisfied before the bound), `timeout` (the bound was hit while the load/network condition never went quiet), or `dom_unstable` (the bound was hit while the network was quiet and the document complete but the DOM kept mutating). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.
 
 **Example**
 

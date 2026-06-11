@@ -217,21 +217,30 @@ impl ReadinessMachine {
         }
 
         if self.tick >= self.cfg.tick_ceiling {
-            // Distinguish a DOM-churn timeout from a network/load timeout so the
-            // receipt's settle_outcome is precise. `DomUnstable` applies only in
-            // `Settled` mode, when everything EXCEPT the DOM had quiesced.
-            if self.mode == SettleMode::Settled
-                && net_idle
-                && obs.ready_complete
-                && obs.url_stable
-                && !dom_quiet
-            {
-                return Some(SettleOutcome::DomUnstable);
-            }
-            return Some(SettleOutcome::Timeout);
+            return Some(self.timeout_verdict(obs));
         }
 
         None
+    }
+
+    /// Terminal classification when a BOUND ends the wait — the tick ceiling
+    /// here, or the I/O layer's wall-clock guard (see `wait_for_settle`).
+    /// Distinguishes a DOM-churn timeout from a network/load timeout so the
+    /// receipt's `settle_outcome` is precise: `DomUnstable` applies only in
+    /// `Settled` mode, when everything EXCEPT the DOM had quiesced. Pure —
+    /// reads the quiet-run state as of the last `step`, never advances it.
+    pub fn timeout_verdict(&self, obs: PageObservation) -> SettleOutcome {
+        let net_idle = obs.load_fired && self.net_quiet_run >= self.cfg.quiet_ticks;
+        let dom_quiet = self.dom_quiet_run >= self.cfg.quiet_ticks;
+        if self.mode == SettleMode::Settled
+            && net_idle
+            && obs.ready_complete
+            && obs.url_stable
+            && !dom_quiet
+        {
+            return SettleOutcome::DomUnstable;
+        }
+        SettleOutcome::Timeout
     }
 }
 

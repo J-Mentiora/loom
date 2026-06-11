@@ -60,7 +60,7 @@ impl CdpConnection for RecordingCdp {
         )]))
     }
     fn register_event_handler(&self, _: EventFilter, _: EventHandler) -> EventRegistration {
-        EventRegistration { handler_id: 0 }
+        EventRegistration::detached(0)
     }
     fn invalidate_session(&self) {}
     fn is_connected(&self) -> bool {
@@ -86,7 +86,7 @@ impl CdpConnection for AlwaysFailingCdp {
         Err(CdpError::Timeout { ms: 0 })
     }
     fn register_event_handler(&self, _: EventFilter, _: EventHandler) -> EventRegistration {
-        EventRegistration { handler_id: 0 }
+        EventRegistration::detached(0)
     }
     fn invalidate_session(&self) {}
     fn is_connected(&self) -> bool {
