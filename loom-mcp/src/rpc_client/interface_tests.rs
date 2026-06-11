@@ -85,6 +85,22 @@ fn next_backoff_caps_at_configured_max() {
     );
 }
 
+// === Client-side call deadline sits above the daemon's request deadline ===
+
+#[test]
+fn defaults_call_timeout_exceeds_daemon_request_deadline() {
+    let cfg = RpcClientConfig::defaults();
+    // The daemon's server-side per-request deadline is
+    // `LOOM_REQUEST_TIMEOUT_MS` (default 30 s). The client deadline must sit
+    // above it so the daemon's typed `request_timeout` envelope wins the
+    // race whenever the daemon is healthy enough to produce one.
+    assert!(
+        cfg.call_timeout > Duration::from_secs(30),
+        "call_timeout {:?} must exceed the daemon's 30 s request deadline",
+        cfg.call_timeout
+    );
+}
+
 #[test]
 fn next_backoff_starts_at_initial_for_first_failure() {
     let cfg = RpcClientConfig::defaults();

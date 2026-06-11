@@ -80,7 +80,6 @@ pub struct McpDispatcher {
     pub(crate) tool_cache: Arc<ToolCache>,
     pub(crate) resource_tracker: Arc<ResourceTracker>,
     pub(crate) rpc: Arc<RpcClient>,
-    #[allow(dead_code)]
     pub(crate) obs: Arc<McpObservability>,
     /// Cancelled when shutdown is requested — by the MCP `shutdown`
     /// method or the process signal task. `mcp_main::serve_until_shutdown`
