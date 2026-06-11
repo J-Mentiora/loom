@@ -2355,6 +2355,7 @@ dependencies = [
  "jsonschema",
  "libc",
  "loom-core",
+ "loom-keychain",
  "loom-shared",
  "parking_lot",
  "reqwest 0.12.28",

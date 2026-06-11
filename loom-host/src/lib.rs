@@ -44,3 +44,6 @@ mod wasi_linker_tests;
 
 #[cfg(test)]
 mod navigate_receipt_tests;
+
+#[cfg(test)]
+mod wasm_preemption_tests;

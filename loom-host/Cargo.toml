@@ -53,6 +53,9 @@ hex = { workspace = true }
 tempfile = { workspace = true }
 tokio-tungstenite = { workspace = true }
 loom-core = { workspace = true, features = ["mock"] }
+# wasm_preemption_tests builds a real CoreApiFacade, which needs a
+# keychain test double (StubKeychain).
+loom-keychain = { workspace = true }
 # integration_har_export.rs validates the end-to-end-produced HAR
 # against the vendored HAR 1.2 schema
 # (tests/integration_har_export.rs). Same workspace dep loom-core

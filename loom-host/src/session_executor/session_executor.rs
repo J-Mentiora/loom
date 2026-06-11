@@ -19,7 +19,11 @@
 // - **Abort propagation (loom-core).** `tokio::select!`
 //   races the WASM call against `session_handle.abort_signal.notified()`.
 //   On abort: the call is dropped, a typed `LoomError::SessionAborted`
-//   receipt is returned.
+//   receipt is returned. The store is armed via
+//   `WasmRuntime::arm_store_preemption` BEFORE any guest code runs, so
+//   `call_async` yields every epoch tick — the select stays preemptive
+//   even for CPU-bound guests, and a runaway loop traps at the hard
+//   guest-CPU deadline through the normal trap path.
 // - **Acyclicity.** Depends on `WasmRuntime`, `ModuleLibrary`,
 //   `HostFunctionTable`, `TrapHandler`, `HostObservability` — never
 //   on `WasmHost` (downstream).
@@ -174,6 +178,11 @@ impl SessionExecutor {
         // Capture before host_state moves into the Store (decisions D9).
         let determinism_on = !host_state.no_determinism;
         let mut store = wasmtime::Store::new(engine, host_state);
+        // Arm preemption BEFORE instantiate (component initializers run
+        // guest code too): epoch yield per ticker tick keeps the abort
+        // `select!` arm below live, the hard guest-CPU deadline traps
+        // runaway loops, and the optional fuel budget is loaded.
+        self.runtime.arm_store_preemption(&mut store)?;
         let instance = self
             .instantiate_surface(&mut store, &component, linker)
             .await?;
