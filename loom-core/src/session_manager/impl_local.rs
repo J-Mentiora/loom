@@ -359,6 +359,20 @@ impl LocalSessionManager {
         self.sessions.iter().map(|e| e.key().clone()).collect()
     }
 
+    /// Number of sessions currently `Active` in the in-memory FSM. O(live map),
+    /// no disk I/O — this is the authoritative count for the daemon's
+    /// concurrency cap: close/abort/budget-kill flip status under the session
+    /// lock and immediately leave this count, and the startup recovery sweep
+    /// stamps any on-disk "active" leftovers of a crashed daemon as
+    /// RuntimeCrash before the daemon serves, so a fresh process correctly
+    /// starts from zero.
+    pub fn active_session_count(&self) -> usize {
+        self.sessions
+            .iter()
+            .filter(|e| *e.value().status.lock() == SessionStatus::Active)
+            .count()
+    }
+
     /// Abort all Active sessions. Called by startup_manager on SIGTERM.
     pub fn abort_all(&self, reason: AbortReason) -> Result<(), LoomError> {
         let active_ids: Vec<SessionId> = self

@@ -326,19 +326,62 @@ impl Drop for ActionActivityGuard {
 /// `loom-core` and `loom-rpc` type vocabularies.
 struct CoreBridge {
     core: Arc<CoreApiFacade>,
-    /// Optional WasmHost handle. When present, `close_session_raw` spawns
-    /// `host.shutdown_session(...)` into the bridge's `cleanup_tasks`
-    /// JoinSet so any session-bound shim subprocesses (e.g. Chromium) get
-    /// cooperatively torn down. None when modules haven't been compiled
-    /// yet (matches StubHostBridge fallback).
+    /// Optional WasmHost handle. When present, `close_session_raw` and
+    /// `abort_session_raw` spawn `host.shutdown_session(...)` into the
+    /// bridge's `cleanup_tasks` JoinSet so any session-bound shim
+    /// subprocesses (e.g. Chromium) get cooperatively torn down. None
+    /// when modules haven't been compiled yet (matches StubHostBridge
+    /// fallback).
     wasm_host: Option<Arc<loom_host::WasmHost>>,
     /// Tracks background `host.shutdown_session` spawns from
-    /// `close_session_raw`. Previously a bare `tokio::spawn` here leaked
+    /// `spawn_shim_teardown`. Previously a bare `tokio::spawn` here leaked
     /// `JoinHandle`s — when shim teardown stalled on SIGTERM grace,
     /// each session.close left a never-joined task behind; after a few
     /// sequential sessions the daemon's runtime saturated. Spawns now go
-    /// into this `JoinSet`, reaped opportunistically on every close.
+    /// into this `JoinSet`, reaped opportunistically on every close/abort.
     cleanup_tasks: Arc<std::sync::Mutex<tokio::task::JoinSet<()>>>,
+}
+
+impl CoreBridge {
+    /// Background shim teardown for a session leaving the Active state, so
+    /// the session-bound Chromium subprocess AND its ShimManager
+    /// processes/states/configs entries get reclaimed. Shared by
+    /// `close_session_raw` and `abort_session_raw`: abort legitimately skips
+    /// the graceful in-session drain, but the shim must still be torn down —
+    /// without this, an aborted session's browser kept running until the
+    /// orphan-GC sweep aged it out and its ShimManager entries leaked
+    /// forever. `host.shutdown_session` is idempotent, so overlapping with
+    /// `session.kill`'s separate `shutdown_with_ceiling` path is safe.
+    ///
+    /// Tracked in `cleanup_tasks` so the JoinHandle isn't leaked. Completed
+    /// cleanups are reaped BEFORE the fresh spawn so the JoinSet stays
+    /// bounded across many close/abort calls (and the fresh task is always
+    /// observable in `len()` right after this returns).
+    fn spawn_shim_teardown(&self, session_id: &str) {
+        let Some(host) = self.wasm_host.clone() else {
+            return;
+        };
+        let sid = session_id.to_string();
+        // `unwrap` is safe: the only way the mutex is poisoned is if a
+        // previous holder panicked while spawning into the JoinSet,
+        // which would have already crashed the process — there is no
+        // recovery path that's better than propagating the panic.
+        let mut set = self.cleanup_tasks.lock().unwrap();
+        // Reap completed cleanups + count for visibility.
+        let mut reaped = 0usize;
+        while set.try_join_next().is_some() {
+            reaped += 1;
+        }
+        set.spawn(async move {
+            host.shutdown_session(&sid).await;
+        });
+        tracing::debug!(
+            metric = "loom_daemon_close_cleanup_spawn",
+            session_id = %session_id,
+            pending = set.len(),
+            reaped,
+        );
+    }
 }
 
 impl CoreFacadeBridge for CoreBridge {
@@ -437,15 +480,20 @@ impl CoreFacadeBridge for CoreBridge {
 
         // Concurrency cap: fail fast (retryable) when too many sessions are
         // already active, rather than spawning an unbounded number of chromium
-        // shims. Counts the AUTHORITATIVE live-session set (no separate counter
-        // to drift or leak — a closed/aborted/crashed session leaves the set, so
-        // the count self-reconciles for the common case). The one exception is a
-        // corrupt-WAL orphan (torn write from a hard daemon kill): its broken
-        // chain can't be terminal-marked, so it would otherwise read as "active"
-        // forever. That gap is closed by the startup quarantine sweep, the disk
-        // scanner's "corrupt" status (excluded from this count), and the on-demand
-        // `session.reap`. Cap-hit → `TooManyRequests` so the caller backs off and
-        // retries when a slot frees (NOT a reconnect).
+        // shims. Counts the AUTHORITATIVE in-memory live-session set (no
+        // separate counter to drift or leak — a closed/aborted/budget-killed
+        // session flips status under its lock and immediately leaves the
+        // count). Previously this re-read and JSON-parsed EVERY session WAL on
+        // disk per create — O(total sessions × WAL bytes) of synchronous I/O on
+        // a tokio worker, monotonically degrading create latency on a
+        // long-running daemon. The in-memory FSM is at least as accurate:
+        // sessions a crashed daemon left "active" on disk are stamped
+        // RuntimeCrash by the startup recovery sweep before serving, and
+        // corrupt-WAL orphans (torn write from a hard kill) were never counted
+        // by either source — the disk scanner reports them "corrupt" and they
+        // are reclaimed by quarantine / `session.reap`. Cap-hit →
+        // `TooManyRequests` so the caller backs off and retries when a slot
+        // frees (NOT a reconnect).
         //
         // This is a best-effort, eventually-consistent resource valve, not a
         // hard security boundary (the daemon is single-user/local): a check-then-
@@ -455,21 +503,7 @@ impl CoreFacadeBridge for CoreBridge {
         // strict atomic reservation would reintroduce the counter-leak-on-crash
         // problem the live-set design deliberately avoids — not worth it here.
         let cap = max_concurrent_sessions();
-        let active = match self.core.list_sessions_info() {
-            Ok(v) => v.iter().filter(|(_, status, _)| status == "active").count(),
-            Err(e) => {
-                // Don't silently disable the cap on a transient read error; log
-                // it. Fail-open (allow) is the lesser evil for a local tool —
-                // blocking the user on a transient introspection glitch is worse
-                // than a momentary overshoot, and the next create re-checks.
-                tracing::warn!(
-                    metric = "loom_daemon_cap_introspect_error",
-                    error = %e,
-                    "session cap: could not read active sessions; allowing create"
-                );
-                0
-            }
-        };
+        let active = self.core.session_manager.active_session_count();
         if active >= cap {
             tracing::warn!(
                 metric = "loom_daemon_cap_reject",
@@ -545,33 +579,10 @@ impl CoreFacadeBridge for CoreBridge {
             .map_err(|e| map_loom_error(&e));
 
         // Background shim teardown so any session-bound Chromium subprocess
-        // gets cooperatively reaped. Tracked in `cleanup_tasks` so the
-        // JoinHandle isn't leaked — previously a bare `tokio::spawn` here
-        // accumulated never-joined tasks and saturated the daemon runtime
-        // after 4-6 sessions. Opportunistic `try_join_next` reap keeps the
-        // JoinSet bounded across many close calls.
-        if let Some(host) = self.wasm_host.clone() {
-            let sid = session_id.to_string();
-            // `unwrap` is safe: the only way the mutex is poisoned is if a
-            // previous holder panicked while spawning into the JoinSet,
-            // which would have already crashed the process — there is no
-            // recovery path that's better than propagating the panic.
-            let mut set = self.cleanup_tasks.lock().unwrap();
-            set.spawn(async move {
-                host.shutdown_session(&sid).await;
-            });
-            // Reap completed cleanups + count for visibility.
-            let mut reaped = 0usize;
-            while set.try_join_next().is_some() {
-                reaped += 1;
-            }
-            tracing::debug!(
-                metric = "loom_daemon_close_cleanup_spawn",
-                session_id = %session_id,
-                pending = set.len(),
-                reaped,
-            );
-        }
+        // gets cooperatively reaped. Spawned even when close errored (e.g.
+        // already-closed): teardown is idempotent and a stale shim entry
+        // must not survive a lost close/teardown race.
+        self.spawn_shim_teardown(session_id);
 
         result
     }
@@ -579,7 +590,8 @@ impl CoreFacadeBridge for CoreBridge {
     fn abort_session_raw(&self, session_id: &str, reason: &str) -> Result<(), AdapterError> {
         use loom_core::manifest_writer::SessionId;
         use loom_core::session_manager::AbortReason;
-        self.core
+        let result = self
+            .core
             .session_manager
             .abort(
                 SessionId(session_id.to_string()),
@@ -587,7 +599,17 @@ impl CoreFacadeBridge for CoreBridge {
                     reason: reason.to_string(),
                 },
             )
-            .map_err(|e| map_loom_error(&e))
+            .map_err(|e| map_loom_error(&e));
+
+        // Abort flips core state immediately (≤1s signal SLA) but the
+        // session-bound chromium shim must STILL be reclaimed — mirroring
+        // `close_session_raw`. Previously abort performed no shim teardown
+        // at all: the browser ran on until orphan GC aged it out and the
+        // ShimManager entries for `chromium:<sid>` leaked for the daemon's
+        // lifetime.
+        self.spawn_shim_teardown(session_id);
+
+        result
     }
 
     // ── Vault bridge methods ────────────────────────────────────────────
@@ -855,23 +877,39 @@ fn probe_auth_perms_or_refuse(_path: &std::path::Path, _what: &str) -> Result<()
     Ok(())
 }
 
-/// Tighten a freshly-written auth file to 0600 unconditionally.
+/// Write an auth artefact CREATED with mode 0600 (atomically, via
+/// `OpenOptions::mode` — the mode applies at `open(O_CREAT)` time, before
+/// any byte lands). The old write-then-chmod sequence left a transient
+/// umask-mode (typically 0644) window in which any local user could open
+/// the daemon's bearer token and keep the fd past the chmod. `mode` only
+/// applies to newly-created files; a pre-existing file already passed
+/// `probe_auth_perms_or_refuse` (no group/world bits), so truncate+rewrite
+/// preserves its ≤0600 mode.
 /// Unix only; Windows uses ACLs and is out of scope for v0.9.4.
 #[cfg(unix)]
-fn apply_auth_perms_0600(path: &std::path::Path, what: &str) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).with_context(|| {
-        format!(
-            "set 0600 on {} at {}; required by the A-W8.1 startup-perms contract",
-            what,
-            path.display()
-        )
-    })
+fn write_auth_file_0600(path: &std::path::Path, contents: &[u8], what: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| {
+            format!(
+                "create {} (mode 0600) at {}; required by the A-W8.1 startup-perms contract",
+                what,
+                path.display()
+            )
+        })?;
+    f.write_all(contents)
+        .with_context(|| format!("write {} to {}", what, path.display()))
 }
 
 #[cfg(not(unix))]
-fn apply_auth_perms_0600(_path: &std::path::Path, _what: &str) -> Result<()> {
-    Ok(())
+fn write_auth_file_0600(path: &std::path::Path, contents: &[u8], what: &str) -> Result<()> {
+    std::fs::write(path, contents).with_context(|| format!("write {} to {}", what, path.display()))
 }
 
 // ─── Vault W6 wire-boundary helpers ────────────────────────────────────────
@@ -2252,8 +2290,14 @@ fn parse_args(argv: &[String]) -> DaemonArgs {
         args.log_path = root.join("daemon.log");
         args.data_root = root;
     }
+    // Track whether the log path was set EXPLICITLY (vs derived from a data
+    // root): per-setting precedence means `--data-root` may supply the
+    // default `<root>/daemon.log` but must never clobber an operator-pinned
+    // LOOM_LOG_PATH — monitoring reads logs from where the env said.
+    let mut log_path_explicit = false;
     if let Ok(v) = std::env::var("LOOM_LOG_PATH") {
         args.log_path = PathBuf::from(v);
+        log_path_explicit = true;
     }
     if std::env::var("LOOM_OTEL_ENABLED").as_deref() == Ok("1") {
         args.otel_enabled = true;
@@ -2277,7 +2321,12 @@ fn parse_args(argv: &[String]) -> DaemonArgs {
         if arg == "--data-root" {
             if let Some(path) = iter.next() {
                 let root = PathBuf::from(path);
-                args.log_path = root.join("daemon.log");
+                // Only DERIVE the log path when no explicit LOOM_LOG_PATH won
+                // already — the flag supplies a default location, not an
+                // override of an unrelated, explicitly-set setting.
+                if !log_path_explicit {
+                    args.log_path = root.join("daemon.log");
+                }
                 args.data_root = root;
             }
         }
@@ -2300,14 +2349,16 @@ fn print_daemon_help() {
          \n\
          OPTIONS:\n    \
              --socket <PATH>      Override the Unix socket path.\n    \
-             --data-root <PATH>   Override the data-root directory (sessions, CAS, logs).\n    \
+             --data-root <PATH>   Override the data-root directory (sessions, CAS, logs).\n                          \
+             daemon.log defaults under it; an explicit LOOM_LOG_PATH wins.\n    \
              -h, --help           Print this help and exit.\n    \
              -V, --version        Print version and exit.\n\
          \n\
          ENVIRONMENT:\n    \
              LOOM_SOCKET_PATH     Same as --socket.\n    \
              LOOM_DATA_ROOT       Same as --data-root.\n    \
-             LOOM_LOG_PATH        Override the daemon log file path.\n    \
+             LOOM_LOG_PATH        Override the daemon log file path (wins over the\n                          \
+             <data-root>/daemon.log default derived from --data-root).\n    \
              LOOM_OTEL_ENABLED    Set to `1` to enable OTEL exports.\n    \
              LOOM_UPLOAD_ROOT     Allow-list root for web.set_input_files. Unset → uploads fail closed.\n    \
              LOOM_MAX_CONCURRENT_SESSIONS  Hard cap on concurrent sessions (default 16).\n    \
@@ -2618,18 +2669,19 @@ async fn async_main() -> Result<()> {
     probe_auth_perms_or_refuse(&token_path, "hello.token")?;
     probe_auth_perms_or_refuse(&pid_path, "daemon.pid")?;
 
-    std::fs::write(&token_path, server.token.0.as_bytes())
-        .with_context(|| format!("write hello.token to {}", token_path.display()))?;
-    std::fs::write(&pid_path, std::process::id().to_string().as_bytes())
-        .with_context(|| format!("write daemon.pid to {}", pid_path.display()))?;
-
-    // 7b. A-W8.1 second leg: tighten the freshly-written files to 0600.
-    //     The umask on default Linux installs is 0022 → files land at
-    //     0644 → group + world can read the daemon's auth token. Set
-    //     explicit perms so the file mode matches the socket's 0600
-    //     contract (SOCKET_MODE in loom-rpc).
-    apply_auth_perms_0600(&token_path, "hello.token")?;
-    apply_auth_perms_0600(&pid_path, "daemon.pid")?;
+    // 7b. A-W8.1 second leg: CREATE the files with 0600 atomically
+    //     (OpenOptions mode on unix). The umask on default Linux installs
+    //     is 0022 → a plain fs::write landed at 0644 and a follow-up chmod
+    //     left a transient window in which group + world could read (and
+    //     keep an fd on) the daemon's sole bearer credential. Creating
+    //     with the right mode matches the socket's 0600 contract
+    //     (SOCKET_MODE in loom-rpc) with no repair window.
+    write_auth_file_0600(&token_path, server.token.0.as_bytes(), "hello.token")?;
+    write_auth_file_0600(
+        &pid_path,
+        std::process::id().to_string().as_bytes(),
+        "daemon.pid",
+    )?;
 
     // 8. Print HELLO_TOKEN to stdout .
     println!("HELLO_TOKEN={}", server.token.0);
@@ -3749,5 +3801,232 @@ mod tests {
             .await
             .expect("shutdown future must resolve on SIGINT")
             .expect("shutdown future must not panic");
+    }
+
+    // ─── CoreBridge shim teardown on close AND abort ──────────
+    // session.abort previously flipped core state only — the session-bound
+    // chromium shim was never torn down, leaking the browser (until orphan
+    // GC) and the ShimManager entries (forever). Both lifecycle exits must
+    // route through `spawn_shim_teardown`.
+
+    /// Scratch dir under the test TMPDIR (tests run --test-threads=1).
+    fn test_scratch_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("loom-daemon-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create test scratch dir");
+        dir
+    }
+
+    fn make_core_at(data_root: &std::path::Path) -> Arc<CoreApiFacade> {
+        let config = CoreConfig {
+            data_root: data_root.to_path_buf(),
+            log_path: data_root.join("daemon.log"),
+            otel_enabled: false,
+            default_seed: 42,
+            checkpoint_every_n: 100,
+        };
+        let keychain: Arc<dyn loom_core::vault::KeychainAccess> =
+            Arc::new(loom_keychain::StubKeychain);
+        CoreApiFacade::new(config, keychain).expect("CoreApiFacade::new in scratch dir")
+    }
+
+    /// A CoreBridge with a REAL WasmHost (empty surfaces dir — no modules,
+    /// no chromium template) so `spawn_shim_teardown` takes the Some(host)
+    /// path exactly like a production daemon.
+    fn make_bridge(data_root: &std::path::Path) -> CoreBridge {
+        let core = make_core_at(data_root);
+        let host = loom_host::WasmHost::new(
+            Arc::clone(&core),
+            loom_host::HostConfig {
+                surfaces_dir: data_root.join("surfaces-empty"),
+                shim_chromium: None,
+                ..Default::default()
+            },
+        )
+        .expect("WasmHost::new with empty surfaces dir");
+        CoreBridge {
+            core,
+            wasm_host: Some(host),
+            cleanup_tasks: Arc::new(std::sync::Mutex::new(tokio::task::JoinSet::new())),
+        }
+    }
+
+    fn create_session_via(bridge: &CoreBridge) -> String {
+        let (sid, _) = bridge
+            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .expect("create_session_raw");
+        sid
+    }
+
+    #[tokio::test]
+    async fn abort_session_raw_spawns_shim_teardown() {
+        let tmp = test_scratch_dir("abort-teardown");
+        let bridge = make_bridge(&tmp);
+        let sid = create_session_via(&bridge);
+
+        bridge.abort_session_raw(&sid, "test-abort").expect("abort");
+
+        // The teardown task must be in the JoinSet (completed tasks stay in
+        // `len()` until joined, and `spawn_shim_teardown` reaps BEFORE the
+        // fresh spawn — so exactly this abort's task is observable here).
+        assert_eq!(
+            bridge.cleanup_tasks.lock().unwrap().len(),
+            1,
+            "abort must spawn host.shutdown_session into cleanup_tasks \
+             (browser + ShimManager entry reclamation)"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn close_session_raw_spawns_shim_teardown() {
+        let tmp = test_scratch_dir("close-teardown");
+        let bridge = make_bridge(&tmp);
+        let sid = create_session_via(&bridge);
+
+        bridge.close_session_raw(&sid).expect("close");
+
+        assert_eq!(
+            bridge.cleanup_tasks.lock().unwrap().len(),
+            1,
+            "close must spawn host.shutdown_session into cleanup_tasks"
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // ─── parse_args: per-setting precedence (CLI > env > defaults) ──────────
+    // --data-root supplies the DEFAULT <root>/daemon.log, but must never
+    // clobber an explicitly-set LOOM_LOG_PATH (monitoring tails the env-set
+    // path). Tests run --test-threads=1, so process-env mutation is safe.
+
+    /// Run `f` with the loom env vars parse_args reads pinned to a known
+    /// state (LOOM_LOG_PATH optionally set, the rest cleared), restoring
+    /// the previous values afterwards.
+    fn with_parse_args_env<T>(log_path: Option<&str>, f: impl FnOnce() -> T) -> T {
+        const KEYS: &[&str] = &[
+            "LOOM_SOCKET_PATH",
+            "LOOM_DATA_ROOT",
+            "LOOM_LOG_PATH",
+            "LOOM_OTEL_ENABLED",
+            "LOOM_UPLOAD_ROOT",
+        ];
+        let saved: Vec<(&str, Option<String>)> =
+            KEYS.iter().map(|k| (*k, std::env::var(*k).ok())).collect();
+        for k in KEYS {
+            std::env::remove_var(k);
+        }
+        if let Some(v) = log_path {
+            std::env::set_var("LOOM_LOG_PATH", v);
+        }
+        let out = f();
+        for (k, v) in saved {
+            match v {
+                Some(v) => std::env::set_var(k, v),
+                None => std::env::remove_var(k),
+            }
+        }
+        out
+    }
+
+    fn argv(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn data_root_flag_derives_log_path_when_log_path_not_explicit() {
+        let args = with_parse_args_env(None, || {
+            parse_args(&argv(&["loom-daemon", "--data-root", "/srv/loom"]))
+        });
+        assert_eq!(args.data_root, PathBuf::from("/srv/loom"));
+        assert_eq!(args.log_path, PathBuf::from("/srv/loom/daemon.log"));
+    }
+
+    #[test]
+    fn data_root_flag_does_not_clobber_explicit_loom_log_path() {
+        let args = with_parse_args_env(Some("/var/log/custom-loom.log"), || {
+            parse_args(&argv(&["loom-daemon", "--data-root", "/srv/loom"]))
+        });
+        assert_eq!(args.data_root, PathBuf::from("/srv/loom"));
+        assert_eq!(
+            args.log_path,
+            PathBuf::from("/var/log/custom-loom.log"),
+            "an explicit LOOM_LOG_PATH must win over --data-root's derived default"
+        );
+    }
+
+    #[test]
+    fn explicit_loom_log_path_alone_overrides_default() {
+        let args = with_parse_args_env(Some("/var/log/custom-loom.log"), || {
+            parse_args(&argv(&["loom-daemon"]))
+        });
+        assert_eq!(args.log_path, PathBuf::from("/var/log/custom-loom.log"));
+    }
+
+    // ─── A-W8.1 auth artefacts created 0600 atomically ──────────
+    // hello.token is the daemon's sole bearer credential. It must be CREATED
+    // with 0600 — a write-then-chmod sequence leaves a transient umask-mode
+    // window in which any local user can open the token (and keep the fd
+    // past the chmod).
+
+    /// Run `f` with the process umask temporarily set to `mask` (tests run
+    /// --test-threads=1, so no other thread races the process-global umask).
+    #[cfg(unix)]
+    fn with_umask<T>(mask: libc::mode_t, f: impl FnOnce() -> T) -> T {
+        let old = unsafe { libc::umask(mask) };
+        let out = f();
+        unsafe { libc::umask(old) };
+        out
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_auth_file_0600_creates_with_0600_under_permissive_umask() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_scratch_dir("auth-0600");
+        let path = dir.join("hello.token");
+        // umask 0: a plain fs::write would create this 0666 — the regression
+        // under test is that the file is NEVER creatable looser than 0600.
+        with_umask(0, || {
+            write_auth_file_0600(&path, b"tok-secret", "hello.token")
+        })
+        .expect("write_auth_file_0600");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "auth file must be CREATED 0600 (no transient world-readable window)"
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"tok-secret");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_auth_file_0600_truncates_and_rewrites_existing_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_scratch_dir("auth-0600-rewrite");
+        let path = dir.join("hello.token");
+        write_auth_file_0600(&path, b"first-token-longer", "hello.token").unwrap();
+        // Daemon restart path: same file, new token — must fully replace.
+        write_auth_file_0600(&path, b"second", "hello.token").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"second");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn abort_session_raw_without_host_still_aborts() {
+        let tmp = test_scratch_dir("abort-no-host");
+        let bridge = CoreBridge {
+            core: make_core_at(&tmp),
+            wasm_host: None,
+            cleanup_tasks: Arc::new(std::sync::Mutex::new(tokio::task::JoinSet::new())),
+        };
+        let sid = create_session_via(&bridge);
+        bridge
+            .abort_session_raw(&sid, "test-abort")
+            .expect("abort without a WasmHost must still succeed");
+        assert_eq!(bridge.cleanup_tasks.lock().unwrap().len(), 0);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

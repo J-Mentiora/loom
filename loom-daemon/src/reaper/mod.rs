@@ -2,14 +2,18 @@
 //!
 //! ONE sequential sweep (intake-council C1: no concurrent races between the phases) runs
 //! three steps in order, used both by the periodic background task and the on-demand
-//! `session.reap` RPC (the latter in preview mode when `apply == false`):
+//! `session.reap` RPC (the latter in preview mode when `apply == false`). The C1
+//! single-sweep invariant is enforced by construction: every `run_sweep` entry point
+//! serializes on `SWEEP_GATE`, so an RPC-triggered sweep can never overlap the periodic
+//! ticker (or another RPC):
 //!
 //! 1. **idle eviction** — Active sessions idle past the TTL with no in-flight action, closed
 //!    through the two-phase guarded `evict_if_idle` + browser teardown.
 //! 2. **zombie detection** — Active sessions whose Chromium pid is already dead, closed.
 //! 3. **orphan GC** — `$TMPDIR/loom-chromium-*` dirs whose session is not live and which are
 //!    aged past one sweep interval; their browser tree is `killpg`'d (pidfile-verified) and
-//!    the dir removed.
+//!    the dir removed — but ONLY once the tree is confirmed dead. A kill skipped for a live,
+//!    unverifiable pid retains the dir + pidfile so the next sweep can retry.
 //!
 //! The decision logic is the pure `decide` module; the I/O is the `proc` module. Every
 //! eviction / kill emits a structured `tracing` line so the wedge is visible in logs.
@@ -110,12 +114,14 @@ fn session_udd(session_id: &str) -> std::path::PathBuf {
     proc::browser_tmp_root().join(format!("loom-chromium-{session_id}"))
 }
 
-/// Browser liveness for an Active session, via its sidecar pidfile. Missing pidfile ⇒
-/// treated as ALIVE (fail-safe: a session that never navigated has no browser and must not
-/// be mistaken for a zombie).
+/// Browser liveness for an Active session, via its sidecar pidfile. Probes the process
+/// GROUP, not just the leader pid: Chromium's leader can exit while renderer/GPU members
+/// survive, and such a session is NOT a zombie (its tree still holds fds/memory). Missing
+/// pidfile ⇒ treated as ALIVE (fail-safe: a session that never navigated has no browser and
+/// must not be mistaken for a zombie).
 fn browser_pid_alive_for(session_id: &str) -> bool {
     match proc::read_pidfile(&session_udd(session_id)) {
-        Some(pid) => proc::pid_is_alive(pid),
+        Some(pgid) => proc::group_is_alive(pgid),
         None => true,
     }
 }
@@ -127,47 +133,92 @@ async fn teardown_browser(host: Option<&Arc<WasmHost>>, session_id: &str) {
     }
 }
 
+/// Outcome of a `kill_orphan` attempt, deciding whether the user-data-dir may be swept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrphanKill {
+    /// Tree verified + signalled — it is dead now.
+    Terminated,
+    /// Nothing alive at the recorded pgid — tree confirmed dead.
+    AlreadyDead,
+    /// No verifiable pid recorded — there is no process this sweep could strand.
+    NoPidfile,
+    /// A LIVE pid the sweep declined to signal (cmdline did not verify — recycled pid, or a
+    /// transient cmdline-read failure). The dir AND pidfile must survive so the next sweep
+    /// can retry: deleting them would make a still-running browser permanently untrackable,
+    /// inverting the module's "leak for ONE MORE SWEEP" invariant.
+    SkippedAliveUnverified,
+}
+
+impl OrphanKill {
+    /// Whether the browser tree is confirmed dead (or never recorded a pid), making the
+    /// user-data-dir safe to remove. `SkippedAliveUnverified` keeps the dir: the pidfile
+    /// inside it is the only handle a future sweep has on the still-running process.
+    fn dir_removable(self) -> bool {
+        !matches!(self, OrphanKill::SkippedAliveUnverified)
+    }
+}
+
 /// Kill an orphan browser tree for `udd`. Pidfile-only + cmdline-verified (hardening B/C3):
-/// any uncertainty ⇒ no signal sent. Returns true iff a tree was actually terminated.
-async fn kill_orphan(udd: std::path::PathBuf, grace: Duration) -> bool {
+/// any uncertainty ⇒ no signal sent. The returned tri-state tells the caller whether the
+/// dir may be removed (`dir_removable`) — only a confirmed-dead tree is sweepable.
+async fn kill_orphan(udd: std::path::PathBuf, grace: Duration) -> OrphanKill {
     let Some(pgid) = proc::read_pidfile(&udd) else {
-        // No verifiable pid — fail-safe skip. The dir is still removed by the caller.
-        return false;
+        // No verifiable pid — fail-safe skip (no signal). With no pid recorded there is
+        // nothing a dir removal could strand, so the caller may still sweep the dir.
+        return OrphanKill::NoPidfile;
     };
-    if !proc::pid_is_alive(pgid) {
-        return false;
+    // Group liveness, not leader liveness: a dead leader with surviving renderer/GPU
+    // members is exactly the leaked tree this GC exists for — kill(leader, 0) would
+    // report it AlreadyDead and the stragglers would never be signalled.
+    if !proc::group_is_alive(pgid) {
+        return OrphanKill::AlreadyDead;
     }
     let needle = format!("user-data-dir={}", udd.display());
-    // C3: only signal a pid whose command line actually references this user-data-dir, so a
-    // recycled pid is never hit.
-    let verified = tokio::task::spawn_blocking(move || proc::pid_cmdline_contains(pgid, &needle))
+    // C3: only signal a group whose command line actually references this user-data-dir, so
+    // a recycled pid is never hit. Checked across the GROUP members (leader fast-path
+    // first) so a dead-leader tree can still be verified and killed.
+    let verified = tokio::task::spawn_blocking(move || proc::group_cmdline_contains(pgid, &needle))
         .await
         .unwrap_or(false);
     if !verified {
         tracing::warn!(
             pid = pgid,
             udd = %udd.display(),
-            "reaper: orphan pid did not match user-data-dir (recycled?); skipping kill"
+            "reaper: orphan pid did not match user-data-dir (recycled?); \
+             skipping kill, retaining dir for the next sweep"
         );
-        return false;
+        return OrphanKill::SkippedAliveUnverified;
     }
     let grace2 = grace;
-    matches!(
-        tokio::task::spawn_blocking(move || proc::terminate_group(pgid, grace2))
-            .await
-            .unwrap_or(proc::KillOutcome::AlreadyDead),
-        proc::KillOutcome::Terminated
-    )
+    match tokio::task::spawn_blocking(move || proc::terminate_group(pgid, grace2)).await {
+        Ok(proc::KillOutcome::Terminated) => OrphanKill::Terminated,
+        Ok(proc::KillOutcome::AlreadyDead) => OrphanKill::AlreadyDead,
+        // Join error (kill task panicked/cancelled): tree state unknown while the pid was
+        // just seen alive — keep the dir so the next sweep retries.
+        Err(_) => OrphanKill::SkippedAliveUnverified,
+    }
 }
+
+/// Serializes every sweep entry point — startup GC, the periodic ticker, and the
+/// `session.reap` RPC (including two concurrent RPCs) — so the documented C1
+/// single-sequential-sweep invariant holds by construction instead of by scheduling luck.
+/// Overlapping sweeps would double-signal orphan trees, race `remove_orphan_dir` against a
+/// concurrent kill's pidfile/cmdline verification, and double-count `SweepReport`s. Sweeps
+/// are idempotent, so a caller that waited here just re-scans and reports the (now empty)
+/// remainder.
+static SWEEP_GATE: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Run one reaper sweep. `apply == false` previews (no side effects) — used by
 /// `session.reap` dry-run. Idempotent: a second apply finds nothing left and reports zero.
+/// Sweeps are serialized on `SWEEP_GATE` (see above); a concurrent caller waits, it is
+/// never skipped — `session.reap` callers always get a real (possibly empty) report.
 pub async fn run_sweep(
     core: &Arc<CoreApiFacade>,
     host: Option<&Arc<WasmHost>>,
     cfg: &ReaperConfig,
     apply: bool,
 ) -> SweepReport {
+    let _sweep_guard = SWEEP_GATE.lock().await;
     let now = now_ms();
     let sm = &core.session_manager;
     let mut report = SweepReport::default();
@@ -261,7 +312,8 @@ pub async fn run_sweep(
                 report.orphan_browsers_killed.push(sid);
                 continue;
             }
-            if kill_orphan(entry.path.clone(), cfg.kill_grace).await {
+            let outcome = kill_orphan(entry.path.clone(), cfg.kill_grace).await;
+            if outcome == OrphanKill::Terminated {
                 tracing::warn!(
                     metric = "loom_reaper_orphan_killed",
                     session_id = %sid,
@@ -270,10 +322,169 @@ pub async fn run_sweep(
                 );
                 report.orphan_browsers_killed.push(sid.clone());
             }
-            proc::remove_orphan_dir(&sid, &entry.path);
-            report.orphan_dirs_removed += 1;
+            // Only sweep a dir whose tree is confirmed dead. When the kill was skipped for a
+            // live, unverifiable pid the udd + pidfile must outlive this sweep — removing
+            // them would permanently strand the process (no future sweep, `session.reap`,
+            // or `loom doctor` could ever find it again).
+            if !outcome.dir_removable() {
+                continue;
+            }
+            if proc::remove_orphan_dir(&sid, &entry.path) {
+                report.orphan_dirs_removed += 1;
+            }
         }
     }
 
     report
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    fn scratch_udd(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("loom-chromium-{name}{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch udd");
+        dir
+    }
+
+    fn make_core(data_root: &std::path::Path) -> Arc<CoreApiFacade> {
+        let config = loom_core::core_api_facade::CoreConfig {
+            data_root: data_root.to_path_buf(),
+            log_path: data_root.join("daemon.log"),
+            otel_enabled: false,
+            default_seed: 42,
+            checkpoint_every_n: 100,
+        };
+        let keychain: Arc<dyn loom_core::vault::KeychainAccess> =
+            Arc::new(loom_keychain::StubKeychain);
+        CoreApiFacade::new(config, keychain).expect("CoreApiFacade::new in scratch dir")
+    }
+
+    /// The C1 single-sweep invariant: a sweep entering while another holds the gate must
+    /// WAIT (not overlap, not be skipped) and complete once the gate frees.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn run_sweep_waits_for_an_in_flight_sweep() {
+        let tmp = std::env::temp_dir().join(format!("reaper-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let core = make_core(&tmp);
+        let cfg = ReaperConfig {
+            idle_ttl: Duration::ZERO,
+            sweep_interval: Duration::from_secs(60),
+            kill_grace: Duration::from_millis(100),
+            orphan_min_age: Duration::from_secs(60),
+            orphan_gc_enabled: false,
+        };
+
+        // Simulate an in-flight sweep by holding the gate directly.
+        let guard = SWEEP_GATE.lock().await;
+        let core2 = Arc::clone(&core);
+        let cfg2 = cfg.clone();
+        let task = tokio::spawn(async move { run_sweep(&core2, None, &cfg2, true).await });
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(
+            !task.is_finished(),
+            "run_sweep must block while another sweep holds the gate (C1: no overlap)"
+        );
+
+        drop(guard);
+        let report = tokio::time::timeout(Duration::from_secs(5), task)
+            .await
+            .expect("sweep must complete once the gate frees")
+            .expect("sweep task must not panic");
+        assert!(report.is_empty(), "empty facade ⇒ empty report");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn orphan_kill_dir_removable_only_when_tree_confirmed_dead() {
+        assert!(OrphanKill::Terminated.dir_removable());
+        assert!(OrphanKill::AlreadyDead.dir_removable());
+        assert!(OrphanKill::NoPidfile.dir_removable());
+        // The one case that must retain the udd + pidfile for retry.
+        assert!(!OrphanKill::SkippedAliveUnverified.dir_removable());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kill_orphan_no_pidfile_is_removable_no_signal() {
+        let udd = scratch_udd("no-pidfile-");
+        let outcome = kill_orphan(udd.clone(), Duration::from_millis(100)).await;
+        assert_eq!(outcome, OrphanKill::NoPidfile);
+        assert!(outcome.dir_removable());
+        let _ = std::fs::remove_dir_all(&udd);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kill_orphan_dead_pid_is_already_dead() {
+        let udd = scratch_udd("dead-pid-");
+        // A very high pid is almost certainly unused (same fixture as proc::tests).
+        std::fs::write(udd.join(proc::PIDFILE_NAME), "2000000000").unwrap();
+        let outcome = kill_orphan(udd.clone(), Duration::from_millis(100)).await;
+        assert_eq!(outcome, OrphanKill::AlreadyDead);
+        assert!(outcome.dir_removable());
+        let _ = std::fs::remove_dir_all(&udd);
+    }
+
+    /// The finding's exact scenario: a LIVE pid whose cmdline does NOT reference the udd
+    /// (recycled pid / transient read failure). The kill must be skipped AND the dir must
+    /// be retained — previously run_sweep removed the dir (and pidfile) anyway, stranding
+    /// the process forever.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kill_orphan_live_unverified_pid_skips_kill_and_retains_dir() {
+        let udd = scratch_udd("live-unverified-");
+        let mut child = Command::new("sleep")
+            .arg("30")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn sleep");
+        let pid = child.id() as i32;
+        std::fs::write(udd.join(proc::PIDFILE_NAME), pid.to_string()).unwrap();
+
+        let outcome = kill_orphan(udd.clone(), Duration::from_millis(100)).await;
+        assert_eq!(outcome, OrphanKill::SkippedAliveUnverified);
+        assert!(
+            !outcome.dir_removable(),
+            "udd + pidfile must survive for the next sweep"
+        );
+        // The unverified process must NOT have been signalled.
+        assert!(proc::pid_is_alive(pid), "skip means no signal was sent");
+
+        let _ = proc::terminate_group(pid, Duration::from_millis(500));
+        let _ = child.wait();
+        let _ = std::fs::remove_dir_all(&udd);
+    }
+
+    /// Happy path: live pid whose cmdline carries the user-data-dir needle → verified,
+    /// terminated, dir removable.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn kill_orphan_verified_live_tree_is_terminated() {
+        let udd = scratch_udd("live-verified-");
+        let needle = format!("user-data-dir={}", udd.display());
+        // Extra argv after `-c CMD` becomes $0/$1 of the shell — visible in its command
+        // line, so pid_cmdline_contains matches without launching a real chromium.
+        let mut child = Command::new("sh")
+            .args(["-c", "sleep 30", "sh", &needle])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .process_group(0)
+            .spawn()
+            .expect("spawn sh sleep");
+        let pid = child.id() as i32;
+        std::fs::write(udd.join(proc::PIDFILE_NAME), pid.to_string()).unwrap();
+
+        let outcome = kill_orphan(udd.clone(), Duration::from_millis(1000)).await;
+        assert_eq!(outcome, OrphanKill::Terminated);
+        assert!(outcome.dir_removable());
+
+        let _ = child.wait();
+        assert!(!proc::pid_is_alive(pid));
+        let _ = std::fs::remove_dir_all(&udd);
+    }
 }
