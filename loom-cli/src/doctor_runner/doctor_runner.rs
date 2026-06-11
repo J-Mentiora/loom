@@ -19,6 +19,10 @@
 //   Exit-code mapping owned by `ErrorMapper`.
 // - **RPC-free for checks 1, 3, 4, 5, 6.** Checks 2, 7, 8 use the daemon
 //   (`RpcClient::ping` / `daemon.health` / a real session round-trip).
+// - **`--daemon-only` scopes the verdict to checks 1-2** (socket + daemon)
+//   and reports checks 3-8 as `skipped`, preserving the exactly-8 report
+//   shape. For hosts where Chromium/AOT artifacts are absent by design
+//   (e.g. the Docker runtime image's HEALTHCHECK).
 
 use clap::Args;
 use serde::{Deserialize, Serialize};
@@ -29,9 +33,16 @@ use crate::error_mapper::DoctorReport;
 use crate::rpc_client::RpcClient;
 use crate::CliError;
 
-/// `loom doctor` arguments. No flags at v1 — fixed 5-check probe.
+/// `loom doctor` arguments.
 #[derive(Debug, Clone, Args, Serialize, Deserialize, Default)]
-pub struct DoctorArgs {}
+pub struct DoctorArgs {
+    /// Run only the daemon-scoped checks (socket reachable + daemon
+    /// responsive); report everything else as skipped. For hosts where
+    /// Chromium/AOT artifacts are absent by design (e.g. a container
+    /// healthcheck against an RPC-only daemon image).
+    #[arg(long)]
+    pub daemon_only: bool,
+}
 
 /// Resolved paths used by the 6 checks. (`chromium_binary` feeds both the
 /// presence/sha check 4 and the macOS quarantine check 6.)
@@ -69,12 +80,15 @@ const BROWSER_SMOKE_PREREQS: &[&str] = &[
     "chromium_present_and_verified",
 ];
 
-/// Run the full 6-check probe. Returns `Ok(report)` if all checks
+/// Run the health probe. Returns `Ok(report)` if all checks
 /// pass; returns `Err(CliError::DoctorFailed(report))` if any fail.
+/// With `args.daemon_only`, only checks 1-2 run; checks 3-8 are
+/// reported as `skipped` and never counted as failures.
 pub async fn run(
     rpc: &RpcClient,
     chromium: &ChromiumDownloader,
     paths: &DoctorPaths,
+    args: &DoctorArgs,
 ) -> Result<DoctorReport, CliError> {
     use crate::error_mapper::DoctorCheck;
     let mut checks = Vec::new();
@@ -108,6 +122,32 @@ pub async fn run(
         check_socket_reachable(&paths.socket_path)
     );
     run_check!("daemon_responsive", check_daemon_responsive(rpc));
+
+    // --daemon-only: the host is only expected to provide a reachable
+    // socket and a responsive daemon (e.g. the Docker runtime image,
+    // which ships no Chromium or AOT artifacts until `loom postinstall`
+    // is run). Report checks 3-8 as `skipped` — NOT failed — so the
+    // exit code reflects what this host can actually do, while keeping
+    // the exactly-8 report shape.
+    if args.daemon_only {
+        for name in &CHECK_NAMES[2..] {
+            checks.push(DoctorCheck {
+                name: (*name).to_string(),
+                status: "skipped".to_string(),
+                detail: Some(serde_json::json!("skipped: --daemon-only")),
+            });
+        }
+        let report = DoctorReport {
+            checks,
+            failures: failures.clone(),
+        };
+        return if failures.is_empty() {
+            Ok(report)
+        } else {
+            Err(CliError::DoctorFailed(report))
+        };
+    }
+
     run_check!(
         "aot_artifacts_present",
         check_aot_artifacts(&paths.surfaces_dir)

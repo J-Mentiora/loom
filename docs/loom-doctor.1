@@ -4,10 +4,13 @@
 .SH NAME
 loom\-doctor \- Health checks. RPC\-free local action
 .SH SYNOPSIS
-\fBloom\-doctor\fR [\fB\-h\fR|\fB\-\-help\fR] 
+\fBloom\-doctor\fR [\fB\-\-daemon\-only\fR] [\fB\-h\fR|\fB\-\-help\fR] 
 .SH DESCRIPTION
 Health checks. RPC\-free local action
 .SH OPTIONS
+.TP
+\fB\-\-daemon\-only\fR
+Run only the daemon\-scoped checks (socket reachable + daemon responsive); report everything else as skipped. For hosts where Chromium/AOT artifacts are absent by design (e.g. a container healthcheck against an RPC\-only daemon image)
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
