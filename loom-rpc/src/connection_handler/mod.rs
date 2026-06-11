@@ -140,6 +140,32 @@ impl ConnectionHandler {
             let frame =
                 match tokio::time::timeout(authenticated_idle_timeout(), framed.next()).await {
                     Ok(Some(Ok(f))) => f,
+                    // Codec error — in practice a frame whose length prefix
+                    // exceeds MAX_FRAME_BYTES (LengthDelimitedCodec emits an
+                    // io error and cannot resync afterwards, so the
+                    // connection must still close). Previously this arm
+                    // silently dropped the connection and clients surfaced
+                    // it as a generic "no daemon running"; send a typed
+                    // error envelope and log the reason before closing.
+                    Ok(Some(Err(e))) => {
+                        tracing::warn!(
+                            metric = "loom_daemon_frame_rejected",
+                            error = %e,
+                            max_frame_bytes = crate::frame_handler::frame_handler::MAX_FRAME_BYTES,
+                            "closing connection: oversized or undecodable frame"
+                        );
+                        let response = jsonrpc_err(
+                            serde_json::Value::Null,
+                            LoomErrorCode::ProtocolMalformed,
+                            &format!(
+                                "frame rejected ({e}); the frame cap is {} bytes",
+                                crate::frame_handler::frame_handler::MAX_FRAME_BYTES
+                            ),
+                        );
+                        let _ = framed.send(Bytes::from(response)).await;
+                        break;
+                    }
+                    // Idle timeout or clean EOF.
                     _ => break,
                 };
             let response = handle_request(&frame, &deps, &cancels, &health_limiter).await;

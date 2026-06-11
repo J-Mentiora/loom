@@ -105,14 +105,24 @@ impl AuthManager {
     }
 }
 
+/// Artefact paths inside an explicit auth dir — the resolved
+/// `CliConfig.auth_dir` (config.toml `auth_dir` / `LOOM_AUTH_DIR`). The
+/// daemon writes `hello.token` + `daemon.pid` under `<data_root>/auth/`,
+/// so a custom `--data-root` daemon pairs with `auth_dir = <root>/auth`.
+pub fn auth_paths_in(auth_dir: &std::path::Path) -> AuthPaths {
+    AuthPaths {
+        token_path: auth_dir.join("hello.token"),
+        pid_path: auth_dir.join("daemon.pid"),
+    }
+}
+
 /// Default platform paths. macOS: `~/Library/Application Support/loom/auth/`.
 /// Linux: `$XDG_DATA_HOME/loom/auth/`.
+/// Must agree with `CliConfig`'s compiled `auth_dir` default and the
+/// daemon's `<data_root>/auth/` layout.
 pub fn default_auth_paths() -> Result<AuthPaths, CliError> {
     let auth_dir = dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
         .join("loom/auth");
-    Ok(AuthPaths {
-        token_path: auth_dir.join("hello.token"),
-        pid_path: auth_dir.join("daemon.pid"),
-    })
+    Ok(auth_paths_in(&auth_dir))
 }

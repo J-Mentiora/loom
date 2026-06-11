@@ -10,7 +10,9 @@
 //   single-shot process. `call` opens, HELLOs, sends, awaits, closes.
 // - **Auth via `AuthManager`.** `RpcClient::call` reads the HELLO
 //   token from `AuthManager::read_hello_token()` (per-startup
-//   artefact). Token never persisted across daemon restarts.
+//   artefact) at the resolved `auth_dir` (config.toml `auth_dir` /
+//   `LOOM_AUTH_DIR` per `ConfigResolver` precedence). Token never
+//   persisted across daemon restarts.
 // - **Retry policy.** Default = no retry; one connect
 //   retry on `ECONNREFUSED` after 100 ms (covers daemon
 //   just-restarted race). Anything else fails fast through
@@ -29,6 +31,10 @@ use crate::CliError;
 pub struct RpcClientConfig {
     /// Resolved Unix socket path (per `ConfigResolver` precedence).
     pub socket_path: PathBuf,
+    /// Resolved auth artefact dir (`hello.token` + `daemon.pid`), per
+    /// `ConfigResolver` precedence. Must point where the daemon writes
+    /// its `<data_root>/auth/` artefacts.
+    pub auth_dir: PathBuf,
     /// Request timeout. Default 30s.
     pub request_timeout: Duration,
 }
@@ -63,8 +69,12 @@ impl RpcClient {
     /// HELLO semantics: timeout on the read-back = accepted; any frame or
     /// EOF before the timeout = rejected (`AuthFailed`).
     async fn open_and_hello(&self) -> Result<tokio::net::UnixStream, CliError> {
-        let auth =
-            crate::auth_manager::AuthManager::new(crate::auth_manager::default_auth_paths()?);
+        // Resolved `auth_dir` (file + LOOM_AUTH_DIR env per ConfigResolver),
+        // not the hardcoded platform default — custom `--data-root` daemon
+        // setups read the token from where their daemon actually wrote it.
+        let auth = crate::auth_manager::AuthManager::new(crate::auth_manager::auth_paths_in(
+            &self.config.auth_dir,
+        ));
         let token = auth.read_hello_token()?;
         let mut stream = match tokio::net::UnixStream::connect(&self.config.socket_path).await {
             Ok(s) => s,

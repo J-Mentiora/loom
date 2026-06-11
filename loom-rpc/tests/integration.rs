@@ -615,4 +615,70 @@ async fn test_content_get_malformed_artifact_ref_returns_schema_violation() {
         code, "internal_error",
         "well-formed ref must reach the core bridge; got: {resp}"
     );
+// ─── Test 6: Oversized frame → typed error envelope, then close ──────────────
+
+/// Regression: a frame whose length prefix exceeds `MAX_FRAME_BYTES`
+/// (e.g. `loom import playwright` hex-encoding a >8 MiB trace into one
+/// JSON-RPC frame) used to be silently dropped by the authenticated
+/// loop's `_ => break` arm — the client saw a bare connection close and
+/// surfaced it as "no daemon running". The handler must now send a
+/// `protocol_malformed` JSON-RPC error envelope naming the frame cap,
+/// then close the connection (LengthDelimitedCodec cannot resync after
+/// an oversized length prefix, so the close itself is unavoidable).
+#[tokio::test]
+async fn test_oversized_frame_returns_protocol_malformed_then_closes() {
+    use loom_rpc::frame_handler::frame_handler::MAX_FRAME_BYTES;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let (srv, _bg) = start_server().await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Raw stream — the test client's own LengthDelimitedCodec would
+    // refuse to *encode* an oversized frame, so write the length prefix
+    // by hand. The server decoder rejects on the prefix alone; no
+    // payload bytes are required.
+    let mut stream = UnixStream::connect(&srv.socket_path)
+        .await
+        .expect("connect must succeed");
+
+    // Authenticate (manual 4-byte big-endian length framing).
+    let hello = format!("HELLO {}", srv.token.0);
+    stream
+        .write_all(&(hello.len() as u32).to_be_bytes())
+        .await
+        .unwrap();
+    stream.write_all(hello.as_bytes()).await.unwrap();
+
+    // Claim a frame one byte over the cap.
+    stream
+        .write_all(&((MAX_FRAME_BYTES + 1) as u32).to_be_bytes())
+        .await
+        .unwrap();
+
+    // The server must answer with a typed error envelope, not a bare close.
+    let mut len_buf = [0u8; 4];
+    stream
+        .read_exact(&mut len_buf)
+        .await
+        .expect("server must send an error frame before closing");
+    let mut buf = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+    stream.read_exact(&mut buf).await.unwrap();
+    let resp: serde_json::Value =
+        serde_json::from_slice(&buf).expect("error frame must be valid JSON");
+    assert_eq!(
+        resp.get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_str()),
+        Some("protocol_malformed"),
+        "oversized frame must yield protocol_malformed; got: {resp}"
+    );
+    let message = resp["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        message.contains(&MAX_FRAME_BYTES.to_string()),
+        "error must name the frame cap; got: {message}"
+    );
+
+    // ... and then the connection closes (codec cannot resync).
+    let n = stream.read(&mut [0u8; 16]).await.unwrap_or(0);
+    assert_eq!(n, 0, "connection must be closed after the error frame");
 }
