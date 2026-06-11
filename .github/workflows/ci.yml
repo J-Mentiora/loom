@@ -5,6 +5,12 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    # `labeled` is non-default: adding the `ci:macos` label must re-trigger
+    # CI so the macOS `test` leg (PR-skipped by default, see the test job
+    # matrix) can be pulled into a PR on demand. Any other label addition
+    # also re-triggers, but the per-ref concurrency group above cancels the
+    # superseded run, so the cost is a restart, not a duplicate.
+    types: [opened, synchronize, reopened, labeled]
 
 # Cancel superseded runs on the same ref (force-pushes to a PR branch, and
 # pushes to main). Main is included deliberately: merges are batched with
@@ -139,34 +145,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
-        # Beta is informational only — see `continue-on-error` below.
-        # Beta cells skip the real-Chromium e2e harness and the
-        # `--include-ignored` fake-chromium tests; they validate that the
-        # workspace compiles + unit tests pass against an incoming rustc.
-        toolchain: [stable, beta]
-        # macos-latest is billed at $0.16/min even on public repos. Beta is
-        # informational — Linux/beta is sufficient signal for incoming-rustc
-        # breakage without paying for the macOS leg.
-        exclude:
-          - os: macos-latest
-            toolchain: beta
+        # The macOS test leg is the single most expensive cell in this file
+        # (~42 min wall, $0.16/min, and the public-repo macOS concurrency cap
+        # is 5 jobs — it serialized the whole queue). PRs run Linux only by
+        # default; macOS test coverage is preserved on every push to main and
+        # can be pulled into a PR on demand with the `ci:macos` label (the
+        # `labeled` pull_request type above re-triggers CI when it lands).
+        # macOS-specific *compile* breakage is still caught on every PR by
+        # the macOS leg of the `build` job below, which stays.
+        os: ${{ (github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci:macos')) && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest"]') }}
+        # Beta-toolchain coverage moved to the weekly rust-beta.yml workflow:
+        # it was informational-only (continue-on-error) yet cost a full
+        # ~35-min workspace compile+test on every PR push. `toolchain` stays
+        # a matrix axis so job names ("cargo test (… / stable)") are stable.
+        toolchain: [stable]
     runs-on: ${{ matrix.os }}
-    # Beta breakage is best-effort: it surfaces in the matrix UI but does
-    # not block a PR. Stable cells remain hard-required.
-    continue-on-error: ${{ matrix.toolchain == 'beta' }}
     steps:
       - uses: actions/checkout@v6
-      # `dtolnay/rust-toolchain` publishes dedicated `stable`, `beta` branches
-      # that pin specific Rust versions. We branch on `matrix.toolchain` here
-      # rather than using `@master` (whose branch semantics can change) — GHA
-      # forbids `${{ matrix.* }}` inside `uses:` so the gate is per-step.
-      - if: matrix.toolchain == 'stable'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip2
-      - if: matrix.toolchain == 'beta'
-        uses: dtolnay/rust-toolchain@beta
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
       # Default key already fingerprints toolchain (rustc hash) + Cargo.lock,
@@ -205,7 +201,7 @@ jobs:
       # ≠ failed PR — the Linux backend has a documented weaker-CI gap
       # per D9, and macOS coverage exercises 70% of the same trait surface.
       - name: Start gnome-keyring (linux only, best-effort)
-        if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'stable'
+        if: matrix.os == 'ubuntu-latest'
         run: |
           set +e
           # `eval` not `export $(...)` — if dbus-launch fails or prints
@@ -235,14 +231,12 @@ jobs:
             echo "  see A-W7.2 / FND-0047 — failed setup is non-blocking for v0.9.4." >&2
           fi
           exit 0
-      - name: Build fake-chromium binary (stable cells only)
-        if: matrix.toolchain == 'stable'
+      - name: Build fake-chromium binary
         # The 23 `#[ignore]`'d tests in loom-host locate this binary via
         # `current_exe().parent()/"fake-chromium"`. `--release` puts it next
         # to the test binaries' parent dir.
         run: cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --release
-      - name: Run tests (stable, with --include-ignored)
-        if: matrix.toolchain == 'stable'
+      - name: Run tests (with --include-ignored)
         # `--test-threads=1` is load-bearing — see CONTRIBUTING.md.
         # `--features 'loom-shims/fake-chromium-bin'`: required for the
         # `loom-shims` test crates (e.g. `binary_smoke`) to compile —
@@ -257,12 +251,6 @@ jobs:
         # of each function name. Drop both filters when those tests are
         # implemented.
         run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42
-      - name: Run tests (beta, baseline only)
-        if: matrix.toolchain == 'beta'
-        # Beta cells run the same baseline cargo test as the previous CI did,
-        # without --include-ignored — the ignored fake-chromium tests would
-        # add cost to a `continue-on-error` cell whose signal is informational.
-        run: cargo test --workspace --release -- --test-threads=1
 
   build:
     name: cargo build --release (${{ matrix.os }} / ${{ matrix.toolchain }})
@@ -271,23 +259,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The macOS leg stays on PRs deliberately (unlike `test`): it is the
+        # only per-PR check that compiles the platform-specific code paths
+        # (loom-keychain / loom-shims) on macOS, and at ~5 min it is an order
+        # of magnitude cheaper than the macOS test leg it backstops.
         os: [macos-latest, ubuntu-latest]
-        toolchain: [stable, beta]
-        # See note on `test.exclude` — macOS/beta is informational-only signal
-        # not worth $0.16/min.
-        exclude:
-          - os: macos-latest
-            toolchain: beta
+        # Beta moved to the weekly rust-beta.yml workflow — see the note on
+        # the `test` job matrix.
+        toolchain: [stable]
     runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.toolchain == 'beta' }}
     steps:
       - uses: actions/checkout@v6
-      - if: matrix.toolchain == 'stable'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip2
-      - if: matrix.toolchain == 'beta'
-        uses: dtolnay/rust-toolchain@beta
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
       # `shared-key` (instead of the default per-job key) lets the `smoke`
@@ -457,8 +440,8 @@ jobs:
         run: scripts/uninstall.test.sh
 
   e2e:
-    # Real-Chromium-pinned end-to-end verification. Runs on
-    # stable cells only; beta is best-effort and skips this job.
+    # Real-Chromium-pinned end-to-end verification. Stable toolchain only
+    # (beta coverage lives in the weekly rust-beta.yml and skips e2e).
     name: e2e pinned-chromium (${{ matrix.os }})
     needs: [changes, build]
     # Runs when Rust code OR tests/e2e fixtures change. The explicit

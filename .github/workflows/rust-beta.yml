@@ -1,0 +1,80 @@
+name: Rust beta (weekly)
+
+# Informational-only beta-toolchain coverage, moved out of per-PR CI.
+#
+# The beta cells in ci.yml were `continue-on-error` (never blocked a merge)
+# yet cost a full ~35-min workspace compile+test on every PR push and every
+# main push. Beta promotes to stable every 6 weeks, so a weekly run is ample
+# lead time on incoming-rustc breakage. Nothing gates on this workflow;
+# failures surface in the Actions tab and repo-watch notifications.
+#
+# These jobs mirror what the beta cells ran in ci.yml:
+#   • cargo test — baseline only, no --include-ignored (the fake-chromium
+#     e2e signal is stable-only by design).
+#   • cargo build --release + binary presence check.
+
+on:
+  schedule:
+    # Tuesday 06:00 UTC — clear of the Monday 09:00 e2e-real-world run.
+    - cron: '0 6 * * 2'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: cargo test (ubuntu-latest / beta)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@beta
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install system deps
+        # Same package set as the ci.yml test job — `pkg-config libssl-dev`
+        # for openssl-sys, the rest are runtime libs so any test that probes
+        # for a runnable browser environment behaves like it does in ci.yml.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config libssl-dev \
+            libnss3 libgbm1 libasound2t64 \
+            libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libxcomposite1 libxdamage1 libxss1 \
+            libxkbcommon-x11-0 libx11-xcb1 \
+            fonts-liberation xdg-utils \
+            libdbus-1-3 dbus-x11 gnome-keyring libsecret-tools
+      - name: Run tests (baseline, no --include-ignored)
+        # `--test-threads=1` is load-bearing — see CONTRIBUTING.md.
+        run: cargo test --workspace --release -- --test-threads=1
+
+  build:
+    name: cargo build --release (ubuntu-latest / beta)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@beta
+        with:
+          targets: wasm32-wasip2
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev
+      - run: cargo build --workspace --release
+      - name: Verify binaries are present
+        run: |
+          for bin in loom loom-daemon loom-shim-chromium loom-mcp; do
+            test -f "target/release/$bin" || (echo "missing: $bin"; exit 1)
+            file "target/release/$bin"
+          done
