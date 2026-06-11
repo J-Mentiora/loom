@@ -42,12 +42,25 @@ pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 
 /// Structured field detail for a `schema_violation` envelope.
 /// Wire-equal to the `data` block in `{error: {code: "schema_violation",
-/// data: {field, expected, actual}}}`.
+/// data: {field, expected, actual, method, allowed?}}}`.
+///
+/// `field` names the ACTUAL offending key: the unexpected property for
+/// `field_unknown`, the missing property for `field_missing`, the dotted
+/// instance path for type/enum violations — never the bare envelope word
+/// "params" (the v0.11.0 bug blamed `field 'params'` for a request whose
+/// offending key was `until`). `method` + `allowed` are additive
+/// (serde-defaulted) so pre-fix consumers of the data block keep parsing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaViolationDetail {
     pub field: String,
     pub expected: String,
     pub actual: String,
+    /// RPC method whose params (or response) failed validation.
+    #[serde(default)]
+    pub method: String,
+    /// For `field_unknown`: the schema's permitted property names (sorted).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed: Option<Vec<String>>,
 }
 
 /// JSON-RPC error envelope as it appears on the wire.

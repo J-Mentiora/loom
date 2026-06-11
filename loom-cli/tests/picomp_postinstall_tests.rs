@@ -78,6 +78,9 @@ fn test_schema_step_creates_and_populates_dir() {
         SchemaStepOutcome::Populated(count) => {
             assert!(count >= 10, "expected >= 10 schema files, got {}", count);
         }
+        SchemaStepOutcome::Refreshed { .. } => {
+            panic!("schema_step returned Refreshed on empty dir — nothing existed to refresh");
+        }
         SchemaStepOutcome::Skipped => {
             panic!("schema_step returned Skipped on empty dir — expected Populated");
         }

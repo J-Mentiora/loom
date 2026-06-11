@@ -290,6 +290,10 @@ impl JsonRpcCaller for RecordingFakeCaller {
             .unwrap()
             .push((method.to_string(), params.clone()));
         match method {
+            // Mirrors the REAL builtin web.navigate schema (incl. the
+            // settle-capture optionals) — the previous {session,url}-only
+            // mock meant this suite never exercised the documented full
+            // arg set (mcp-navigate-schema-regression).
             "rpc.schemas" => Ok(json!({
                 "methods": [{
                     "method": "web.navigate",
@@ -297,9 +301,12 @@ impl JsonRpcCaller for RecordingFakeCaller {
                         "type": "object",
                         "properties": {
                             "session": { "type": "string" },
-                            "url": { "type": "string" }
+                            "url": { "type": "string" },
+                            "until": { "type": "string", "enum": ["load", "networkidle", "settled"] },
+                            "timeout_ms": { "type": "integer" }
                         },
-                        "required": ["session", "url"]
+                        "required": ["session", "url"],
+                        "additionalProperties": false
                     },
                     "response": { "type": "object" }
                 }],
@@ -406,6 +413,37 @@ async fn implicit_session_create_forwards_seed_clock_anchor_profile() {
         creates,
         vec![json!({ "profile": "full", "seed": 42, "clock_anchor": 1_700_000_000_000_u64 })],
         "env-derived options must reach session.create"
+    );
+}
+
+/// The v0.11.0 regression, MCP-side pin: the dispatcher must forward the
+/// documented optional navigate args (`until`, `timeout_ms`) VERBATIM to the
+/// daemon alongside the injected implicit session — no projection, no
+/// dropping, no per-tool special-casing.
+#[tokio::test]
+async fn navigate_documented_optional_args_forward_verbatim() {
+    let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
+    let result = dispatcher
+        .tools_call(ToolsCallParams {
+            name: "loom.web.navigate".into(),
+            arguments: json!({
+                "url": "https://example.test",
+                "until": "settled",
+                "timeout_ms": 5000
+            }),
+        })
+        .await;
+    assert!(!result.is_error, "navigate must succeed: {result:?}");
+    let navigates = RecordingFakeCaller::calls_for(&caller.calls, "web.navigate");
+    assert_eq!(
+        navigates,
+        vec![json!({
+            "session": "fixture-session-1",
+            "url": "https://example.test",
+            "until": "settled",
+            "timeout_ms": 5000
+        })],
+        "until/timeout_ms must reach the daemon verbatim with the injected session"
     );
 }
 

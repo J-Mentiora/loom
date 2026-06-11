@@ -15,6 +15,7 @@
 pub mod action_aliases;
 pub mod auth_token;
 pub mod binary_resolver;
+pub mod builtin_schemas;
 pub mod chromium_resolver;
 pub mod cookie_types;
 pub mod dom_normalize;
