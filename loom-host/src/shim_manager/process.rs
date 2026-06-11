@@ -73,17 +73,32 @@ pub struct SpawnConfig {
 /// panic in the driver. Pinning high (10) leaves the runtime's range free.
 const SHIM_IPC_FD: RawFd = 10;
 
-/// Spawn a shim subprocess: AF_UNIX socketpair, `pre_exec` dup2 to
-/// `SHIM_IPC_FD`, and `LOOM_SHIM_FD` env. Returns a `ShimProcess` with all
-/// background loops running.
+/// Spawn a shim subprocess: AF_UNIX socketpair (CLOEXEC on both ends),
+/// `pre_exec` dup2 to `SHIM_IPC_FD`, and `LOOM_SHIM_FD` env. Returns a
+/// `ShimProcess` with all background loops running.
 ///
-/// The pre_exec body MUST be async-signal-safe — only `libc::dup2` and
-/// `libc::close` are allowed. No allocations, no `format!`, no
-/// `eprintln!` (per practitioner gotcha #2).
+/// The pre_exec body MUST be async-signal-safe — only `libc::dup2`,
+/// `libc::fcntl`, and `libc::close` are allowed. No allocations, no
+/// `format!`, no `eprintln!` (per practitioner gotcha #2).
 pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomError> {
-    // STEP 1: AF_UNIX SOCK_STREAM socketpair via libc.
+    // STEP 1: AF_UNIX SOCK_STREAM socketpair via libc, with CLOEXEC on
+    // BOTH ends. Without CLOEXEC the exec'd shim inherits the host's end
+    // of its own IPC socket (so its EOF-based "daemon died" detection
+    // can never fire — the shim itself holds the write end open), and
+    // concurrently-spawned shims inherit other sessions' in-flight fds.
+    // The child still receives its end: the pre_exec dup2 to
+    // `SHIM_IPC_FD` clears the flag on the new descriptor.
+    //
+    // Linux gets SOCK_CLOEXEC (atomic with creation — no window for a
+    // concurrent spawn on another thread to fork between socketpair and
+    // fcntl); macOS has no SOCK_CLOEXEC, so fall back to fcntl
+    // immediately after creation.
     let mut fds = [0i32; 2];
-    let rc = unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+    #[cfg(target_os = "linux")]
+    let sock_type = libc::SOCK_STREAM | libc::SOCK_CLOEXEC;
+    #[cfg(not(target_os = "linux"))]
+    let sock_type = libc::SOCK_STREAM;
+    let rc = unsafe { libc::socketpair(libc::AF_UNIX, sock_type, 0, fds.as_mut_ptr()) };
     if rc != 0 {
         let errno = std::io::Error::last_os_error();
         return Err(LoomError::new(
@@ -93,6 +108,20 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     }
     let parent_fd: RawFd = fds[0];
     let child_fd: RawFd = fds[1];
+    #[cfg(not(target_os = "linux"))]
+    for fd in fds {
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+            let errno = std::io::Error::last_os_error();
+            unsafe {
+                libc::close(parent_fd);
+                libc::close(child_fd);
+            }
+            return Err(LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("fcntl(FD_CLOEXEC) failed: {errno}"),
+            ));
+        }
+    }
 
     // STEP 2: build the spawn command. dup2(child_fd, SHIM_IPC_FD) in
     // pre_exec to pin the FD; LOOM_SHIM_FD carries the number to the shim.
@@ -110,10 +139,18 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     // SAFETY: pre_exec body only calls async-signal-safe libc functions.
     unsafe {
         cmd.pre_exec(move || {
-            if libc::dup2(child_fd, SHIM_IPC_FD) < 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            if child_fd != SHIM_IPC_FD {
+            if child_fd == SHIM_IPC_FD {
+                // dup2(fd, fd) is a no-op that does NOT clear FD_CLOEXEC
+                // — clear it explicitly so the exec'd shim keeps its end.
+                if libc::fcntl(SHIM_IPC_FD, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            } else {
+                // dup2 clears FD_CLOEXEC on the new descriptor, so the
+                // shim inherits exactly one end of the pair: fd 10.
+                if libc::dup2(child_fd, SHIM_IPC_FD) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
                 libc::close(child_fd);
             }
             Ok(())
@@ -171,18 +208,32 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     })?;
     let (read_half, write_half) = stream.into_split();
 
+    // Shared liveness state, created before the IO loops so the read
+    // loop can mark the transport dead on a framing failure (see
+    // `host_read_loop`) the same way the crash watcher does on child
+    // exit.
+    let pending: Arc<dashmap::DashMap<u64, oneshot::Sender<ShimResponse>>> =
+        Arc::new(dashmap::DashMap::new());
+    let crashed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let exit_status_text: Arc<parking_lot::Mutex<Option<String>>> =
+        Arc::new(parking_lot::Mutex::new(None));
+
     // STEP 5: spawn the host-side framing loops.
     let (request_tx, request_rx_internal) = mpsc::channel::<ShimRequest>(64);
     let (response_tx_internal, mut response_rx) = mpsc::channel::<ShimResponse>(64);
 
     let write = tokio::spawn(host_write_loop(write_half, request_rx_internal));
-    let read = tokio::spawn(host_read_loop(read_half, response_tx_internal));
+    let read = tokio::spawn(host_read_loop(
+        read_half,
+        response_tx_internal,
+        crashed.clone(),
+        exit_status_text.clone(),
+        pending.clone(),
+    ));
 
     // STEP 6: demux loop — pulls ShimResponse and resolves the matching
     // pending oneshot by request_id. Async pushes (CdpEvent / LogLine)
     // are logged at trace level for now.
-    let pending: Arc<dashmap::DashMap<u64, oneshot::Sender<ShimResponse>>> =
-        Arc::new(dashmap::DashMap::new());
     let pending_for_demux = pending.clone();
     let demux = tokio::spawn(async move {
         while let Some(resp) = response_rx.recv().await {
@@ -222,9 +273,6 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     // retains None after the watcher takes the handle;
     // shutdown_process can still kill via libc::kill(pid, SIGKILL)
     // since we cached child_pid.
-    let crashed = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let exit_status_text: Arc<parking_lot::Mutex<Option<String>>> =
-        Arc::new(parking_lot::Mutex::new(None));
     let pending_for_watcher = pending.clone();
     let request_tx_for_watcher = request_tx.clone();
     let crashed_for_watcher = crashed.clone();
@@ -325,9 +373,28 @@ async fn host_write_loop(
     let _ = write_half.shutdown().await;
 }
 
-async fn host_read_loop(
+/// Read loop for shim → host frames.
+///
+/// On a corrupt or oversized frame the transport is unrecoverable (the
+/// stream is desynced — there is no way to find the next frame
+/// boundary), so the loop marks the process crashed, records the reason,
+/// and fails all pending requests — mirroring the child-exit watcher.
+/// Without this, the process would stay cached as healthy: the next
+/// `send_and_await` would pass the `crashed` fast-fail, write to the
+/// half-dead socket, and park an unresolvable oneshot for the full
+/// `recv_timeout` (30 s default; minutes for budget-extended navigates).
+/// Once `crashed` is set, `get_or_spawn` evicts the entry on the next
+/// call and respawns. Clean EOF / read errors are left to the watcher:
+/// they accompany child exit, which the watcher detects and reports with
+/// the real exit status.
+///
+/// `pub(crate)` as a test seam (mirrors `send_and_await`).
+pub(crate) async fn host_read_loop(
     mut read_half: tokio::net::unix::OwnedReadHalf,
     response_tx: mpsc::Sender<ShimResponse>,
+    crashed: Arc<std::sync::atomic::AtomicBool>,
+    exit_status_text: Arc<parking_lot::Mutex<Option<String>>>,
+    pending: Arc<dashmap::DashMap<u64, oneshot::Sender<ShimResponse>>>,
 ) {
     use tokio::io::AsyncReadExt;
     loop {
@@ -338,7 +405,12 @@ async fn host_read_loop(
         }
         let len = u32::from_be_bytes(len_buf);
         if len > loom_shared::shim_protocol::MAX_FRAME_BYTES {
-            tracing::error!("host: frame too large: {len}");
+            mark_transport_dead(
+                format!("shim ipc framing failure: frame too large ({len} bytes)"),
+                &crashed,
+                &exit_status_text,
+                &pending,
+            );
             return;
         }
         let mut payload = vec![0u8; len as usize];
@@ -348,7 +420,12 @@ async fn host_read_loop(
         let resp: ShimResponse = match ciborium::de::from_reader(&payload[..]) {
             Ok(r) => r,
             Err(e) => {
-                tracing::error!("host: decode response: {e}");
+                mark_transport_dead(
+                    format!("shim ipc framing failure: response decode: {e}"),
+                    &crashed,
+                    &exit_status_text,
+                    &pending,
+                );
                 return;
             }
         };
@@ -356,6 +433,23 @@ async fn host_read_loop(
             return;
         }
     }
+}
+
+/// Mark the shim transport dead from the read loop: record the reason,
+/// flip `crashed` so `send_and_await` fail-fasts and `get_or_spawn`
+/// evicts, and drop all in-flight oneshots so parked callers wake
+/// immediately with RecvError → ShimFailure instead of stalling out the
+/// full recv_timeout. Same sequence as the child-exit watcher.
+fn mark_transport_dead(
+    detail: String,
+    crashed: &std::sync::atomic::AtomicBool,
+    exit_status_text: &parking_lot::Mutex<Option<String>>,
+    pending: &dashmap::DashMap<u64, oneshot::Sender<ShimResponse>>,
+) {
+    tracing::error!("host: {detail}");
+    *exit_status_text.lock() = Some(detail);
+    crashed.store(true, std::sync::atomic::Ordering::SeqCst);
+    pending.clear();
 }
 
 /// Send a request and await the matching response with timeout.

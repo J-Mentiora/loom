@@ -8,9 +8,16 @@
 //   namespaces ShimId as `format!("{name}:{session_id}")` so each
 //   session gets its own subprocess (reuse falls out naturally — a
 //   second navigate hits the cached `ShimProcess`).
-// - **Circuit breaker.** 3 consecutive spawn / IO / decode failures
-//   opens the breaker for 5 s. Subsequent `send` calls fail-fast with
-//   `ShimBreakerOpen` until the open window expires.
+// - **Circuit breaker.** 3 consecutive failures opens the breaker for
+//   5 s (`breaker_open_ms`). Subsequent `send` calls fail-fast with
+//   `ShimBreakerOpen` until the open window expires; the first call
+//   after expiry transitions the breaker to `HalfOpen` and proceeds as
+//   a recovery probe — success closes the breaker, failure re-opens it
+//   with a fresh window. Failures are classified: transport failures
+//   (spawn / IO / timeout — the subprocess or socket is unhealthy) also
+//   evict the live subprocess; application failures (shim-REPORTED
+//   errors from a live shim, e.g. a CDP protocol error) only count
+//   toward the threshold and never kill a healthy Chromium.
 // - **Spawn-retry budget.** Single retry on initial spawn failure.
 // - **No platform symbols here.** The shim binaries (chromium) contain
 //   the platform-specific code; `ShimManager` only spawns and speaks
@@ -75,6 +82,25 @@ pub enum BreakerState {
     HalfOpen,
 }
 
+/// Failure classification for `record_failure`.
+///
+/// - `Transport`: the subprocess or its socket is unhealthy (spawn
+///   failure, channel closed, send/recv timeout, crash, framing/demux
+///   protocol violation). Counts toward the breaker AND evicts the live
+///   process so the next admitted call respawns fresh.
+/// - `Application`: a live, responsive shim REPORTED an error (e.g.
+///   `CdpProtocolError` / `TargetUnknown` from a bad `Runtime.evaluate`),
+///   or the host failed to decode the guest's payload before the shim
+///   was ever involved. Counts toward the breaker threshold but does NOT
+///   evict — killing the subprocess here would destroy a healthy
+///   Chromium's mid-session browser state (current page, in-memory
+///   state, in-flight navigation) over an error the browser survived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailureClass {
+    Transport,
+    Application,
+}
+
 /// Per-shim live state. Tracked by `ShimManager`.
 pub struct ShimState {
     pub id: ShimId,
@@ -108,8 +134,16 @@ pub struct ShimManager {
     pub(crate) states: dashmap::DashMap<ShimId, ShimState>,
     /// Live subprocess pool. One entry per `ShimId` that has a running
     /// child. Populated by lazy spawn on first `send`; drained by
-    /// `shutdown_session` and on breaker-open evictions.
+    /// `shutdown_session` and on transport-failure evictions.
     pub(crate) processes: dashmap::DashMap<ShimId, Arc<ShimProcess>>,
+    /// Per-id spawn mutual exclusion. Without this, two concurrent first
+    /// calls for the same `ShimId` both miss the `processes` cache and
+    /// both spawn — the second insert displaces the first Arc, leaving a
+    /// transient untracked shim sharing the same `--user-data-dir`
+    /// (split-brain + spurious first-action errors). The lock makes
+    /// check-spawn-insert atomic per id; losers of the race await the
+    /// winner and get the same `Arc<ShimProcess>`.
+    pub(crate) spawn_locks: dashmap::DashMap<ShimId, Arc<tokio::sync::Mutex<()>>>,
     pub(crate) obs: Arc<HostObservability>,
     /// Allocates a stable u64 per host-side ULID for the wire's
     /// `session_id` field. Atomic counter avoids the hash-collision
@@ -118,7 +152,7 @@ pub struct ShimManager {
     pub(crate) host_session_ids: dashmap::DashMap<String, u64>,
     pub(crate) host_session_counter: AtomicU64,
     /// Background cleanup tasks evicted from `processes` by
-    /// `record_failure` (circuit-breaker eviction). The previous code
+    /// `record_failure` (transport-failure eviction). The previous code
     /// used a fire-and-forget `tokio::spawn` here, which leaked
     /// `JoinHandle`s — when `shutdown_process` hung on SIGTERM grace
     /// each eviction left a never-joined task behind, and after a few
@@ -134,6 +168,7 @@ impl ShimManager {
             configs: dashmap::DashMap::new(),
             states: dashmap::DashMap::new(),
             processes: dashmap::DashMap::new(),
+            spawn_locks: dashmap::DashMap::new(),
             obs,
             host_session_ids: dashmap::DashMap::new(),
             host_session_counter: AtomicU64::new(0),
@@ -166,22 +201,17 @@ impl ShimManager {
     /// to `id` and await the response. Honors send/recv timeouts and
     /// the circuit breaker.
     pub async fn send(&self, id: ShimId, msg: Vec<u8>) -> Result<Vec<u8>, LoomError> {
-        // Check circuit breaker.
-        if let Some(state) = self.states.get(&id) {
-            if state.breaker == BreakerState::Open {
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimBreakerOpen,
-                    format!("shim {} circuit breaker is open", id.0),
-                ));
-            }
-        }
+        self.check_breaker(&id)?;
 
         // Decode the opaque CBOR bytes into a `CdpMessage`. The WASM
-        // guest's cdp_message_encoder produces this shape.
+        // guest's cdp_message_encoder produces this shape. A decode
+        // failure here is the HOST's problem (bad guest payload) — the
+        // shim did nothing wrong, so it counts as an application failure
+        // and must not kill the subprocess.
         let cdp_msg: CdpMessage = match ciborium_from_slice(&msg) {
             Ok(m) => m,
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Application);
                 return Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: opaque payload not a CdpMessage: {e}", id.0),
@@ -226,7 +256,7 @@ impl ShimManager {
                 Ok(bytes)
             }
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
@@ -236,31 +266,51 @@ impl ShimManager {
                 // CdpEvent / LogLine on the response oneshot is a protocol
                 // violation — those go through the demux task's separate
                 // path. If we got one here, the demux logic is buggy.
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
                 ))
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(e)
             }
         }
     }
 
-    async fn get_or_spawn(
+    pub(crate) async fn get_or_spawn(
         &self,
         id: &ShimId,
         config: &ShimConfig,
     ) -> Result<Arc<ShimProcess>, LoomError> {
-        // Proactive liveness check: only hand back a cached shim if it is still
-        // alive. A crashed chromium/CDP shim that's still in the map would
-        // otherwise be returned as a dead handle, so every session created after
-        // a browser crash inherits the dead browser (the reported "sessions
-        // after a crash get a dead browser" bug). Evict the corpse and fall
-        // through to respawn. The breaker (checked by callers before reaching
-        // here) bounds repeated crash-respawn churn.
+        // Fast path: hand back a cached, live shim without touching the
+        // spawn lock.
+        if let Some(p) = self.processes.get(id) {
+            if !p.crashed.load(Ordering::SeqCst) {
+                return Ok(p.clone());
+            }
+        }
+
+        // Slow path: per-id mutual exclusion around check-spawn-insert.
+        // Clone the Arc out of the entry guard before awaiting so no
+        // DashMap shard lock is held across the `.await`.
+        let spawn_lock = self
+            .spawn_locks
+            .entry(id.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = spawn_lock.lock().await;
+
+        // Re-check under the lock: a concurrent caller may have spawned
+        // while we waited. Proactive liveness check: only hand back a
+        // cached shim if it is still alive. A crashed chromium/CDP shim
+        // that's still in the map would otherwise be returned as a dead
+        // handle, so every session created after a browser crash inherits
+        // the dead browser (the reported "sessions after a crash get a
+        // dead browser" bug). Evict the corpse and fall through to
+        // respawn. The breaker (checked by callers before reaching here)
+        // bounds repeated crash-respawn churn.
         let cached_dead = {
             if let Some(p) = self.processes.get(id) {
                 if !p.crashed.load(Ordering::SeqCst) {
@@ -309,7 +359,7 @@ impl ShimManager {
                 Ok(p)
             }
             Err(e) => {
-                self.record_failure(id);
+                self.record_failure(id, FailureClass::Transport);
                 Err(e)
             }
         }
@@ -344,15 +394,7 @@ impl ShimManager {
         // action_id is reserved for receipt correlation (Q5 plumbing); not
         // sent to the shim — shim deals only with target_id + CDP frames.
         let _action_id = action_id;
-        // Check circuit breaker.
-        if let Some(state) = self.states.get(&id) {
-            if state.breaker == BreakerState::Open {
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimBreakerOpen,
-                    format!("shim {} circuit breaker is open", id.0),
-                ));
-            }
-        }
+        self.check_breaker(&id)?;
 
         let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
             LoomError::new(
@@ -413,21 +455,21 @@ impl ShimManager {
                 })
             }
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
                 ))
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
                 ))
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(e)
             }
         }
@@ -442,14 +484,7 @@ impl ShimManager {
         session_id: u64,
         target_id: u64,
     ) -> Result<NetworkLogOutcome, LoomError> {
-        if let Some(state) = self.states.get(&id) {
-            if state.breaker == BreakerState::Open {
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimBreakerOpen,
-                    format!("shim {} circuit breaker is open", id.0),
-                ));
-            }
-        }
+        self.check_breaker(&id)?;
         let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
             LoomError::new(
                 LoomErrorCode::ShimFailure,
@@ -487,21 +522,21 @@ impl ShimManager {
                 })
             }
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
                 ))
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
                 ))
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(e)
             }
         }
@@ -528,14 +563,7 @@ impl ShimManager {
         // action_id reserved for receipt correlation (Q5 plumbing).
         let _action_id = action_id;
 
-        if let Some(state) = self.states.get(&id) {
-            if state.breaker == BreakerState::Open {
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimBreakerOpen,
-                    format!("shim {} circuit breaker is open", id.0),
-                ));
-            }
-        }
+        self.check_breaker(&id)?;
 
         let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
             LoomError::new(
@@ -604,21 +632,21 @@ impl ShimManager {
                 )
             }
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
                 ))
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
                 ))
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(e)
             }
         }
@@ -650,14 +678,7 @@ impl ShimManager {
         // action_id reserved for receipt correlation (Q5 plumbing).
         let _action_id = action_id;
 
-        if let Some(state) = self.states.get(&id) {
-            if state.breaker == BreakerState::Open {
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimBreakerOpen,
-                    format!("shim {} circuit breaker is open", id.0),
-                ));
-            }
-        }
+        self.check_breaker(&id)?;
 
         let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
             LoomError::new(
@@ -744,21 +765,21 @@ impl ShimManager {
                 })
             }
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
                 ))
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
                 ))
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(e)
             }
         }
@@ -792,14 +813,7 @@ impl ShimManager {
         use ciborium::value::{Integer, Value};
         let _action_id = action_id;
 
-        if let Some(state) = self.states.get(&id) {
-            if state.breaker == BreakerState::Open {
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimBreakerOpen,
-                    format!("shim {} circuit breaker is open", id.0),
-                ));
-            }
-        }
+        self.check_breaker(&id)?;
 
         let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
             LoomError::new(
@@ -872,21 +886,21 @@ impl ShimManager {
                     )
                 })?,
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 return Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
                 ));
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 return Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: getDocument unexpected: {other:?}", id.0),
                 ));
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 return Err(e);
             }
         };
@@ -908,21 +922,21 @@ impl ShimManager {
                 cbor_get(&payload, "nodeId").and_then(cbor_u64).unwrap_or(0)
             }
             Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id);
+                self.record_failure(&id, shim_error_class(&code));
                 return Err(LoomError::new(
                     map_shim_code(code),
                     format!("shim {}: {}", id.0, detail),
                 ));
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 return Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: querySelector unexpected: {other:?}", id.0),
                 ));
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 return Err(e);
             }
         };
@@ -959,14 +973,14 @@ impl ShimManager {
                 Ok(SetInputFilesOutcome::NotAFileInput)
             }
             Ok(other) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(LoomError::new(
                     LoomErrorCode::ShimFailure,
                     format!("shim {}: setFileInputFiles unexpected: {other:?}", id.0),
                 ))
             }
             Err(e) => {
-                self.record_failure(&id);
+                self.record_failure(&id, FailureClass::Transport);
                 Err(e)
             }
         }
@@ -989,6 +1003,7 @@ impl ShimManager {
             }
             self.states.remove(&key);
             self.configs.remove(&key);
+            self.spawn_locks.remove(&key);
         }
         // Remove the per-session chromium profile dir
         // (`<tmp>/loom-chromium-<session_id>`). Without this it leaks forever
@@ -1007,10 +1022,53 @@ impl ShimManager {
         while set.try_join_next().is_some() {}
     }
 
-    /// Increment the breaker counter on a failure. Opens the breaker
-    /// at threshold and evicts the live process so the next call
-    /// triggers a fresh spawn.
-    fn record_failure(&self, id: &ShimId) {
+    /// Gate a send path on the circuit breaker.
+    ///
+    /// `Closed` (or untracked) passes. `Open` fail-fasts with
+    /// `ShimBreakerOpen` until the open window (`breaker_open_ms`,
+    /// default 5 s) has elapsed since `opened_at_ms`; the first call
+    /// after expiry transitions the breaker to `HalfOpen` and proceeds
+    /// as a recovery probe. `HalfOpen` admits calls as probes (no
+    /// single-probe gating — an early-return path that skipped both
+    /// `record_*` calls would otherwise wedge the breaker half-open
+    /// forever): the first probe success closes the breaker
+    /// (`record_success`), the first probe failure re-opens it with a
+    /// fresh window (`record_failure`).
+    pub(crate) fn check_breaker(&self, id: &ShimId) -> Result<(), LoomError> {
+        let Some(mut state) = self.states.get_mut(id) else {
+            return Ok(());
+        };
+        match state.breaker {
+            BreakerState::Closed | BreakerState::HalfOpen => Ok(()),
+            BreakerState::Open => {
+                let open_ms = self
+                    .configs
+                    .get(id)
+                    .map(|c| c.breaker_open_ms)
+                    .unwrap_or(5_000);
+                let expired = state
+                    .opened_at_ms
+                    .is_none_or(|t| now_ms().saturating_sub(t) >= open_ms);
+                if expired {
+                    state.breaker = BreakerState::HalfOpen;
+                    Ok(())
+                } else {
+                    Err(LoomError::new(
+                        LoomErrorCode::ShimBreakerOpen,
+                        format!("shim {} circuit breaker is open", id.0),
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Increment the breaker counter on a failure. Opens the breaker at
+    /// threshold (or immediately on a failed `HalfOpen` probe, with a
+    /// fresh window either way). `Transport` failures additionally evict
+    /// the live process so the next admitted call triggers a fresh
+    /// spawn; `Application` failures keep the healthy subprocess (and
+    /// its mid-session browser state) alive — see `FailureClass`.
+    pub(crate) fn record_failure(&self, id: &ShimId, class: FailureClass) {
         let threshold = self
             .configs
             .get(id)
@@ -1025,22 +1083,30 @@ impl ShimManager {
             last_restart_at_ms: None,
         });
         state.consecutive_failures = state.consecutive_failures.saturating_add(1);
-        if state.consecutive_failures >= threshold {
+        if state.breaker == BreakerState::HalfOpen || state.consecutive_failures >= threshold {
             state.breaker = BreakerState::Open;
             state.opened_at_ms = Some(now_ms());
         }
-        // Evict the live process if any — the next call will half-open.
         drop(state);
-        if let Some((_, p)) = self.processes.remove(id) {
-            let mut set = self.cleanup_tasks.lock();
-            set.spawn(shutdown_process(p));
-            // Opportunistically reap completed cleanups so the JoinSet
-            // doesn't grow unbounded across many breaker evictions.
-            while set.try_join_next().is_some() {}
+        // Evict the live process on transport failures only — the
+        // subprocess/socket is unhealthy and the next admitted call must
+        // respawn. Application failures came from a live, responsive
+        // shim; evicting would kill a healthy Chromium and destroy its
+        // mid-session browser state.
+        if class == FailureClass::Transport {
+            if let Some((_, p)) = self.processes.remove(id) {
+                let mut set = self.cleanup_tasks.lock();
+                set.spawn(shutdown_process(p));
+                // Opportunistically reap completed cleanups so the JoinSet
+                // doesn't grow unbounded across many breaker evictions.
+                while set.try_join_next().is_some() {}
+            }
         }
     }
 
-    fn record_success(&self, id: &ShimId) {
+    /// Reset the breaker to `Closed`. Also the `HalfOpen` → `Closed`
+    /// transition: a successful recovery probe lands here.
+    pub(crate) fn record_success(&self, id: &ShimId) {
         if let Some(mut s) = self.states.get_mut(id) {
             s.consecutive_failures = 0;
             s.breaker = BreakerState::Closed;
@@ -1219,6 +1285,24 @@ fn map_shim_code(code: loom_shared::shim_protocol::ShimErrorCode) -> LoomErrorCo
         E::ChromiumUnavailable => LoomErrorCode::ShimFailure,
         E::CdpTimeout => LoomErrorCode::ShimTimeout,
         E::CdpProtocolError | E::TargetUnknown | E::ShimInternalError => LoomErrorCode::ShimFailure,
+    }
+}
+
+/// Classify a shim-REPORTED error envelope for `record_failure`.
+/// `ChromiumUnavailable` means the shim's browser is gone and its own
+/// restart budget is exhausted — the supervisor contract hands the
+/// respawn decision to the ShimManager, so it is transport class (evict;
+/// the next admitted call respawns the whole shim). Everything else came
+/// from a live shim with a running Chromium (bad CDP params, unknown
+/// target, slow page, internal shim error) — application class: count
+/// toward the breaker, keep the browser alive.
+fn shim_error_class(code: &loom_shared::shim_protocol::ShimErrorCode) -> FailureClass {
+    use loom_shared::shim_protocol::ShimErrorCode as E;
+    match code {
+        E::ChromiumUnavailable => FailureClass::Transport,
+        E::CdpTimeout | E::CdpProtocolError | E::TargetUnknown | E::ShimInternalError => {
+            FailureClass::Application
+        }
     }
 }
 
