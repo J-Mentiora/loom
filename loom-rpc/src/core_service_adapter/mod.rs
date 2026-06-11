@@ -6,7 +6,7 @@ pub use core_service_adapter::*;
 mod interface_tests;
 
 impl CoreServiceAdapterApi for CoreServiceAdapter {
-    fn create_session(&self, params: CreateSessionParams) -> Result<SessionInfo, AdapterError> {
+    fn create_session(&self, params: CreateSessionParams) -> Result<SessionInfo, LoomError> {
         let (session_id, created_at_ms) = self.core.create_session_raw(
             &params.profile,
             &params.network_mode,

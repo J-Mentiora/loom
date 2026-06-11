@@ -252,7 +252,7 @@ mod vault_grant_response_validation {
                 label: p.label,
             })
         }
-        fn create_session(&self, _: CreateSessionParams) -> Result<SessionInfo, AdapterError> { unimplemented!() }
+        fn create_session(&self, _: CreateSessionParams) -> Result<SessionInfo, crate::error_translator::error_translator::LoomError> { unimplemented!() }
         fn inspect_session(&self, _: &str, _: Option<u64>) -> Result<SessionInspection, AdapterError> { unimplemented!() }
         fn list_sessions(&self) -> Result<Vec<SessionInfo>, AdapterError> { unimplemented!() }
         fn close_session(&self, _: &str) -> Result<SessionInfo, AdapterError> { unimplemented!() }
@@ -375,5 +375,148 @@ mod vault_grant_response_validation {
             .expect_err("violating response must be refused");
         assert_eq!(err.code, LoomErrorCode::InternalError);
         assert!(err.message.contains("response"), "message: {}", err.message);
+    }
+}
+
+// ===== session.create cap rejection — typed envelope (typed-capacity-errors) =====
+//
+// The daemon's cap rejection must reach the wire as `session_cap_exceeded`
+// with `{active, cap, hint}` in `data` — never collapse to the legacy
+// `internal_error: session.create failed`. Pins the handler half of the
+// contract (daemon half: loom-daemon's cap-saturation test).
+
+mod session_cap_envelope {
+    use super::*;
+    use crate::core_service_adapter::core_service_adapter::{
+        AdapterError, ContentData, GcRunReport, PlaywrightImportInfo, ReapReport, VaultAddInfo,
+        VaultAddParams, VaultDeleteSecretInfo, VaultDeleteSecretParams, VaultDiagnoseInfo,
+        VaultGetSessionContextInfo, VaultListLabelsInfo, VaultListLabelsParams, VaultSetSecretInfo,
+        VaultSetSecretParams,
+    };
+    use crate::error_translator::error_translator::{LoomError, LoomErrorCode};
+    use crate::rpc_observability::rpc_observability::RpcObservability;
+    use crate::schema_provider::schema_provider::CompiledJsonSchema;
+    use crate::schema_validator::schema_validator::SchemaValidator;
+
+    /// Core fake whose `create_session` is saturated: returns the daemon-
+    /// shaped typed cap rejection (code + message + `{active, cap, hint}`).
+    struct CapSaturatedCore;
+
+    #[rustfmt::skip]
+    impl CoreServiceAdapterApi for CapSaturatedCore {
+        fn create_session(&self, _: CreateSessionParams) -> Result<SessionInfo, LoomError> {
+            Err(LoomError::new(
+                LoomErrorCode::SessionCapExceeded,
+                "concurrent session cap reached (2/2); close sessions or run \
+                 `loom session reap` to free leaked slots, then retry",
+            )
+            .with_context(serde_json::json!({
+                "active": 2,
+                "cap": 2,
+                "hint": "close sessions or run `loom session reap`",
+            })))
+        }
+        fn inspect_session(&self, _: &str, _: Option<u64>) -> Result<SessionInspection, AdapterError> { unimplemented!() }
+        fn list_sessions(&self) -> Result<Vec<SessionInfo>, AdapterError> { unimplemented!() }
+        fn close_session(&self, _: &str) -> Result<SessionInfo, AdapterError> { unimplemented!() }
+        fn abort_session(&self, _: &str, _: &str) -> Result<SessionInfo, AdapterError> { unimplemented!() }
+        fn replay_session(&self, _: &str, _: Option<f32>, _: Option<&str>) -> Result<SessionInfo, AdapterError> { unimplemented!() }
+        fn diff_sessions(&self, _: &str, _: &str, _: bool, _: bool) -> Result<DiffReport, AdapterError> { unimplemented!() }
+        fn export_session(&self, _: &str, _: &str) -> Result<ExportInfo, AdapterError> { unimplemented!() }
+        fn content_get(&self, _: &str) -> Result<ContentData, AdapterError> { unimplemented!() }
+        fn validate_session(&self, _: &str) -> Result<ValidationResult, AdapterError> { unimplemented!() }
+        fn import_playwright(&self, _: &[u8]) -> Result<PlaywrightImportInfo, AdapterError> { unimplemented!() }
+        fn vault_grant(&self, _: GrantParams) -> Result<GrantInfo, AdapterError> { unimplemented!() }
+        fn vault_revoke(&self, _: &str, _: &str) -> Result<(), AdapterError> { unimplemented!() }
+        fn vault_list_grants(&self, _: Option<&str>) -> Result<Vec<GrantInfo>, AdapterError> { unimplemented!() }
+        fn vault_add(&self, _: VaultAddParams) -> Result<VaultAddInfo, AdapterError> { unimplemented!() }
+        fn vault_set_secret(&self, _: VaultSetSecretParams) -> Result<VaultSetSecretInfo, AdapterError> { unimplemented!() }
+        fn vault_delete_secret(&self, _: VaultDeleteSecretParams) -> Result<VaultDeleteSecretInfo, AdapterError> { unimplemented!() }
+        fn vault_list_labels(&self, _: VaultListLabelsParams) -> Result<VaultListLabelsInfo, AdapterError> { unimplemented!() }
+        fn vault_diagnose(&self) -> Result<VaultDiagnoseInfo, AdapterError> { unimplemented!() }
+        fn vault_get_session_context(&self) -> Result<VaultGetSessionContextInfo, AdapterError> { unimplemented!() }
+        fn gc_run(&self, _: Option<u64>, _: Option<u64>) -> Result<GcRunReport, AdapterError> { unimplemented!() }
+        fn session_reap(&self, _: bool) -> Result<ReapReport, AdapterError> { unimplemented!() }
+    }
+
+    struct NoopHost;
+
+    #[async_trait::async_trait]
+    impl HostServiceAdapterApi for NoopHost {
+        async fn dispatch_action(&self, _: Action) -> Result<Receipt, AdapterError> {
+            unimplemented!()
+        }
+        // default has_chromium() = true, so session_create reaches the core.
+    }
+
+    struct NoSchemas;
+
+    impl SchemaProviderApi for NoSchemas {
+        fn lookup_request_schema(&self, _: &str) -> Option<Arc<CompiledJsonSchema>> {
+            None
+        }
+        fn lookup_response_schema(&self, _: &str) -> Option<Arc<CompiledJsonSchema>> {
+            None
+        }
+        fn registered_methods(&self) -> Vec<String> {
+            Vec::new()
+        }
+        fn get_registry_snapshot(&self) -> SchemaRegistry {
+            SchemaRegistry {
+                methods: vec![],
+                source_wit_sha256: String::new(),
+            }
+        }
+    }
+
+    fn saturated_handlers() -> Arc<RpcHandlers> {
+        let provider: Arc<dyn SchemaProviderApi> = Arc::new(NoSchemas);
+        let validator = SchemaValidator::new(Arc::clone(&provider));
+        RpcHandlers::new(
+            Arc::new(CapSaturatedCore),
+            Arc::new(NoopHost),
+            provider,
+            validator,
+            RpcObservability::new(),
+        )
+    }
+
+    #[tokio::test]
+    async fn session_create_cap_rejection_is_typed_with_active_cap_hint() {
+        let h = saturated_handlers();
+        let err = h
+            .session_create(CreateSessionParams {
+                profile: "safe".to_string(),
+                network_mode: "live".to_string(),
+                capture_policy: None,
+                seed: None,
+                budget: None,
+                no_blocklist: false,
+                no_determinism: false,
+                clock_anchor: None,
+            })
+            .await
+            .expect_err("saturated core must reject");
+
+        assert_eq!(err.code, LoomErrorCode::SessionCapExceeded);
+        // The wire spelling is the typed snake_case code — NOT internal_error.
+        assert_eq!(
+            serde_json::to_value(err.code).expect("serialize code"),
+            serde_json::json!("session_cap_exceeded")
+        );
+        assert!(
+            err.message.contains("(2/2)"),
+            "message must carry active/cap: {}",
+            err.message
+        );
+        let data = err.data.expect("cap envelope must carry data");
+        assert_eq!(data["active"], 2);
+        assert_eq!(data["cap"], 2);
+        assert!(
+            data["hint"]
+                .as_str()
+                .is_some_and(|h| h.contains("loom session reap")),
+            "hint must name the remediation; got: {data}"
+        );
     }
 }

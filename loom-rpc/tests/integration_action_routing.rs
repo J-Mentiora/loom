@@ -319,9 +319,9 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _: bool,
         _: bool,
         _: Option<u64>,
-    ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::AdapterError>
+    ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
-        Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
+        Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError.into())
     }
     fn close_session_raw(
         &self,

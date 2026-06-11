@@ -36,7 +36,11 @@ impl CuratedRenderer for Doctor {
                     .unwrap_or("?");
                 let (glyph, code) = match outcome {
                     "ok" | "pass" | "passed" | "healthy" => ("OK", ansi::GREEN),
-                    "warn" | "warning" => ("WARN", ansi::YELLOW),
+                    // `at_capacity` (browser_smoke on a saturated daemon) is
+                    // warn-class: busy-but-healthy, never red. It is NOT in
+                    // the detail-suppress list below, so its active/cap
+                    // remediation line still renders.
+                    "warn" | "warning" | "at_capacity" => ("WARN", ansi::YELLOW),
                     _ => ("FAIL", ansi::RED),
                 };
                 lines.push(format!(

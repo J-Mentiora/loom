@@ -34,7 +34,7 @@ use serde::{Deserialize, Serialize};
 // `loom_shared::LoomErrorCode`'s manual `Serialize`/`as_wire` (no `rename_all` needed) and is
 // pinned to BC-RPC-03 by `wire_parity_with_bc_rpc_03`. Re-exported here so existing
 // `error_translator::LoomErrorCode` paths keep resolving.
-pub use loom_shared::error_format::LoomErrorCode;
+pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 
 /// Structured field detail for a `schema_violation` envelope.
 /// Wire-equal to the `data` block in `{error: {code: "schema_violation",
@@ -77,4 +77,22 @@ pub trait LoomErrorLike: Send + Sync {
     fn code(&self) -> LoomErrorCode;
     fn message(&self) -> String;
     fn data(&self) -> Option<serde_json::Value>;
+}
+
+/// The canonical `loom_shared::LoomError` IS error-like: `context` is its
+/// structured wire data. Lets adapter methods that return the full
+/// `LoomError` (e.g. `create_session`, whose `session_cap_exceeded`
+/// rejection carries `{active, cap, hint}`) route through the single
+/// `ErrorTranslator::from_loom_error` conversion point instead of
+/// collapsing to a bare code.
+impl LoomErrorLike for LoomError {
+    fn code(&self) -> LoomErrorCode {
+        self.code
+    }
+    fn message(&self) -> String {
+        self.message.clone()
+    }
+    fn data(&self) -> Option<serde_json::Value> {
+        self.context.clone()
+    }
 }

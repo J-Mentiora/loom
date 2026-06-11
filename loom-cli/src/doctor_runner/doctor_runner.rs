@@ -14,8 +14,15 @@
 //      session age, via `daemon.health`). Informational: `warn` when
 //      orphan trees exist, never a hard failure.
 //   8. Browser smoke (full session round-trip; skipped if prereqs failed).
+//      Reports `at_capacity` (warn-class, NOT a failure) when the daemon
+//      rejects the smoke's `session.create` with the typed
+//      `session_cap_exceeded` — a saturated-but-healthy daemon must not
+//      flip doctor red (monitoring keyed on the exit code would
+//      false-positive at exactly peak load). Agrees with check 7's
+//      `active_sessions` count.
 // - **Exit 0 if all healthy; exit 1 with typed
 //   `DoctorReport { checks, failures }` if any fails.**
+//   Warn-class statuses (`warn`, `at_capacity`) are not failures → exit 0.
 //   Exit-code mapping owned by `ErrorMapper`.
 // - **RPC-free for checks 1, 3, 4, 5, 6.** Checks 2, 7, 8 use the daemon
 //   (`RpcClient::ping` / `daemon.health` / a real session round-trip).
@@ -215,7 +222,33 @@ pub async fn run(
         .iter()
         .any(|f| BROWSER_SMOKE_PREREQS.contains(&f.as_str()));
     if prereqs_ok {
-        run_check!("browser_smoke", check_browser_smoke(rpc));
+        match check_browser_smoke(rpc).await {
+            Ok(()) => checks.push(DoctorCheck {
+                name: "browser_smoke".to_string(),
+                status: "ok".to_string(),
+                detail: None,
+            }),
+            // The typed `session_cap_exceeded` rejection means the daemon
+            // answered the RPC and applied policy — busy, not broken.
+            // Warn-class like check 7's orphan warn: reported distinctly,
+            // never counted as a failure (exit stays 0).
+            Err(ref e) => match session_cap_detail(e) {
+                Some(detail) => checks.push(DoctorCheck {
+                    name: "browser_smoke".to_string(),
+                    status: "at_capacity".to_string(),
+                    detail: Some(serde_json::json!(detail)),
+                }),
+                None => {
+                    checks.push(DoctorCheck {
+                        name: "browser_smoke".to_string(),
+                        status: "fail".to_string(),
+                        // Display (not Debug) — same rationale as run_check!.
+                        detail: Some(serde_json::json!(e.to_string())),
+                    });
+                    failures.push("browser_smoke".to_string());
+                }
+            },
+        }
     } else {
         checks.push(DoctorCheck {
             name: "browser_smoke".to_string(),
@@ -330,6 +363,32 @@ pub async fn check_browser_smoke(rpc: &RpcClient) -> Result<(), CliError> {
         .await;
 
     steps
+}
+
+/// When `e` is the daemon's typed `session_cap_exceeded` rejection (a
+/// `CliError::Receipt` wire envelope), return the human detail line for the
+/// `at_capacity` status; `None` for every other error (genuine failures).
+/// Pulls `{active, cap}` out of the envelope's `data` so the line agrees
+/// with `session_health`'s `active_sessions` count.
+pub fn session_cap_detail(e: &CliError) -> Option<String> {
+    let CliError::Receipt(v) = e else {
+        return None;
+    };
+    if v.get("code").and_then(|c| c.as_str()) != Some("session_cap_exceeded") {
+        return None;
+    }
+    const REMEDY: &str = "daemon is busy but healthy; close sessions or run `loom session reap`";
+    Some(
+        match (
+            v.pointer("/data/active").and_then(|a| a.as_u64()),
+            v.pointer("/data/cap").and_then(|c| c.as_u64()),
+        ) {
+            (Some(active), Some(cap)) => {
+                format!("at capacity: active_sessions={active} cap={cap} — {REMEDY}")
+            }
+            _ => format!("at capacity: concurrent session cap reached — {REMEDY}"),
+        },
+    )
 }
 
 /// Check 3 — AOT artifacts present.

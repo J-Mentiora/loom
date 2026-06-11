@@ -94,6 +94,12 @@ pub trait CoreFacadeBridge: Send + Sync {
     /// `budget` carries the optional per-session BudgetLimits as a
     /// serde_json::Value (the daemon's CoreBridge deserialises it into
     /// loom_core::budget_enforcer::BudgetLimits).
+    ///
+    /// Errors as the full `LoomError`, not a bare `AdapterError` code: the
+    /// daemon's `session_cap_exceeded` rejection carries `{active, cap,
+    /// hint}` in `context`, which must survive to the JSON-RPC envelope
+    /// (`data`). Other bridge methods keep the bare-code shape until they
+    /// need structured detail too.
     #[allow(clippy::too_many_arguments)]
     fn create_session_raw(
         &self,
@@ -105,7 +111,7 @@ pub trait CoreFacadeBridge: Send + Sync {
         no_blocklist: bool,
         no_determinism: bool,
         clock_anchor: Option<u64>,
-    ) -> Result<(String, u64), AdapterError>;
+    ) -> Result<(String, u64), LoomError>;
 
     /// Close an active session.
     fn close_session_raw(&self, session_id: &str) -> Result<(), AdapterError>;
@@ -495,11 +501,19 @@ pub struct VaultDiagnoseLastError {
 // canonical type lives in `loom_core::error`.
 pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode;
 
+// Full canonical error (code + message + structured `context`) for adapter
+// methods whose rejections carry wire data — today only the create-session
+// path (`session_cap_exceeded` → `{active, cap, hint}`).
+pub use crate::error_translator::error_translator::LoomError;
+
 /// Trait surface for `CoreServiceAdapter` so `RpcHandlers` can be
 /// unit-tested with a fake. Each method maps 1:1 to a method in the
 /// loom-rpc contract's `session.*` / `vault.*` block.
 pub trait CoreServiceAdapterApi: Send + Sync {
-    fn create_session(&self, params: CreateSessionParams) -> Result<SessionInfo, AdapterError>;
+    /// Errors as the full `LoomError` so the cap rejection's structured
+    /// `{active, cap, hint}` context reaches the wire (see
+    /// `CoreFacadeBridge::create_session_raw`).
+    fn create_session(&self, params: CreateSessionParams) -> Result<SessionInfo, LoomError>;
 
     fn inspect_session(
         &self,

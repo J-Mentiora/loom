@@ -124,8 +124,9 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         _: bool,
         _: bool,
         _: Option<u64>,
-    ) -> Result<(String, u64), LoomErrorCode> {
-        Err(LoomErrorCode::InternalError)
+    ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
+    {
+        Err(LoomErrorCode::InternalError.into())
     }
     fn close_session_raw(&self, _: &str) -> Result<(), LoomErrorCode> {
         Err(LoomErrorCode::InternalError)

@@ -150,6 +150,7 @@ impl From<LoomError> for HostError {
             | LoomErrorCode::RequestTimeout
             | LoomErrorCode::RequestCancelled
             | LoomErrorCode::TooManyRequests
+            | LoomErrorCode::SessionCapExceeded
             | LoomErrorCode::SchemaViolation
             | LoomErrorCode::SafeProfileDownloadBlocked
             | LoomErrorCode::ProfileRestricted

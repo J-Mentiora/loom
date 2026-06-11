@@ -67,6 +67,10 @@ class LoomErrorCode(StrEnum):
     request_timeout = "request_timeout"
     request_cancelled = "request_cancelled"
     too_many_requests = "too_many_requests"
+    # session.create at the LOOM_MAX_CONCURRENT_SESSIONS cap. Capacity, not
+    # a fault: back off and retry after a slot frees, or run
+    # `loom session reap`; error data carries {active, cap, hint}.
+    session_cap_exceeded = "session_cap_exceeded"
     transport_dropped = "transport_dropped"
     llm_cache_miss = "llm_cache_miss"
     io = "io"

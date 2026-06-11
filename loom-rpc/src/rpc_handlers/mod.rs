@@ -83,10 +83,25 @@ impl RpcHandlers {
                 data: None,
             });
         }
-        self.core.create_session(p).map_err(|code| JsonRpcError {
-            code,
-            message: "session.create failed".to_string(),
-            data: None,
+        self.core.create_session(p).map_err(|e| {
+            // The cap rejection is typed end-to-end: route the full
+            // LoomError (message + {active, cap, hint} context) through the
+            // single ErrorTranslator conversion point so CLI --json, SDKs
+            // and raw RPC all see `session_cap_exceeded` with its data —
+            // never the opaque `internal_error: session.create failed`.
+            // Other codes keep the legacy generic message (their LoomError
+            // text is not wire-vetted; see the import.playwright precedent).
+            use crate::error_translator::error_translator::{ErrorTranslator, LoomErrorRef};
+            match e.code {
+                LoomErrorCode::SessionCapExceeded => {
+                    ErrorTranslator::from_loom_error(&LoomErrorRef(&e))
+                }
+                code => JsonRpcError {
+                    code,
+                    message: "session.create failed".to_string(),
+                    data: None,
+                },
+            }
         })
     }
 
