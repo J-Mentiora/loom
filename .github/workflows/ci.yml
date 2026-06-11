@@ -1,5 +1,31 @@
 name: CI
 
+# ── Per-job time budgets ──────────────────────────────────────────────────
+# Baseline measured 2026-06-11 (runs 27328345698 / 27326452136, warm cache).
+# If a job drifts past its budget, treat it as a perf regression and find
+# out why before raising the number.
+#
+#   job                       measured      budget   notes
+#   cargo test (ubuntu)       28-30 min     ≤ 35     serial --test-threads=1
+#                                                    dominates; cache only
+#                                                    helps the compile half
+#   cargo test (macos)        30-42 min     ≤ 45     main pushes + ci:macos
+#                                                    label only
+#   build (ubuntu/macos)       4-7 min      ≤ 10
+#   smoke (ubuntu)             4-9 min      ≤ 12     rebuild + daemon RPC
+#   e2e pinned-chromium       10-11 min     ≤ 15     chromium download is
+#                                                    cached; miss adds ~2 min
+#   clippy                     1-3 min      ≤ 6
+#   gen-docs                   ~1 min       ≤ 4
+#   vendored-wasm staleness    ~30 s        ≤ 3
+#   cargo-deny                 ~35 s        ≤ 3
+#   pytest / node:test         10-35 s      ≤ 3      each SDK suite
+#   fmt / lint scripts / etc.  4-15 s       ≤ 2
+#
+# Wall-clock for a default Rust-touching PR ≈ the ubuntu test leg (~30 min).
+# SDK-only / docs-only PRs ≈ 1 min (path filters skip the Rust matrix).
+# Beta toolchain runs weekly in rust-beta.yml, not here.
+
 on:
   push:
     branches: [main]
