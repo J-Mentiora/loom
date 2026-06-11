@@ -370,7 +370,9 @@ jobs:
           test -n "$S" -a "$S" != "null"
           $BIN/loom session list | jq 'length' | grep -E '^[1-9]'
           $BIN/loom session inspect "$S" | jq -r '.session_id' | grep -q "$S"
-          $BIN/loom session validate "$S" | grep -q "PASS"
+          # validate honors the D-7 output contract: piped/non-TTY emits JSON
+          # (a bare "PASS" string was the pre-fix bug). Assert the structured field.
+          $BIN/loom session validate "$S" --json | jq -e '.passed == true'
           $BIN/loom session close "$S" | jq -r '.status' | grep -q closed
           # gc smoke (no blobs to collect on a freshly-created session)
           $BIN/loom gc --ttl 0 | jq -r '.blobs_collected'
