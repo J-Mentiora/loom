@@ -103,6 +103,58 @@ fn canary_byte_preservation() {
 
 #[test]
 #[ignore]
+fn legacy_unpinned_items_still_match_device_only_queries() {
+    // Items written by builds that predate the this-device-only pinning
+    // (raw set_generic_password, no explicit kSecAttrSynchronizable) must
+    // stay reachable through the hardened sync=false queries: the keychain
+    // treats an absent synchronizable attribute as false. Exercises all
+    // three ops, including the upsert arm (SecItemUpdate over a legacy item).
+    let kc = fresh_backend();
+    let label = fresh_label();
+    security_framework::passwords::set_generic_password(TEST_SERVICE, &label, b"legacy-bytes")
+        .expect("legacy-style set");
+
+    let fetched = kc.get_secret(&label).expect("get legacy item");
+    assert_eq!(&fetched[..], b"legacy-bytes");
+
+    kc.set_secret(&label, Zeroizing::new(b"rotated".to_vec()))
+        .expect("upsert over legacy item");
+    let fetched = kc.get_secret(&label).expect("get after upsert");
+    assert_eq!(&fetched[..], b"rotated");
+
+    kc.delete_secret(&label).expect("delete legacy item");
+    let err = kc.get_secret(&label).expect_err("gone after delete");
+    assert!(
+        matches!(err.kind(), KeychainErrorKind::NotFound),
+        "expected NotFound after delete, got {:?}",
+        err.kind()
+    );
+}
+
+#[test]
+#[ignore]
+fn stored_items_never_land_in_the_synchronizable_store() {
+    // set_secret pins kSecAttrSynchronizable=false, so a query against the
+    // cloud-synchronized (iCloud Keychain) store must come back empty —
+    // errSecItemNotFound (-25300), the same code the backend maps to
+    // NotFound.
+    let kc = fresh_backend();
+    let label = fresh_label();
+    kc.set_secret(&label, Zeroizing::new(b"device-only".to_vec()))
+        .expect("set");
+
+    let mut synced_query =
+        security_framework::passwords::PasswordOptions::new_generic_password(TEST_SERVICE, &label);
+    synced_query.set_access_synchronized(Some(true));
+    let err = security_framework::passwords::generic_password(synced_query)
+        .expect_err("item must not exist in the synchronizable store");
+    assert_eq!(err.code(), -25300, "expected errSecItemNotFound, got {err}");
+
+    kc.delete_secret(&label).expect("cleanup");
+}
+
+#[test]
+#[ignore]
 fn list_labels_returns_unavailable_v094_limitation() {
     // Documents the v0.9.4 macOS limitation: list_labels returns
     // Unavailable per module-level doc; flip this test when the
