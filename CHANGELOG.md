@@ -6,6 +6,40 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.1] — 2026-06-11 — Embedded-First Schema Validation
+
+Patch release fixing a v0.11.0 regression where MCP `tools/call` rejected the
+documented `until`/`timeout_ms` args on `loom.web.navigate` with a misattributed
+`schema_violation` (`field 'params' expected field_unknown got object`) while
+`web.wait_for` accepted the same params. Root cause: the daemon validated against
+per-method schema files on disk that `loom postinstall` never content-refreshes, so a
+pre-settle-capture `web.navigate.json` survived upgrades; #152's fail-closed validation
+then enforced the stale schema. (#176, fixes #175)
+
+### Fixed
+
+- **Embedded-first schema validation (#176).** The daemon now validates builtin action
+  methods against the schemas compiled into the binary (`BUILTIN_SCHEMAS` moved to
+  `loom-shared`) — binary version == schema version, always. Disk schema files act only
+  as an overlay for methods unknown to the binary (compiled fail-closed); a stale
+  builtin mirror is logged with remediation and ignored. The exact regression
+  (`web.navigate` + `until`/`timeout_ms` over MCP) is pinned by a class-level test that
+  validates EVERY builtin action method against its full documented arg set.
+- **`schema_violation` errors name the real field, the method, and the allowed
+  properties** — e.g. `schema violation: web.navigate: unknown field 'bogus' (schema
+  allows: session, timeout_ms, until, url)` — instead of blaming the envelope word
+  `params`. The error `data` block gains additive `method` and `allowed` fields.
+- **`loom postinstall` refreshes stale schema mirrors** (atomic write); the receipt
+  reports a `refreshed` count alongside the existing `populated`/`skipped` shapes.
+
+### Changed
+
+- Builtin action methods are validated from first boot — the pre-postinstall
+  empty-registry validation bypass is gone (fail-closed, consistent with #152).
+  Hand-edits to builtin schema mirror files are no longer honored (loud warning;
+  overlay extras for unknown methods remain supported). `rpc.schemas`'
+  `source_wit_sha256` is now machine-independent for stock installs.
+
 ## [0.11.0] — 2026-06-11 — Hardening Sweep: Determinism, Protocol, Security + MCP Determinism Surface
 
 A large correctness, robustness, and security pass: a deep multi-agent audit produced
