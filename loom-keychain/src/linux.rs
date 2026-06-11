@@ -13,15 +13,24 @@
 //! can claim the well-known name `org.freedesktop.secrets` if the legitimate
 //! daemon is killed. To prevent silent interception, we pin the bus name's
 //! *unique* owner (e.g. `:1.42`) at construction via `org.freedesktop.DBus
-//! GetNameOwner` and re-verify on every op. If the owner has changed mid-flight,
-//! the op refuses with `Unavailable` and emits a structured `tracing::error!`
-//! — operator must restart `loom-daemon` to re-pin.
+//! GetNameOwner` and re-verify on every op — on the SAME connection that
+//! carries the secret op, both before and after it (a post-op mismatch
+//! discards the op's outcome). Verifying on the op connection matters: a
+//! unique name dies with its owning connection, so the realistic hijack
+//! (legitimate daemon killed, name squatted) can never present the pinned
+//! unique name to either check, and an ownership change while the op is in
+//! flight is caught by the post-check. The pre-fix scheme verified on a
+//! throwaway connection while the op opened its own `SecretService`
+//! connection independently — a TOCTOU window in which the name could change
+//! hands between the two connects. On a mismatch the op refuses with
+//! `Unavailable` and emits a structured `tracing::error!` — operator must
+//! restart `loom-daemon` to re-pin.
 //!
 //! The original plan called for a `NameOwnerChanged` background watcher, but
 //! that conflicts with the `secret-service` crate's sync `blocking::*` API
-//! (a background task needs its own runtime). A-W3.1 replaces it with per-op
-//! `GetNameOwner` re-check: cheaper, no shared connection state, and the
-//! per-op overhead is one D-Bus round-trip.
+//! (a background task needs its own runtime). A-W3.1 replaces it with the
+//! per-op `GetNameOwner` re-check: cheaper, no shared connection state, and
+//! the per-op overhead is two D-Bus round-trips on the op's own connection.
 //!
 //! Per W3.8 `list_labels` does attribute-only search (`item.get_attributes()`),
 //! NEVER `item.get_secret()` — so listing does not trigger an unlock prompt.
@@ -35,9 +44,10 @@
 //! - everything else (zbus transport, parse, crypto) → `Internal{hash}`
 //!
 //! `zbus` is a direct dependency (alongside `secret-service`'s transitive
-//! pull) because the SS crate does not expose its internal connection;
-//! the per-op `GetNameOwner` check uses its own small connection. Aligned
-//! to zbus 5.x so cargo dedupes.
+//! pull) because the per-op `GetNameOwner` pin check must run on the same
+//! zbus connection that is then handed to
+//! `SecretService::connect_with_existing` for the op. Aligned to zbus 5.x
+//! so cargo dedupes.
 
 use crate::{KeychainAccess, KeychainError, KeychainErrorKind};
 use secret_service::blocking::SecretService;
@@ -87,12 +97,13 @@ impl LinuxKeychain {
         &self.pinned_owner
     }
 
-    /// A-W3.1 per-op verification: fresh `GetNameOwner` call; if the bus
-    /// name's owner has drifted from the pinned value, refuse the op. The
-    /// vault layer (W5) translates this `Unavailable` into a
-    /// `secret_service_owner_changed` audit entry.
-    fn verify_owner(&self) -> Result<(), KeychainError> {
-        let current = resolve_secrets_owner()?;
+    /// A-W3.1 per-op verification: fresh `GetNameOwner` call **on the same
+    /// connection that carries the secret op**; if the bus name's owner has
+    /// drifted from the pinned value, refuse the op. The vault layer (W5)
+    /// translates this `Unavailable` into a `secret_service_owner_changed`
+    /// audit entry.
+    fn verify_owner_on(&self, conn: &zbus::blocking::Connection) -> Result<(), KeychainError> {
+        let current = resolve_secrets_owner_on(conn)?;
         if current != self.pinned_owner {
             tracing::error!(
                 pinned = %self.pinned_owner,
@@ -111,10 +122,13 @@ impl LinuxKeychain {
         Ok(())
     }
 
-    /// Open a SecretService connection + default collection, then run a
-    /// closure against them. Each op gets a fresh connection — the per-op
-    /// owner check is the cost; the connect itself is cheap on a local
-    /// session bus.
+    /// Open ONE session-bus connection, pin-check the secret-service owner
+    /// on it, run the op over a `SecretService` bound to that same
+    /// connection, then re-check the owner before releasing the outcome.
+    /// Each op still gets a fresh connection (cheap on a local session bus),
+    /// but verification and op now share it — the pre-fix scheme's
+    /// check-on-one-connection/op-on-another TOCTOU window is gone (see
+    /// module doc, "D-Bus hijack mitigation").
     fn with_default_collection<F, T>(&self, f: F) -> Result<T, KeychainError>
     where
         F: FnOnce(
@@ -122,24 +136,45 @@ impl LinuxKeychain {
             &secret_service::blocking::Collection<'_>,
         ) -> Result<T, KeychainError>,
     {
-        let svc = SecretService::connect(EncryptionType::Dh).map_err(map_ss_error)?;
+        let conn = connect_session_bus()?;
+        self.verify_owner_on(&conn)?;
+        let svc = SecretService::connect_with_existing(EncryptionType::Dh, conn.clone())
+            .map_err(map_ss_error)?;
         let collection = svc.get_default_collection().map_err(map_ss_error)?;
-        f(&svc, &collection)
+        let outcome = f(&svc, &collection);
+        // Post-op re-check on the SAME connection: if the owner drifted while
+        // the op was in flight, the outcome (success OR error) came from an
+        // unverified peer — report the owner change instead of releasing it.
+        self.verify_owner_on(&conn)?;
+        outcome
     }
 }
 
-/// Ask the session bus daemon `org.freedesktop.DBus.GetNameOwner` for the
-/// current unique-name owner of `org.freedesktop.secrets`. On any failure
-/// (no owner, transport error) return `Unavailable` so the daemon refuses
-/// to start without a working keychain backend (D7 hard-fail-closed).
-fn resolve_secrets_owner() -> Result<String, KeychainError> {
-    let conn = zbus::blocking::Connection::session().map_err(|e| {
+/// Connect to the session bus. `Unavailable` on failure so the daemon
+/// refuses to run without a reachable bus (D7 hard-fail-closed).
+fn connect_session_bus() -> Result<zbus::blocking::Connection, KeychainError> {
+    zbus::blocking::Connection::session().map_err(|e| {
         KeychainError::new(
             KeychainErrorKind::Unavailable,
             format!("zbus session bus connect failed: {e}"),
         )
-    })?;
-    let proxy = zbus::blocking::fdo::DBusProxy::new(&conn).map_err(|e| {
+    })
+}
+
+/// Ask the session bus daemon `org.freedesktop.DBus.GetNameOwner` for the
+/// current unique-name owner of `org.freedesktop.secrets`, over a fresh
+/// throwaway connection. Construction-time pinning only — per-op checks go
+/// through [`resolve_secrets_owner_on`] so they ride the op's connection.
+fn resolve_secrets_owner() -> Result<String, KeychainError> {
+    resolve_secrets_owner_on(&connect_session_bus()?)
+}
+
+/// Ask `org.freedesktop.DBus.GetNameOwner` for the current unique-name owner
+/// of `org.freedesktop.secrets` **over the given connection**. On any failure
+/// (no owner, transport error) return `Unavailable` so the daemon refuses
+/// to operate without a working keychain backend (D7 hard-fail-closed).
+fn resolve_secrets_owner_on(conn: &zbus::blocking::Connection) -> Result<String, KeychainError> {
+    let proxy = zbus::blocking::fdo::DBusProxy::new(conn).map_err(|e| {
         KeychainError::internal_from_message(format!("zbus DBusProxy construct failed: {e}"))
     })?;
     let bus_name = SECRETS_BUS_NAME.try_into().map_err(|e| {
@@ -186,7 +221,6 @@ fn map_ss_error(err: secret_service::Error) -> KeychainError {
 
 impl KeychainAccess for LinuxKeychain {
     fn get_secret(&self, label: &str) -> Result<Zeroizing<Vec<u8>>, KeychainError> {
-        self.verify_owner()?;
         let service_id = self.service_id;
         self.with_default_collection(|_svc, collection| {
             let attrs = HashMap::from([("service", service_id), ("account", label)]);
@@ -208,7 +242,6 @@ impl KeychainAccess for LinuxKeychain {
     }
 
     fn set_secret(&self, label: &str, secret: Zeroizing<Vec<u8>>) -> Result<(), KeychainError> {
-        self.verify_owner()?;
         let service_id = self.service_id;
         self.with_default_collection(|_svc, collection| {
             let attrs = HashMap::from([("service", service_id), ("account", label)]);
@@ -227,7 +260,6 @@ impl KeychainAccess for LinuxKeychain {
     }
 
     fn delete_secret(&self, label: &str) -> Result<(), KeychainError> {
-        self.verify_owner()?;
         let service_id = self.service_id;
         self.with_default_collection(|_svc, collection| {
             let attrs = HashMap::from([("service", service_id), ("account", label)]);
@@ -242,7 +274,6 @@ impl KeychainAccess for LinuxKeychain {
     }
 
     fn list_labels(&self) -> Result<Vec<String>, KeychainError> {
-        self.verify_owner()?;
         let service_id = self.service_id;
         self.with_default_collection(|_svc, collection| {
             let attrs = HashMap::from([("service", service_id)]);
