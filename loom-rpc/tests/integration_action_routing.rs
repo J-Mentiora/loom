@@ -119,13 +119,15 @@ impl WebSchemas {
             let resp: serde_json::Value = serde_json::from_str(resp_json).unwrap();
             request_schemas.insert(
                 method.to_string(),
-                Arc::new(CompiledJsonSchema { inner: req.clone() }),
+                Arc::new(
+                    CompiledJsonSchema::compile(req.clone()).expect("test schema must compile"),
+                ),
             );
             response_schemas.insert(
                 method.to_string(),
-                Arc::new(CompiledJsonSchema {
-                    inner: resp.clone(),
-                }),
+                Arc::new(
+                    CompiledJsonSchema::compile(resp.clone()).expect("test schema must compile"),
+                ),
             );
             let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(method)
                 .into_iter()

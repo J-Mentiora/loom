@@ -34,11 +34,13 @@ hex = { workspace = true }
 dirs = { workspace = true }
 bytes = { workspace = true }
 futures = { workspace = true }
+# umask guard around the Unix-socket bind (socket_server) + getuid for
+# the per-user /tmp fallback path.
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-libc = "0.2"
 
 [features]
 default = []

@@ -75,6 +75,61 @@ fn validation_outcome_distinguishes_pass_violation_method_not_found() {
     let _ = _ck_m;
 }
 
+/// Behavioral pin for the fail-closed redesign: a provider serving a
+/// (successfully) compiled schema still enforces it through
+/// `validate_request` — the validator consumes the precompiled
+/// validator and never recompiles (or fail-opens) per request.
+struct OneCompiledSchemaProvider;
+
+impl SchemaProviderApi for OneCompiledSchemaProvider {
+    fn lookup_request_schema(
+        &self,
+        method: &str,
+    ) -> Option<Arc<crate::schema_provider::schema_provider::CompiledJsonSchema>> {
+        (method == "web.click").then(|| {
+            Arc::new(
+                crate::schema_provider::schema_provider::CompiledJsonSchema::compile(
+                    serde_json::json!({
+                        "type": "object",
+                        "properties": { "selector": { "type": "string" } },
+                        "required": ["selector"],
+                        "additionalProperties": false
+                    }),
+                )
+                .expect("test schema must compile"),
+            )
+        })
+    }
+    fn lookup_response_schema(
+        &self,
+        _method: &str,
+    ) -> Option<Arc<crate::schema_provider::schema_provider::CompiledJsonSchema>> {
+        None
+    }
+    fn registered_methods(&self) -> Vec<String> {
+        vec!["web.click".to_string()]
+    }
+    fn get_registry_snapshot(&self) -> crate::schema_provider::schema_provider::SchemaRegistry {
+        crate::schema_provider::schema_provider::SchemaRegistry {
+            methods: vec![],
+            source_wit_sha256: "0".into(),
+        }
+    }
+}
+
+#[test]
+fn validate_request_enforces_precompiled_schema() {
+    let validator = SchemaValidator::new(Arc::new(OneCompiledSchemaProvider));
+    assert!(matches!(
+        validator.validate_request("web.click", &serde_json::json!({"selector": 42})),
+        ValidationOutcome::Violation(_)
+    ));
+    assert!(matches!(
+        validator.validate_request("web.click", &serde_json::json!({"selector": "#go"})),
+        ValidationOutcome::Pass
+    ));
+}
+
 #[test]
 fn violation_kind_covers_sr_rpc_02_categories() {
     // strict mode coverage.

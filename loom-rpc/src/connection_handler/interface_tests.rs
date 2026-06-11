@@ -175,3 +175,34 @@ fn unwrap_sdk_envelope_empty_object_passthrough() {
     let unwrapped = unwrap_sdk_envelope(params.clone());
     assert_eq!(unwrapped, params);
 }
+
+/// Payload byte > 255 must NOT silently truncate (`300 as u8` == 44):
+/// the whole envelope passes through unchanged so the validator rejects
+/// it, instead of decoding to different-but-valid JSON and dispatching.
+#[test]
+fn unwrap_sdk_envelope_overflow_byte_passthrough_not_truncated() {
+    // `{"url":"a"}` with one byte shifted by +256 — the wrapped decode
+    // would yield the exact bytes the client did NOT send.
+    let mut payload: Vec<i64> = br#"{"url":"a"}"#.iter().map(|&b| b as i64).collect();
+    payload[8] += 256;
+    let params = json!({
+        "session_id": "sess",
+        "action": { "payload": payload, "kind": "navigate" }
+    });
+    let unwrapped = unwrap_sdk_envelope(params.clone());
+    assert_eq!(unwrapped, params);
+}
+
+/// Negative, fractional, and non-numeric payload elements are rejected
+/// (passthrough), not silently dropped with later bytes shifted.
+#[test]
+fn unwrap_sdk_envelope_non_byte_elements_passthrough() {
+    for bad in [json!(-1), json!(1.5), json!("x"), json!(null)] {
+        let params = json!({
+            "session_id": "sess",
+            "action": { "payload": [123, bad, 125], "kind": "navigate" }
+        });
+        let unwrapped = unwrap_sdk_envelope(params.clone());
+        assert_eq!(unwrapped, params);
+    }
+}

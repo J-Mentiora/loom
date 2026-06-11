@@ -22,13 +22,19 @@ impl SchemaProvider {
         let mut method_schemas: Vec<MethodSchema> = Vec::new();
         let mut hasher_input = Vec::<u8>::new();
 
-        let entries: Vec<_> = std::fs::read_dir(schema_dir)
+        let mut entries: Vec<_> = std::fs::read_dir(schema_dir)
             .map_err(|_e| SchemaLoadError::DirectoryMissing {
                 path: schema_dir.clone(),
             })?
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
             .collect();
+
+        // Deterministic load order: read_dir iteration order is
+        // filesystem-dependent, and `hasher_input` accumulates file
+        // bytes in this order — sort by path so `source_wit_sha256` is
+        // stable across machines, filesystems, and reloads.
+        entries.sort_by_key(|e| e.path());
 
         if entries.is_empty() {
             return Err(SchemaLoadError::EmptyDirectory {
@@ -71,16 +77,16 @@ impl SchemaProvider {
             let req = doc["request"].clone();
             let resp = doc["response"].clone();
 
-            request_schemas.insert(
-                method.clone(),
-                Arc::new(CompiledJsonSchema { inner: req.clone() }),
-            );
-            response_schemas.insert(
-                method.clone(),
-                Arc::new(CompiledJsonSchema {
-                    inner: resp.clone(),
-                }),
-            );
+            // Compile once, here, at load/SIGHUP-reload time. A schema
+            // that does not compile fails the whole load (fail CLOSED):
+            // a corrupted postinstall file must surface as a typed
+            // startup error, not silently disable validation for its
+            // method on the request hot path.
+            let compiled_req = compile_or_fail("request", &method, &path, req.clone())?;
+            let compiled_resp = compile_or_fail("response", &method, &path, resp.clone())?;
+
+            request_schemas.insert(method.clone(), Arc::new(compiled_req));
+            response_schemas.insert(method.clone(), Arc::new(compiled_resp));
             let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(&method)
                 .into_iter()
                 .map(|s| s.to_string())
@@ -95,14 +101,14 @@ impl SchemaProvider {
 
         method_schemas.sort_by(|a, b| a.method.cmp(&b.method));
 
-        // SHA256 of all schema file bytes concatenated (deterministic after sort).
-        let source_wit_sha256 = {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            hasher_input.hash(&mut h);
-            format!("{:016x}", h.finish())
-        };
+        // Real SHA-256 (64 lowercase hex chars) of all schema file
+        // bytes concatenated in path-sorted order — honest to the
+        // field's `source_wit_sha256` wire name, and deterministic
+        // across hosts and Rust releases (the previous 16-hex
+        // DefaultHasher value was neither: SipHash is unspecified and
+        // unstable, and read_dir order is filesystem-dependent). Uses
+        // the workspace's content-addressing helper.
+        let source_wit_sha256 = loom_core::content_store::sha256_hex(&hasher_input);
 
         let snapshot = SchemaRegistry {
             methods: method_schemas.clone(),
@@ -115,6 +121,31 @@ impl SchemaProvider {
             snapshot,
         }))
     }
+}
+
+/// Compile one side (`request` / `response`) of a method's schema file,
+/// mapping a compile failure to a logged, typed `SchemaLoadError` so the
+/// daemon refuses to start (or refuses the SIGHUP reload) instead of
+/// serving requests with validation silently disabled.
+fn compile_or_fail(
+    side: &str,
+    method: &str,
+    path: &std::path::Path,
+    doc: serde_json::Value,
+) -> Result<CompiledJsonSchema, SchemaLoadError> {
+    CompiledJsonSchema::compile(doc).map_err(|reason| {
+        tracing::error!(
+            method,
+            side,
+            path = %path.display(),
+            %reason,
+            "stored JSON Schema does not compile — failing schema load (fail closed)"
+        );
+        SchemaLoadError::InvalidSchema {
+            method: method.to_string(),
+            reason: format!("{side} schema failed to compile: {reason}"),
+        }
+    })
 }
 
 impl SchemaProviderApi for SchemaProvider {

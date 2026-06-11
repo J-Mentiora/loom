@@ -22,9 +22,10 @@ struct OneMethodProvider {
 impl SchemaProviderApi for OneMethodProvider {
     fn lookup_request_schema(&self, method: &str) -> Option<Arc<CompiledJsonSchema>> {
         if method == self.method {
-            Some(Arc::new(CompiledJsonSchema {
-                inner: self.request_schema.clone(),
-            }))
+            Some(Arc::new(
+                CompiledJsonSchema::compile(self.request_schema.clone())
+                    .expect("test schema must compile"),
+            ))
         } else {
             None
         }

@@ -16,7 +16,7 @@ use crate::error_translator::error_translator::LoomErrorCode;
 use crate::host_service_adapter::host_service_adapter::{Action, HostServiceAdapterApi, Receipt};
 use crate::rpc_observability::rpc_observability::RpcObservabilityApi;
 use crate::schema_provider::schema_provider::{SchemaProviderApi, SchemaRegistry};
-use crate::schema_validator::schema_validator::SchemaValidatorApi;
+use crate::schema_validator::schema_validator::{SchemaValidatorApi, ValidationOutcome};
 use std::sync::Arc;
 
 impl RpcHandlers {
@@ -366,11 +366,37 @@ impl RpcHandlers {
     // === Vault methods — wired through CoreServiceAdapter to loom-core ===
 
     pub async fn vault_grant(&self, p: GrantParams) -> HandlerResult<GrantInfo> {
-        self.core.vault_grant(p).map_err(|code| JsonRpcError {
+        let info = self.core.vault_grant(p).map_err(|code| JsonRpcError {
             code,
             message: "vault.grant failed".to_string(),
             data: None,
-        })
+        })?;
+        // Belt+braces response check documented in this module's
+        // contract and on `GrantInfo`: validate the response against
+        // the registered `vault.grant` response schema so secret-shaped
+        // fields can never leak onto the wire. No registered response
+        // schema = Pass (validator contract), so installs without a
+        // vault.grant response schema behave exactly as before.
+        let response = serde_json::to_value(&info).map_err(|e| JsonRpcError {
+            code: LoomErrorCode::InternalError,
+            message: format!("vault.grant response serialisation failed: {e}"),
+            data: None,
+        })?;
+        match self.validator.validate_response("vault.grant", &response) {
+            ValidationOutcome::Pass => Ok(info),
+            ValidationOutcome::Violation(err) | ValidationOutcome::MethodNotFound(err) => {
+                tracing::error!(
+                    reason = %err.message,
+                    "vault.grant response failed response-schema validation — \
+                     refusing to return it"
+                );
+                Err(JsonRpcError {
+                    code: LoomErrorCode::InternalError,
+                    message: "vault.grant response failed response-schema validation".to_string(),
+                    data: None,
+                })
+            }
+        }
     }
 
     pub async fn vault_revoke(&self, g: String, r: String) -> HandlerResult<()> {

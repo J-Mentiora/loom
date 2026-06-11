@@ -176,19 +176,12 @@ pub fn resolve(
 pub fn compiled_defaults() -> CliConfig {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     let config_base = home.join(".config").join("loom");
-    // Match loom_rpc::socket_server::default_socket_path():
-    // macOS: ~/Library/Caches/loom/loom.sock  (dirs::cache_dir())
-    // Linux: $XDG_RUNTIME_DIR/loom.sock or /tmp/loom.sock
-    #[cfg(target_os = "macos")]
-    let socket_path = dirs::cache_dir()
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
-        .join("loom")
-        .join("loom.sock");
-    #[cfg(not(target_os = "macos"))]
-    let socket_path = std::env::var("XDG_RUNTIME_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/tmp"))
-        .join("loom.sock");
+    // Single source of truth for the platform default: the daemon's own
+    // resolution (macOS: ~/Library/Caches/loom/loom.sock; Linux:
+    // $XDG_RUNTIME_DIR/loom.sock, else ~/.local/share/loom/loom.sock —
+    // never shared /tmp). Calling it directly keeps client and daemon
+    // from drifting apart, which the old hand-mirrored copy could.
+    let socket_path = loom_rpc::socket_server::default_socket_path();
     // Auth artefacts live where the daemon writes them: `<data_root>/auth/`,
     // with data_root defaulting to `dirs::data_dir()/loom` (see
     // `loom-daemon::data_root_default` and `auth_manager::default_auth_paths`).

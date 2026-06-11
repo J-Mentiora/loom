@@ -4,11 +4,15 @@
 // # Contract semantics
 // - **Socket path.** Default
 //   `~/Library/Caches/loom/loom.sock` on macOS;
-//   `$XDG_RUNTIME_DIR/loom.sock` on Linux. Overridable via config
-//   file → env (`LOOM_SOCKET_PATH`) → CLI flag (`--socket`).
-// - **Permissions.** Mode `0600` set via
-//   `std::os::unix::fs::PermissionsExt` immediately after bind, before
-//   the first `accept()`.
+//   `$XDG_RUNTIME_DIR/loom.sock` on Linux, falling back to the
+//   per-user data dir (`~/.local/share/loom/loom.sock`) — never
+//   shared `/tmp` — when the runtime dir is unset. Overridable via
+//   config file → env (`LOOM_SOCKET_PATH`) → CLI flag (`--socket`).
+// - **Permissions.** Mode `0600`: the bind itself runs under a
+//   0o177 umask guard so the socket inode is never world-accessible
+//   (not even between bind and chmod), and
+//   `std::os::unix::fs::PermissionsExt` re-asserts 0600 immediately
+//   after bind as belt-and-braces.
 // - **Stale-socket recovery (design.md §4).** On bind `EADDRINUSE`,
 //   probe-connect; if `ECONNREFUSED`, `unlink()` the socket file and
 //   retry bind once. Second failure is fatal — daemon refuses to
