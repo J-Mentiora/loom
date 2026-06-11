@@ -91,7 +91,7 @@ impl CdpConnection for RecordingCdp {
         if filter.method_prefix.starts_with("Fetch") {
             *self.fetch_handler.lock().unwrap() = Some(handler);
         }
-        EventRegistration { handler_id: 0 }
+        EventRegistration::detached(0)
     }
 
     fn invalidate_session(&self) {}
@@ -311,13 +311,23 @@ async fn test_top_frame_document_skips_gate() {
     );
 }
 
+/// Regression (audit: 'top_frame_seen skip-gate mismodels Chromium frame
+/// identity'): in real Chromium the MAIN frame's frameId is stable for
+/// the tab's lifetime — the second and every later operator-issued
+/// Page.navigate pauses a Document on the SAME frameId as the first.
+/// The old seen-set exempted only the first Document per (target,
+/// frame), so navigating a session twice to a blocklisted host blocked
+/// the second navigation (ERR_BLOCKED_BY_CLIENT). EVERY main-frame
+/// Document must be skip-gated, even when its URL matches the
+/// blocklist.
 #[tokio::test]
-async fn test_subsequent_same_frame_document_request_is_gated() {
+async fn test_second_main_frame_document_is_skip_gated() {
     let cdp = RecordingCdp::new();
     let interceptor = ChromiumNetworkInterceptor::new_with_blocklist(cdp.clone(), ga_blocklist());
     interceptor.subscribe(0).await.expect("subscribe");
 
-    // First Document for frame-MAIN — the page-level navigate. Skipped.
+    // First Document for frame-MAIN — establishes the main-frame
+    // identity and is skip-gated (operator's primary URL).
     cdp.fire_fetch_event(
         0,
         "Fetch.requestPaused",
@@ -330,23 +340,89 @@ async fn test_subsequent_same_frame_document_request_is_gated() {
     );
     tokio::time::sleep(Duration::from_millis(10)).await;
 
-    // Second Document for frame-MAIN — e.g. an iframe document load
-    // navigated FROM the parent frame. This SHOULD be gated. URL
-    // matches the blocklist.
+    // Second Document for frame-MAIN — a SECOND operator navigate of
+    // the same tab, this time to a blocklisted host. Must ALSO be
+    // skip-gated (same stable main-frame frameId).
     cdp.fire_fetch_event(
         0,
         "Fetch.requestPaused",
         paused_params(
             "fetch-doc-2",
-            "https://www.google-analytics.com/iframe.html",
+            "https://www.google-analytics.com/dashboard",
             "frame-MAIN",
             "Document",
         ),
     );
     tokio::time::sleep(Duration::from_millis(20)).await;
 
-    // Two separate paused events: first → continueRequest, second →
-    // failRequest. Count instances.
+    let methods = cdp.recorded_methods();
+    let n_continue = methods
+        .iter()
+        .filter(|m| *m == "Fetch.continueRequest")
+        .count();
+    assert_eq!(
+        n_continue, 2,
+        "both main-frame Documents must continue; recorded = {methods:?}"
+    );
+    assert!(
+        !methods.contains(&"Fetch.failRequest".to_string()),
+        "a main-frame Document must never be failed; recorded = {methods:?}"
+    );
+    assert!(
+        interceptor.drain_blocked(0).is_empty(),
+        "no BlockedEvents for main-frame Documents"
+    );
+}
+
+/// An iframe's Document arrives on its OWN frameId (distinct from the
+/// main frame) and IS gated normally — a blocklisted iframe document is
+/// failed + recorded, and the main frame stays exempt afterwards.
+#[tokio::test]
+async fn test_iframe_document_on_distinct_frame_is_gated() {
+    let cdp = RecordingCdp::new();
+    let interceptor = ChromiumNetworkInterceptor::new_with_blocklist(cdp.clone(), ga_blocklist());
+    interceptor.subscribe(0).await.expect("subscribe");
+
+    // Main-frame Document first (establishes main-frame identity).
+    cdp.fire_fetch_event(
+        0,
+        "Fetch.requestPaused",
+        paused_params(
+            "fetch-doc-1",
+            "https://example.com/index.html",
+            "frame-MAIN",
+            "Document",
+        ),
+    );
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    // Iframe Document on a DIFFERENT frameId, blocklisted URL → gated.
+    cdp.fire_fetch_event(
+        0,
+        "Fetch.requestPaused",
+        paused_params(
+            "fetch-doc-iframe",
+            "https://www.google-analytics.com/iframe.html",
+            "frame-IFRAME",
+            "Document",
+        ),
+    );
+    tokio::time::sleep(Duration::from_millis(10)).await;
+
+    // Another main-frame Document afterwards — still skip-gated (the
+    // iframe must not have stolen or reset the main-frame identity).
+    cdp.fire_fetch_event(
+        0,
+        "Fetch.requestPaused",
+        paused_params(
+            "fetch-doc-2",
+            "https://example.com/next.html",
+            "frame-MAIN",
+            "Document",
+        ),
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+
     let methods = cdp.recorded_methods();
     let n_continue = methods
         .iter()
@@ -354,16 +430,16 @@ async fn test_subsequent_same_frame_document_request_is_gated() {
         .count();
     let n_fail = methods.iter().filter(|m| *m == "Fetch.failRequest").count();
     assert_eq!(
-        n_continue, 1,
-        "first Document continued; recorded = {methods:?}"
+        n_continue, 2,
+        "both main-frame Documents continued; recorded = {methods:?}"
     );
     assert_eq!(
         n_fail, 1,
-        "second Document gated and failed; recorded = {methods:?}"
+        "blocklisted iframe Document gated and failed; recorded = {methods:?}"
     );
 
     let blocked = interceptor.drain_blocked(0);
-    assert_eq!(blocked.len(), 1, "second Document recorded as BlockedEvent");
+    assert_eq!(blocked.len(), 1, "iframe Document recorded as BlockedEvent");
     assert_eq!(
         blocked[0].url,
         "https://www.google-analytics.com/iframe.html"

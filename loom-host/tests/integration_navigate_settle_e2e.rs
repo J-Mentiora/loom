@@ -25,6 +25,10 @@
 //!   (d2) Never-settles (DOM): the DOM mutates every tick forever (network
 //!       quiet, document complete). Assert a typed `dom_unstable` receipt,
 //!       distinct from the network timeout.
+//!   (e) Static page under determinism: the inject-time virtual-time pin
+//!       defers the load event until the budget arm (mirroring real headless
+//!       Chromium). Assert `reached` well inside the budget — the
+//!       settle-timeout-on-static regression pin.
 //!
 //! No wall-clock dependence: every verdict is a pure function of the scripted
 //! per-tick observation sequence (DET-CORE). `settle_ms` is `ticks * pacing`,
@@ -286,4 +290,50 @@ async fn never_settles_dom_returns_dom_unstable() {
     );
 
     mgr.shutdown_session("settle-dom-unstable").await;
+}
+
+// ── (e) Static page under determinism: settled is REACHED, well in budget ────
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn static_page_under_determinism_reaches_settled() {
+    assert_binaries_built();
+    // A trivially static page: ready immediately, URL stable, zero mutations.
+    // Under determinism the inject-time virtual-time clock pin DEFERS
+    // `Page.loadEventFired` until the navigate arms the per-navigation budget
+    // (fake-chromium mirrors real headless Chromium here). The v0.10.1
+    // executor awaited load BEFORE arming the budget, so `load_fired` stayed
+    // false, the settled latch (which requires it) could never close, and
+    // every navigate burned its full wall-clock budget before reporting
+    // `settle_outcome="timeout"` on a fully-loaded page
+    // (settle-timeout-on-static). This pins the fix.
+    let script = r#"{
+        "settle_probe": [[true, "http://fake.test/static", 0]]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script("settle-static", script);
+
+    let started = std::time::Instant::now();
+    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(30)).await;
+    let elapsed = started.elapsed();
+
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "a loaded, request-quiet, mutation-quiet page must reach settled"
+    );
+    assert_eq!(outcome.settle_until, "settled");
+    // A clean page settles in exactly the quiet window (5 ticks → 25ms of
+    // virtual settle time); generous headroom, but far below the ceiling.
+    assert!(
+        outcome.settle_ms <= 100,
+        "a clean page must settle in ~the quiet window, got settle_ms={}",
+        outcome.settle_ms
+    );
+    // Well inside the 10s default navigate budget: the OLD order spent the
+    // full budget waiting for a load event that cannot fire while the clock
+    // pin holds, then walked the settle ceiling on top.
+    assert!(
+        elapsed < Duration::from_secs(8),
+        "static-page navigate must complete well inside the budget, took {elapsed:?}"
+    );
+
+    mgr.shutdown_session("settle-static").await;
 }

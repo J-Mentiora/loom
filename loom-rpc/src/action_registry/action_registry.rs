@@ -313,8 +313,19 @@ Readiness: the DOM + screenshot are captured once the page reaches the \
 `until` state (default `settled`), not at navigation commit. `settled` \
 waits for `load`, network-idle, a stable final URL after client-side \
 redirects, and a quiescent DOM, so SPA shells and mid-animation frames \
-are never captured. The receipt records `until` and `settle_outcome` \
-(`reached`|`timeout`|`dom_unstable`).",
+are never captured. The receipt records `until` and `settle_outcome`:\n\
+- `reached` — the requested readiness state was satisfied before the \
+bound; the capture is gated on a genuinely ready page. A loaded, \
+request-quiet, mutation-quiet page settles well inside the default \
+timeout.\n\
+- `timeout` — the bound (tick ceiling or wall-clock budget) was hit \
+while the load/network condition never went quiet (e.g. a persistent \
+connection or perpetual polling). The action still SUCCEEDS and the \
+capture proceeds; the verdict only describes how the wait ended.\n\
+- `dom_unstable` — the bound was hit while the network was quiet and \
+the document complete but the DOM kept mutating (perpetual animation / \
+re-render). Distinct from `timeout` so consumers can tell the two \
+apart. Like `timeout`, the action still succeeds.",
         params: &[
             ParamMeta {
                 name: "session_id",
@@ -700,7 +711,7 @@ real readiness instead of a magic sleep.",
                 required: false,
             },
         ],
-        returns: "Receipt with `settle_until` (the requested mode) and `settle_outcome` (`reached` | `timeout` | `dom_unstable`). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.",
+        returns: "Receipt with `settle_until` (the requested mode) and `settle_outcome`: `reached` (the requested state was satisfied before the bound), `timeout` (the bound was hit while the load/network condition never went quiet), or `dom_unstable` (the bound was hit while the network was quiet and the document complete but the DOM kept mutating). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.",
         example: &["loom", "action", "web.wait_for", "--session", "<SESSION>", "--until", "settled"],
     },
 ];

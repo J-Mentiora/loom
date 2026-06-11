@@ -153,6 +153,67 @@ async fn blocklist_ga_subresource_is_blocked_and_recorded() {
     mgr.shutdown_session("blocklist-05-ga").await;
 }
 
+/// Two navigates to a BLOCKLISTED host in one session. fake-chromium now
+/// mirrors real Chromium's pause semantics (the document's
+/// responseReceived/loadEventFired are held until the interceptor's
+/// Fetch.continueRequest), and the document URL itself matches the
+/// default blocklist — so this e2e fails in two pre-fix ways:
+///   - main-frame identity regression: the old seen-set gated the SECOND
+///     navigate's document (same stable frameId), the interceptor sent
+///     Fetch.failRequest, and the navigation aborted/hung instead of
+///     completing with status 200;
+///   - a broken interceptor continue-path now hangs the navigate against
+///     the fake exactly like it would against real Chromium.
+#[tokio::test]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn blocklist_second_navigate_to_blocklisted_host_still_succeeds() {
+    assert_binaries_built();
+    let (mgr, id, _udd) = make_manager("blocklist-06-twice");
+
+    for nav in 0..2u32 {
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(45),
+            mgr.send_navigate(
+                id.clone(),
+                format!("test-blocklist-action-{nav}"),
+                0,
+                0,
+                "https://www.google-analytics.com/page-with-tracker".to_string(),
+                30_000,
+                loom_shared::types::Seed(0),
+                loom_shared::types::EpochMs(0),
+                true, // blocklist_enabled
+                "settled".to_string(),
+                true,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| panic!("navigate #{nav} did not return within 45s"))
+        .unwrap_or_else(|e| panic!("navigate #{nav} returned an error: {e:?}"));
+
+        // The operator's primary URL is skip-gated regardless of blocklist
+        // match — on EVERY navigate of the session, not just the first.
+        assert_eq!(
+            outcome.status_code, 200,
+            "navigate #{nav}: main document must load (skip-gated)"
+        );
+        // The GA sub-resource is still gated each time.
+        assert_eq!(
+            outcome.blocked_events.len(),
+            1,
+            "navigate #{nav}: expected exactly one BlockedEvent for the GA \
+             sub-resource; got {:?}",
+            outcome.blocked_events
+        );
+        assert_eq!(
+            outcome.blocked_events[0].url,
+            "https://www.google-analytics.com/analytics.js"
+        );
+    }
+
+    mgr.shutdown_session("blocklist-06-twice").await;
+}
+
 /// With `blocklist_enabled = false`, the same fake-chromium fixture
 /// produces ZERO BlockedEvents because the shim never issues
 /// `Fetch.enable` (no interception → no Fetch.* events → no gate

@@ -8,6 +8,11 @@
 // to avoid busy-spin (practitioner R-b), but the VERDICT depends only on the
 // per-tick observation sequence + tick count — never elapsed wall-time — so a
 // recorded session replays to the identical outcome (DET-CORE).
+//
+// One bounded exception: an outer wall-clock guard caps the WHOLE wait at the
+// caller's budget (D-INTAKE: never hangs). It can only fire on pages that
+// never settle (where loom already accepts bounded divergence); pages that
+// settle reach their verdict from the tick sequence alone.
 
 use super::readiness_monitor::{
     PageObservation, ReadinessMachine, SettleConfig, SettleMode, SettleOutcome,
@@ -22,6 +27,14 @@ use std::time::Duration;
 /// Pacing between ticks. Bounded await so the loop does not hot-spin; its
 /// DURATION never enters the verdict (which counts ticks, not ms).
 const TICK_PACING: Duration = Duration::from_millis(5);
+
+/// Cap on the per-tick probe's CDP timeout. The tick ceiling assumes a tick
+/// costs ~`TICK_PACING`; handing each probe the FULL caller budget would let a
+/// wedged renderer (Runtime.evaluate stalling to its timeout while the hang
+/// watchdog's Browser.getVersion pings still succeed) stretch the wait to
+/// ceiling × budget — hours. One second per probe keeps a single slow tick
+/// bounded without flapping on routine busy-main-thread pauses.
+const MAX_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Derive a [`SettleConfig`] whose tick ceiling bounds the wait to roughly the
 /// caller's `timeout` (ceiling = timeout / pacing). The ceiling is a fixed tick
@@ -125,9 +138,20 @@ pub async fn wait_for_settle(
     let mut machine = ReadinessMachine::new(mode, config);
     let mut last_href: Option<String> = None;
 
+    // Outer wall-clock bound (D-INTAKE: never hangs). The tick ceiling bounds
+    // the VERDICT deterministically, but each tick costs pacing + a CDP
+    // round-trip, so slow probes could otherwise overrun the caller's budget
+    // by a large factor. Healthy pages settle well before either bound, so the
+    // verdict for pages that settle stays a pure function of the tick
+    // observation sequence (DET-CORE); only never-settling pages can observe
+    // this guard — the same bounded-determinism tradeoff as the virtual-time
+    // budget warn path in `page_navigate`.
+    let deadline = tokio::time::Instant::now() + cdp_timeout;
+    let probe_timeout = cdp_timeout.min(MAX_PROBE_TIMEOUT);
+
     loop {
         // Poll page state for this tick.
-        let (ready_complete, href, dom_mutations) = probe_page(cdp, target_id, cdp_timeout).await;
+        let (ready_complete, href, dom_mutations) = probe_page(cdp, target_id, probe_timeout).await;
         let in_flight = inflight.lock().len() as u32;
 
         // URL is "stable" this tick if it has not changed since the previous
@@ -152,6 +176,18 @@ pub async fn wait_for_settle(
             return SettleResult {
                 mode,
                 outcome,
+                ticks: machine.ticks(),
+                network_count: in_flight,
+            };
+        }
+
+        // Wall-clock expiry: classify with the same terminal rule the tick
+        // ceiling uses so `dom_unstable` stays distinguishable from `timeout`
+        // regardless of which bound fires first.
+        if tokio::time::Instant::now() >= deadline {
+            return SettleResult {
+                mode,
+                outcome: machine.timeout_verdict(obs),
                 ticks: machine.ticks(),
                 network_count: in_flight,
             };

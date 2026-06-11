@@ -84,7 +84,10 @@ impl EventFilter {
 
 /// In-flight request bookkeeping shared between command() and the reader task.
 type PendingMap = Arc<DashMap<u64, oneshot::Sender<Result<JsonValue, String>>>>;
-type HandlerList = Arc<parking_lot::RwLock<Vec<(EventFilter, EventHandler)>>>;
+/// `(handler_id, filter, handler)` — the stable id is what lets an
+/// [`EventRegistration`] remove exactly its own entry on drop.
+type HandlerEntries = parking_lot::RwLock<Vec<(u64, EventFilter, EventHandler)>>;
+type HandlerList = Arc<HandlerEntries>;
 
 /// Live WS-backed connection state. Held inside `Mutex<Option<...>>` so
 /// `invalidate_session()` can drop it cleanly.
@@ -118,6 +121,9 @@ impl CdpConnState {
 pub struct ChromiumCdpConnection {
     inner: Arc<tokio::sync::Mutex<Option<CdpConnState>>>,
     handlers: HandlerList,
+    /// Monotonic id source for handler registrations. A counter (not
+    /// `handlers.len()`) so ids stay unique across removals.
+    next_handler_id: AtomicU64,
     connected: Arc<AtomicBool>,
     pub(crate) default_timeout: Duration,
 }
@@ -127,6 +133,7 @@ impl ChromiumCdpConnection {
         Self {
             inner: Arc::new(tokio::sync::Mutex::new(None)),
             handlers: Arc::new(parking_lot::RwLock::new(Vec::new())),
+            next_handler_id: AtomicU64::new(0),
             connected: Arc::new(AtomicBool::new(false)),
             default_timeout: DEFAULT_CDP_TIMEOUT,
         }
@@ -161,8 +168,52 @@ pub trait CdpConnection: Send + Sync {
     fn is_connected(&self) -> bool;
 }
 
+/// RAII registration token. Dropping it removes the handler from the owning
+/// connection's dispatch list — so per-navigate subscriptions (the load /
+/// budget-expiry oneshots, the console collector, the settle driver's
+/// `Network.` counter) are deregistered when their scope ends instead of
+/// accumulating for the session's lifetime. Pre-RAII, every navigate leaked
+/// up to 4 handlers: dispatch degraded to O(navigates) per event and each
+/// orphaned console collector kept receiving (and retaining) every
+/// subsequent console line — unbounded memory growth on chatty pages.
+///
+/// Long-lived subscribers (NetworkInterceptor, DeterminismInjector) keep
+/// their token in a struct field, which preserves their handlers exactly
+/// as before.
 pub struct EventRegistration {
     pub handler_id: u64,
+    /// Weak link back to the owning handler list. `None` for detached
+    /// tokens (impls that don't support removal). Weak so a token held
+    /// past `invalidate_session`/connection drop is a no-op, not a leak.
+    list: Option<std::sync::Weak<HandlerEntries>>,
+}
+
+impl EventRegistration {
+    /// Token that does NOT deregister on drop. For `CdpConnection` impls
+    /// without a removable handler list.
+    pub fn detached(handler_id: u64) -> Self {
+        Self {
+            handler_id,
+            list: None,
+        }
+    }
+
+    fn scoped(handler_id: u64, list: &HandlerList) -> Self {
+        Self {
+            handler_id,
+            list: Some(Arc::downgrade(list)),
+        }
+    }
+}
+
+impl Drop for EventRegistration {
+    fn drop(&mut self) {
+        if let Some(weak) = self.list.take() {
+            if let Some(list) = weak.upgrade() {
+                list.write().retain(|(id, _, _)| *id != self.handler_id);
+            }
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -256,7 +307,7 @@ impl CdpConnection for ChromiumCdpConnection {
                     value.get("params"),
                 ) {
                     let handlers = handlers_for_reader.read();
-                    for (filter, handler) in handlers.iter() {
+                    for (_id, filter, handler) in handlers.iter() {
                         if method.starts_with(&filter.method_prefix) {
                             let cbor_params = json_to_cbor(params);
                             let cdp_msg = CdpMessage {
@@ -287,7 +338,27 @@ impl CdpConnection for ChromiumCdpConnection {
         // it. bootstrap_page_session sends real CDP commands through the
         // same path as user commands.
         drop(guard);
-        self.bootstrap_page_session().await?;
+        if let Err(e) = self.bootstrap_page_session().await {
+            // Bootstrap failed AFTER the conn state was stored and
+            // `connected` flipped true. Without cleanup the connection is
+            // wedged half-open: is_connected() reports healthy, a retry of
+            // connect() hits the `guard.is_some()` fast-path above and
+            // returns Ok with page_session_id still None — after which
+            // every page-scope command fails with TargetNotAttached. Tear
+            // the state down so a retry re-runs the FULL connect path.
+            //
+            // Deliberately NOT invalidate_session(): that also clears the
+            // handler list, and registrations made before connect (the
+            // NetworkInterceptor / DeterminismInjector constructor-time
+            // subscriptions) must survive a failed attempt so the retry's
+            // reader keeps dispatching to them.
+            self.connected.store(false, Ordering::SeqCst);
+            let mut guard = self.inner.lock().await;
+            if let Some(state) = guard.take() {
+                state.shutdown();
+            }
+            return Err(e);
+        }
         Ok(())
     }
 
@@ -363,10 +434,9 @@ impl CdpConnection for ChromiumCdpConnection {
         filter: EventFilter,
         handler: EventHandler,
     ) -> EventRegistration {
-        let mut h = self.handlers.write();
-        let id = h.len() as u64;
-        h.push((filter, handler));
-        EventRegistration { handler_id: id }
+        let id = self.next_handler_id.fetch_add(1, Ordering::SeqCst);
+        self.handlers.write().push((id, filter, handler));
+        EventRegistration::scoped(id, &self.handlers)
     }
 
     fn invalidate_session(&self) {

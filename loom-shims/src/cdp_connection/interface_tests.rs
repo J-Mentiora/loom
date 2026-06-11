@@ -266,3 +266,242 @@ fn cdpatt_04_method_classifier_handles_empty_and_dotted_edge_cases() {
     // Unknown domain → page-scope (defensive default).
     assert!(!is_browser_scope_method("UnknownDomain.method"));
 }
+
+// === Mini WS CDP server harness ===
+//
+// A canned in-process CDP endpoint for tests that need the REAL
+// reader-task dispatch path (handler registration/deregistration) or the
+// REAL connect/bootstrap sequence — fake-chromium is a separate binary
+// and overkill for these. Answers the bootstrap methods
+// (`Target.createTarget` → t-1, `Target.attachToTarget` → page-session-1,
+// everything else `{}`) and pushes arbitrary event frames on demand via
+// `event_tx`.
+
+struct FakeCdpServer {
+    url: String,
+    /// Push a raw JSON event frame to the CURRENT connection.
+    event_tx: tokio::sync::mpsc::UnboundedSender<String>,
+}
+
+/// Spawn the canned server. When `fail_first_bootstrap` is true, the
+/// FIRST accepted connection answers `Target.createTarget` with a
+/// JSON-RPC error (modelling a bootstrap failure mid-connect); every
+/// later connection bootstraps normally.
+async fn spawn_fake_cdp_server(fail_first_bootstrap: bool) -> FakeCdpServer {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("local_addr");
+    let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+    tokio::spawn(async move {
+        let mut conn_idx = 0usize;
+        loop {
+            let Ok((stream, _)) = listener.accept().await else {
+                return;
+            };
+            let Ok(ws) = tokio_tungstenite::accept_async(stream).await else {
+                return;
+            };
+            let (mut sink, mut rx) = ws.split();
+            let fail_bootstrap = fail_first_bootstrap && conn_idx == 0;
+            conn_idx += 1;
+            loop {
+                tokio::select! {
+                    evt = event_rx.recv() => {
+                        let Some(evt) = evt else { return };
+                        if sink.send(Message::Text(evt.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    msg = rx.next() => {
+                        let Some(Ok(Message::Text(text))) = msg else { break };
+                        let Ok(req) = serde_json::from_str::<serde_json::Value>(&text) else {
+                            continue;
+                        };
+                        let id = req.get("id").cloned().unwrap_or(serde_json::json!(0));
+                        let method = req.get("method").and_then(|m| m.as_str()).unwrap_or("");
+                        let resp = match method {
+                            "Target.createTarget" if fail_bootstrap => serde_json::json!({
+                                "id": id,
+                                "error": {"code": -32000, "message": "createTarget refused (test)"},
+                            }),
+                            "Target.createTarget" => serde_json::json!({
+                                "id": id, "result": {"targetId": "t-1"},
+                            }),
+                            "Target.attachToTarget" => serde_json::json!({
+                                "id": id, "result": {"sessionId": "page-session-1"},
+                            }),
+                            _ => serde_json::json!({"id": id, "result": {}}),
+                        };
+                        if sink.send(Message::Text(resp.to_string().into())).await.is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    FakeCdpServer {
+        url: format!("ws://{addr}/devtools/browser/test"),
+        event_tx,
+    }
+}
+
+/// Poll until `cond` holds or the deadline expires. Returns whether the
+/// condition was observed.
+async fn wait_until(cond: impl Fn() -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while tokio::time::Instant::now() < deadline {
+        if cond() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    cond()
+}
+
+// === RAII deregistration (per-navigate handler leak regression) ===
+
+/// Regression: per-navigate handlers (load/budget oneshots, the console
+/// collector, the settle driver's `Network.` counter) accumulated on the
+/// connection for the whole session because `EventRegistration` had no
+/// `Drop` — dispatch degraded to O(navigates) per event and orphaned
+/// console collectors retained every later console line. Dropping the
+/// token must now remove exactly that handler from the dispatch list,
+/// while kept tokens keep receiving.
+#[tokio::test]
+async fn dropping_registration_deregisters_handler() {
+    let srv = spawn_fake_cdp_server(false).await;
+    let cdp = ChromiumCdpConnection::new();
+    cdp.connect(&srv.url).await.expect("connect");
+
+    let dropped_count: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let kept_count: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let dropped_inner = Arc::clone(&dropped_count);
+    let kept_inner = Arc::clone(&kept_count);
+    let to_drop = cdp.register_event_handler(
+        EventFilter::new("Custom."),
+        Arc::new(move |_t: TargetId, _m: CdpMessage| {
+            dropped_inner.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+    let _kept = cdp.register_event_handler(
+        EventFilter::new("Custom."),
+        Arc::new(move |_t: TargetId, _m: CdpMessage| {
+            kept_inner.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+
+    srv.event_tx
+        .send(r#"{"method":"Custom.evt","params":{}}"#.to_string())
+        .expect("push event");
+    let kc = Arc::clone(&kept_count);
+    let dc = Arc::clone(&dropped_count);
+    assert!(
+        wait_until(move || kc.load(Ordering::SeqCst) == 1 && dc.load(Ordering::SeqCst) == 1).await,
+        "both handlers must observe the first event"
+    );
+
+    drop(to_drop);
+
+    srv.event_tx
+        .send(r#"{"method":"Custom.evt","params":{}}"#.to_string())
+        .expect("push event");
+    // The kept handler observing event #2 is the ordering barrier: events
+    // on one WS dispatch in order, so by now the dropped handler would
+    // have seen #2 too if it were still registered.
+    let kc = Arc::clone(&kept_count);
+    assert!(
+        wait_until(move || kc.load(Ordering::SeqCst) == 2).await,
+        "kept handler must observe the second event"
+    );
+    assert_eq!(
+        dropped_count.load(Ordering::SeqCst),
+        1,
+        "dropped registration must no longer receive events"
+    );
+
+    cdp.invalidate_session();
+}
+
+/// Handler ids come from a monotonic counter, NOT `handlers.len()` — a
+/// len-based id would collide after a removal and a later drop would
+/// deregister an innocent handler.
+#[test]
+fn handler_ids_stay_unique_across_removals() {
+    let cdp = ChromiumCdpConnection::new();
+    let a = cdp.register_event_handler(EventFilter::new("A."), Arc::new(|_, _| {}));
+    let b = cdp.register_event_handler(EventFilter::new("B."), Arc::new(|_, _| {}));
+    let a_id = a.handler_id;
+    drop(a);
+    let c = cdp.register_event_handler(EventFilter::new("C."), Arc::new(|_, _| {}));
+    assert_ne!(c.handler_id, b.handler_id, "ids must stay unique");
+    assert_ne!(c.handler_id, a_id, "removed ids must not be reissued");
+}
+
+// === connect() bootstrap failure leaves a clean, retryable state ===
+
+/// Regression: connect() stored the conn state and flipped
+/// `connected=true` BEFORE bootstrap_page_session ran. A bootstrap
+/// failure (Target.createTarget error here) used to leave the
+/// connection half-open: is_connected() reported true, a retry of
+/// connect() hit the `guard.is_some()` fast-path and returned Ok with
+/// no page session, and every page-scope command then failed
+/// permanently with TargetNotAttached. The failure must now tear the
+/// state down so a retry re-runs the full connect+bootstrap path.
+#[tokio::test]
+async fn connect_cleans_up_on_bootstrap_failure_and_retry_succeeds() {
+    let srv = spawn_fake_cdp_server(true).await; // first bootstrap fails
+    let cdp = ChromiumCdpConnection::new();
+
+    let first = cdp.connect(&srv.url).await;
+    assert!(
+        first.is_err(),
+        "bootstrap failure must surface from connect(); got {first:?}"
+    );
+    assert!(
+        !cdp.is_connected(),
+        "bootstrap failure must not leave connected=true"
+    );
+
+    // Retry: must run the FULL connect path (not the is_some fast-path)
+    // against the server's second connection, which bootstraps normally.
+    cdp.connect(&srv.url).await.expect("retry connect");
+    assert!(cdp.is_connected());
+
+    // Page-scope command proves page_session_id was set by the retry's
+    // bootstrap — pre-fix this returned TargetNotAttached forever.
+    let res = cdp
+        .command(
+            0,
+            CdpMessage {
+                method: "Runtime.evaluate".into(),
+                params: CborValue::Map(vec![]),
+            },
+            Some(Duration::from_secs(5)),
+        )
+        .await;
+    assert!(
+        res.is_ok(),
+        "page-scope command must succeed after a successful retry; got {res:?}"
+    );
+
+    cdp.invalidate_session();
+}
+
+/// A token outliving `invalidate_session` (or the connection itself) is
+/// a no-op on drop — the Weak link refuses to resurrect cleared state.
+#[test]
+fn registration_drop_after_invalidate_is_noop() {
+    let cdp = ChromiumCdpConnection::new();
+    let reg = cdp.register_event_handler(EventFilter::new("X."), Arc::new(|_, _| {}));
+    cdp.invalidate_session();
+    drop(reg); // must not panic or disturb later registrations
+    let again = cdp.register_event_handler(EventFilter::new("Y."), Arc::new(|_, _| {}));
+    let _ = again.handler_id;
+}

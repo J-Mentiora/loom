@@ -145,6 +145,34 @@ async fn handle_connection(
     // replays the script from the top; advanced once per settle probe.
     let script = settle_script();
     let mut settle_idx: usize = 0;
+    // Virtual-time fidelity: real headless Chromium DEFERS the load-completion
+    // tasks while virtual time is not advancing — after the inject-time
+    // `setVirtualTimePolicy {policy:"pause"}` pin, `Page.loadEventFired` is
+    // held until a budget-carrying setVirtualTimePolicy advances the clock
+    // (and the clock pauses again once each budget drains). Mirror that:
+    // once a pause-pin has been seen, every navigate's loadEventFired is
+    // deferred until the next budget arm, which flushes it just before the
+    // synthetic `virtualTimeBudgetExpired`. An executor that awaits load
+    // BEFORE arming the budget deadlocks here exactly like it does against
+    // real Chromium (the settle-timeout-on-static regression).
+    let mut vt_clock_paused = false;
+    let mut deferred_load_event: Option<String> = None;
+    // Fetch-pause fidelity: with `Fetch.enable {requestStage:"Request"}`,
+    // real Chromium pauses the matched DOCUMENT request and the navigation
+    // does NOT proceed — no Network.responseReceived, no Page.loadEventFired
+    // — until the client answers Fetch.continueRequest / failRequest for the
+    // paused requestId. Mirror that: the PageWithTracker document's would-be
+    // events are stashed here and only flushed when the answer arrives, so
+    // an interceptor regression that never answers the document pause hangs
+    // the navigate in e2e exactly like it would against real Chromium
+    // (previously the fake emitted them fire-and-forget and could not catch
+    // that divergence class).
+    let mut paused_doc: Option<PausedDoc> = None;
+    // Under `pauseIfNetworkFetchesPending`, a paused document fetch keeps
+    // virtual time from advancing: a budget armed while the pause is
+    // outstanding must not drain (no flush, no virtualTimeBudgetExpired)
+    // until the fetch gate answers.
+    let mut vt_budget_pending_on_pause = false;
 
     while let Some(msg) = read.next().await {
         let msg = match msg {
@@ -246,9 +274,12 @@ async fn handle_connection(
         };
 
         // Page.navigate resets the settle-script cursor so each navigation
-        // replays LOOM_FAKE_CHROMIUM_SCRIPT from the top.
+        // replays LOOM_FAKE_CHROMIUM_SCRIPT from the top. Any document
+        // pause left over from a prior navigate is superseded too.
         if method == "Page.navigate" {
             settle_idx = 0;
+            paused_doc = None;
+            vt_budget_pending_on_pause = false;
         }
 
         // Runtime.evaluate is driven by an expression-pattern convention
@@ -289,6 +320,16 @@ async fn handle_connection(
             fetch_enabled = true;
         } else if method == "Fetch.disable" {
             fetch_enabled = false;
+        }
+
+        // Track the virtual-time clock pin (see `vt_clock_paused` above). A
+        // budgetless `policy:"pause"` is the inject-time origin pin; the
+        // budget-carrying arm is handled after the response is sent below.
+        if method == "Emulation.setVirtualTimePolicy"
+            && params.get("budget").is_none()
+            && params.get("policy").and_then(|p| p.as_str()) == Some("pause")
+        {
+            vt_clock_paused = true;
         }
 
         let mut result = if let Some(eval_result) = evaluate_response {
@@ -383,26 +424,140 @@ async fn handle_connection(
             return;
         }
 
-        // Emit Emulation.virtualTimeBudgetExpired right after a
-        // setVirtualTimePolicy that carries a `budget`, so the action_executor's
-        // post-load budget await (cross-run determinism) completes promptly
-        // instead of waiting out its wall-clock timeout. Real Chromium emits this
-        // once the granted virtual-time budget elapses; here we treat the budget
-        // as instantly drained (the fake has no real virtual clock).
+        // A budget-carrying setVirtualTimePolicy advances the clock: first
+        // flush any load event deferred by the pause-pin (real Chromium
+        // completes the held load tasks the moment the budget is granted),
+        // then emit Emulation.virtualTimeBudgetExpired so the action_executor's
+        // budget await (cross-run determinism) completes promptly instead of
+        // waiting out its wall-clock timeout. The budget is treated as
+        // instantly drained (the fake has no real virtual clock), after which
+        // the clock is paused again — `vt_clock_paused` stays true so the NEXT
+        // navigate's load event defers until ITS budget arm, exactly like a
+        // second navigation against real Chromium.
         if method == "Emulation.setVirtualTimePolicy" && params.get("budget").is_some() {
-            let mut vt_evt = json!({
-                "method": "Emulation.virtualTimeBudgetExpired",
-                "params": {},
-            });
-            if let Some(sid) = &session_id {
-                vt_evt["sessionId"] = json!(sid);
+            if paused_doc.is_some() {
+                // `pauseIfNetworkFetchesPending`: the paused document fetch
+                // keeps virtual time from advancing, so the budget cannot
+                // drain (and the held load cannot flush) until the Fetch
+                // gate answers. The continueRequest/failRequest handler
+                // below emits the budget expiry once the pause resolves.
+                vt_budget_pending_on_pause = true;
+            } else {
+                if let Some(load_evt) = deferred_load_event.take() {
+                    if write.send(Message::Text(load_evt.into())).await.is_err() {
+                        return;
+                    }
+                }
+                let mut vt_evt = json!({
+                    "method": "Emulation.virtualTimeBudgetExpired",
+                    "params": {},
+                });
+                if let Some(sid) = &session_id {
+                    vt_evt["sessionId"] = json!(sid);
+                }
+                if write
+                    .send(Message::Text(vt_evt.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
             }
-            if write
-                .send(Message::Text(vt_evt.to_string().into()))
-                .await
-                .is_err()
+        }
+
+        // Answering the document's Fetch pause releases the held
+        // navigation: continueRequest flushes the document response +
+        // load event (real Chromium resumes the request); failRequest
+        // aborts it with a Document loadingFailed and NO load event.
+        if method == "Fetch.continueRequest" || method == "Fetch.failRequest" {
+            let answered_id = params
+                .get("requestId")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if paused_doc
+                .as_ref()
+                .is_some_and(|pd| pd.request_id == answered_id)
             {
-                return;
+                let pd = paused_doc.take().expect("checked is_some above");
+                if method == "Fetch.continueRequest" {
+                    for held in pd.held_events {
+                        if write.send(Message::Text(held.into())).await.is_err() {
+                            return;
+                        }
+                    }
+                    if let Some(load_evt) = pd.load_event {
+                        if vt_budget_pending_on_pause {
+                            // The armed budget resumes draining now that
+                            // the fetch gate is clear: the held load
+                            // completes, then the budget expires.
+                            vt_budget_pending_on_pause = false;
+                            if write.send(Message::Text(load_evt.into())).await.is_err() {
+                                return;
+                            }
+                            let mut vt_evt = json!({
+                                "method": "Emulation.virtualTimeBudgetExpired",
+                                "params": {},
+                            });
+                            if let Some(sid) = &session_id {
+                                vt_evt["sessionId"] = json!(sid);
+                            }
+                            if write
+                                .send(Message::Text(vt_evt.to_string().into()))
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        } else if vt_clock_paused {
+                            deferred_load_event = Some(load_evt);
+                        } else if write.send(Message::Text(load_evt.into())).await.is_err() {
+                            return;
+                        }
+                    }
+                } else {
+                    // Document failRequest: navigation aborted — emit the
+                    // Document loadingFailed real Chromium produces for a
+                    // client-blocked main document; the held events drop.
+                    let mut fail_evt = json!({
+                        "method": "Network.loadingFailed",
+                        "params": {
+                            "requestId": "fake-req-1",
+                            "timestamp": 1.0,
+                            "type": "Document",
+                            "errorText": "net::ERR_BLOCKED_BY_CLIENT",
+                            "canceled": false,
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        fail_evt["sessionId"] = json!(sid);
+                    }
+                    if write
+                        .send(Message::Text(fail_evt.to_string().into()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    if vt_budget_pending_on_pause {
+                        // The aborted fetch no longer pends; the budget
+                        // drains with nothing further to flush.
+                        vt_budget_pending_on_pause = false;
+                        let mut vt_evt = json!({
+                            "method": "Emulation.virtualTimeBudgetExpired",
+                            "params": {},
+                        });
+                        if let Some(sid) = &session_id {
+                            vt_evt["sessionId"] = json!(sid);
+                        }
+                        if write
+                            .send(Message::Text(vt_evt.to_string().into()))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
             }
         }
 
@@ -589,9 +744,14 @@ async fn handle_connection(
                         let _ = write.send(Message::Text(ga_evt.to_string().into())).await;
                     }
 
-                    // Also emit the document's Network.responseReceived
-                    // so the action_executor's status_code derivation
-                    // succeeds (mirrors the Status branch behavior).
+                    // The document's Network.responseReceived feeds the
+                    // action_executor's status_code derivation (mirrors
+                    // the Status branch behavior). With the Fetch gate
+                    // active the document is PAUSED: hold the event (and
+                    // the load event, stashed below) until the client
+                    // answers the pause — real Chromium does not let the
+                    // navigation proceed past an unanswered Document
+                    // pause. Without the gate, emit immediately.
                     let mut resp_evt = json!({
                         "method": "Network.responseReceived",
                         "params": {
@@ -610,7 +770,15 @@ async fn handle_connection(
                     if let Some(sid) = &session_id {
                         resp_evt["sessionId"] = json!(sid);
                     }
-                    let _ = write.send(Message::Text(resp_evt.to_string().into())).await;
+                    if fetch_enabled {
+                        paused_doc = Some(PausedDoc {
+                            request_id: "fake-fetch-doc-1".to_string(),
+                            held_events: vec![resp_evt.to_string()],
+                            load_event: None,
+                        });
+                    } else {
+                        let _ = write.send(Message::Text(resp_evt.to_string().into())).await;
+                    }
                 }
                 FakeUrlPattern::PageWithIframe404 => {
                     // Main document loads fine (200) under the navigation's
@@ -707,7 +875,13 @@ async fn handle_connection(
             // Emit Page.loadEventFired after Page.navigate so the daemon's
             // wait-for-load-event doesn't time out. Real Chromium emits
             // this event on the page session's sessionId, not the
-            // browser one.
+            // browser one. While the document is paused at the Fetch gate
+            // the event is HELD with the pause (load cannot fire before
+            // the navigation is even allowed to proceed); while the
+            // virtual-time clock pin is in effect it is DEFERRED until the
+            // next budget arm instead (see `vt_clock_paused` — mirrors real
+            // headless Chromium, which holds load completion while virtual
+            // time is not advancing).
             let mut evt = json!({
                 "method": "Page.loadEventFired",
                 "params": { "timestamp": 1.0 }
@@ -715,9 +889,29 @@ async fn handle_connection(
             if let Some(sid) = &session_id {
                 evt["sessionId"] = json!(sid);
             }
-            let _ = write.send(Message::Text(evt.to_string().into())).await;
+            if let Some(pd) = paused_doc.as_mut() {
+                pd.load_event = Some(evt.to_string());
+            } else if vt_clock_paused {
+                deferred_load_event = Some(evt.to_string());
+            } else {
+                let _ = write.send(Message::Text(evt.to_string().into())).await;
+            }
         }
     }
+}
+
+/// A document request held at the Fetch gate (PageWithTracker with
+/// `Fetch.enable` issued). Carries the would-be navigation events until
+/// the client answers `Fetch.continueRequest` (flush) or
+/// `Fetch.failRequest` (abort with `Network.loadingFailed`).
+struct PausedDoc {
+    /// The paused Fetch requestId the client must answer.
+    request_id: String,
+    /// Held event frames (the document's `Network.responseReceived`).
+    held_events: Vec<String>,
+    /// The held `Page.loadEventFired` frame, populated when the navigate
+    /// block reaches its load-event emission.
+    load_event: Option<String>,
 }
 
 /// URL-driven test scaffolding for navigate-error and blocklist behaviours.
@@ -907,6 +1101,15 @@ fn parse_fake_url_pattern(url: &str) -> FakeUrlPattern {
         }
     }
     if url == "http://fake.test/page-with-tracker" || url == "https://fake.test/page-with-tracker" {
+        return FakeUrlPattern::PageWithTracker;
+    }
+    // BLOCKLISTED-host variant: same tracker page served from a host that
+    // matches the default blocklist (`*.google-analytics.com`). The
+    // document's own Fetch.requestPaused URL then matches the blocklist,
+    // exercising the interceptor's main-frame skip-gate — the documented
+    // 'operator's primary URL is never gated' invariant — on EVERY
+    // navigate of a session, not just the first.
+    if url == "https://www.google-analytics.com/page-with-tracker" {
         return FakeUrlPattern::PageWithTracker;
     }
     if url == "http://fake.test/page-with-iframe-404"

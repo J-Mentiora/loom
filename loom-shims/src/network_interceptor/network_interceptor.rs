@@ -321,15 +321,21 @@ pub struct ChromiumNetworkInterceptor {
     /// enforcement is disabled — `subscribe()` becomes a no-op and the
     /// `Fetch.*` handler is never installed (constructor decides).
     pub(crate) blocklist: Arc<Vec<(String, String)>>,
-    /// Set of `(target_id, frame_id)` for which the first
-    /// `Fetch.requestPaused` event has already been processed. The
-    /// first event for a given frame's top-frame document is the
-    /// page-level navigate (operator's primary URL); skip-gate that
-    /// one regardless of blocklist match (top-frame Document is the operator's primary navigation). All
-    /// subsequent events on the same target are gated normally.
-    pub(crate) top_frame_seen: parking_lot::RwLock<
-        std::collections::BTreeMap<TargetId, std::collections::BTreeSet<String>>,
-    >,
+    /// Per-target main-frame identity: the `frameId` of the FIRST
+    /// Document `Fetch.requestPaused` observed on the target. In real
+    /// Chromium the main frame's frameId is stable for the tab's
+    /// lifetime while iframes get their OWN frameIds, so the first
+    /// Document on a fresh target IS the main frame, and EVERY
+    /// Document on that frameId is an operator-driven top-level
+    /// navigation (Page.navigate, client redirect, link click of the
+    /// page itself) — skip-gated regardless of blocklist match.
+    /// Documents on any other frameId are iframe loads, gated
+    /// normally. (A previous seen-set keyed on `(target_id, frame_id)`
+    /// exempted only the FIRST Document per frame, so the second and
+    /// every later top-level navigate — same stable main-frame
+    /// frameId — was blocklist-gated, breaking the documented
+    /// 'operator's primary URL is never gated' invariant.)
+    pub(crate) main_frame_id: parking_lot::RwLock<std::collections::BTreeMap<TargetId, String>>,
     /// Registration for the `Fetch.*` event handler (only present when
     /// `blocklist` is non-empty). Held alongside `registration` (the
     /// `Network.*` handler) so both stay alive for the interceptor's
@@ -381,7 +387,7 @@ impl ChromiumNetworkInterceptor {
             registration: parking_lot::Mutex::new(None),
             blocked_per_target: parking_lot::RwLock::new(Default::default()),
             blocklist: Arc::new(blocklist),
-            top_frame_seen: parking_lot::RwLock::new(Default::default()),
+            main_frame_id: parking_lot::RwLock::new(Default::default()),
             fetch_registration: parking_lot::Mutex::new(None),
             entries_per_target: parking_lot::RwLock::new(Default::default()),
             doc_request_attribution: parking_lot::RwLock::new(Default::default()),
@@ -529,15 +535,22 @@ impl ChromiumNetworkInterceptor {
         let frame_id = cbor_map_text(map, "frameId").unwrap_or_default();
         let resource_type = cbor_map_text(map, "resourceType").unwrap_or_default();
 
-        // The top-frame Document request is the operator's
-        // primary URL — skip-gate regardless of blocklist match.
-        // First Document event per (target_id, frame_id) is the
-        // page-level navigate; subsequent same-frame Documents (e.g.
-        // iframe navigations) ARE gated normally.
+        // Main-frame Document requests are operator-driven top-level
+        // navigations — skip-gate regardless of blocklist match. The
+        // first Document on a fresh target establishes the main frame's
+        // identity (its frameId is stable for the tab's lifetime in real
+        // Chromium); every later Document on THAT frameId is another
+        // top-level navigate of the same tab. Documents on other
+        // frameIds are iframe loads and ARE gated normally.
         let is_top_frame_doc = if resource_type == "Document" {
-            let mut seen = self.top_frame_seen.write();
-            let frames = seen.entry(target_id).or_default();
-            frames.insert(frame_id.clone())
+            let mut main = self.main_frame_id.write();
+            match main.get(&target_id) {
+                Some(main_frame) => *main_frame == frame_id,
+                None => {
+                    main.insert(target_id, frame_id.clone());
+                    true
+                }
+            }
         } else {
             false
         };
@@ -789,7 +802,7 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
     fn clear_target(&self, target_id: TargetId) {
         self.per_target.write().remove(&target_id);
         self.blocked_per_target.write().remove(&target_id);
-        self.top_frame_seen.write().remove(&target_id);
+        self.main_frame_id.write().remove(&target_id);
         self.entries_per_target.write().remove(&target_id);
         self.doc_request_attribution.write().remove(&target_id);
     }

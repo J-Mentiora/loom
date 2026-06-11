@@ -21,7 +21,9 @@
 //   type sequence is enforced by serialising actions targeting the
 //   same `target_id`; cross-target actions remain parallel.
 
-use crate::cdp_connection::cdp_connection::{CdpConnection, CdpError, EventFilter, EventHandler};
+use crate::cdp_connection::cdp_connection::{
+    CdpConnection, CdpError, EventFilter, EventHandler, EventRegistration,
+};
 use crate::dispatcher::dispatcher::make_error_response;
 use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, ShimResponse, TargetId};
 use crate::network_interceptor::network_interceptor::{
@@ -183,15 +185,19 @@ impl ChromiumActionExecutor {
         }
     }
 
-    /// Register a one-shot listener for a CDP event and return the receiver.
-    /// The handler fires the channel the first time `method` is observed.
-    /// Register BEFORE issuing the command that triggers the event (fast events
-    /// — cached/data: URL loads, an instantly-drained virtual-time budget — can
-    /// otherwise fire before a post-command subscription lands). The returned
-    /// registration token is intentionally dropped: the connection owns the
-    /// handler `Arc` until `invalidate_session`, so drop ≠ deregister (handlers
-    /// are cheap and per-navigate, matching the prior inline usage).
-    fn subscribe_cdp_event_once(&self, method: &'static str) -> oneshot::Receiver<()> {
+    /// Register a one-shot listener for a CDP event and return the receiver
+    /// PLUS its RAII registration token. The handler fires the channel the
+    /// first time `method` is observed. Register BEFORE issuing the command
+    /// that triggers the event (fast events — cached/data: URL loads, an
+    /// instantly-drained virtual-time budget — can otherwise fire before a
+    /// post-command subscription lands). The caller must keep the token alive
+    /// while awaiting the receiver: dropping it DEREGISTERS the handler, so
+    /// per-navigate subscriptions no longer accumulate on the connection for
+    /// the session's lifetime.
+    fn subscribe_cdp_event_once(
+        &self,
+        method: &'static str,
+    ) -> (oneshot::Receiver<()>, EventRegistration) {
         let signal: Arc<parking_lot::Mutex<Option<oneshot::Sender<()>>>> =
             Arc::new(parking_lot::Mutex::new(None));
         let (tx, rx) = oneshot::channel::<()>();
@@ -204,10 +210,10 @@ impl ChromiumActionExecutor {
                 }
             }
         });
-        let _reg = self
+        let reg = self
             .cdp
             .register_event_handler(EventFilter::new(method), handler);
-        rx
+        (rx, reg)
     }
 }
 
@@ -356,20 +362,15 @@ impl ActionExecutor for ChromiumActionExecutor {
 
         // STEP 1: subscribe to Page.loadEventFired BEFORE issuing navigate
         // (per practitioner bug magnet #1: cached / data: URLs fire fast,
-        // and post-navigate subscription will miss the event).
-        let load_rx = self.subscribe_cdp_event_once("Page.loadEventFired");
-
-        // STEP 1c (cross-run determinism): subscribe to the virtual-time budget
-        // expiry BEFORE arming the budget (same fast-event reasoning as STEP 1).
-        // Registered when virtual time is on; only awaited under determinism (STEP 4c).
-        let vt_expired_rx =
-            if crate::determinism_injector::determinism_injector::virtual_time_enabled() {
-                Some(self.subscribe_cdp_event_once(
-                    crate::determinism_injector::determinism_injector::VIRTUAL_TIME_BUDGET_EXPIRED_EVENT,
-                ))
-            } else {
-                None
-            };
+        // and post-navigate subscription will miss the event). The RAII token
+        // keeps the handler registered for this navigate only.
+        let (load_rx, _load_reg) = self.subscribe_cdp_event_once("Page.loadEventFired");
+        // (The virtual-time budget-expiry subscription happens in STEP 4c,
+        // immediately before the budget is armed — NOT here. Subscribing at
+        // navigate start left a multi-second window in which a STALE
+        // `virtualTimeBudgetExpired` from a previous navigate's never-drained
+        // budget could satisfy this navigate's wait before its budget was even
+        // armed, letting DOM capture race the fresh budget.)
 
         // Reset the full-capture network-entries accumulator at navigate START
         // so this navigate's `network_entries` reflect only this navigate;
@@ -450,24 +451,61 @@ impl ActionExecutor for ChromiumActionExecutor {
             .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
         let (frame_id, loader_id) = extract_frame_loader(&nav_response);
 
-        // STEP 4: await Page.loadEventFired with timeout. The fake-chromium
-        // harness emits the event right after Page.navigate response so this
-        // typically completes immediately. Real Chromium can take longer.
-        // (The inject step pins the origin with policy "pause"; the budget is
-        // armed AFTER load in STEP 4c — arming before load can make
-        // `virtualTimeBudgetExpired` never fire under pauseIfNetworkFetchesPending,
-        // chrome-headless-render-pdf#29.)
-        let load_fired = tokio::time::timeout(timeout, load_rx).await.is_ok();
+        // STEP 4 + 4c: await Page.loadEventFired and (under virtual time) arm
+        // + drain this navigation's bounded virtual-time budget
+        // (faithful-entrance-animations + cross-run determinism). The budget is
+        // a hard ceiling (security boundary) so a never-terminating animation
+        // pauses instead of spinning the renderer unbounded.
+        //
+        // ORDER IS LOAD-BEARING and depends on whether the inject-time clock
+        // pin is in effect:
+        //
+        // - determinism ON: inject sent `setVirtualTimePolicy {policy:"pause"}`,
+        //   and headless Chromium DEFERS the load-completion tasks while
+        //   virtual time is paused — `Network.responseReceived` arrives but
+        //   `Page.loadEventFired` is held until the clock advances (verified
+        //   live: the load event fires the instant the budget is armed).
+        //   Waiting for load BEFORE arming therefore always burned the full
+        //   wall-clock timeout, and the settle machine — whose networkidle/
+        //   settled latches require `load_fired` — then reported `timeout` on
+        //   perfectly healthy static pages (settle-timeout-on-static). So under
+        //   determinism: arm the budget FIRST (it is what lets the load
+        //   complete), then await load, then await the budget expiry so DOM
+        //   capture stays virtual-time settled (commit 114be83).
+        // - determinism OFF: the clock was never pinned (inject skipped), so
+        //   keep the original order — await load, then arm post-load (arming
+        //   before the load is in flight can make the expiry event unreliable
+        //   under pauseIfNetworkFetchesPending, chrome-headless-render-pdf#29).
+        let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
+        let clock_pinned = vt_active && determinism_enabled;
 
-        // STEP 4c (faithful-entrance-animations + cross-run determinism): grant a
-        // bounded virtual-time budget for THIS navigation so the page's entrance
-        // animations + ≤budget `setTimeout`/rAF callbacks run while the clock stays
-        // deterministic. The budget is a hard ceiling (security boundary) so a
-        // never-terminating animation pauses instead of spinning the renderer
-        // unbounded. Origin was pinned (frozen) at inject; this is what advances it.
-        // Armed here (post-load) rather than pre-navigate to keep the expiry event
-        // reliable. Best-effort: a failure leaves the page on the inject clock.
-        if crate::determinism_injector::determinism_injector::virtual_time_enabled() {
+        let mut load_rx = Some(load_rx);
+        let mut load_fired = if clock_pinned {
+            // Load cannot complete while the inject-time pin holds; resolved
+            // after the budget is armed below.
+            false
+        } else {
+            // The fake-chromium harness emits the event right after the
+            // Page.navigate response so this typically completes immediately.
+            // Real Chromium can take longer.
+            let rx = load_rx.take().expect("load_rx consumed once");
+            tokio::time::timeout(timeout, rx).await.is_ok()
+        };
+
+        if vt_active {
+            // Subscribe to the budget-expiry event immediately BEFORE issuing
+            // the arm command — after the prior navigate's awaits, not at
+            // navigate start. The WS command/response round-trip orders this
+            // subscription ahead of THIS navigate's expiry event, while
+            // shrinking the window in which a stale expiry from a previous
+            // navigate's never-drained budget (the warn path below) could
+            // satisfy the wait prematurely from seconds to sub-millisecond.
+            // (A stale `Page.loadEventFired` has the same residual hazard;
+            // with the pin-aware ordering above the load wait can no longer
+            // time out on healthy pages, which is what left budgets undrained.)
+            let (vt_expired_rx, _vt_reg) = self.subscribe_cdp_event_once(
+                crate::determinism_injector::determinism_injector::VIRTUAL_TIME_BUDGET_EXPIRED_EVENT,
+            );
             let vt_budget = CdpMessage {
                 method: crate::determinism_injector::determinism_injector::VIRTUAL_TIME_METHOD
                     .to_string(),
@@ -476,32 +514,40 @@ impl ActionExecutor for ChromiumActionExecutor {
                     ),
             };
             if let Err(e) = self.cdp.command(target_id, vt_budget, Some(timeout)).await {
+                // Best-effort: the page stays on the inject clock. Under the
+                // pin that also means the load CANNOT complete — skip the load
+                // wait (it would burn the full timeout) and fall through to
+                // the bounded settle, which returns a typed `timeout`.
                 tracing::warn!(target_id, error = %e, "navigate: virtual-time budget re-arm failed");
-            } else if determinism_enabled {
-                // Under determinism, block DOM capture until the budget drains so
-                // all ≤budget virtual timers (e.g. a setTimeout-driven reveal) have
-                // deterministically fired — making `dom_snapshot_hash` cross-run
-                // stable. Bounded-determinism: a pathological page (perpetual
-                // network / runaway timers) can exhaust the wall-clock timeout
-                // before the budget elapses; on timeout we warn + fall through to
-                // the existing settle (non-fatal), so that navigate may diverge
-                // cross-run but never hangs (D-INTAKE). `vt_expired_rx` is always
-                // Some here (we're inside the virtual_time_enabled() branch).
-                let budget_drained = match vt_expired_rx {
-                    Some(rx) => tokio::time::timeout(timeout, rx).await.is_ok(),
-                    None => true,
-                };
-                if budget_drained {
-                    tracing::debug!(
-                        target_id,
-                        "navigate: virtualTimeBudgetExpired arrived; DOM capture is virtual-time settled"
-                    );
-                } else {
-                    tracing::warn!(
-                        target_id,
-                        "navigate: virtualTimeBudgetExpired did not arrive within timeout; \
-                         settle may be non-deterministic — falling back to wait_for_settle"
-                    );
+            } else {
+                // `load_rx` is still Some exactly when the clock was pinned
+                // (the not-pinned branch consumed it pre-arm).
+                if let Some(rx) = load_rx.take() {
+                    load_fired = tokio::time::timeout(timeout, rx).await.is_ok();
+                }
+                if determinism_enabled {
+                    // Under determinism, block DOM capture until the budget
+                    // drains so all ≤budget virtual timers (e.g. a setTimeout-
+                    // driven reveal) have deterministically fired — making
+                    // `dom_snapshot_hash` cross-run stable. Bounded-determinism:
+                    // a pathological page (perpetual network / runaway timers)
+                    // can exhaust the wall-clock timeout before the budget
+                    // elapses; on timeout we warn + fall through to the
+                    // existing settle (non-fatal), so that navigate may diverge
+                    // cross-run but never hangs (D-INTAKE).
+                    let budget_drained = tokio::time::timeout(timeout, vt_expired_rx).await.is_ok();
+                    if budget_drained {
+                        tracing::debug!(
+                            target_id,
+                            "navigate: virtualTimeBudgetExpired arrived; DOM capture is virtual-time settled"
+                        );
+                    } else {
+                        tracing::warn!(
+                            target_id,
+                            "navigate: virtualTimeBudgetExpired did not arrive within timeout; \
+                             settle may be non-deterministic — falling back to wait_for_settle"
+                        );
+                    }
                 }
             }
         }
