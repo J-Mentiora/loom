@@ -25,8 +25,8 @@ use crate::cdp_connection::cdp_connection::{CdpConnection, CdpError, EventFilter
 use crate::dispatcher::dispatcher::make_error_response;
 use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, ShimResponse, TargetId};
 use crate::network_interceptor::network_interceptor::{
-    classify_chromium_nav_error, BlockedEvent, LoomNetworkEntry, LoomNetworkEvent,
-    NetworkInterceptor,
+    classify_chromium_nav_error, BlockedEvent, EventAttribution, LoomNetworkEntry,
+    LoomNetworkEvent, NetworkInterceptor,
 };
 use crate::target_manager::target_manager::TargetManager;
 use async_trait::async_trait;
@@ -86,9 +86,22 @@ pub enum ActionResult {
         final_url: String,
         /// Page title. Stub: empty string.
         page_title: String,
-        /// HTTP status of main document. Derived from network_events[0].status,
-        /// falls back to 0 when network_events is empty.
+        /// HTTP status of main document. Derived from the main-document
+        /// event (`main_document_event_index`); falls back to 0 when no
+        /// main-document event was captured.
         status_code: u16,
+        /// Index into `network_events` of the event attributed to THIS
+        /// navigation's main document (matched against the
+        /// `Page.navigate` response's loaderId/frameId; see
+        /// `find_main_document_index`). `None` = no event attributable
+        /// to the main document (no events, or only iframe documents).
+        /// The host scopes the navigate failure verdict (4xx/transport)
+        /// to this event ONLY — iframe document errors stay in
+        /// `network_events` for observability without failing the
+        /// navigate. Control-flow plumbing only: never enters the
+        /// hashed receipt. `serde(default)` for CBOR wire back-compat.
+        #[serde(default)]
+        main_document_event_index: Option<u32>,
         /// Raw CBOR bytes of the DOM.getDocument response (dom_after_sha256 = sha256 of these).
         dom_bytes: Vec<u8>,
         /// Raw CBOR bytes of the Page.captureScreenshot response (screenshot_sha256 = sha256 of these).
@@ -366,6 +379,20 @@ impl ActionExecutor for ChromiumActionExecutor {
         self.network.clear_entries(0);
         self.network.clear_entries(target_id);
 
+        // Also drop any HASHED Document events left over from before this
+        // navigate: a failed/aborted prior navigate early-returns past the
+        // STEP 7 drain, and an in-session click can trigger a real link
+        // navigation whose Document events land between navigates. Without
+        // this, stale events poison the next receipt's `network_events` /
+        // `status_code` (and the host's 4xx/transport failure verdict).
+        // Clearing at START opens the hashed event window at Page.navigate
+        // issue time, making capture per-navigation deterministic
+        // (NFR-DET-01); the success path drained everything at STEP 7
+        // already, so serial successful navigates record byte-identical
+        // receipts either way.
+        self.network.clear_events(0);
+        self.network.clear_events(target_id);
+
         // STEP 1b: subscribe to Runtime.consoleAPICalled to accumulate
         // console output during the navigate.. The
         // collector is dropped at the end of this fn so each navigate
@@ -597,14 +624,24 @@ impl ActionExecutor for ChromiumActionExecutor {
         // Falling back to the requested `target_id` keeps the
         // fake-chromium harness's per-target drain working — that
         // path uses real per-target IDs.
-        let mut network_events = self.network.drain_events(0);
-        if network_events.is_empty() {
-            network_events = self.network.drain_events(target_id);
+        let mut drained = self.network.drain_events_attributed(0);
+        if drained.is_empty() {
+            drained = self.network.drain_events_attributed(target_id);
         }
         let mut blocked_events = self.network.drain_blocked(0);
         if blocked_events.is_empty() {
             blocked_events = self.network.drain_blocked(target_id);
         }
+
+        // Identify THIS navigation's main-document event by matching each
+        // event's frame/loader attribution against the Page.navigate
+        // response's frameId/loaderId. Iframe document events (different
+        // frame/loader) stay in `network_events` for observability but
+        // must not drive `status_code` or the host's failure verdict.
+        let mut main_document_event_index =
+            find_main_document_index(&drained, &frame_id, &loader_id);
+        let mut network_events: Vec<LoomNetworkEvent> =
+            drained.into_iter().map(|(event, _)| event).collect();
 
         // Read (NON-draining) the full-capture network-entries snapshot — the
         // accumulator persists across in-session actions for the `network_log`
@@ -618,19 +655,13 @@ impl ActionExecutor for ChromiumActionExecutor {
             }
         };
 
-        // Derive status_code from first network event; fall back to 0.
-        // Computed BEFORE any synthetic-event push so HTTP status from a
-        // real Network.responseReceived isn't shadowed by a status=0
-        // synthetic event we appended for DNS-failure signaling.
-        let status_code = network_events.first().map(|e| e.status).unwrap_or(0);
-
         // Surface DNS / network failures via a synthetic LoomNetworkEvent
         // carrying `error_reason`. CDP `Page.navigate` returns a non-empty
         // `errorText` field when navigation could not even reach a server
         // (DNS, conn-refused, TLS, etc.). The host-side `navigate_execute`
-        // detects events with `error_reason.is_some()` and converts them
-        // into an HostError::ShimFailure carrying a structured JSON
-        // detail (kind="dns_failure").
+        // detects a main-document event with `error_reason.is_some()` and
+        // converts it into an HostError::ShimFailure carrying a structured
+        // JSON detail (kind="dns_failure").
         if let Some(err_text) = extract_nav_error_text(&nav_response) {
             // Classify at the boundary (D-01): the shim owns chromium-
             // specific error mapping, the host reads the typed kind.
@@ -647,7 +678,29 @@ impl ActionExecutor for ChromiumActionExecutor {
                 error_reason: Some(err_text),
                 error_kind: Some(kind),
             });
+            // The navigation itself failed, so the synthetic event IS the
+            // main-document verdict — UNLESS a captured main-document
+            // response already carries the HTTP status (chromium emits
+            // ERR_HTTP_RESPONSE_CODE_FAILURE alongside a 4xx/5xx
+            // responseReceived for empty-body responses; the actual
+            // status_code is the more actionable verdict — see the
+            // HTTP-first ordering note in `navigate_execute`).
+            let has_http_verdict = main_document_event_index
+                .and_then(|i| network_events.get(i as usize))
+                .is_some_and(|e| e.status >= 400);
+            if !has_http_verdict {
+                main_document_event_index = Some((network_events.len() - 1) as u32);
+            }
         }
+
+        // Derive status_code from the MAIN document's event; fall back to 0
+        // when no event is attributable to the main document. The synthetic
+        // error event above has status=0, so a transport failure reports
+        // status_code=0 exactly as before.
+        let status_code = main_document_event_index
+            .and_then(|i| network_events.get(i as usize))
+            .map(|e| e.status)
+            .unwrap_or(0);
 
         Ok(ActionResult::Navigated {
             target_id,
@@ -666,6 +719,7 @@ impl ActionExecutor for ChromiumActionExecutor {
             // because final_url is no longer == url for redirecting pages).
             page_title,
             status_code,
+            main_document_event_index,
             dom_bytes,
             screenshot_bytes,
             // console_lines populated from the
@@ -859,6 +913,60 @@ pub(super) fn extract_console_line(params: &CborValue) -> Option<ShimConsoleLine
         parts.join(" ")
     };
     Some(ShimConsoleLine { level, message })
+}
+
+/// Find the index of the event attributed to THIS navigation's main
+/// document. An event "matches" the navigation when its loaderId equals
+/// the `Page.navigate` response's loaderId (preferred — each navigation
+/// gets a fresh loader, so late events from a superseded prior load are
+/// excluded), else when its frameId equals the navigated (main) frame,
+/// else — when neither side carries identifiers — unconditionally
+/// (conservative fallback that preserves the pre-attribution failure
+/// semantics for harnesses/events without frame plumbing).
+///
+/// Among matching events, prefer the first carrying an HTTP status
+/// (responseReceived) over a transport failure (loadingFailed): chromium
+/// pairs ERR_HTTP_RESPONSE_CODE_FAILURE with a 4xx/5xx responseReceived
+/// for empty-body responses, and the status is the more actionable
+/// verdict (HTTP-first ordering, mirrored host-side in
+/// `navigate_execute`).
+pub(super) fn find_main_document_index(
+    events: &[(LoomNetworkEvent, EventAttribution)],
+    nav_frame_id: &str,
+    nav_loader_id: &str,
+) -> Option<u32> {
+    let matching = |attribution: &EventAttribution| {
+        attribution_matches_navigation(attribution, nav_frame_id, nav_loader_id)
+    };
+    let with_status = events
+        .iter()
+        .position(|(event, attribution)| matching(attribution) && event.status > 0);
+    let with_error = events
+        .iter()
+        .position(|(event, attribution)| matching(attribution) && event.error_reason.is_some());
+    let any = events
+        .iter()
+        .position(|(_, attribution)| matching(attribution));
+    with_status.or(with_error).or(any).map(|i| i as u32)
+}
+
+/// Whether an event's frame/loader attribution ties it to the navigation
+/// identified by `nav_frame_id`/`nav_loader_id`. See
+/// `find_main_document_index` for the matching policy.
+fn attribution_matches_navigation(
+    attribution: &EventAttribution,
+    nav_frame_id: &str,
+    nav_loader_id: &str,
+) -> bool {
+    if !attribution.loader_id.is_empty() && !nav_loader_id.is_empty() {
+        return attribution.loader_id == nav_loader_id;
+    }
+    if !attribution.frame_id.is_empty() && !nav_frame_id.is_empty() {
+        return attribution.frame_id == nav_frame_id;
+    }
+    // Unattributed event or navigation without identifiers: treat as
+    // main-document so transport failures are never silently dropped.
+    true
 }
 
 /// Pull `frameId` + `loaderId` from a `Page.navigate` CBOR response Map.
