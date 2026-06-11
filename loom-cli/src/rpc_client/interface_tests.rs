@@ -40,30 +40,56 @@ fn new_does_not_open_socket() {
 // regresses to the hardcoded default path, the HELLO either carries a
 // different token or the call fails before connecting — both fail the
 // assertion.
-#[tokio::test]
-async fn connect_reads_hello_token_from_configured_auth_dir() {
+async fn read_frame_from(stream: &mut tokio::net::UnixStream) -> Vec<u8> {
     use tokio::io::AsyncReadExt as _;
+    let mut len_buf = [0u8; 4];
+    stream.read_exact(&mut len_buf).await.unwrap();
+    let mut buf = vec![0u8; u32::from_be_bytes(len_buf) as usize];
+    stream.read_exact(&mut buf).await.unwrap();
+    buf
+}
 
+async fn write_frame_to(stream: &mut tokio::net::UnixStream, data: &[u8]) {
+    use tokio::io::AsyncWriteExt as _;
+    let len = (data.len() as u32).to_be_bytes();
+    stream.write_all(&len).await.unwrap();
+    stream.write_all(data).await.unwrap();
+}
+
+/// Tempdir auth fixture + a fake daemon socket. Returns (tempdir guard,
+/// socket_path, auth_dir, listener).
+fn fake_daemon_fixture() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    tokio::net::UnixListener,
+) {
     let dir = tempfile::tempdir().unwrap();
     let auth_dir = dir.path().join("custom-auth");
     std::fs::create_dir_all(&auth_dir).unwrap();
     std::fs::write(auth_dir.join("hello.token"), "tok-from-custom-dir\n").unwrap();
     // PID of this test process — alive, so read_hello_token proceeds.
     std::fs::write(auth_dir.join("daemon.pid"), std::process::id().to_string()).unwrap();
-
     let socket_path = dir.path().join("fake-daemon.sock");
     let listener = tokio::net::UnixListener::bind(&socket_path).unwrap();
+    (dir, socket_path, auth_dir, listener)
+}
+
+#[tokio::test]
+async fn connect_reads_hello_token_from_configured_auth_dir() {
+    let (_dir, socket_path, auth_dir, listener) = fake_daemon_fixture();
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
-        let mut len_buf = [0u8; 4];
-        stream.read_exact(&mut len_buf).await.unwrap();
-        let mut buf = vec![0u8; u32::from_be_bytes(len_buf) as usize];
-        stream.read_exact(&mut buf).await.unwrap();
-        // Send nothing back: the client treats HELLO-read timeout as
-        // accepted (see open_and_hello). Hold the stream open briefly so
-        // the client side doesn't observe EOF inside the 50ms window.
-        tokio::time::sleep(Duration::from_millis(200)).await;
-        String::from_utf8(buf).unwrap()
+        let hello = read_frame_from(&mut stream).await;
+        // Consume the pipelined daemon.hello probe and ack it like a
+        // new daemon, so connect() resolves on the positive-ack path.
+        let _probe = read_frame_from(&mut stream).await;
+        write_frame_to(
+            &mut stream,
+            br#"{"jsonrpc":"2.0","id":0,"result":{"hello":"ok","server":"test"}}"#,
+        )
+        .await;
+        String::from_utf8(hello).unwrap()
     });
 
     let client = RpcClient::new(RpcClientConfig {
@@ -78,6 +104,100 @@ async fn connect_reads_hello_token_from_configured_auth_dir() {
         hello, "HELLO tok-from-custom-dir",
         "HELLO must carry the token from the configured auth_dir"
     );
+}
+
+// === HELLO ack handshake (client side) ===
+
+/// new-client ↔ old-daemon (≤0.10.x): the daemon doesn't know
+/// `daemon.hello` and answers a normal `method_not_found` envelope —
+/// which proves auth passed. connect() must succeed, with no timeout
+/// stall in either direction.
+#[tokio::test]
+async fn connect_accepts_method_not_found_probe_reply_from_old_daemon() {
+    let (_dir, socket_path, auth_dir, listener) = fake_daemon_fixture();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _hello = read_frame_from(&mut stream).await;
+        let _probe = read_frame_from(&mut stream).await;
+        write_frame_to(
+            &mut stream,
+            br#"{"jsonrpc":"2.0","id":0,"error":{"code":"method_not_found","message":"method not found: daemon.hello"}}"#,
+        )
+        .await;
+        // Hold open so the client doesn't observe a premature EOF.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    });
+
+    let client = RpcClient::new(RpcClientConfig {
+        socket_path,
+        auth_dir,
+        request_timeout: Duration::from_secs(1),
+    });
+    client
+        .connect()
+        .await
+        .expect("old-daemon method_not_found reply must count as authenticated");
+    server.await.unwrap();
+}
+
+/// Auth rejection: the daemon sends its bare typed JsonRpcError (no
+/// envelope keys) and closes — connect() must surface AuthFailed, not
+/// parse it as a response.
+#[tokio::test]
+async fn connect_maps_bare_error_frame_to_auth_failed() {
+    let (_dir, socket_path, auth_dir, listener) = fake_daemon_fixture();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _hello = read_frame_from(&mut stream).await;
+        write_frame_to(
+            &mut stream,
+            br#"{"code":"protocol_auth_required","message":"authentication required"}"#,
+        )
+        .await;
+        // Close immediately, like the real daemon.
+    });
+
+    let client = RpcClient::new(RpcClientConfig {
+        socket_path,
+        auth_dir,
+        request_timeout: Duration::from_secs(1),
+    });
+    let err = client.connect().await.expect_err("must fail auth");
+    assert!(
+        matches!(
+            err,
+            CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed)
+        ),
+        "bare error frame must map to AuthFailed; got: {err:?}"
+    );
+    server.await.unwrap();
+}
+
+/// Close-without-ack (rejection where the error frame was lost): EOF
+/// before any probe reply is auth failure, not success.
+#[tokio::test]
+async fn connect_maps_close_without_ack_to_auth_failed() {
+    let (_dir, socket_path, auth_dir, listener) = fake_daemon_fixture();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let _hello = read_frame_from(&mut stream).await;
+        drop(stream);
+    });
+
+    let client = RpcClient::new(RpcClientConfig {
+        socket_path,
+        auth_dir,
+        request_timeout: Duration::from_secs(1),
+    });
+    let err = client.connect().await.expect_err("must fail");
+    assert!(
+        matches!(
+            err,
+            CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed)
+        ),
+        "close without ack must map to AuthFailed; got: {err:?}"
+    );
+    server.await.unwrap();
 }
 
 #[test]

@@ -208,6 +208,15 @@ pub struct Session {
     /// evicts a session with `in_flight_actions > 0` (no mid-action eviction); the close
     /// path re-checks it under the status lock. In-memory only.
     pub in_flight_actions: AtomicU32,
+    /// Per-session dispatch fence (connection-protocol redesign). The daemon's
+    /// `WasmBridge::dispatch_action_blocking` holds this for the FULL duration of a
+    /// surface-verb dispatch — including after the RPC layer has abandoned the request
+    /// on timeout/cancel (the blocking work runs detached to completion). A later
+    /// action that finds the slot held fails fast with a typed `too_many_requests`
+    /// instead of interleaving with the abandoned work, so a late result can never
+    /// corrupt a newer request's session state and per-session WAL/receipt order
+    /// stays strictly dispatch-ordered (NFR-DET-01). In-memory only.
+    pub dispatch_slot: parking_lot::Mutex<()>,
     /// Per-session monotonic action sequence, 0-based. Incremented atomically
     /// at action dispatch via `allocate_action_id()`.
     /// In-memory only — NOT persisted across daemon restarts (the daemon

@@ -35,6 +35,13 @@ pub trait WasmHostBridge: Send + Sync {
     /// Dispatch an action to the WASM surface. Returns a typed
     /// `Receipt` (CDP-free, per the contract). This is the one and only
     /// host-side entry point.
+    ///
+    /// # Threading contract
+    /// Called ONLY from a blocking thread (the adapter wraps it in
+    /// `tokio::task::spawn_blocking`), never from an async worker.
+    /// Implementations may therefore drive inner async work with a
+    /// plain `Handle::block_on` — and must NOT use `block_in_place`,
+    /// which panics off the runtime's worker threads.
     fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, AdapterError>;
 
     /// true iff a chromium template was registered at host boot. False

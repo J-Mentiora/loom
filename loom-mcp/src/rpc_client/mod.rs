@@ -249,9 +249,16 @@ impl RpcClient {
             })?;
         let mut framed = loom_rpc::frame_handler::FrameHandler::wrap_stream(stream);
 
-        let hello = format!("HELLO {token}");
+        // HELLO + pipelined opt-in ack probe (positive handshake). The
+        // daemon answers `daemon.hello` on its read-loop fast lane with
+        // `{"hello":"ok","server":<version>}`; pre-ack daemons (≤0.10.x)
+        // answer a normal `method_not_found` envelope — either response
+        // proves auth passed (rejections are a bare JsonRpcError frame +
+        // close). This replaces the 5 s 'silence = accepted' stall that
+        // every successful connect used to pay.
         {
             use futures::SinkExt;
+            let hello = format!("HELLO {token}");
             framed
                 .send(bytes::Bytes::from(hello.into_bytes()))
                 .await
@@ -261,9 +268,30 @@ impl RpcClient {
                         DispatchPhase::Pre,
                     )
                 })?;
+            // Probe id 0 is reserved for the handshake; FramedCaller
+            // allocates real call ids from 1.
+            let probe = serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "daemon.hello",
+                "params": {},
+            });
+            framed
+                .send(bytes::Bytes::from(
+                    serde_json::to_vec(&probe)
+                        .map_err(|e| ErrorMapper::from_rpc_io(&e.to_string()))?,
+                ))
+                .await
+                .map_err(|_| {
+                    ErrorMapper::from_transport_dropped(
+                        "connection lost during handshake",
+                        DispatchPhase::Pre,
+                    )
+                })?;
         }
 
-        // Wait up to 5 s for an error response; timeout → Connected.
+        // Every daemon (old or new) answers a well-formed request frame,
+        // so the bound only fires against a wedged daemon.
         let timeout_result = tokio::time::timeout(Duration::from_secs(5), async {
             use futures::StreamExt;
             framed.next().await
@@ -271,7 +299,13 @@ impl RpcClient {
         .await;
 
         match timeout_result {
-            Err(_timeout) => {} // No response = HELLO accepted.
+            Err(_timeout) => {
+                return Err(ErrorMapper::from_transport_dropped(
+                    "daemon unresponsive during HELLO handshake",
+                    DispatchPhase::Pre,
+                ));
+            }
+            // Close without an ack = auth rejection.
             Ok(None) => {
                 return Err(ErrorMapper::from_hello_mismatch(
                     "server closed connection after HELLO",
@@ -283,8 +317,22 @@ impl RpcClient {
                     DispatchPhase::Pre,
                 ));
             }
-            Ok(Some(Ok(_frame))) => {
-                return Err(ErrorMapper::from_hello_mismatch("server rejected HELLO"));
+            Ok(Some(Ok(frame))) => {
+                let response: serde_json::Value =
+                    serde_json::from_slice(&frame).unwrap_or(serde_json::Value::Null);
+                // JSON-RPC envelope = authenticated; a bare frame is the
+                // daemon's typed auth rejection.
+                if response.get("jsonrpc").is_none() && response.get("id").is_none() {
+                    return Err(ErrorMapper::from_hello_mismatch("server rejected HELLO"));
+                }
+                if let Some(server) = response
+                    .get("result")
+                    .and_then(|r| r.get("server"))
+                    .and_then(|s| s.as_str())
+                {
+                    self.obs
+                        .info("hello_ack", serde_json::json!({ "server_version": server }));
+                }
             }
         }
 

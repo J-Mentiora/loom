@@ -123,6 +123,7 @@ impl LocalSessionManager {
             scope: Arc::clone(&scope),
             last_activity_ms: AtomicU64::new(epoch_ms.0),
             in_flight_actions: AtomicU32::new(0),
+            dispatch_slot: parking_lot::Mutex::new(()),
             next_action_id: AtomicU64::new(0),
             kill_reason: Arc::new(parking_lot::Mutex::new(None)),
             capture_policy,

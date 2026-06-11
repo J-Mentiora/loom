@@ -316,3 +316,43 @@ fn kill_callback_for_returns_arc_dyn_fn_session_id_killreason() {
     // Compile-time check: cb is Arc<dyn Fn(SessionId, KillReason) + Send + Sync>.
     let _: &Arc<dyn Fn(SessionId, loom_core::budget_enforcer::KillReason) + Send + Sync> = &cb;
 }
+
+// === Per-session dispatch fence (connection-protocol redesign) ===
+
+/// `Session.dispatch_slot` serializes surface-verb dispatch per session:
+/// while held (including by a timeout/cancel-abandoned blocking dispatch),
+/// `try_lock` must fail so the daemon's `acquire_dispatch_slot` fences the
+/// next action with a typed `too_many_requests`; once the holder finishes,
+/// the slot reopens.
+#[test]
+fn dispatch_slot_fences_while_held_and_reopens_on_release() {
+    let sm = fixture();
+    let opts = SessionCreateOpts {
+        agent_id: "agent-1".into(),
+        surface: "web".into(),
+        seed: Some(42),
+        limits: None,
+        replay_of: None,
+        started_at_ms_override: None,
+        capture_policy: None,
+        no_blocklist: false,
+        no_determinism: false,
+        profile: "default".to_string(),
+    };
+    let id = sm.create(opts).expect("session created");
+    let session = sm.get(id).expect("session retrievable");
+
+    let guard = session
+        .dispatch_slot
+        .try_lock()
+        .expect("free slot must acquire");
+    assert!(
+        session.dispatch_slot.try_lock().is_none(),
+        "held slot must fence a second dispatch"
+    );
+    drop(guard);
+    assert!(
+        session.dispatch_slot.try_lock().is_some(),
+        "released slot must reopen"
+    );
+}

@@ -206,3 +206,35 @@ fn unwrap_sdk_envelope_non_byte_elements_passthrough() {
         assert_eq!(unwrapped, params);
     }
 }
+
+// ─── effective_request_timeout (per-action deadline_ms clamp) ────────
+
+use super::effective_request_timeout;
+use std::time::Duration as Dur;
+
+/// A positive `deadline_ms` below the server cap tightens the bound.
+#[test]
+fn deadline_below_cap_clamps_down() {
+    let cap = Dur::from_secs(30);
+    assert_eq!(
+        effective_request_timeout(Some(300), cap),
+        Dur::from_millis(300)
+    );
+}
+
+/// A `deadline_ms` above the server cap can NOT extend past server
+/// policy — the cap wins.
+#[test]
+fn deadline_above_cap_is_capped() {
+    let cap = Dur::from_secs(30);
+    assert_eq!(effective_request_timeout(Some(120_000), cap), cap);
+}
+
+/// Absent or zero deadline (the SDKs send 0 for "no preference") means
+/// the server default applies.
+#[test]
+fn absent_or_zero_deadline_uses_server_cap() {
+    let cap = Dur::from_secs(30);
+    assert_eq!(effective_request_timeout(None, cap), cap);
+    assert_eq!(effective_request_timeout(Some(0), cap), cap);
+}
