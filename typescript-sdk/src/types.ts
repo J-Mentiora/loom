@@ -121,6 +121,10 @@ export interface ValidationResult {
   sessionId: string;
   passed: boolean;
   reasons: string[];
+  /** PASS ≠ replayable: a --no-determinism recording validates but can
+   *  never be replay-equal. Default-true for daemons predating the field. */
+  replayable: boolean;
+  notReplayableReason?: string;
 }
 
 export interface GrantInfo {

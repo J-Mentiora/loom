@@ -241,6 +241,8 @@ export class Session {
       sessionId: result["session_id"] as string,
       passed: (result["passed"] as boolean) ?? false,
       reasons: (result["reasons"] as string[]) ?? [],
+      replayable: (result["replayable"] as boolean) ?? true,
+      notReplayableReason: result["not_replayable_reason"] as string | undefined,
     };
   }
 
