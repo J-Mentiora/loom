@@ -306,6 +306,11 @@ jobs:
           # list — keeps this in sync with the dynamic subcommand-walking
           # man-page generator. New CLI subcommands automatically appear
           # in docs/ and are covered here without editing this workflow.
+          # `git add -N` registers untracked files as intent-to-add so the
+          # diff also fails when the generator emits a brand-new man page
+          # (e.g. docs/loom-newverb.1) that was never committed — plain
+          # `git diff` only sees tracked files and would pass falsely.
+          git add -N docs/
           if ! git diff --exit-code -- docs/; then
             echo "::error::Generated docs in docs/ are out of date. Run 'cargo run --example gen-docs -p loom-cli' and commit the result."
             exit 1
@@ -572,7 +577,10 @@ jobs:
           node-version: "22"
       - name: Install deps
         working-directory: typescript-sdk
-        run: npm ci || npm install
+        # Strict `npm ci` (no `|| npm install` fallback): lockfile drift must
+        # fail the PR that introduced it, not the tag-triggered publish-npm.yml
+        # run (which also uses strict `npm ci`).
+        run: npm ci
       - name: Typecheck
         working-directory: typescript-sdk
         run: npm run typecheck

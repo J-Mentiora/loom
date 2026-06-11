@@ -19,7 +19,9 @@ Exclusions:
   - Lines that start with # (Python/shell comments)
   - Files in target/ directory
 
-Exit code 0 = clean, 1 = violations found.
+Exit code 0 = clean, 1 = violations found or a SCAN_DIRS entry is missing
+(a missing dir means the crate layout drifted and the lint would otherwise
+silently scan zero files — the v0.9.3 regression).
 """
 
 import re
@@ -105,9 +107,22 @@ def scan_file(path: Path) -> list[tuple[int, str]]:
 def main() -> int:
     all_violations: list[str] = []
 
+    # A missing scan dir means SCAN_DIRS is stale (crate moved/renamed) —
+    # the exact silently-scanning-zero-files failure mode that shipped
+    # broken for all of v0.9.3 (A-W8 / FND-0040 / D40). Fail loud instead
+    # of skipping.
+    missing = [d for d in SCAN_DIRS if not d.is_dir()]
+    if missing:
+        print(
+            "lint_no_platform_imports: SCAN_DIRS entry missing — the crate "
+            "layout drifted; update SCAN_DIRS:",
+            file=sys.stderr,
+        )
+        for d in missing:
+            print(f"  {d}", file=sys.stderr)
+        return 1
+
     for scan_root in SCAN_DIRS:
-        if not scan_root.exists():
-            continue
         for rs_file in sorted(scan_root.rglob("*.rs")):
             if "target" in rs_file.parts:
                 continue

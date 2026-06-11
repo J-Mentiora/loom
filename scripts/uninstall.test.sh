@@ -73,6 +73,43 @@ else
   bad "--yes left files behind"
 fi
 
+# 5. A Homebrew-managed loom on PATH is never planned or deleted (the header's
+#    "never touches a Homebrew prefix" contract). Fake brew layout: a Cellar
+#    keg plus the $(brew --prefix)/bin symlink that `command -v loom` resolves.
+brew_prefix="$fake_home/homebrew"
+mkdir -p "$brew_prefix/Cellar/loom/0.0.0/bin" "$brew_prefix/bin"
+printf '#!/bin/sh\n' > "$brew_prefix/Cellar/loom/0.0.0/bin/loom"
+chmod +x "$brew_prefix/Cellar/loom/0.0.0/bin/loom"
+ln -s "$brew_prefix/Cellar/loom/0.0.0/bin/loom" "$brew_prefix/bin/loom"
+# Recreate a cargo-installed binary so the run still has something to remove.
+mkdir -p "$fake_home/.cargo/bin"
+: > "$fake_home/.cargo/bin/loom"
+run_with_brew() {
+  env -i HOME="$fake_home" PATH="$brew_prefix/bin:/usr/bin:/bin" bash "$script" "$@" 2>&1
+}
+out="$(run_with_brew --dry-run)"
+if printf '%s' "$out" | grep -q "rm -rf $brew_prefix/bin/loom"; then
+  bad "--dry-run plans rm -rf of the Homebrew binary — contract violation"
+else
+  note "--dry-run excludes the Homebrew binary from the removal plan"
+fi
+if printf '%s' "$out" | grep -q "brew uninstall loom"; then
+  note "--dry-run plan points at brew uninstall for the Homebrew binary"
+else
+  bad "--dry-run plan does not mention brew uninstall"
+fi
+run_with_brew --yes >/dev/null 2>&1
+if [ -e "$brew_prefix/bin/loom" ] && [ -e "$brew_prefix/Cellar/loom/0.0.0/bin/loom" ]; then
+  note "--yes left the Homebrew binary intact"
+else
+  bad "--yes DELETED the Homebrew binary — contract violation"
+fi
+if [ ! -e "$fake_home/.cargo/bin/loom" ]; then
+  note "--yes still removed the cargo-installed binary alongside the brew skip"
+else
+  bad "--yes failed to remove the cargo-installed binary"
+fi
+
 if [ "$fail" -ne 0 ]; then
   echo "uninstall.test.sh: FAILED"
   exit 1

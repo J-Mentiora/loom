@@ -6,12 +6,16 @@ companion `lint_no_platform_imports.py` (W7.5).
 Per A-W8 / FND-0040 / D40 the lint silently scanned zero files for the
 entire v0.9.3 release because `SCAN_DIRS` pointed at a non-existent
 `src/<crate>/src` layout. To stop that regression from recurring, this
-script plants a deliberate violation under `loom-core/src/_lint_fixture.rs`,
-invokes the lint, and asserts it exits non-zero. The fixture is removed
-in `finally` so the working tree is always clean.
+script plants a deliberate violation under EVERY scanned crate (the
+lint's own `SCAN_DIRS`, imported so the coverage can never drift),
+invokes the lint, and asserts it exits non-zero naming each fixture.
+The fixtures are removed in `finally` so the working tree is always
+clean. It deliberately does NOT create a missing scan dir: a missing
+dir means SCAN_DIRS is stale, which both the lint and this test must
+report instead of papering over.
 
-Exit 0 → lint correctly caught the planted violation (success).
-Exit 1 → lint did NOT catch it (the path bug regressed, or the rule set
+Exit 0 → lint correctly caught every planted violation (success).
+Exit 1 → lint did NOT catch one (the path bug regressed, or the rule set
          got narrower) — the wider CI gate must fail loud.
 
 Wire from `.github/workflows/ci.yml` like:
@@ -27,7 +31,13 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 LOOM_ROOT = SCRIPT_DIR.parent
 LINT_SCRIPT = SCRIPT_DIR / "lint_no_platform_imports.py"
-FIXTURE_PATH = LOOM_ROOT / "loom-core" / "src" / "_lint_fixture.rs"
+
+# Source SCAN_DIRS from the lint itself so a new scanned crate is
+# automatically covered here without editing this test.
+sys.path.insert(0, str(SCRIPT_DIR))
+from lint_no_platform_imports import SCAN_DIRS  # noqa: E402
+
+FIXTURE_NAME = "_lint_fixture.rs"
 # Use a banned exact symbol from the lint's list. `Foundation` is the
 # loudest macOS-only marker — any false-positive review would catch a
 # bug here, not at the operator's fingertips.
@@ -43,17 +53,32 @@ def main() -> int:
     if not LINT_SCRIPT.exists():
         print(f"FAIL: {LINT_SCRIPT} does not exist", file=sys.stderr)
         return 1
-    if FIXTURE_PATH.exists():
-        print(
-            f"FAIL: {FIXTURE_PATH} already exists; refusing to overwrite a "
-            "stale fixture from a prior crashed run. Inspect + delete it manually.",
-            file=sys.stderr,
-        )
-        return 1
 
-    FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    fixture_paths = [scan_dir / FIXTURE_NAME for scan_dir in SCAN_DIRS]
+    for scan_dir in SCAN_DIRS:
+        # Do NOT mkdir a missing scan dir — that would recreate a stale
+        # path and let a crate rename slip past both the lint and this
+        # test (the exact v0.9.3 zero-files-scanned failure mode).
+        if not scan_dir.is_dir():
+            print(
+                f"FAIL: scan dir {scan_dir} does not exist — SCAN_DIRS in "
+                "lint_no_platform_imports.py is stale (crate moved/renamed?). "
+                "Fix SCAN_DIRS rather than this test.",
+                file=sys.stderr,
+            )
+            return 1
+    for fixture in fixture_paths:
+        if fixture.exists():
+            print(
+                f"FAIL: {fixture} already exists; refusing to overwrite a "
+                "stale fixture from a prior crashed run. Inspect + delete it manually.",
+                file=sys.stderr,
+            )
+            return 1
+
     try:
-        FIXTURE_PATH.write_text(FIXTURE_BODY)
+        for fixture in fixture_paths:
+            fixture.write_text(FIXTURE_BODY)
         result = subprocess.run(
             [sys.executable, str(LINT_SCRIPT)],
             capture_output=True,
@@ -68,32 +93,37 @@ def main() -> int:
             print(f"  stdout: {result.stdout!r}", file=sys.stderr)
             print(f"  stderr: {result.stderr!r}", file=sys.stderr)
             return 1
-        # The lint must specifically name our fixture in its output.
-        marker = "_lint_fixture.rs"
-        if marker not in result.stderr:
+        # The lint must specifically name EVERY planted fixture in its
+        # output — one per scanned crate, so a single unscanned crate
+        # (e.g. a renamed loom-host/src) fails here.
+        missing = [f for f in fixture_paths if str(f) not in result.stderr]
+        if missing:
             print(
-                "FAIL: lint exited non-zero but did NOT mention "
-                f"`{marker}` in stderr — the scan may be hitting a different "
-                "violation; verify the lint logic.",
+                "FAIL: lint exited non-zero but did NOT mention these "
+                "planted fixtures in stderr — those crates are not being "
+                "scanned; verify SCAN_DIRS / the lint logic:",
                 file=sys.stderr,
             )
+            for f in missing:
+                print(f"  {f}", file=sys.stderr)
             print(f"  stderr: {result.stderr!r}", file=sys.stderr)
             return 1
         print(
             "OK: lint_no_platform_imports.py correctly caught the planted "
-            "violation."
+            f"violation in all {len(fixture_paths)} scanned crate(s)."
         )
         return 0
     finally:
-        try:
-            FIXTURE_PATH.unlink()
-        except FileNotFoundError:
-            pass
-        # Clean up `__pycache__`/empty parent dirs that might have been
-        # created — best effort; never raise.
-        cache = FIXTURE_PATH.parent / "__pycache__"
-        if cache.is_dir():
-            shutil.rmtree(cache, ignore_errors=True)
+        for fixture in fixture_paths:
+            try:
+                fixture.unlink()
+            except FileNotFoundError:
+                pass
+            # Clean up `__pycache__`/empty parent dirs that might have been
+            # created — best effort; never raise.
+            cache = fixture.parent / "__pycache__"
+            if cache.is_dir():
+                shutil.rmtree(cache, ignore_errors=True)
 
 
 if __name__ == "__main__":

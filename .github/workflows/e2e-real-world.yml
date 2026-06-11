@@ -114,3 +114,38 @@ jobs:
             /tmp/loom-daemon.log
           if-no-files-found: ignore
           retention-days: 30
+      - name: Open tracking issue on scheduled failure
+        # Implements the header contract ("Failures open a tracking issue
+        # rather than failing a check") — this is what `issues: write` above
+        # is granted for. Scheduled runs only: a workflow_dispatch failure is
+        # already in front of whoever dispatched it. Deduped against an open
+        # issue carrying the marker label so weekly repeats (and the second
+        # matrix leg of the same run) append a comment instead of filing a
+        # new issue per failure.
+        if: failure() && github.event_name == 'schedule'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          MATRIX_OS: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          label='e2e-real-world-failure'
+          # Ensure the marker label exists; `issues: write` covers the
+          # labels API. `|| true`: already-exists is the steady state.
+          gh label create "$label" \
+            --description 'Tracking issues opened by the scheduled e2e-real-world workflow' \
+            --color B60205 || true
+          body="Scheduled real-world e2e run failed on \`${MATRIX_OS}\`: ${RUN_URL}
+
+          See the \`real-world-results-${MATRIX_OS}\` artifact on the run for the daemon log and per-site results."
+          existing=$(gh issue list --state open --label "$label" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create \
+              --title 'e2e-real-world: scheduled run failed' \
+              --label "$label" \
+              --body "$body"
+          fi

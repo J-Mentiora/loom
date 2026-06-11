@@ -78,4 +78,18 @@ jobs:
         if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && !inputs.dry-run)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish --access public
+        run: |
+          set -euo pipefail
+          # Prerelease versions (semver with a hyphen, e.g. 0.11.0-rc.1) must
+          # not become the npm `latest` dist-tag — that is what a bare
+          # `npm install @mentiora-ai/loom-sdk` resolves to. Publish them
+          # under `next` instead, mirroring release.yml's
+          # announcement_is_prerelease gate on the Homebrew publish. Derived
+          # from package.json (not the git ref) so manual dispatches from a
+          # non-tag commit get the same guard.
+          version=$(node -p "require('./package.json').version")
+          publish_args=(--access public)
+          case "$version" in
+            *-*) publish_args+=(--tag next) ;;
+          esac
+          npm publish "${publish_args[@]}"

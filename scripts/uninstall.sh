@@ -68,6 +68,38 @@ if command -v loom >/dev/null 2>&1; then
   RESOLVED_LOOM="$(command -v loom)"
 fi
 
+# Honour the header contract: never touch a Homebrew prefix. A brew-installed
+# loom resolves to $(brew --prefix)/bin/loom (a symlink into the Cellar);
+# rm -rf'ing it would leave the keg with a broken link and bypass brew's own
+# bookkeeping. Detect both the path itself and its symlink target against
+# `brew --prefix` plus the standard Homebrew locations, and route the binary
+# to the LEFTOVERS report (brew uninstall loom) instead of the removal plan.
+is_homebrew_path() {
+  local p="$1" real brew_prefix="" candidate
+  real="$(readlink "$p" 2>/dev/null || true)"
+  if command -v brew >/dev/null 2>&1; then
+    brew_prefix="$(brew --prefix 2>/dev/null || true)"
+  fi
+  for candidate in "$p" "$real"; do
+    [ -n "$candidate" ] || continue
+    case "$candidate" in
+      */Cellar/*|/opt/homebrew/*|/usr/local/Cellar/*|/home/linuxbrew/.linuxbrew/*) return 0 ;;
+    esac
+    if [ -n "$brew_prefix" ]; then
+      case "$candidate" in
+        "$brew_prefix"/*) return 0 ;;
+      esac
+    fi
+  done
+  return 1
+}
+
+HOMEBREW_LOOM=""
+if [ -n "$RESOLVED_LOOM" ] && is_homebrew_path "$RESOLVED_LOOM"; then
+  HOMEBREW_LOOM="$RESOLVED_LOOM"
+  RESOLVED_LOOM=""
+fi
+
 # --- Build the removal plan -------------------------------------------------
 TARGETS=()
 add_target() { [ -e "$1" ] && TARGETS+=("$1") || true; }
@@ -98,11 +130,17 @@ if [ "$HAS_PLIST" -eq 1 ]; then
 fi
 if [ "${#TARGETS[@]}" -eq 0 ] && [ "$HAS_PLIST" -eq 0 ]; then
   echo "  (nothing found — loom does not appear to be installed for this user)"
+  if [ -n "$HOMEBREW_LOOM" ]; then
+    echo "  (Homebrew-managed loom at $HOMEBREW_LOOM is out of scope — run: brew uninstall loom)"
+  fi
   exit 0
 fi
 for t in "${TARGETS[@]:-}"; do
   [ -n "$t" ] && echo "  • rm -rf $t"
 done
+if [ -n "$HOMEBREW_LOOM" ]; then
+  echo "  • leave Homebrew-managed loom at $HOMEBREW_LOOM (run: brew uninstall loom)"
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo
@@ -142,7 +180,9 @@ echo "Done. loom has been removed."
 LEFTOVERS=()
 [ -n "${LOOM_DATA_ROOT:-}" ] && LEFTOVERS+=("LOOM_DATA_ROOT=$LOOM_DATA_ROOT (custom data dir — remove manually)")
 [ -n "${LOOM_CHROMIUM_PATH:-}" ] && LEFTOVERS+=("LOOM_CHROMIUM_PATH=$LOOM_CHROMIUM_PATH (custom Chromium — remove manually)")
-if command -v brew >/dev/null 2>&1 && brew list loom >/dev/null 2>&1; then
+if [ -n "$HOMEBREW_LOOM" ]; then
+  LEFTOVERS+=("Homebrew-managed loom at $HOMEBREW_LOOM — run: brew uninstall loom")
+elif command -v brew >/dev/null 2>&1 && brew list loom >/dev/null 2>&1; then
   LEFTOVERS+=("Homebrew formula still installed — run: brew uninstall loom")
 fi
 if [ "$OS" = "Darwin" ]; then
