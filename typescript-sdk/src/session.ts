@@ -89,6 +89,15 @@ export interface SessionCreateOptions {
   socketPath?: string;
   token?: string;
   /**
+   * Fixed Unix epoch in milliseconds that pins the injected browser clock
+   * (cross-run determinism). Two recordings created with the same `seed` +
+   * `clockAnchor` capture identical dom/screenshot/outcome hashes, so
+   * `session.diff` between them reports zero field diffs. Sent on the wire
+   * as `clock_anchor`; omitted (default) → the session epoch falls back to
+   * wall-clock now. No effect under `noDeterminism`.
+   */
+  clockAnchor?: number;
+  /**
    * Disable determinism for this session (settle-capture). Determinism is ON
    * by default: loom freezes `Date.now`/animations and seeds `Math.random` so
    * captures are byte-reproducible. Set `true` for live/non-reproducible
@@ -119,6 +128,7 @@ export class Session {
         capture: opts.capture ?? true,
       };
       if (opts.seed !== undefined) params["seed"] = opts.seed;
+      if (opts.clockAnchor !== undefined) params["clock_anchor"] = opts.clockAnchor;
       if (opts.budget !== undefined) params["budget"] = opts.budget;
       if (opts.noDeterminism) params["no_determinism"] = true;
       const result = (await transport.call("session.create", params)) as Record<string, unknown>;

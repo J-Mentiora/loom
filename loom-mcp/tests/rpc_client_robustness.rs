@@ -122,6 +122,7 @@ async fn reconnect_reprimes_tool_cache_after_daemon_down_at_launch() {
         rpc.clone(),
         obs.clone(),
         tokio_util::sync::CancellationToken::new(),
+        loom_mcp::mcp_dispatcher::SessionOptions::default(),
     );
     install_tool_cache_reprime(&rpc, dispatcher.clone(), obs.clone()).await;
 
@@ -179,11 +180,18 @@ async fn tools_list_lazily_primes_once_daemon_is_reachable() {
         rpc.clone(),
         obs.clone(),
         tokio_util::sync::CancellationToken::new(),
+        loom_mcp::mcp_dispatcher::SessionOptions::default(),
     )
     .await;
 
-    // Daemon down: the lazy prime fails fast and tools/list degrades to [].
-    assert!(dispatcher.tools_list().await.is_empty());
+    // Daemon down: the lazy prime fails fast and the daemon-derived list
+    // degrades to nothing — only the MCP-server-local loom.session.* tools
+    // (schemas defined in-process, no daemon round trip) are advertised.
+    assert!(dispatcher
+        .tools_list()
+        .await
+        .iter()
+        .all(|t| t.name.starts_with("loom.session.")));
 
     // Daemon comes up.
     let listener = UnixListener::bind(&socket_path).unwrap();

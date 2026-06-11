@@ -431,11 +431,23 @@ impl RpcClient {
         method: &str,
         params: serde_json::Value,
     ) -> ToolResult {
-        match self.call(method, params).await {
+        let result = self.call(method, params).await;
+        self.render_tool_result(method, result).await
+    }
+
+    /// Render an RPC outcome as an MCP `ToolResult`: text receipt block
+    /// first (preserves the wire contract incl. screenshot_after_hash for
+    /// all consumers), then an inline image block for screenshot-producing
+    /// verbs. Split from `call_as_tool_result` so the dispatcher can
+    /// intercept the typed error between call and render (implicit-session
+    /// self-heal).
+    pub async fn render_tool_result(
+        self: &Arc<Self>,
+        method: &str,
+        result: Result<serde_json::Value, LoomError>,
+    ) -> ToolResult {
+        match result {
             Ok(v) => {
-                // Text receipt block first (preserves the wire contract incl.
-                // screenshot_after_hash for all consumers), then an inline image
-                // block for screenshot-producing verbs.
                 let mut content = vec![McpContent::from_json(v.clone())];
                 if let Some(img) = self.screenshot_image_block(method, &v).await {
                     content.push(img);

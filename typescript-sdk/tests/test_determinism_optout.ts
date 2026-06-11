@@ -1,6 +1,10 @@
 /**
  * settle-capture (4b): Session.create({ noDeterminism }) forwards the
  * `no_determinism` flag to the session.create RPC. Default sessions omit it.
+ *
+ * Cross-run determinism v2: Session.create({ clockAnchor }) forwards
+ * `clock_anchor` (the fixed epoch-ms that pins the injected browser clock).
+ * Default sessions omit it (wall-clock epoch, unchanged wire shape).
  */
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -44,5 +48,23 @@ describe("settle-capture: --no-determinism session opt-out", () => {
     });
     await s.close();
     assert.equal(lastCreateParams["no_determinism"], true);
+  });
+
+  test("default session create omits clock_anchor (wall-clock epoch)", async () => {
+    const s = await Session.create({ socketPath: daemon.socketPath, token: daemon.token });
+    await s.close();
+    assert.equal(lastCreateParams["clock_anchor"], undefined);
+  });
+
+  test("clockAnchor forwards clock_anchor alongside seed", async () => {
+    const s = await Session.create({
+      socketPath: daemon.socketPath,
+      token: daemon.token,
+      seed: 42,
+      clockAnchor: 1_700_000_000_000,
+    });
+    await s.close();
+    assert.equal(lastCreateParams["seed"], 42);
+    assert.equal(lastCreateParams["clock_anchor"], 1_700_000_000_000);
   });
 });
