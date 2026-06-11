@@ -24,8 +24,69 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  # ── PR path filtering ───────────────────────────────────────────────────
+  # PR runs skip job groups whose inputs cannot have changed (SDK-only PRs
+  # skip the Rust matrix and vice versa). Pushes to main always run every
+  # job: main runs self-cancel under the concurrency group above, so the
+  # newest push's own diff does not cover the batch it superseded — the
+  # filter is only trustworthy for PR diffs.
+  #
+  # This job always runs and always succeeds, so every PR gets at least one
+  # green status even when all heavy jobs are filtered out.
+  #
+  # The SDK filters deliberately include the Rust wire-type files their
+  # drift tests parse (python-sdk/tests/test_types_drift.py reads
+  # loom-shared/src/error_format.rs + loom-rpc/src/rpc_handlers/
+  # rpc_handlers.rs; typescript-sdk/tests/test_types_drift.ts reads
+  # error_format.rs) so an error-code or admin-RPC change still runs both
+  # SDK suites.
+  changes:
+    name: detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      e2e: ${{ steps.filter.outputs.e2e }}
+      docs: ${{ steps.filter.outputs.docs }}
+      python_sdk: ${{ steps.filter.outputs.python_sdk }}
+      typescript_sdk: ${{ steps.filter.outputs.typescript_sdk }}
+    steps:
+      # No checkout needed: on pull_request the action lists changed files
+      # via the API. The step is skipped on push (outputs stay empty) — every
+      # downstream `if` short-circuits on event_name first.
+      - uses: dorny/paths-filter@v3
+        if: github.event_name == 'pull_request'
+        id: filter
+        with:
+          filters: |
+            rust: &rust
+              - 'loom-*/**'
+              - 'wit/**'
+              - 'mocks/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'deny.toml'
+              - '.github/workflows/ci.yml'
+            e2e:
+              - *rust
+              - 'tests/e2e/**'
+            docs:
+              - 'docs/**'
+            python_sdk:
+              - 'python-sdk/**'
+              - 'loom-shared/src/error_format.rs'
+              - 'loom-rpc/src/rpc_handlers/**'
+              - '.github/workflows/ci.yml'
+            typescript_sdk:
+              - 'typescript-sdk/**'
+              - 'loom-shared/src/error_format.rs'
+              - '.github/workflows/ci.yml'
+
   fmt:
     name: rustfmt
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -36,6 +97,8 @@ jobs:
 
   clippy:
     name: clippy
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -71,6 +134,8 @@ jobs:
 
   test:
     name: cargo test (${{ matrix.os }} / ${{ matrix.toolchain }})
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -201,6 +266,8 @@ jobs:
 
   build:
     name: cargo build --release (${{ matrix.os }} / ${{ matrix.toolchain }})
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -247,7 +314,8 @@ jobs:
 
   smoke:
     name: end-to-end smoke (${{ matrix.os }})
-    needs: build
+    needs: [changes, build]
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -309,6 +377,14 @@ jobs:
   # registry edit was committed without re-running the generator.
   gen-docs:
     name: docs/actions.md and man pages are up to date
+    needs: changes
+    # Generated docs are a pure function of Rust code, so any Rust change can
+    # invalidate them; a hand-edit under docs/ must also be re-checked. Both
+    # paths gate here — SDK-only / README-only PRs cannot go stale.
+    if: >-
+      github.event_name != 'pull_request' ||
+      needs.changes.outputs.rust == 'true' ||
+      needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -384,7 +460,16 @@ jobs:
     # Real-Chromium-pinned end-to-end verification. Runs on
     # stable cells only; beta is best-effort and skips this job.
     name: e2e pinned-chromium (${{ matrix.os }})
-    needs: build
+    needs: [changes, build]
+    # Runs when Rust code OR tests/e2e fixtures change. The explicit
+    # `needs.build.result` check (instead of the implicit success() gate)
+    # lets a fixtures-only PR run e2e even though `build` was path-skipped —
+    # this job compiles its own binaries, `needs: build` is ordering/gating
+    # only. A genuinely failed build still skips e2e.
+    if: >-
+      !cancelled() &&
+      (github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true') &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
     strategy:
       fail-fast: false
       matrix:
@@ -565,6 +650,10 @@ jobs:
   # transitive ancestors as wrappers.
   deny:
     name: cargo-deny
+    needs: changes
+    # The audited inputs (Cargo.toml/Cargo.lock/deny.toml/crate sources) are
+    # all inside the rust filter group.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -581,6 +670,10 @@ jobs:
   # Hits a MockDaemon fixture; no real daemon spawn.
   python-sdk-tests:
     name: pytest (python-sdk)
+    needs: changes
+    # Filter includes the Rust wire-type files the drift tests parse — see
+    # the `changes` job comment.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.python_sdk == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -602,6 +695,10 @@ jobs:
   # MockDaemon fixture; no real daemon spawn.
   typescript-sdk-tests:
     name: node:test (typescript-sdk)
+    needs: changes
+    # Filter includes loom-shared/src/error_format.rs, which the TS drift
+    # test parses — see the `changes` job comment.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.typescript_sdk == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -629,6 +726,11 @@ jobs:
   # behavior. This job rebuilds from source and diffs.
   vendored-wasm-check:
     name: vendored-wasm staleness
+    needs: changes
+    # The vendored bytes are a pure function of Rust sources + Cargo.lock
+    # (all inside the rust filter, including loom-cli/vendor/ itself via
+    # loom-*/**) — SDK/docs/README-only PRs cannot introduce staleness.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
