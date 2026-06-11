@@ -50,6 +50,13 @@ on:
         type: boolean
         default: true
 
+# Cancel superseded PR validation runs (rebases / force-pushes). Tag and
+# manual-dispatch runs are never auto-cancelled — cancelling a half-finished
+# publish would be worse than letting it race.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

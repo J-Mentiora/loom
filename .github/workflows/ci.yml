@@ -6,12 +6,14 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel superseded runs on the same ref (e.g. force-pushes to a PR branch).
-# Main pushes get a unique group per SHA so historical main runs don't cancel
-# each other. PR runs share a group per ref and cancel the prior in-flight run.
+# Cancel superseded runs on the same ref (force-pushes to a PR branch, and
+# pushes to main). Main is included deliberately: merges are batched with
+# local gating, so a batch of N pushes used to spawn N full runs (each with a
+# unique per-SHA group) that queued for hours — only the newest main run
+# matters, the rest self-cancel.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Least-privilege default. Individual jobs can elevate if needed.
 permissions:
