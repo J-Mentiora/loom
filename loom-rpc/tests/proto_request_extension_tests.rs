@@ -191,3 +191,102 @@ fn builtin_core_methods_pass_validation_even_when_provider_has_only_one_method()
         );
     }
 }
+
+/// CLASS-KILLER for the `method_not_found`-on-installed-daemons regression
+/// family (audit 2026-06-10 / `session.reap` feature spec, AC 2).
+///
+/// The hand-maintained list in the test above goes stale the same way
+/// `BUILTIN_CORE_METHODS` itself went stale twice (`session.create` post-#55,
+/// then vault.set_secret/.../session.reap): someone adds a `RequestRouter`
+/// dispatch arm and forgets the validator-bypass entry, and nothing fails
+/// until an installed daemon (with postinstall web.* schemas loaded) rejects
+/// the new method on the wire.
+///
+/// This test derives the routed-method set FROM THE ROUTER SOURCE instead of
+/// a copied list: it scans `src/request_router/mod.rs` for match arms whose
+/// pattern is a quoted `<surface>.<verb>` literal, drops the schema-driven
+/// `web.*` surface verbs, and asserts every remaining routed method passes
+/// `validate_request` against a POPULATED registry (one unrelated web schema,
+/// mirroring a postinstalled daemon — the empty-registry bypass must not be
+/// what saves these methods). A new router arm without a matching
+/// `BUILTIN_CORE_METHODS` entry now fails HERE, at PR time.
+#[test]
+fn every_routed_core_method_passes_validation_with_populated_registry() {
+    let router_src = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/src/request_router/mod.rs"
+    ))
+    .expect("request_router/mod.rs must be readable from the crate root");
+
+    fn is_method_shape(s: &str) -> bool {
+        // exactly one '.', non-empty [a-z_]+ segments on both sides
+        let mut parts = s.split('.');
+        match (parts.next(), parts.next(), parts.next()) {
+            (Some(a), Some(b), None) => {
+                !a.is_empty()
+                    && !b.is_empty()
+                    && a.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                    && b.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            }
+            _ => false,
+        }
+    }
+
+    let mut routed: Vec<String> = router_src
+        .lines()
+        .filter_map(|line| {
+            let t = line.trim_start();
+            // Match-arm shape: `"<literal>" => ...` (the pattern is the
+            // first token on the line). This deliberately also picks up the
+            // `router_required_params` table — every entry there is a routed
+            // method too.
+            let rest = t.strip_prefix('"')?;
+            let (literal, after) = rest.split_once('"')?;
+            if !after.trim_start().starts_with("=>") {
+                return None;
+            }
+            if !is_method_shape(literal) || literal.starts_with("web.") {
+                return None;
+            }
+            Some(literal.to_string())
+        })
+        .collect();
+    routed.sort();
+    routed.dedup();
+
+    // Extraction-rot guard: the router currently dispatches 20+ core
+    // methods; if the source shape changes enough that we extract almost
+    // nothing, fail loudly instead of green-washing.
+    assert!(
+        routed.len() >= 20,
+        "extracted only {} routed core methods from request_router/mod.rs — \
+         the source scan in this test needs updating: {routed:?}",
+        routed.len()
+    );
+    assert!(
+        routed.iter().any(|m| m == "session.reap"),
+        "sanity: session.reap must be among the extracted routed methods"
+    );
+
+    // Populated registry (NOT empty): the validator's empty-registry bypass
+    // must not be what lets these methods through.
+    let provider = Arc::new(OneMethodProvider {
+        method: "web.click".to_string(),
+        request_schema: web_click_schema(),
+    });
+    let validator = SchemaValidator::new(provider);
+
+    let mut rejected: Vec<String> = Vec::new();
+    for method in &routed {
+        let outcome = validator.validate_request(method, &json!({}));
+        if !matches!(outcome, ValidationOutcome::Pass) {
+            rejected.push(format!("{method} -> {outcome:?}"));
+        }
+    }
+    assert!(
+        rejected.is_empty(),
+        "router-dispatched core methods rejected by the schema validator on a \
+         postinstalled daemon (add them to BUILTIN_CORE_METHODS in \
+         schema_validator/mod.rs): {rejected:#?}"
+    );
+}
