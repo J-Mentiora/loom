@@ -146,3 +146,75 @@ fn log_level_has_five_variants() {
         LogLevel::Error,
     ];
 }
+
+// === navigate_execute failure verdict is scoped to the MAIN document ===
+// The shim attributes each Document event to a frame/loader and reports
+// the main-document event's index; `navigate_execute` checks ONLY that
+// event for the 4xx / transport-error verdict. An iframe's 404 (or a
+// stale prior-load event) must not fail the whole navigate.
+
+mod main_document_verdict {
+    use super::super::host_impl::main_document_event;
+    use loom_shared::navigate_outcome::LoomNetworkEvent;
+
+    fn event(status: u16, error_reason: Option<&str>) -> LoomNetworkEvent {
+        LoomNetworkEvent {
+            method: String::new(),
+            url: "http://fake.test/".into(),
+            request_hash: String::new(),
+            response_hash: String::new(),
+            status,
+            content_type: String::new(),
+            duration_ms: 0,
+            response_bytes: 0,
+            error_reason: error_reason.map(String::from),
+            error_kind: error_reason.map(|_| "network_error".to_string()),
+        }
+    }
+
+    #[test]
+    fn iframe_404_with_main_200_does_not_trigger_http_failure() {
+        // Index points at the main 200; the iframe 404 at index 0 must be
+        // invisible to the `status >= 400` filter.
+        let events = vec![event(404, None), event(200, None)];
+        let main = main_document_event(&events, Some(1));
+        assert!(main.filter(|e| e.status >= 400).is_none());
+        assert!(main.filter(|e| e.error_reason.is_some()).is_none());
+    }
+
+    #[test]
+    fn main_document_404_triggers_http_failure() {
+        let events = vec![event(404, None)];
+        let main = main_document_event(&events, Some(0));
+        let ev = main
+            .filter(|e| e.status >= 400)
+            .expect("must fail on main 404");
+        assert_eq!(ev.status, 404);
+    }
+
+    #[test]
+    fn main_document_transport_error_triggers_failure() {
+        let events = vec![event(0, Some("net::ERR_NAME_NOT_RESOLVED"))];
+        let main = main_document_event(&events, Some(0));
+        assert!(main.filter(|e| e.status >= 400).is_none());
+        let ev = main
+            .filter(|e| e.error_reason.is_some())
+            .expect("must fail on main transport error");
+        assert_eq!(ev.error_kind.as_deref(), Some("network_error"));
+    }
+
+    #[test]
+    fn no_main_document_index_raises_no_failure() {
+        // Only iframe events (shim found no main-document event) — the
+        // navigate must not be failed by them.
+        let events = vec![event(404, None), event(0, Some("net::ERR_FAILED"))];
+        let main = main_document_event(&events, None);
+        assert!(main.is_none());
+    }
+
+    #[test]
+    fn out_of_bounds_index_is_ignored() {
+        let events = vec![event(200, None)];
+        assert!(main_document_event(&events, Some(7)).is_none());
+    }
+}

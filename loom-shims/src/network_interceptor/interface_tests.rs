@@ -262,13 +262,57 @@ fn parse_response_received_extracts_document_status_code() {
             ]),
         ),
     ]);
-    let event = parse_network_event("Network.responseReceived", &params)
+    let (event, attribution) = parse_network_event("Network.responseReceived", &params)
         .expect("Document responseReceived should yield an event");
     assert_eq!(event.status, 404u16);
     assert_eq!(event.url, "http://fake.test/x");
     assert_eq!(event.content_type, "text/html");
     assert_eq!(event.error_reason, None);
     assert_eq!(event.error_kind, None);
+    assert_eq!(attribution.request_id, "R-1");
+    assert_eq!(
+        attribution.frame_id, "",
+        "no frameId in params → unattributed frame"
+    );
+}
+
+/// Main-document identification: responseReceived carries top-level
+/// frameId/loaderId; parse must surface them in the attribution so
+/// `page_navigate` can exclude iframe-document events from the
+/// failure verdict.
+#[test]
+fn parse_response_received_extracts_frame_and_loader_attribution() {
+    use super::network_interceptor::parse_network_event;
+    use ciborium::value::Value;
+
+    let params = Value::Map(vec![
+        (Value::Text("requestId".into()), Value::Text("R-9".into())),
+        (
+            Value::Text("frameId".into()),
+            Value::Text("frame-iframe-1".into()),
+        ),
+        (
+            Value::Text("loaderId".into()),
+            Value::Text("loader-iframe-1".into()),
+        ),
+        (Value::Text("type".into()), Value::Text("Document".into())),
+        (
+            Value::Text("response".into()),
+            Value::Map(vec![
+                (
+                    Value::Text("url".into()),
+                    Value::Text("http://fake.test/embed".into()),
+                ),
+                (Value::Text("status".into()), Value::Integer(404i64.into())),
+            ]),
+        ),
+    ]);
+    let (event, attribution) = parse_network_event("Network.responseReceived", &params)
+        .expect("Document responseReceived should yield an event");
+    assert_eq!(event.status, 404u16);
+    assert_eq!(attribution.request_id, "R-9");
+    assert_eq!(attribution.frame_id, "frame-iframe-1");
+    assert_eq!(attribution.loader_id, "loader-iframe-1");
 }
 
 #[test]
@@ -306,7 +350,7 @@ fn parse_loading_failed_extracts_error_text_and_classifies() {
         ),
         (Value::Text("canceled".into()), Value::Bool(false)),
     ]);
-    let event = parse_network_event("Network.loadingFailed", &params)
+    let (event, attribution) = parse_network_event("Network.loadingFailed", &params)
         .expect("Document loadingFailed should yield an event");
     assert_eq!(
         event.error_reason.as_deref(),
@@ -314,6 +358,35 @@ fn parse_loading_failed_extracts_error_text_and_classifies() {
     );
     assert_eq!(event.error_kind.as_deref(), Some("dns_failure"));
     assert_eq!(event.status, 0);
+    // loadingFailed carries no frame ids of its own; backfill happens in
+    // ChromiumNetworkInterceptor::resolve_attribution via requestId.
+    assert_eq!(attribution.request_id, "R-1");
+    assert_eq!(attribution.frame_id, "");
+    assert_eq!(attribution.loader_id, "");
+}
+
+/// Cancelled load failures (canceled: true — e.g. net::ERR_ABORTED when
+/// a JS redirect supersedes the prior document request) are NOT
+/// navigation failures and must be dropped, or a stale cancelled prior
+/// load would spuriously fail the next navigate.
+#[test]
+fn parse_loading_failed_drops_cancelled_loads() {
+    use super::network_interceptor::parse_network_event;
+    use ciborium::value::Value;
+
+    let params = Value::Map(vec![
+        (Value::Text("requestId".into()), Value::Text("R-1".into())),
+        (Value::Text("type".into()), Value::Text("Document".into())),
+        (
+            Value::Text("errorText".into()),
+            Value::Text("net::ERR_ABORTED".into()),
+        ),
+        (Value::Text("canceled".into()), Value::Bool(true)),
+    ]);
+    assert!(
+        parse_network_event("Network.loadingFailed", &params).is_none(),
+        "canceled=true loadingFailed must be dropped"
+    );
 }
 
 #[test]

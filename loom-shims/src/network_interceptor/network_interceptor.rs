@@ -21,9 +21,12 @@
 //   `NetworkInterceptor::new` registers an event handler in
 //   `CdpConnection`; `CdpConnection` does NOT import this module.
 // - **Per-target accumulator.** Events are appended to a per-target
-//   `Vec<LoomNetworkEvent>`; `ActionExecutor::page_navigate` drains
-//   the vec when `Page.loadEventFired` arrives and includes the
-//   events in the `ActionResult::Navigated`.
+//   `Vec<(LoomNetworkEvent, EventAttribution)>`; `ActionExecutor::page_navigate`
+//   clears the vec at navigate START (stale events from a failed prior
+//   navigate must not leak into the next receipt), drains it when
+//   `Page.loadEventFired` arrives, and includes the events in the
+//   `ActionResult::Navigated`. The attribution half is internal-only —
+//   it never crosses the wire or enters the hashed receipt.
 // - **Hard-binding 3 compliance.** `LoomNetworkEvent` has integer-only
 //   numeric fields (durations in ms as u64, sizes in bytes as u64,
 //   hashes as hex strings). No floats.
@@ -77,6 +80,37 @@ impl LoomNetworkEvent {
         self.error_reason.is_none() && self.response_hash.len() == SHA256_HEX_LEN
     }
 }
+
+/// Frame/loader attribution for a captured Document network event.
+/// INTERNAL navigation bookkeeping only — these are ephemeral per-run
+/// CDP identifiers, so they must never be serialized into the hashed
+/// receipt (`LoomNetworkEvent` stays unchanged on the wire; NFR-DET-01).
+/// `ActionExecutor::page_navigate` matches `loader_id`/`frame_id`
+/// against the `Page.navigate` response to find THIS navigation's
+/// main-document event, so an iframe document error cannot fail the
+/// whole navigate.
+///
+/// `Network.responseReceived` carries `frameId`/`loaderId` directly;
+/// `Network.loadingFailed` carries neither, so the interceptor backfills
+/// them from the matching Document `Network.requestWillBeSent` by
+/// `request_id`. Empty fields mean "unattributed".
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EventAttribution {
+    pub request_id: String,
+    pub frame_id: String,
+    pub loader_id: String,
+}
+
+/// Cap on the per-target `requestId -> (frameId, loaderId)` correlation
+/// map. Document requests are rare (one per main-frame/iframe load), so
+/// this is a defensive memory backstop for pathological pages; on
+/// overflow the map is reset (subsequent `loadingFailed` events degrade
+/// to "unattributed", the conservative pre-attribution behavior).
+const MAX_DOC_REQUEST_ATTRIBUTIONS: usize = 1024;
+
+/// `requestId -> (frameId, loaderId)` correlation map for one target.
+/// See `ChromiumNetworkInterceptor::doc_request_attribution`.
+type DocRequestFrames = std::collections::BTreeMap<String, (String, String)>;
 
 /// Default cap on the per-session network-entries accumulator. Mirrors the
 /// `SessionCreateOpts.max_network_entries` default; bounds in-memory growth for
@@ -271,8 +305,9 @@ impl NetworkEntryAccumulator {
 /// Concrete NetworkInterceptor.
 pub struct ChromiumNetworkInterceptor {
     pub(crate) cdp: Arc<dyn CdpConnection>,
-    pub(crate) per_target:
-        parking_lot::RwLock<std::collections::BTreeMap<TargetId, Vec<LoomNetworkEvent>>>,
+    pub(crate) per_target: parking_lot::RwLock<
+        std::collections::BTreeMap<TargetId, Vec<(LoomNetworkEvent, EventAttribution)>>,
+    >,
     pub(crate) registration: parking_lot::Mutex<Option<EventRegistration>>,
     /// Sub-resource requests blocked by the default blocklist.
     /// Drained by `ActionExecutor::page_navigate`
@@ -310,6 +345,15 @@ pub struct ChromiumNetworkInterceptor {
     /// `max_network_entries` on top when building the receipt.
     pub(crate) entries_per_target:
         parking_lot::RwLock<std::collections::BTreeMap<TargetId, NetworkEntryAccumulator>>,
+    /// Per-target `requestId -> (frameId, loaderId)` for Document-type
+    /// `Network.requestWillBeSent` events — the correlation source for
+    /// attributing `Network.loadingFailed` (which carries no frame ids)
+    /// to a frame. Kept across navigates (a late failure from a
+    /// superseded prior load must stay attributable to its ORIGINAL
+    /// loader so loader matching excludes it); bounded by
+    /// `MAX_DOC_REQUEST_ATTRIBUTIONS`; cleared on `clear_target`.
+    pub(crate) doc_request_attribution:
+        parking_lot::RwLock<std::collections::BTreeMap<TargetId, DocRequestFrames>>,
 }
 
 impl ChromiumNetworkInterceptor {
@@ -340,12 +384,17 @@ impl ChromiumNetworkInterceptor {
             top_frame_seen: parking_lot::RwLock::new(Default::default()),
             fetch_registration: parking_lot::Mutex::new(None),
             entries_per_target: parking_lot::RwLock::new(Default::default()),
+            doc_request_attribution: parking_lot::RwLock::new(Default::default()),
         });
         let interceptor = Arc::clone(&s);
         let handler: EventHandler = Arc::new(move |target_id, msg: CdpMessage| {
+            // Correlation source for loadingFailed attribution: remember each
+            // Document request's (frameId, loaderId) by requestId.
+            interceptor.record_document_request(target_id, &msg.method, &msg.params);
             // Document-only hashed path (status_code derivation, replay chain).
-            if let Some(event) = parse_network_event(&msg.method, &msg.params) {
-                interceptor.append(target_id, event);
+            if let Some((event, attribution)) = parse_network_event(&msg.method, &msg.params) {
+                let attribution = interceptor.resolve_attribution(target_id, attribution);
+                interceptor.append_attributed(target_id, event, attribution);
             }
             // Full-capture observational path (xhr/fetch/subresource/document)
             // feeding `network_entries`. Separate accumulator — never touches
@@ -373,6 +422,68 @@ impl ChromiumNetworkInterceptor {
             *s.fetch_registration.lock() = Some(fetch_reg);
         }
         s
+    }
+
+    /// Record `requestId -> (frameId, loaderId)` for Document-type
+    /// `Network.requestWillBeSent` events. `Network.loadingFailed` carries
+    /// no frame identifiers of its own, so this map is the only way to
+    /// attribute a Document load failure to its frame/loader (see
+    /// `resolve_attribution`). Non-Document and malformed events are
+    /// ignored.
+    pub(crate) fn record_document_request(
+        &self,
+        target_id: TargetId,
+        method: &str,
+        params: &CborValue,
+    ) {
+        if method != "Network.requestWillBeSent" {
+            return;
+        }
+        let map = match params {
+            CborValue::Map(entries) => entries,
+            _ => return,
+        };
+        if cbor_map_text(map, "type").is_none_or(|t| t != "Document") {
+            return;
+        }
+        let request_id = match cbor_map_text(map, "requestId") {
+            Some(r) if !r.is_empty() => r,
+            _ => return,
+        };
+        let frame_id = cbor_map_text(map, "frameId").unwrap_or_default();
+        let loader_id = cbor_map_text(map, "loaderId").unwrap_or_default();
+        if frame_id.is_empty() && loader_id.is_empty() {
+            return;
+        }
+        let mut g = self.doc_request_attribution.write();
+        let m = g.entry(target_id).or_default();
+        if m.len() >= MAX_DOC_REQUEST_ATTRIBUTIONS {
+            m.clear();
+        }
+        m.insert(request_id, (frame_id, loader_id));
+    }
+
+    /// Backfill an unattributed event's frame/loader ids from the
+    /// Document `requestWillBeSent` correlation map (by `request_id`).
+    /// Events that already carry attribution (responseReceived) pass
+    /// through unchanged; a failed lookup leaves the event unattributed
+    /// (conservatively treated as main-document by the executor).
+    pub(crate) fn resolve_attribution(
+        &self,
+        target_id: TargetId,
+        mut attribution: EventAttribution,
+    ) -> EventAttribution {
+        if (attribution.frame_id.is_empty() && attribution.loader_id.is_empty())
+            && !attribution.request_id.is_empty()
+        {
+            if let Some(m) = self.doc_request_attribution.read().get(&target_id) {
+                if let Some((frame_id, loader_id)) = m.get(&attribution.request_id) {
+                    attribution.frame_id = frame_id.clone();
+                    attribution.loader_id = loader_id.clone();
+                }
+            }
+        }
+        attribution
     }
 
     /// Feed one `Network.*` event into the per-target full-capture accumulator
@@ -529,6 +640,22 @@ pub trait NetworkInterceptor: Send + Sync {
     /// `ActionExecutor::page_navigate` after `Page.loadEventFired`.
     fn drain_events(&self, target_id: TargetId) -> Vec<LoomNetworkEvent>;
 
+    /// Drain accumulated events together with their frame/loader
+    /// attribution, so `page_navigate` can match each Document event
+    /// against THIS navigation's frameId/loaderId (main-document
+    /// identification — an iframe's 4xx/failure must not fail the whole
+    /// navigate). Default maps `drain_events` with empty (unattributed)
+    /// attributions for impls that don't track frames.
+    fn drain_events_attributed(
+        &self,
+        target_id: TargetId,
+    ) -> Vec<(LoomNetworkEvent, EventAttribution)> {
+        self.drain_events(target_id)
+            .into_iter()
+            .map(|event| (event, EventAttribution::default()))
+            .collect()
+    }
+
     /// Drain accumulated blocked sub-resource events for a target.
     /// Called by `ActionExecutor::page_navigate` after
     /// `Page.loadEventFired`; events become `AuditEntry::BlockedUrl`s
@@ -540,9 +667,29 @@ pub trait NetworkInterceptor: Send + Sync {
     /// inside `compute_response_hash` before calling this.
     fn append(&self, target_id: TargetId, event: LoomNetworkEvent);
 
+    /// Append an event with its frame/loader attribution. Default drops
+    /// the attribution and delegates to `append` for impls that don't
+    /// track frames.
+    fn append_attributed(
+        &self,
+        target_id: TargetId,
+        event: LoomNetworkEvent,
+        _attribution: EventAttribution,
+    ) {
+        self.append(target_id, event);
+    }
+
     /// State-invalidation cascade hook. Called by
     /// `Supervisor::handle_crash` indirectly (via TargetManager).
     fn clear_target(&self, target_id: TargetId);
+
+    /// Drop any HASHED Document events accumulated for a target. Called
+    /// at navigate START (alongside `clear_entries`) so events left over
+    /// from a failed/aborted prior navigate — whose early-return paths
+    /// skip the STEP 7 drain — cannot leak into the next navigate's
+    /// `network_events`/`status_code` (and from there into the hashed
+    /// receipt). Default no-op for impls that don't accumulate.
+    fn clear_events(&self, _target_id: TargetId) {}
 
     /// Read (NON-draining) the full-capture network-entries snapshot for a
     /// target, plus whether the shim-side cap truncated it. Used to populate
@@ -603,6 +750,16 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
     }
 
     fn drain_events(&self, target_id: TargetId) -> Vec<LoomNetworkEvent> {
+        self.drain_events_attributed(target_id)
+            .into_iter()
+            .map(|(event, _)| event)
+            .collect()
+    }
+
+    fn drain_events_attributed(
+        &self,
+        target_id: TargetId,
+    ) -> Vec<(LoomNetworkEvent, EventAttribution)> {
         let mut g = self.per_target.write();
         g.remove(&target_id).unwrap_or_default()
     }
@@ -613,11 +770,20 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
     }
 
     fn append(&self, target_id: TargetId, event: LoomNetworkEvent) {
+        self.append_attributed(target_id, event, EventAttribution::default());
+    }
+
+    fn append_attributed(
+        &self,
+        target_id: TargetId,
+        event: LoomNetworkEvent,
+        attribution: EventAttribution,
+    ) {
         self.per_target
             .write()
             .entry(target_id)
             .or_default()
-            .push(event);
+            .push((event, attribution));
     }
 
     fn clear_target(&self, target_id: TargetId) {
@@ -625,6 +791,11 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
         self.blocked_per_target.write().remove(&target_id);
         self.top_frame_seen.write().remove(&target_id);
         self.entries_per_target.write().remove(&target_id);
+        self.doc_request_attribution.write().remove(&target_id);
+    }
+
+    fn clear_events(&self, target_id: TargetId) {
+        self.per_target.write().remove(&target_id);
     }
 
     fn read_entries(&self, target_id: TargetId) -> (Vec<LoomNetworkEntry>, bool) {
@@ -642,26 +813,39 @@ impl NetworkInterceptor for ChromiumNetworkInterceptor {
 }
 
 /// Parse a `Network.responseReceived` or `Network.loadingFailed` CDP
-/// event into a `LoomNetworkEvent`. Returns `None` for events that
-/// aren't main-document loads (subresource CSS/JS/images), so the
-/// document-status derivation in `action_executor::page_navigate`
-/// stays unambiguous. The shim is the only place
+/// event into a `LoomNetworkEvent` plus its frame/loader
+/// `EventAttribution`. Returns `None` for events that aren't Document
+/// loads (subresource CSS/JS/images) and for CANCELLED load failures
+/// (`canceled: true`, e.g. `net::ERR_ABORTED` when a JS redirect
+/// supersedes the prior document request — not a failure of the new
+/// navigation). Document events include same-process IFRAME documents;
+/// the attribution (frameId/loaderId, backfilled for `loadingFailed`
+/// via `resolve_attribution`) is what lets `page_navigate` single out
+/// the MAIN document. The shim is the only place
 /// that classifies chromium error codes (D-01); the `error_kind` field
 /// is set here for `loadingFailed`, mirroring the synthetic-event
 /// path in `action_executor::page_navigate` for `Page.navigate`-time
 /// transport failures.
-pub fn parse_network_event(method: &str, params: &CborValue) -> Option<LoomNetworkEvent> {
+pub fn parse_network_event(
+    method: &str,
+    params: &CborValue,
+) -> Option<(LoomNetworkEvent, EventAttribution)> {
     let map = match params {
         CborValue::Map(entries) => entries,
         _ => return None,
     };
-    // Only main-document events feed the navigate receipt's status_code.
+    // Only Document events feed the navigate receipt's status_code.
     // Real chromium emits subresource events with type="Stylesheet" /
     // "Script" / "Image"; we drop those. fake-chromium emits type="Document"
     // for the cases under test.
     if cbor_map_text(map, "type").is_none_or(|t| t != "Document") {
         return None;
     }
+    let attribution = EventAttribution {
+        request_id: cbor_map_text(map, "requestId").unwrap_or_default(),
+        frame_id: cbor_map_text(map, "frameId").unwrap_or_default(),
+        loader_id: cbor_map_text(map, "loaderId").unwrap_or_default(),
+    };
     match method {
         "Network.responseReceived" => {
             let response = match cbor_map_get(map, "response")? {
@@ -670,37 +854,51 @@ pub fn parse_network_event(method: &str, params: &CborValue) -> Option<LoomNetwo
             };
             let url = cbor_map_text(response, "url").unwrap_or_default();
             let status = cbor_map_u16(response, "status").unwrap_or(0);
-            Some(LoomNetworkEvent {
-                method: String::new(),
-                url,
-                request_hash: String::new(),
-                response_hash: String::new(),
-                status,
-                content_type: cbor_map_text(response, "mimeType").unwrap_or_default(),
-                duration_ms: 0,
-                response_bytes: 0,
-                error_reason: None,
-                error_kind: None,
-            })
+            Some((
+                LoomNetworkEvent {
+                    method: String::new(),
+                    url,
+                    request_hash: String::new(),
+                    response_hash: String::new(),
+                    status,
+                    content_type: cbor_map_text(response, "mimeType").unwrap_or_default(),
+                    duration_ms: 0,
+                    response_bytes: 0,
+                    error_reason: None,
+                    error_kind: None,
+                },
+                attribution,
+            ))
         }
         "Network.loadingFailed" => {
+            // Cancelled loads are NOT navigation failures: chromium sets
+            // `canceled: true` (typically with net::ERR_ABORTED) when a
+            // request is superseded — e.g. a JS redirect cancelling the
+            // prior document load. Keeping these would spuriously fail
+            // an otherwise-successful navigate.
+            if cbor_map_bool(map, "canceled") == Some(true) {
+                return None;
+            }
             let error_text = cbor_map_text(map, "errorText").unwrap_or_default();
             if error_text.is_empty() {
                 return None;
             }
             let kind = classify_chromium_nav_error(&error_text).to_string();
-            Some(LoomNetworkEvent {
-                method: String::new(),
-                url: String::new(),
-                request_hash: String::new(),
-                response_hash: String::new(),
-                status: 0,
-                content_type: String::new(),
-                duration_ms: 0,
-                response_bytes: 0,
-                error_reason: Some(error_text),
-                error_kind: Some(kind),
-            })
+            Some((
+                LoomNetworkEvent {
+                    method: String::new(),
+                    url: String::new(),
+                    request_hash: String::new(),
+                    response_hash: String::new(),
+                    status: 0,
+                    content_type: String::new(),
+                    duration_ms: 0,
+                    response_bytes: 0,
+                    error_reason: Some(error_text),
+                    error_kind: Some(kind),
+                },
+                attribution,
+            ))
         }
         _ => None,
     }
