@@ -24,6 +24,7 @@ export {
   daemonHealth,
 } from "./session.js";
 export { LoomTransport } from "./transport.js";
+export { LOOM_ERROR_CODES } from "./types.js";
 export {
   LoomError,
   LoomRPCError,

@@ -18,6 +18,34 @@ describe("Admin RPCs: session.kill, daemon.health, AbortSignal", () => {
   const killCalls: string[] = [];
   const healthCalls: Record<string, unknown>[] = [];
 
+  const defaultHealthHandler = (params: Record<string, unknown>): Record<string, unknown> => {
+    healthCalls.push(params);
+    const out: Record<string, unknown> = {
+      active_sessions: Array.from(daemon.sessions.values()).filter(
+        (s) => s["status"] === "active",
+      ).length,
+      shim_breaker_states: [],
+      otel_exporter: "disabled",
+      orphan_browser_trees: 3,
+      oldest_active_session_age_secs: 4242,
+      deep: null,
+    };
+    if (params["deep"]) {
+      out["deep"] = [
+        {
+          shim_id: "chromium-test-01",
+          daemon_restart_count: 2,
+          daemon_last_restart_at_ms: 1_730_000_000_000,
+          shim_uptime_ms: 12_345,
+          shim_requests_served: 7,
+          shim_last_request_at_ms: 1_730_000_005_000,
+          probe_status: "ok",
+        },
+      ];
+    }
+    return out;
+  };
+
   before(async () => {
     daemon = new MockDaemon();
     daemon.registerHandler("session.kill", (params) => {
@@ -30,31 +58,7 @@ describe("Admin RPCs: session.kill, daemon.health, AbortSignal", () => {
       }
       return { session_id: sid, status: "killed", created_at_ms: 0 };
     });
-    daemon.registerHandler("daemon.health", (params) => {
-      healthCalls.push(params);
-      const out: Record<string, unknown> = {
-        active_sessions: Array.from(daemon.sessions.values()).filter(
-          (s) => s["status"] === "active",
-        ).length,
-        shim_breaker_states: [],
-        otel_exporter: "disabled",
-        deep: null,
-      };
-      if (params["deep"]) {
-        out["deep"] = [
-          {
-            shim_id: "chromium-test-01",
-            daemon_restart_count: 2,
-            daemon_last_restart_at_ms: 1_730_000_000_000,
-            shim_uptime_ms: 12_345,
-            shim_requests_served: 7,
-            shim_last_request_at_ms: 1_730_000_005_000,
-            probe_status: "ok",
-          },
-        ];
-      }
-      return out;
-    });
+    daemon.registerHandler("daemon.health", defaultHealthHandler);
     await daemon.start();
   });
 
@@ -99,6 +103,34 @@ describe("Admin RPCs: session.kill, daemon.health, AbortSignal", () => {
     assert.strictEqual(h.deep, null);
     assert.strictEqual(healthCalls.length, before + 1);
     assert.strictEqual(healthCalls[before]["deep"], false);
+  });
+
+  test("daemonHealth() maps orphan_browser_trees + oldest_active_session_age_secs", async () => {
+    const h = await daemonHealth({
+      socketPath: daemon.socketPath,
+      token: daemon.token,
+    });
+    assert.strictEqual(h.orphanBrowserTrees, 3);
+    assert.strictEqual(h.oldestActiveSessionAgeSecs, 4242);
+  });
+
+  test("daemonHealth() defaults the new fields when an older daemon omits them", async () => {
+    daemon.registerHandler("daemon.health", () => ({
+      active_sessions: 0,
+      shim_breaker_states: [],
+      otel_exporter: "disabled",
+      deep: null,
+    }));
+    try {
+      const h = await daemonHealth({
+        socketPath: daemon.socketPath,
+        token: daemon.token,
+      });
+      assert.strictEqual(h.orphanBrowserTrees, 0);
+      assert.strictEqual(h.oldestActiveSessionAgeSecs, null);
+    } finally {
+      daemon.registerHandler("daemon.health", defaultHealthHandler);
+    }
   });
 
   test("daemonHealth({deep:true}): typed ShimDeepHealth array with probe_status enum", async () => {

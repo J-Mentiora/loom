@@ -3,7 +3,7 @@
  */
 import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { LoomTransport, LoomRPCError, LoomConnectionError } from "../src/index.js";
+import { LoomTransport, LoomError, LoomRPCError, LoomConnectionError } from "../src/index.js";
 import { MockDaemon } from "./helpers/mock_daemon.js";
 
 describe("Transport: framing + auth + call/response", () => {
@@ -157,5 +157,141 @@ describe("Transport: bare daemon error frames", () => {
     assert.equal(LoomRPCError.fromBareFrame({ result: null }), null);
     assert.equal(LoomRPCError.fromBareFrame({ code: 401, message: "nope" }), null);
     assert.equal(LoomRPCError.fromBareFrame({ code: "x" }), null);
+  });
+});
+
+// ─── dead-connection latch ────────────────────────────────────────────────
+// The real daemon closes authenticated connections after 300s idle
+// (AUTHENTICATED_IDLE_TIMEOUT) — agent workflows routinely exceed that
+// between actions. Calls on the dead transport must fail fast with a typed
+// connection-closed error, not Node's internal "Cannot call write after a
+// stream was destroyed" an event-loop turn later.
+describe("Transport: dead-connection latch", () => {
+  test("calls after daemon hangup fail with a typed connection-closed error", async () => {
+    const daemon = new MockDaemon();
+    await daemon.start();
+    const t = new LoomTransport(daemon.socketPath, daemon.token);
+    await t.connect();
+    assert.ok(Array.isArray(await t.call("session.list", {})));
+
+    // Daemon-side hangup (stop() destroys all open connections). The
+    // first call after it either fails fast (close already observed) or
+    // is rejected by the close handler — either way it must surface a
+    // LoomConnectionError, and afterwards the dead state is latched.
+    await daemon.stop();
+    await assert.rejects(() => t.call("session.list", {}), LoomConnectionError);
+
+    // The latch is now set: subsequent calls fail fast with the typed
+    // dead-transport error, never the misleading stream-destroyed or
+    // not-connected messages.
+    await assert.rejects(
+      () => t.call("session.list", {}),
+      (err: unknown) => {
+        assert.ok(err instanceof LoomConnectionError);
+        assert.match((err as Error).message, /no longer usable/);
+        assert.doesNotMatch(
+          (err as Error).message,
+          /stream was destroyed|not connected/i,
+        );
+        return true;
+      },
+    );
+    await t.close();
+  });
+
+  test("client-side close() latches 'Transport closed', not a daemon hangup", async () => {
+    const daemon = new MockDaemon();
+    try {
+      await daemon.start();
+      const t = new LoomTransport(daemon.socketPath, daemon.token);
+      await t.connect();
+      await t.close();
+      // The socket-destroy 'close' event must not re-label a deliberate
+      // client close as a daemon hangup.
+      await new Promise((r) => setImmediate(r));
+      await assert.rejects(
+        () => t.call("session.list", {}),
+        (err: unknown) => {
+          assert.ok(err instanceof LoomConnectionError);
+          assert.match((err as Error).message, /Transport closed/);
+          return true;
+        },
+      );
+    } finally {
+      await daemon.stop();
+    }
+  });
+
+  test("reconnect after close() clears the latch", async () => {
+    const daemon = new MockDaemon();
+    try {
+      await daemon.start();
+      const t = new LoomTransport(daemon.socketPath, daemon.token);
+      await t.connect();
+      await t.close();
+      await assert.rejects(() => t.call("session.list", {}), LoomConnectionError);
+      // connect() must reset the latch so the transport is usable again.
+      await t.connect();
+      assert.ok(Array.isArray(await t.call("session.list", {})));
+      await t.close();
+    } finally {
+      await daemon.stop();
+    }
+  });
+});
+
+// ─── non-serializable params ──────────────────────────────────────────────
+// call() must serialize BEFORE registering the pending entry / attaching
+// the abort listener: JSON.stringify throws synchronously on circular
+// references and BigInt (reachable via user-controlled params such as
+// SessionCreateOptions.budget), and an orphaned pending entry fires an
+// unhandledRejection when the transport later closes.
+describe("Transport: non-serializable params", () => {
+  test("rejects typed, leaves no orphaned pending entry or abort listener", async () => {
+    const daemon = new MockDaemon();
+    const t = new LoomTransport(daemon.socketPath, daemon.token);
+    let unhandled: unknown = null;
+    const trap = (reason: unknown) => {
+      unhandled = reason;
+    };
+    process.on("unhandledRejection", trap);
+    try {
+      await daemon.start();
+      await t.connect();
+
+      const circular: Record<string, unknown> = {};
+      circular["self"] = circular;
+      const controller = new AbortController();
+      await assert.rejects(
+        () => t.call("session.list", circular, { signal: controller.signal }),
+        (err: unknown) => {
+          assert.ok(err instanceof LoomError, "must be a typed LoomError");
+          assert.ok(!(err instanceof LoomRPCError), "must not masquerade as an RPC error");
+          assert.match((err as Error).message, /not JSON-serializable/);
+          return true;
+        },
+      );
+      await assert.rejects(
+        () => t.call("session.list", { big: BigInt(1) }),
+        (err: unknown) => err instanceof LoomError,
+      );
+
+      // The transport must remain fully usable after the failed serialize.
+      assert.ok(Array.isArray(await t.call("session.list", {})));
+
+      // Aborting the signal must be a no-op (no listener was attached for
+      // the failed call), and closing — which rejects every pending entry
+      // — must find no orphan from it. Pre-fix, either fired an
+      // unhandledRejection that kills the process by default.
+      controller.abort();
+      await t.close();
+      await new Promise((r) => setImmediate(r));
+      await new Promise((r) => setImmediate(r));
+      assert.strictEqual(unhandled, null, `unhandledRejection fired: ${String(unhandled)}`);
+    } finally {
+      process.removeListener("unhandledRejection", trap);
+      await t.close();
+      await daemon.stop();
+    }
   });
 });

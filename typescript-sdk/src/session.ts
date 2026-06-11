@@ -4,6 +4,7 @@
  * Create via `await Session.create()`. Use `await using` or call `close()` explicitly.
  */
 import { LoomTransport } from "./transport.js";
+import { LoomError } from "./errors.js";
 import type {
   SessionInfo,
   SessionInspection,
@@ -111,6 +112,10 @@ export class Session {
   readonly sessionId: string;
   readonly status: string;
   private readonly _transport: LoomTransport;
+  // Latched result of the first close(). Disposable resources must
+  // tolerate double-dispose: `await using` + an explicit close() inside
+  // the block runs close() twice (the second via Symbol.asyncDispose).
+  private _closeInfo: SessionInfo | null = null;
 
   private constructor(sessionId: string, status: string, transport: LoomTransport) {
     this.sessionId = sessionId;
@@ -146,18 +151,31 @@ export class Session {
     }
   }
 
+  /**
+   * Close the session and release the socket. Idempotent: a second
+   * close() (explicit or via `await using` disposal) is a no-op that
+   * returns the latched SessionInfo instead of re-issuing the RPC on
+   * the already-destroyed transport.
+   */
   async close(): Promise<SessionInfo> {
-    let result: Record<string, unknown> | null;
+    if (this._closeInfo) return this._closeInfo;
+    let result: Record<string, unknown> | null = null;
     try {
       result = (await this._transport.call("session.close", {
         session_id: this.sessionId,
       })) as Record<string, unknown> | null;
     } finally {
+      // Latch even when the RPC fails: the transport is destroyed below
+      // either way, so a retry can never succeed — the first call's
+      // error (if any) still propagates, but a later double-dispose
+      // must not throw at scope exit.
+      this._closeInfo = result
+        ? toSessionInfo(result)
+        : { sessionId: this.sessionId, status: "closed", createdAtMs: 0 };
       // Always release the socket, even when the RPC fails.
       await this._transport.close();
     }
-    if (result) return toSessionInfo(result);
-    return { sessionId: this.sessionId, status: "closed", createdAtMs: 0 };
+    return this._closeInfo;
   }
 
   async abort(reason: string): Promise<SessionInfo> {
@@ -389,14 +407,26 @@ export class Session {
   }
 
   async schemas(): Promise<SchemaRegistry> {
-    const result = (await this._transport.call("rpc.schemas", {})) as Record<string, unknown>;
+    const result = (await this._transport.call("rpc.schemas", {})) as Record<
+      string,
+      unknown
+    > | null;
+    // A version-skewed or misbehaving daemon may omit `methods`; surface a
+    // typed error instead of a raw TypeError from `.map` of undefined,
+    // keeping the SDK's uniform LoomError surface.
+    const methods = result?.["methods"];
+    if (!Array.isArray(methods)) {
+      throw new LoomError(
+        "malformed rpc.schemas response: missing 'methods' array (daemon version skew?)",
+      );
+    }
     return {
-      methods: (result["methods"] as Array<Record<string, unknown>>).map((m) => ({
+      methods: (methods as Array<Record<string, unknown>>).map((m) => ({
         method: m["method"] as string,
         request: (m["request"] as JsonSchemaObject) ?? {},
         response: (m["response"] as JsonSchemaObject) ?? {},
       })),
-      sourceWitSha256: (result["source_wit_sha256"] as string) ?? "",
+      sourceWitSha256: (result?.["source_wit_sha256"] as string) ?? "",
     };
   }
 
@@ -562,6 +592,8 @@ function toDaemonHealthResult(d: Record<string, unknown>): DaemonHealthResult {
       }),
     ),
     otelExporter: (d["otel_exporter"] as string) ?? "unknown",
+    orphanBrowserTrees: (d["orphan_browser_trees"] as number) ?? 0,
+    oldestActiveSessionAgeSecs: (d["oldest_active_session_age_secs"] as number | null) ?? null,
     deep:
       d["deep"] === null || d["deep"] === undefined
         ? null
