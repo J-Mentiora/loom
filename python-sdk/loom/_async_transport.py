@@ -51,6 +51,11 @@ class AsyncLoomTransport:
         self._pending: dict[int, asyncio.Future[Any]] = {}
         self._reader_task: asyncio.Task[None] | None = None
         self._closed = False
+        # Latched daemon-level protocol error (e.g. the HELLO auth-failure
+        # frame — a bare JsonRpcError with no id, after which the daemon
+        # closes). Once set, every subsequent call() re-raises it instead
+        # of surfacing a generic connection error.
+        self._daemon_error: LoomRPCError | None = None
 
     @classmethod
     async def connect(
@@ -81,6 +86,8 @@ class AsyncLoomTransport:
         can use ``asyncio.wait_for`` / ``asyncio.timeout`` / TaskGroup
         as normal.
         """
+        if self._daemon_error is not None:
+            raise self._daemon_error
         if self._closed:
             raise LoomConnectionError("Transport is closed")
         request_id = self._next_id
@@ -94,6 +101,14 @@ class AsyncLoomTransport:
         )
         try:
             await self._send_frame(request.encode("utf-8"))
+        except OSError as exc:
+            self._pending.pop(request_id, None)
+            # The daemon may have closed after sending a terminal error
+            # frame (HELLO auth failure); prefer the typed error the
+            # reader latched over a raw BrokenPipeError.
+            if self._daemon_error is not None:
+                raise self._daemon_error from exc
+            raise LoomConnectionError(f"Connection to daemon lost: {exc}") from exc
         except Exception:
             self._pending.pop(request_id, None)
             raise
@@ -193,6 +208,19 @@ class AsyncLoomTransport:
                     continue  # malformed frame — drop
                 rid = envelope.get("id")
                 if not isinstance(rid, int):
+                    # No id. The daemon's HELLO auth-failure frame is a BARE
+                    # serialized JsonRpcError — {"code", "message"} with no
+                    # {"error": ...} wrapper and no id — sent just before it
+                    # closes the connection. Latch it and fail ALL pending
+                    # callers so the typed error surfaces instead of a
+                    # generic "connection closed" error.
+                    bare = LoomRPCError._from_bare_frame(envelope)
+                    if bare is not None:
+                        self._daemon_error = bare
+                        for fut in list(self._pending.values()):
+                            if not fut.done():
+                                fut.set_exception(bare)
+                        self._pending.clear()
                     continue  # notification or malformed
                 fut = self._pending.pop(rid, None)
                 if fut is None:
@@ -202,7 +230,11 @@ class AsyncLoomTransport:
                 if not fut.done():
                     fut.set_result(envelope)
         except asyncio.IncompleteReadError:
-            err = LoomConnectionError("Connection closed by daemon mid-frame")
+            # Prefer the latched daemon error (e.g. auth failure) over a
+            # generic close error — the daemon closes right after sending it.
+            err: Exception = self._daemon_error or LoomConnectionError(
+                "Connection closed by daemon mid-frame"
+            )
             for fut in list(self._pending.values()):
                 if not fut.done():
                     fut.set_exception(err)

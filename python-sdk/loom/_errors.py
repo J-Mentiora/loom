@@ -34,6 +34,27 @@ class LoomRPCError(LoomError):
             data=err.get("data"),
         )
 
+    @classmethod
+    def _from_bare_frame(cls, frame: Any) -> "LoomRPCError | None":
+        """Recognize the daemon's BARE ``JsonRpcError`` frame.
+
+        On HELLO auth failure the daemon serializes the ``JsonRpcError``
+        struct directly — ``{"code": ..., "message": ...}`` with NO
+        ``{"error": ...}`` wrapper and NO ``id`` (loom-rpc
+        ``connection_handler::send_error``) — then closes the connection.
+        Returns ``None`` when ``frame`` is not that shape (normal response
+        envelopes carry ``id`` and ``result``/``error``).
+        """
+        if not isinstance(frame, dict):
+            return None
+        if "id" in frame or "result" in frame or "error" in frame:
+            return None
+        code = frame.get("code")
+        message = frame.get("message")
+        if not isinstance(code, str) or not isinstance(message, str):
+            return None
+        return cls(code=code, message=message, data=frame.get("data"))
+
 
 class LoomConnectionError(LoomError):
     """Failed to connect to the daemon socket."""

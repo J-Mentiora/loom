@@ -61,6 +61,14 @@ def _make_error_envelope(code: str, message: str, request_id: int | None = None)
     return json.dumps(env).encode()
 
 
+def _make_bare_error_frame(code: str, message: str) -> bytes:
+    """The real daemon's HELLO-failure shape: a BARE serialized JsonRpcError —
+    ``{"code", "message"}`` with NO ``{"error": ...}`` wrapper and NO ``id``
+    (loom-rpc ``connection_handler::send_error``; pinned by the daemon's own
+    integration tests asserting top-level ``resp["code"]``)."""
+    return json.dumps({"code": code, "message": message}).encode()
+
+
 def _make_result(result: Any, request_id: int | None = None) -> bytes:
     env: dict[str, Any] = {"result": result}
     if request_id is not None:
@@ -214,11 +222,13 @@ class MockDaemon:
             hello = frame.decode("utf-8")
             parts = hello.split(" ", 1)
             if len(parts) != 2 or parts[0] != "HELLO":
-                _send_frame(conn, _make_error_envelope("protocol_auth_required", "malformed hello"))
+                _send_frame(
+                    conn, _make_bare_error_frame("protocol_auth_required", "malformed hello")
+                )
                 return
             if parts[1] != self.token:
                 _send_frame(
-                    conn, _make_error_envelope("protocol_auth_required", "token mismatch")
+                    conn, _make_bare_error_frame("protocol_auth_required", "token mismatch")
                 )
                 return
             # Authenticated: request dispatch loop
