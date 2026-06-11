@@ -466,6 +466,10 @@ impl CoreFacadeBridge for CoreBridge {
     fn create_session_raw(
         &self,
         profile: &str,
+        // Always `"live"` (session_validation rejects everything else)
+        // and intentionally unused: page traffic is always fetched live.
+        // There is no page-network record/replay engine — don't plumb
+        // this further without building one.
         _network_mode: &str,
         capture_policy: Option<&str>,
         seed: Option<u64>,

@@ -139,6 +139,13 @@ class Session:
         dom/screenshot/outcome hashes, so ``diff`` between them reports zero
         field diffs. Default ``None`` → wall-clock epoch (unchanged
         behavior). No effect under ``no_determinism``.
+
+        ``network_mode`` must be ``"live"`` (the default and only value):
+        page traffic is always fetched live from the network — loom does not
+        record or replay page-network responses, and response bodies are
+        never captured (HAR exports carry no bodies). Anything else
+        (including the formerly-accepted-but-inert ``"recorded"`` /
+        ``"mixed"``) is rejected by the daemon with ``invalid_network_mode``.
         """
         transport = LoomTransport(socket_path, token)
         params: dict[str, Any] = {
@@ -340,10 +347,13 @@ class Session:
         result = self._transport.call("session.validate", {"session_id": self.session_id})
         return ValidationResult._from_dict(result)
 
-    def replay(self, *, speed: float = 1.0, network_mode: str = "replay") -> SessionInfo:
+    def replay(self, *, speed: float = 1.0) -> SessionInfo:
+        # No network_mode kwarg here: earlier SDKs sent an inert
+        # ``network_mode: "replay"`` the daemon ignored — replay re-executes
+        # from the recorded manifest and has no page-network mode to choose.
         result = self._transport.call(
             "session.replay",
-            {"session_id": self.session_id, "speed": speed, "network_mode": network_mode},
+            {"session_id": self.session_id, "speed": speed},
         )
         return SessionInfo._from_dict(result)
 

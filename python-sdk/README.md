@@ -95,10 +95,21 @@ session = loom.Session.create(
     socket_path="/var/run/loom/loom.sock",  # custom daemon socket
     token="...",                             # explicit HELLO-token
     profile="standard",                      # or "safe", "full"
-    network_mode="live",                     # or "replay"
+    network_mode="live",                     # the only mode (see below)
     seed=42,                                 # determinism seed
 )
 ```
+
+## Network mode: page traffic is always live
+
+``network_mode`` accepts exactly one value, ``"live"`` (the default).
+Page traffic is always fetched live from the network — loom records the
+manifest hash chain and per-request metadata, **not** page-network
+responses. Response bodies are never captured, so HAR exports contain
+request entries without bodies, and replay re-executes the recorded
+actions rather than serving recorded responses. Any other value
+(``"recorded"``, ``"mixed"``, ``"replay"``) is rejected at
+``Session.create()`` with ``invalid_network_mode``.
 
 ## License
 

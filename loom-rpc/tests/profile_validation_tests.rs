@@ -256,12 +256,18 @@ async fn ac_profval_01_unknown_profile_rejected_with_typed_envelope() {
 #[tokio::test]
 async fn ac_profval_02_invalid_network_mode_rejected_with_typed_envelope() {
     let h = make_handlers();
-    let p = create_params("safe", "bogus", None);
-    let err = h.session_create(p).await.expect_err("must reject");
-    assert_eq!(err.code, LoomErrorCode::InvalidNetworkMode);
-    let data = err.data.as_ref().expect("envelope must carry data");
-    assert_eq!(data["provided"], "bogus");
-    assert!(data["available"].is_array());
+    // "bogus" never existed; "recorded"/"mixed" were accepted-but-inert
+    // (page traffic fetched live regardless) and "replay" was a README
+    // fiction. All must reject with the honest `["live"]` allowlist —
+    // no silently-inert modes.
+    for mode in ["bogus", "recorded", "mixed", "replay"] {
+        let p = create_params("safe", mode, None);
+        let err = h.session_create(p).await.expect_err("must reject");
+        assert_eq!(err.code, LoomErrorCode::InvalidNetworkMode, "{mode}");
+        let data = err.data.as_ref().expect("envelope must carry data");
+        assert_eq!(data["provided"], mode);
+        assert_eq!(data["available"], serde_json::json!(["live"]));
+    }
 }
 
 // --- — invalid budget key (server side) -------------------

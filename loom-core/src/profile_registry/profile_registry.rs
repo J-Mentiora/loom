@@ -33,8 +33,18 @@ pub fn resolve_profile_alias(s: &str) -> &str {
     }
 }
 
-/// Canonical network-mode names. Glossary §Network Mode.
-pub const KNOWN_NETWORK_MODES: &[&str] = &["live", "recorded", "mixed"];
+/// Canonical network-mode names — `live` only.
+///
+/// Page traffic is ALWAYS fetched live from the network: loom has no
+/// page-network record/replay engine, never captures response bodies,
+/// and HAR exports carry no bodies. `recorded`/`mixed` used to be in
+/// this allowlist but were silently inert (validated, then discarded
+/// before session creation), so they are rejected loudly now via
+/// `invalid_network_mode` instead of implying replay semantics that
+/// don't exist. The record/replay vocabulary belongs to the LLM-cache
+/// axis (`loom_shared::llm_types::LlmMode`), a separate knob that is
+/// not wired to `session.create`.
+pub const KNOWN_NETWORK_MODES: &[&str] = &["live"];
 
 /// Canonical budget keys. Mirrors `parse_budget_string` accepted keys.
 pub const KNOWN_BUDGET_KEYS: &[&str] = &["network", "wall_clock", "dom_nodes", "js_heap"];

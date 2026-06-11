@@ -83,6 +83,14 @@ function toReceipt(d: Record<string, unknown>): Receipt {
 
 export interface SessionCreateOptions {
   profile?: string;
+  /**
+   * Page-network mode. `"live"` (the default) is the ONLY valid value:
+   * page traffic is always fetched live from the network — loom does not
+   * record or replay page-network responses, and response bodies are never
+   * captured (HAR exports carry no bodies). Any other value (including the
+   * formerly-accepted-but-inert `"recorded"`/`"mixed"`) is rejected by the
+   * daemon with `invalid_network_mode`.
+   */
   networkMode?: string;
   capture?: boolean;
   seed?: number;
@@ -236,11 +244,13 @@ export class Session {
     };
   }
 
-  async replay(opts: { speed?: number; networkMode?: string } = {}): Promise<SessionInfo> {
+  // No networkMode option here: earlier SDKs sent an inert
+  // `network_mode: "replay"` the daemon ignored — replay re-executes from
+  // the recorded manifest and has no page-network mode to choose.
+  async replay(opts: { speed?: number } = {}): Promise<SessionInfo> {
     const result = (await this._transport.call("session.replay", {
       session_id: this.sessionId,
       speed: opts.speed ?? 1.0,
-      network_mode: opts.networkMode ?? "replay",
     })) as Record<string, unknown>;
     return toSessionInfo(result);
   }

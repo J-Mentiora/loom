@@ -13,7 +13,10 @@ fn known_profiles_canonical_set() {
 
 #[test]
 fn known_network_modes_canonical_set() {
-    assert_eq!(KNOWN_NETWORK_MODES, &["live", "recorded", "mixed"]);
+    // `live` only: page traffic is always live and loom has no
+    // page-network record/replay engine, so the allowlist must not
+    // advertise modes that don't change behavior.
+    assert_eq!(KNOWN_NETWORK_MODES, &["live"]);
 }
 
 #[test]
@@ -78,6 +81,17 @@ fn is_known_network_mode_rejects_garbage() {
     assert!(!is_known_network_mode("bogus"));
     assert!(!is_known_network_mode("offline")); // not in canonical set
     assert!(!is_known_network_mode(""));
+}
+
+/// `recorded`/`mixed` were historically allowlisted but never changed
+/// page-network behavior (sessions always fetched live); `replay` was
+/// advertised by an old SDK README and never existed. All three must
+/// reject so no caller can believe page-network replay exists.
+#[test]
+fn is_known_network_mode_rejects_inert_legacy_modes() {
+    assert!(!is_known_network_mode("recorded"));
+    assert!(!is_known_network_mode("mixed"));
+    assert!(!is_known_network_mode("replay"));
 }
 
 #[test]

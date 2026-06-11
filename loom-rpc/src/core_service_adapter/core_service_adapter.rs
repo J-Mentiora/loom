@@ -85,6 +85,10 @@ pub trait CoreFacadeBridge: Send + Sync {
     ) -> Result<PlaywrightImportInfo, AdapterError>;
 
     /// Create a new session. Returns `(session_id, created_at_ms)`.
+    /// `network_mode` is always `"live"` here — `session_validation`
+    /// rejects everything else upstream — and implementations ignore it:
+    /// page traffic is always fetched live (no page-network
+    /// record/replay engine exists; response bodies are never captured).
     /// `capture_policy` carries the operator's `--capture-policy` choice
     /// (`"minimal" | "default" | "full"`); `None` means "use server default".
     /// `budget` carries the optional per-session BudgetLimits as a
@@ -289,6 +293,11 @@ pub struct GrantInfo {
 pub struct CreateSessionParams {
     #[serde(default = "default_profile")]
     pub profile: String,
+    /// Page-network mode. `"live"` — the serde default and the ONLY
+    /// accepted value — means page traffic is fetched live; loom never
+    /// records or replays page-network responses. Anything else (incl.
+    /// the formerly-allowlisted-but-inert `"recorded"`/`"mixed"`) is
+    /// rejected by `session_validation` with `invalid_network_mode`.
     #[serde(default = "default_network_mode")]
     pub network_mode: String,
     /// Operator's `--capture-policy` choice.
@@ -504,6 +513,9 @@ pub trait CoreServiceAdapterApi: Send + Sync {
 
     fn abort_session(&self, session_id: &str, reason: &str) -> Result<SessionInfo, AdapterError>;
 
+    /// `network_mode` is accepted for wire back-compat (released SDKs
+    /// ≤0.10.x sent `"replay"`) but ignored — replay re-executes from
+    /// the manifest; there is no page-network mode.
     fn replay_session(
         &self,
         session_id: &str,

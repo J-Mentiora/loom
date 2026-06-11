@@ -57,9 +57,15 @@ impl ErrorTranslator {
         }
     }
 
-    /// Construct an `invalid_network_mode` envelope.
+    /// Construct an `invalid_network_mode` envelope. The message spells
+    /// out WHY only `live` exists — `recorded`/`mixed` were historically
+    /// accepted-but-inert, so a bare "invalid" would read like a typo
+    /// hint rather than the truth (page-network replay is unimplemented).
     pub fn from_invalid_network_mode(provided: &str, available: &[&str]) -> JsonRpcError {
-        let message = Self::truncate_message(&format!("invalid network mode: {provided}"));
+        let message = Self::truncate_message(&format!(
+            "invalid network mode: {provided} — page traffic is always live; \
+             page-network record/replay is not implemented"
+        ));
         JsonRpcError {
             code: LoomErrorCode::InvalidNetworkMode,
             message,
