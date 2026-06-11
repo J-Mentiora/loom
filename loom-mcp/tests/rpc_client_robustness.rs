@@ -12,10 +12,12 @@
 //    poisoning in the framed caller.
 //
 // Fixture: a fake daemon on a temp Unix socket speaking the real framed
-// protocol (4-byte BE length prefix). The real daemon acks a successful
-// `HELLO <token>` with silence, and the client treats 5 s of post-HELLO
-// silence as acceptance — so every successful `connect()` here pays that
-// documented stall; per-test budgets are generous.
+// protocol (4-byte BE length prefix). The client pipelines a
+// `daemon.hello` ack probe after `HELLO <token>` and waits for its
+// id-correlated reply — `serve_responsive` answers it like any request
+// (so connect() resolves in one round trip, no 5 s stall), and
+// `serve_wedged` acks the handshake then goes silent (a daemon that
+// wedges after a healthy handshake).
 //
 // Run: cargo test -p loom-mcp --test rpc_client_robustness
 
@@ -36,9 +38,10 @@ use tokio::net::{UnixListener, UnixStream};
 // Fake daemon
 // ---------------------------------------------------------------------------
 
-/// Serve one connection: accept the HELLO silently (like the real daemon),
-/// then answer every JSON-RPC request. `rpc.schemas` gets a one-method
-/// registry; everything else (e.g. `health.ping`) gets `{}`.
+/// Serve one connection: accept the HELLO, then answer every JSON-RPC
+/// request — including the client's pipelined `daemon.hello` ack probe,
+/// which gets a `{}` result envelope (the authenticated old-daemon
+/// shape). `rpc.schemas` gets a one-method registry.
 async fn serve_responsive(stream: UnixStream) {
     let mut framed = FrameHandler::wrap_stream(stream);
     let Some(Ok(_hello)) = framed.next().await else {
@@ -82,10 +85,34 @@ async fn serve_responsive(stream: UnixStream) {
     }
 }
 
-/// Serve one connection wedged: accept the HELLO, then read frames forever
-/// without ever responding — a daemon that is alive (socket open, reads
-/// progressing) but never produces a response.
+/// Serve one connection wedged AFTER the handshake: accept the HELLO,
+/// ack the pipelined `daemon.hello` probe (so `connect()` succeeds),
+/// then read frames forever without ever responding — a daemon that is
+/// alive (socket open, reads progressing) but never produces a response.
 async fn serve_wedged(stream: UnixStream) {
+    let mut framed = FrameHandler::wrap_stream(stream);
+    let Some(Ok(_hello)) = framed.next().await else {
+        return;
+    };
+    let Some(Ok(probe)) = framed.next().await else {
+        return;
+    };
+    let req: serde_json::Value = serde_json::from_slice(&probe).unwrap_or_default();
+    let resp = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": req.get("id"),
+        "result": { "hello": "ok", "server": "fixture" }
+    });
+    let _ = framed
+        .send(bytes::Bytes::from(serde_json::to_vec(&resp).unwrap()))
+        .await;
+    while let Some(Ok(_frame)) = framed.next().await {}
+}
+
+/// Serve one connection silent from the very first frame: reads forever,
+/// never answers anything — not even the handshake probe. A daemon
+/// wedged BEFORE the handshake completes.
+async fn serve_silent(stream: UnixStream) {
     let mut framed = FrameHandler::wrap_stream(stream);
     while let Some(Ok(_frame)) = framed.next().await {}
 }
@@ -145,7 +172,8 @@ async fn reconnect_reprimes_tool_cache_after_daemon_down_at_launch() {
 
     // Every production reconnect path (keepalive ping, call-path
     // reconnect-first, backoff task) converges on connect(); drive it
-    // directly. Success must fire the re-prime hook (~5 s HELLO stall).
+    // directly. Success must fire the re-prime hook (one ack round
+    // trip — no HELLO stall).
     rpc.connect().await.expect("reconnect must succeed");
 
     // The hook primes on a spawned task; poll until it lands.
@@ -202,8 +230,8 @@ async fn tools_list_lazily_primes_once_daemon_is_reachable() {
     });
 
     // The same tools/list call now recovers on its own: the lazy prime
-    // reconnects (reconnect-first inside RpcClient::call, ~5 s HELLO stall)
-    // and serves the real method set instead of [] until restart.
+    // reconnects (reconnect-first inside RpcClient::call, one ack round
+    // trip) and serves the real method set instead of [] until restart.
     let tools = dispatcher.tools_list().await;
     assert!(
         tools.iter().any(|t| t.name == "loom.web.navigate"),
@@ -304,7 +332,7 @@ async fn keepalive_ping_survives_a_wedged_call() {
     // wedged call times out (300 ms) and poisons the connection, the ping
     // fails fast on the poisoned stream, reconnects (health.ping is
     // idempotent) and succeeds on the fresh connection. The 30 s budget
-    // covers the ~5 s HELLO-acceptance stall of the reconnect.
+    // is generous headroom for the reconnect round trips.
     tokio::time::timeout(Duration::from_secs(30), rpc.ping())
         .await
         .expect("keepalive must not deadlock behind a wedged call")
@@ -315,4 +343,128 @@ async fn keepalive_ping_survives_a_wedged_call() {
         .unwrap()
         .expect_err("the wedged call itself must fail with the typed deadline error");
     assert_eq!(wedged_err.code, LoomErrorCode::TransportDropped);
+}
+
+// ---------------------------------------------------------------------------
+// Connection-protocol redesign — HELLO ack handshake
+// ---------------------------------------------------------------------------
+
+/// A daemon wedged BEFORE answering the handshake probe fails connect()
+/// with a typed transport error in bounded time — previously 5 s of
+/// silence was misread as 'HELLO accepted' and the wedge surfaced only
+/// on the first call.
+#[tokio::test]
+async fn wedged_handshake_fails_connect_with_typed_transport_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fixture_config(dir.path(), Duration::from_millis(300));
+    let socket_path = cfg.socket_path.clone();
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(serve_silent(stream));
+        }
+    });
+    let obs = McpObservability::new(true);
+    let rpc = RpcClient::new(cfg, obs);
+
+    let err = tokio::time::timeout(Duration::from_secs(10), rpc.connect())
+        .await
+        .expect("connect must observe its handshake bound")
+        .expect_err("a silent daemon must fail the handshake");
+    assert_eq!(err.code, LoomErrorCode::TransportDropped);
+}
+
+/// Old-daemon compat: a pre-ack daemon (≤0.10.x) answers the probe with
+/// a `method_not_found` envelope — connect() must treat that as
+/// authenticated and proceed to serve calls normally.
+#[tokio::test]
+async fn old_daemon_method_not_found_probe_reply_counts_as_authenticated() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fixture_config(dir.path(), Duration::from_secs(2));
+    let socket_path = cfg.socket_path.clone();
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut framed = FrameHandler::wrap_stream(stream);
+                let Some(Ok(_hello)) = framed.next().await else {
+                    return;
+                };
+                // Old daemons don't know daemon.hello: answer the probe
+                // with the validator's method_not_found envelope, then
+                // serve later requests normally.
+                while let Some(Ok(frame)) = framed.next().await {
+                    let req: serde_json::Value = serde_json::from_slice(&frame).unwrap_or_default();
+                    let resp = match req.get("method").and_then(|m| m.as_str()) {
+                        Some("daemon.hello") => serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "error": {
+                                "code": "method_not_found",
+                                "message": "method not found: daemon.hello"
+                            }
+                        }),
+                        _ => serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": req.get("id"),
+                            "result": {}
+                        }),
+                    };
+                    if framed
+                        .send(bytes::Bytes::from(serde_json::to_vec(&resp).unwrap()))
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    let obs = McpObservability::new(true);
+    let rpc = RpcClient::new(cfg, obs);
+
+    rpc.connect()
+        .await
+        .expect("method_not_found probe reply must count as authenticated");
+    rpc.ping()
+        .await
+        .expect("calls must work on the old-daemon connection");
+}
+
+/// Auth rejection: the daemon's bare typed JsonRpcError (no envelope
+/// keys) followed by close must surface as the typed HELLO mismatch,
+/// never as success.
+#[tokio::test]
+async fn bare_error_frame_surfaces_as_hello_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = fixture_config(dir.path(), Duration::from_secs(2));
+    let socket_path = cfg.socket_path.clone();
+    let listener = UnixListener::bind(&socket_path).unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut framed = FrameHandler::wrap_stream(stream);
+                let Some(Ok(_hello)) = framed.next().await else {
+                    return;
+                };
+                let bare = serde_json::json!({
+                    "code": "protocol_auth_required",
+                    "message": "authentication required"
+                });
+                let _ = framed
+                    .send(bytes::Bytes::from(serde_json::to_vec(&bare).unwrap()))
+                    .await;
+                // Close, like the real daemon.
+            });
+        }
+    });
+    let obs = McpObservability::new(true);
+    let rpc = RpcClient::new(cfg, obs);
+
+    let err = rpc
+        .connect()
+        .await
+        .expect_err("rejection must fail connect");
+    assert_eq!(err.code, LoomErrorCode::RpcAuthFailed);
 }

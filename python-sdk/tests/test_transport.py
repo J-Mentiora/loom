@@ -35,12 +35,12 @@ def test_hello_auth_succeeds(daemon: MockDaemon):
 
 
 def test_hello_auth_fails_wrong_token(daemon: MockDaemon):
-    """Wrong token: LoomRPCError(protocol_auth_required) raised on first call."""
-    t = LoomTransport(str(daemon.socket_path), "wrong-token")
+    """Wrong token: typed LoomRPCError(protocol_auth_required) raised at
+    construction — the handshake probe surfaces the rejection immediately
+    instead of deferring it to the first call."""
     with pytest.raises(LoomRPCError) as exc_info:
-        t.call("session.list", {})
+        LoomTransport(str(daemon.socket_path), "wrong-token")
     assert exc_info.value.code == "protocol_auth_required"
-    t.close()
 
 
 def test_method_not_found_raises_error(daemon: MockDaemon):
@@ -81,43 +81,93 @@ def test_multiple_calls_on_same_connection(daemon: MockDaemon):
 
 def test_bare_error_frame_surfaces_message(daemon: MockDaemon):
     """The bare auth-failure frame parses into a typed LoomRPCError with the
-    daemon's code AND message, not a generic connection error."""
-    t = LoomTransport(str(daemon.socket_path), "wrong-token")
+    daemon's code AND message, not a generic connection error — raised at
+    construction by the handshake."""
     with pytest.raises(LoomRPCError) as exc_info:
-        t.call("session.list", {})
+        LoomTransport(str(daemon.socket_path), "wrong-token")
     assert exc_info.value.code == "protocol_auth_required"
     assert "token mismatch" in exc_info.value.message
-    t.close()
-
-
-def test_auth_failure_latched_for_subsequent_calls(daemon: MockDaemon):
-    """After the daemon closes post-auth-failure, later calls must re-raise
-    the same typed error — not BrokenPipeError or a generic close error."""
-    t = LoomTransport(str(daemon.socket_path), "wrong-token")
-    with pytest.raises(LoomRPCError):
-        t.call("session.list", {})
-    with pytest.raises(LoomRPCError) as exc_info:
-        t.call("session.list", {})
-    assert exc_info.value.code == "protocol_auth_required"
-    t.close()
 
 
 async def test_async_transport_recognizes_bare_auth_frame(daemon: MockDaemon):
     """The async reader loop must recognize the id-less bare error frame and
-    fail the pending call with the typed auth error."""
+    fail the handshake probe with the typed auth error at connect()."""
     from loom._async_transport import AsyncLoomTransport
 
-    t = await AsyncLoomTransport.connect(str(daemon.socket_path), "wrong-token")
+    with pytest.raises(LoomRPCError) as exc_info:
+        await AsyncLoomTransport.connect(str(daemon.socket_path), "wrong-token")
+    assert exc_info.value.code == "protocol_auth_required"
+
+
+# ─── HELLO ack handshake (connection-protocol redesign) ───────────────────
+# New clients pipeline a daemon.hello probe after HELLO. New daemons ack it
+# with {"hello": "ok", "server": <version>}; pre-ack daemons (<= 0.10.x)
+# answer a normal method_not_found envelope — both prove auth passed. The
+# default MockDaemon has no daemon.hello handler, so every other test in
+# this file already exercises the old-daemon path.
+
+
+def test_handshake_old_daemon_method_not_found_authenticates(daemon: MockDaemon):
+    """Old-daemon compat: a method_not_found reply to the probe counts as
+    authenticated and calls proceed normally."""
+    with LoomTransport(str(daemon.socket_path), daemon.token) as t:
+        assert isinstance(t.call("session.list", {}), list)
+
+
+def test_handshake_new_daemon_ack_authenticates(daemon: MockDaemon):
+    """New-daemon path: the explicit {"hello": "ok", "server": ...} ack
+    resolves the handshake and calls proceed normally."""
+    daemon.register_handler("daemon.hello", lambda _p: {"hello": "ok", "server": "test"})
+    with LoomTransport(str(daemon.socket_path), daemon.token) as t:
+        assert isinstance(t.call("session.list", {}), list)
+
+
+async def test_async_handshake_new_daemon_ack_authenticates(daemon: MockDaemon):
+    from loom._async_transport import AsyncLoomTransport
+
+    daemon.register_handler("daemon.hello", lambda _p: {"hello": "ok", "server": "test"})
+    t = await AsyncLoomTransport.connect(str(daemon.socket_path), daemon.token)
     try:
-        with pytest.raises(LoomRPCError) as exc_info:
-            await t.call("session.list", {})
-        assert exc_info.value.code == "protocol_auth_required"
-        # Latched: subsequent calls surface the same typed error.
-        with pytest.raises(LoomRPCError) as exc_info2:
-            await t.call("session.list", {})
-        assert exc_info2.value.code == "protocol_auth_required"
+        assert isinstance(await t.call("session.list", {}), list)
     finally:
         await t.close()
+
+
+def test_handshake_wedged_daemon_times_out(monkeypatch):
+    """A daemon that accepts the connection but never answers the probe must
+    fail construction in bounded time with a connection error — silence is a
+    wedged daemon, not an accepted HELLO."""
+    import tempfile
+
+    import loom._transport as transport_mod
+
+    monkeypatch.setattr(transport_mod, "_HANDSHAKE_TIMEOUT_S", 0.3)
+
+    # tempfile.mkdtemp keeps the AF_UNIX path under the 104-byte cap
+    # (pytest's tmp_path can exceed it on macOS).
+    sock_path = Path(tempfile.mkdtemp()) / "wedged.sock"
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(sock_path))
+    server.listen(1)
+
+    def _serve():
+        conn, _ = server.accept()
+        # Read frames forever; never answer.
+        try:
+            while conn.recv(4096):
+                pass
+        except OSError:
+            pass
+
+    thread = threading.Thread(target=_serve, daemon=True)
+    thread.start()
+    try:
+        from loom._errors import LoomConnectionError
+
+        with pytest.raises(LoomConnectionError, match="handshake"):
+            LoomTransport(str(sock_path), "any-token")
+    finally:
+        server.close()
 
 
 def test_from_bare_frame_recognizes_daemon_auth_shape():

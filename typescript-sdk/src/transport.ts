@@ -4,8 +4,13 @@
  * Wire protocol:
  *  - Framing: 4-byte big-endian uint32 length prefix + payload bytes.
  *  - HELLO handshake: first frame sent MUST be `HELLO {token}` (UTF-8,
- *    no trailing newline). Server sends NO ACK on success. On auth failure,
- *    server sends one error frame then closes.
+ *    no trailing newline), followed by a pipelined `daemon.hello` probe
+ *    (JSON-RPC id 0). New daemons ack the probe with
+ *    `{"hello": "ok", "server": <version>}`; pre-ack daemons (<= 0.10.x)
+ *    answer a normal `method_not_found` envelope — either reply proves
+ *    auth passed. On auth failure the daemon sends one BARE error frame
+ *    ({code, message}, no envelope keys) then closes; close without an
+ *    ack is an auth failure too.
  *  - All subsequent frames are JSON-RPC 2.0 request/response pairs.
  *
  * Token discovery order (if token not supplied explicitly):
@@ -57,6 +62,11 @@ interface PendingCall {
   settled: boolean;
 }
 
+/** Upper bound on waiting for the `daemon.hello` handshake reply. Every
+ * daemon (old or new) answers a well-formed request frame, so this only
+ * fires against a wedged daemon. */
+const HELLO_ACK_TIMEOUT_MS = 5000;
+
 export interface CallOptions {
   /** Cancel the in-flight call. On abort, the transport fires a
    * `request.cancel` JSON-RPC notification at the daemon and rejects the
@@ -73,10 +83,11 @@ export class LoomTransport {
   private _recvBuffer: Buffer = Buffer.alloc(0);
 
   // ─── MULTIPLEXER STATE ─────────────────────────────────────────────────
-  // Monotonic id allocator + id-keyed pending map + single persistent data
-  // listener. Required for `request.cancel` correlation: the cancel
-  // response can arrive on the same connection while the original call is
-  // still awaiting, and per-call listeners would mis-route the frame.
+  // Monotonic id allocator (id 0 is reserved for the handshake probe) +
+  // id-keyed pending map + single persistent data listener. Required for
+  // `request.cancel` correlation: the cancel response can arrive on the
+  // same connection while the original call is still awaiting, and
+  // per-call listeners would mis-route the frame.
   // Mirror in python-sdk/loom/_async_transport.py.
   // ───────────────────────────────────────────────────────────────────────
   private _nextId = 1;
@@ -103,7 +114,7 @@ export class LoomTransport {
   }
 
   async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
+    await new Promise<void>((resolve, reject) => {
       const sock = net.createConnection({ path: this._path });
       sock.once("connect", () => {
         this._socket = sock;
@@ -118,7 +129,7 @@ export class LoomTransport {
         sock.on("data", this._onData);
         sock.on("error", this._onError);
         sock.on("close", this._onClose);
-        // Send HELLO frame — no ACK expected from server.
+        // Send HELLO frame; the ack probe follows below.
         const hello = Buffer.from(`HELLO ${this._token}`, "utf8");
         this._sendFrame(hello);
         resolve();
@@ -130,6 +141,64 @@ export class LoomTransport {
           ),
         );
       });
+    });
+    await this._awaitHelloAck();
+  }
+
+  /**
+   * Pipeline the opt-in `daemon.hello` ack probe and await its
+   * id-correlated reply (id 0 is reserved for the handshake; call ids
+   * start at 1). New daemons ack with `{"hello": "ok", "server": ...}`;
+   * pre-ack daemons (<= 0.10.x) answer `method_not_found` — either way
+   * the daemon only reached its request loop because auth passed.
+   * A bare auth-rejection frame rejects every pending entry (including
+   * this probe) with the typed LoomRPCError; close-without-ack rejects
+   * with a connection error; silence means a wedged daemon. This
+   * replaces the old "no ack expected" behavior where auth failures
+   * surfaced only on the first call.
+   */
+  private _awaitHelloAck(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const id = 0;
+      const timer = setTimeout(() => {
+        this._pending.delete(id);
+        reject(
+          new LoomConnectionError(
+            `Daemon did not answer the HELLO handshake within ${HELLO_ACK_TIMEOUT_MS} ms (wedged daemon?)`,
+          ),
+        );
+      }, HELLO_ACK_TIMEOUT_MS);
+      const entry: PendingCall = {
+        resolve: () => {},
+        reject: () => {},
+        settled: false,
+      };
+      entry.resolve = () => {
+        if (entry.settled) return;
+        entry.settled = true;
+        clearTimeout(timer);
+        resolve();
+      };
+      entry.reject = (e: Error) => {
+        if (entry.settled) return;
+        entry.settled = true;
+        clearTimeout(timer);
+        if (e instanceof LoomRPCError && e.code === "method_not_found") {
+          // Pre-ack daemon: it answered the probe from its request
+          // loop, which it only reaches when auth passed.
+          resolve();
+          return;
+        }
+        reject(e);
+      };
+      this._pending.set(id, entry);
+      const probe = JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        method: "daemon.hello",
+        params: {},
+      });
+      this._sendFrame(Buffer.from(probe, "utf8"));
     });
   }
 

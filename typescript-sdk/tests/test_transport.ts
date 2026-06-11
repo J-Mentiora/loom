@@ -38,11 +38,12 @@ describe("Transport: framing + auth + call/response", () => {
     await t.close();
   });
 
-  test("HELLO auth fails with wrong token → LoomRPCError(protocol_auth_required)", async () => {
+  test("HELLO auth fails with wrong token → LoomRPCError(protocol_auth_required) at connect", async () => {
     const t = new LoomTransport(daemon.socketPath, "wrong-token");
-    await t.connect();
+    // The handshake probe surfaces the rejection at connect() — typed,
+    // not deferred to the first call.
     await assert.rejects(
-      () => t.call("session.list", {}),
+      () => t.connect(),
       (err: unknown) => {
         assert.ok(err instanceof LoomRPCError);
         assert.strictEqual((err as LoomRPCError).code, "protocol_auth_required");
@@ -113,9 +114,8 @@ describe("Transport: bare daemon error frames", () => {
 
   test("bare auth-failure frame surfaces code AND message, not a generic close", async () => {
     const t = new LoomTransport(daemon.socketPath, "wrong-token");
-    await t.connect();
     await assert.rejects(
-      () => t.call("session.list", {}),
+      () => t.connect(),
       (err: unknown) => {
         assert.ok(err instanceof LoomRPCError);
         assert.strictEqual((err as LoomRPCError).code, "protocol_auth_required");
@@ -126,12 +126,11 @@ describe("Transport: bare daemon error frames", () => {
     await t.close();
   });
 
-  test("auth failure is latched: subsequent calls re-throw the typed error", async () => {
+  test("auth failure is latched: calls after a failed connect re-throw the typed error", async () => {
     const t = new LoomTransport(daemon.socketPath, "wrong-token");
-    await t.connect();
-    await assert.rejects(() => t.call("session.list", {}), LoomRPCError);
-    // The daemon already closed the connection; the second call must
-    // surface the same typed auth error, not a generic connection error.
+    await assert.rejects(() => t.connect(), LoomRPCError);
+    // The latched daemon error must surface on calls too — typed, not a
+    // generic connection error.
     await assert.rejects(
       () => t.call("session.list", {}),
       (err: unknown) => {
@@ -140,6 +139,26 @@ describe("Transport: bare daemon error frames", () => {
         return true;
       },
     );
+    await t.close();
+  });
+
+  test("ack handshake: old daemon's method_not_found probe reply authenticates", async () => {
+    // The default MockDaemon has no daemon.hello handler, so the probe
+    // gets the pre-ack daemon's method_not_found envelope — connect()
+    // must treat that as authenticated.
+    const t = new LoomTransport(daemon.socketPath, daemon.token);
+    await t.connect();
+    const result = await t.call("session.list", {});
+    assert.ok(Array.isArray(result));
+    await t.close();
+  });
+
+  test("ack handshake: new daemon's {hello: ok} ack authenticates", async () => {
+    daemon.registerHandler("daemon.hello", () => ({ hello: "ok", server: "test" }));
+    const t = new LoomTransport(daemon.socketPath, daemon.token);
+    await t.connect();
+    const result = await t.call("session.list", {});
+    assert.ok(Array.isArray(result));
     await t.close();
   });
 

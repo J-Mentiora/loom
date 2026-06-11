@@ -320,6 +320,34 @@ impl Drop for ActionActivityGuard {
     }
 }
 
+/// Acquire the per-session dispatch fence, failing fast with a typed
+/// `too_many_requests` when another surface-verb dispatch holds it.
+///
+/// The slot is held for the FULL blocking dispatch — including after the
+/// RPC layer abandons the request on timeout/cancel (the spawn_blocking
+/// work runs detached to completion). Holding-until-done is the fence:
+/// a later action on the same session cannot start while the abandoned
+/// work might still mutate browser/session state, and per-session WAL +
+/// receipt order stays strictly dispatch-ordered (NFR-DET-01). Sequential
+/// clients never see the busy error — the slot is released before the
+/// previous response is written. Only pipelined same-session actions and
+/// post-timeout/cancel races do, and `too_many_requests` carries
+/// back-off-and-retry semantics in every client.
+fn acquire_dispatch_slot(
+    session: &loom_core::session_manager::Session,
+) -> Result<parking_lot::MutexGuard<'_, ()>, HostAdapterError> {
+    use loom_rpc::error_translator::error_translator::LoomErrorCode;
+    session.dispatch_slot.try_lock().ok_or_else(|| {
+        tracing::warn!(
+            metric = "loom_daemon_session_dispatch_busy",
+            session_id = %session.id.0,
+            "rejecting action: a previous dispatch on this session is still running \
+             (possibly abandoned by a timeout/cancel; it is fenced until it finishes)"
+        );
+        LoomErrorCode::TooManyRequests
+    })
+}
+
 // ─── Bridge: CoreApiFacade → CoreFacadeBridge ───────────────────────────────
 
 /// Wraps `Arc<CoreApiFacade>` and implements the `CoreFacadeBridge`
@@ -1086,6 +1114,15 @@ impl WasmHostBridge for WasmBridge {
             }
         }
 
+        // Per-session dispatch fence: serialize surface-verb dispatch per
+        // session and fail fast (`too_many_requests`) while a previous —
+        // possibly timeout/cancel-abandoned — dispatch is still running.
+        // Held for the WHOLE blocking dispatch; released on every return
+        // path via the guard's Drop. Placed AFTER the terminal-status
+        // check (cheap rejection first) and BEFORE the activity guard so
+        // a fenced-out action never touches `in_flight`.
+        let _slot = acquire_dispatch_slot(&session)?;
+
         // Activity tracking for the idle reaper: mark the action in-flight for the WHOLE
         // dispatch (so an actively-working session is never seen as idle, even a single long
         // navigate) and bump `last_activity` on both entry and exit. The guard's Drop runs on
@@ -1282,15 +1319,17 @@ impl WasmHostBridge for WasmBridge {
             let host = Arc::clone(&self.host);
             let sid = session_id_str.to_string();
             let action_id = session.allocate_action_id();
-            let data = tokio::task::block_in_place(|| handle.block_on(host.network_log(&sid)))
-                .map_err(|e| {
-                    tracing::error!(
-                        session_id = %sid,
-                        error = %e,
-                        "web.network_log failed"
-                    );
-                    map_loom_error(&e)
-                })?;
+            // Plain block_on: we're on a spawn_blocking thread (see the
+            // WasmHostBridge threading contract) — block_in_place would
+            // panic here, and isn't needed off the worker pool.
+            let data = handle.block_on(host.network_log(&sid)).map_err(|e| {
+                tracing::error!(
+                    session_id = %sid,
+                    error = %e,
+                    "web.network_log failed"
+                );
+                map_loom_error(&e)
+            })?;
             return Ok(build_network_log_receipt(action_id, session_id_str, data));
         }
 
@@ -1385,26 +1424,28 @@ impl WasmHostBridge for WasmBridge {
         };
 
         let host = Arc::clone(&self.host);
-        let outcome = tokio::task::block_in_place(|| {
-            handle.block_on(host.dispatch(host_action, session_handle))
-        })
-        .map_err(|e| {
-            // Surface-side dispatch failed at the wasmtime / IPC layer.
-            // Don't drop the error message — it's our only signal for
-            // diagnosing why navigate / click / evaluate trapped (e.g.
-            // shim crash, WIT signature mismatch, OOM in the guest).
-            // The ERROR-level log fires regardless of RUST_LOG since the
-            // subscriber's default fallback is `warn`. The wire kind
-            // stays `SurfaceTrap` so existing CLI / receipt schemas
-            // don't churn.
-            tracing::error!(
-                surface = %action_surface(&action),
-                method = %action_verb(&action),
-                error = %e,
-                "host.dispatch failed → SurfaceTrap"
-            );
-            LoomErrorCode::SurfaceTrap
-        })?;
+        // Plain block_on: we're on a spawn_blocking thread (see the
+        // WasmHostBridge threading contract) — block_in_place would
+        // panic here, and isn't needed off the worker pool.
+        let outcome = handle
+            .block_on(host.dispatch(host_action, session_handle))
+            .map_err(|e| {
+                // Surface-side dispatch failed at the wasmtime / IPC layer.
+                // Don't drop the error message — it's our only signal for
+                // diagnosing why navigate / click / evaluate trapped (e.g.
+                // shim crash, WIT signature mismatch, OOM in the guest).
+                // The ERROR-level log fires regardless of RUST_LOG since the
+                // subscriber's default fallback is `warn`. The wire kind
+                // stays `SurfaceTrap` so existing CLI / receipt schemas
+                // don't churn.
+                tracing::error!(
+                    surface = %action_surface(&action),
+                    method = %action_verb(&action),
+                    error = %e,
+                    "host.dispatch failed → SurfaceTrap"
+                );
+                LoomErrorCode::SurfaceTrap
+            })?;
 
         match outcome {
             ActionOutcome::Success { builder, .. } => Ok(build_navigate_wire_receipt(

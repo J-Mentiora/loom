@@ -29,6 +29,8 @@ dirs = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 hex = { workspace = true }
+# Per-session dispatch fence guard type (Session.dispatch_slot).
+parking_lot = { workspace = true }
 humantime = { workspace = true }
 zeroize = { workspace = true }
 # Reaper process primitives: kill(0)/killpg for orphan-Chromium GC.

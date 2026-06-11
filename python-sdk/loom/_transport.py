@@ -4,8 +4,13 @@ Synchronous Unix socket transport for the loom JSON-RPC 2.0 protocol.
 Wire protocol:
 - Framing: 4-byte big-endian uint32 length prefix + payload bytes.
 - HELLO handshake: first frame sent MUST be ``HELLO {token}`` (UTF-8,
-  no trailing newline). Server sends NO ACK on success. On auth failure,
-  server sends one error frame then closes.
+  no trailing newline), followed by a pipelined ``daemon.hello`` probe
+  (JSON-RPC id 0). New daemons ack the probe with
+  ``{"hello": "ok", "server": <version>}``; pre-ack daemons (<= 0.10.x)
+  answer a normal ``method_not_found`` envelope — either reply proves
+  auth passed. On auth failure the daemon sends one BARE error frame
+  ({"code", "message"}, no envelope keys) then closes; close without an
+  ack is treated as an auth failure too.
 - All subsequent frames are JSON-RPC 2.0 request/response pairs.
 
 Token discovery order (if ``token`` not supplied explicitly):
@@ -38,6 +43,12 @@ def _default_socket_path() -> str:
     return str(Path(xdg) / "loom.sock")
 
 
+# Upper bound on waiting for the daemon.hello handshake reply. Every
+# daemon (old or new) answers a well-formed request frame, so this only
+# fires against a wedged daemon.
+_HANDSHAKE_TIMEOUT_S = 5.0
+
+
 def _resolve_token(token: str | None) -> str:
     if token is not None:
         return token
@@ -65,11 +76,12 @@ class LoomTransport:
     def __init__(self, socket_path: str | None = None, token: str | None = None) -> None:
         self._path = socket_path or _default_socket_path()
         self._token = _resolve_token(token)
-        # Monotonic id allocator. The sync transport is single-in-flight
-        # by design (one call() at a time on one instance); the allocator
-        # exists so that JSON-RPC `id` values are unique-per-connection,
-        # which the daemon's `request.cancel` correlation requires for any
-        # future concurrent path. For cancellable / concurrent use, see
+        # Monotonic id allocator (id 0 is reserved for the handshake
+        # probe). The sync transport is single-in-flight by design (one
+        # call() at a time on one instance); the allocator exists so
+        # that JSON-RPC `id` values are unique-per-connection, which the
+        # daemon's `request.cancel` correlation requires for any future
+        # concurrent path. For cancellable / concurrent use, see
         # AsyncLoomTransport.
         self._next_id: int = 1
         # Latched daemon-level protocol error (e.g. the HELLO auth-failure
@@ -84,10 +96,61 @@ class LoomTransport:
             raise LoomConnectionError(
                 f"Cannot connect to loom socket at {self._path}: {exc}"
             ) from exc
-        # Send HELLO frame — no ACK expected from server.
-        # Auth failure surfaces as an error envelope on the first call().
-        hello = f"HELLO {self._token}".encode()
-        self._send_frame(hello)
+        # Send HELLO + the pipelined daemon.hello ack probe (probe id 0
+        # is reserved for the handshake; call() ids start at 1). Auth
+        # failures now surface HERE as a typed error, not on the first
+        # call().
+        try:
+            self._send_frame(f"HELLO {self._token}".encode())
+            probe = json.dumps(
+                {"jsonrpc": "2.0", "id": 0, "method": "daemon.hello", "params": {}}
+            )
+            self._send_frame(probe.encode("utf-8"))
+            self._complete_handshake()
+        except Exception:
+            self._sock.close()
+            raise
+
+    def _complete_handshake(self) -> None:
+        """Wait (bounded) for the ``daemon.hello`` probe's reply.
+
+        Any id-correlated JSON-RPC envelope means authenticated: new
+        daemons ack with ``{"hello": "ok", "server": ...}``, pre-ack
+        daemons (<= 0.10.x) answer ``method_not_found`` — the daemon
+        only reaches its request loop after a successful HELLO. A BARE
+        ``JsonRpcError`` frame is the typed auth rejection; close or
+        silence means rejection or a wedged daemon respectively.
+        """
+        self._sock.settimeout(_HANDSHAKE_TIMEOUT_S)
+        try:
+            frame = self._recv_frame()
+        except (socket.timeout, TimeoutError) as exc:
+            raise LoomConnectionError(
+                "Daemon did not answer the HELLO handshake within "
+                f"{_HANDSHAKE_TIMEOUT_S:g}s (wedged daemon?)"
+            ) from exc
+        except LoomConnectionError as exc:
+            # Closed without an ack = auth rejection (the daemon's bare
+            # error frame can be lost with the close).
+            raise LoomConnectionError(
+                "Connection closed during the HELLO handshake "
+                "(authentication rejected?)"
+            ) from exc
+        finally:
+            self._sock.settimeout(None)
+        try:
+            response = json.loads(frame)
+        except json.JSONDecodeError as exc:
+            raise LoomConnectionError(
+                "Malformed frame during the HELLO handshake"
+            ) from exc
+        bare = LoomRPCError._from_bare_frame(response)
+        if bare is not None:
+            # Typed auth rejection. Latch so any later call() re-raises.
+            self._daemon_error = bare
+            raise bare
+        # Anything id-correlated (ack result or an old daemon's
+        # method_not_found error envelope) = authenticated.
 
     # ------------------------------------------------------------------ #
     # Public API

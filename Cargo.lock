@@ -2334,6 +2334,7 @@ dependencies = [
  "loom-keychain",
  "loom-rpc",
  "loom-shared",
+ "parking_lot",
  "serde",
  "serde_jcs",
  "serde_json",

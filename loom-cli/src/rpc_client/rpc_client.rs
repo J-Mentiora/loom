@@ -66,8 +66,20 @@ impl RpcClient {
     /// HELLO handshake. Returns the authenticated stream — `connect`
     /// discards it, `call` reuses it for the request/response exchange.
     ///
-    /// HELLO semantics: timeout on the read-back = accepted; any frame or
-    /// EOF before the timeout = rejected (`AuthFailed`).
+    /// HELLO semantics (positive ack with old-daemon fallback): the
+    /// client pipelines a `daemon.hello` probe after the HELLO frame and
+    /// waits for exactly one frame.
+    ///   - JSON-RPC envelope (has `jsonrpc`/`id`) → authenticated. New
+    ///     daemons ack with `{"hello":"ok","server":<version>}`; pre-ack
+    ///     daemons (≤0.10.x) answer `method_not_found` — either way the
+    ///     daemon only reached its request loop because auth passed.
+    ///   - bare error frame (`{code, message}`, no envelope keys) or
+    ///     EOF/close without an ack → `AuthFailed`.
+    ///   - no frame within `request_timeout` → daemon wedged →
+    ///     `ConnectionTimeout`.
+    ///
+    /// Replaces the 'timeout = accepted' heuristic that stalled every
+    /// call 50 ms and misread late rejections as success.
     async fn open_and_hello(&self) -> Result<tokio::net::UnixStream, CliError> {
         // Resolved `auth_dir` (file + LOOM_AUTH_DIR env per ConfigResolver),
         // not the hardcoded platform default — custom `--data-root` daemon
@@ -97,14 +109,42 @@ impl RpcClient {
             .map_err(|_| {
                 CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
             })?;
-        // Timeout = accepted; any frame or EOF before timeout = rejected.
-        let hello = tokio::time::timeout(Duration::from_millis(50), recv_frame(&mut stream)).await;
-        if hello.is_ok() {
-            return Err(CliError::Connection(
+        // Opt-in ack probe, pipelined behind HELLO (id 0 is reserved for
+        // the probe; `call` uses id 1).
+        let probe = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 0,
+            "method": "daemon.hello",
+            "params": {},
+        });
+        let probe_bytes =
+            serde_json::to_vec(&probe).map_err(|e| CliError::Internal(e.to_string()))?;
+        send_frame(&mut stream, &probe_bytes).await.map_err(|_| {
+            CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning)
+        })?;
+
+        let frame = tokio::time::timeout(self.config.request_timeout, recv_frame(&mut stream))
+            .await
+            .map_err(|_| {
+                // No probe answer at all: every daemon (old or new)
+                // answers a well-formed request frame, so silence means
+                // a wedged daemon, not an old one.
+                CliError::Connection(crate::error_mapper::ConnectionError::ConnectionTimeout)
+            })?
+            // EOF / close without an ack = auth rejection.
+            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed))?;
+        let response: serde_json::Value = serde_json::from_slice(&frame)
+            .map_err(|_| CliError::Connection(crate::error_mapper::ConnectionError::AuthFailed))?;
+        // JSON-RPC envelope = authenticated (new-daemon ack OR a pre-ack
+        // daemon's method_not_found). A bare `{code, message}` frame is
+        // the daemon's typed auth rejection.
+        if response.get("jsonrpc").is_some() || response.get("id").is_some() {
+            Ok(stream)
+        } else {
+            Err(CliError::Connection(
                 crate::error_mapper::ConnectionError::AuthFailed,
-            ));
+            ))
         }
-        Ok(stream)
     }
 
     /// Open the Unix-socket connection and complete the HELLO

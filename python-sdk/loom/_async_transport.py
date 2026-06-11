@@ -21,7 +21,7 @@ import struct
 from typing import Any
 
 from loom._errors import LoomConnectionError, LoomRPCError
-from loom._transport import _default_socket_path, _resolve_token
+from loom._transport import _HANDSHAKE_TIMEOUT_S, _default_socket_path, _resolve_token
 
 
 class AsyncLoomTransport:
@@ -68,13 +68,40 @@ class AsyncLoomTransport:
         except OSError as exc:
             raise LoomConnectionError(f"Cannot connect to loom socket at {path}: {exc}") from exc
         transport = cls(reader, writer)
-        # Send HELLO frame — no ACK expected from server.
+        # Send HELLO + the pipelined daemon.hello ack probe (probe id 0
+        # is reserved for the handshake; call() ids start at 1). New
+        # daemons ack with {"hello": "ok", "server": <version>}; pre-ack
+        # daemons (<= 0.10.x) answer a method_not_found envelope —
+        # either reply proves auth passed (rejections are a bare
+        # JsonRpcError frame + close, which the reader latches typed).
         hello = f"HELLO {resolved_token}".encode()
         await transport._send_frame(hello)
-        # Spawn the persistent reader task BEFORE returning. The reader
-        # pumps frames into the pending map for the lifetime of the
-        # connection.
+        loop = asyncio.get_running_loop()
+        ack_future: asyncio.Future[Any] = loop.create_future()
+        transport._pending[0] = ack_future
+        probe = json.dumps(
+            {"jsonrpc": "2.0", "id": 0, "method": "daemon.hello", "params": {}}
+        )
+        await transport._send_frame(probe.encode("utf-8"))
+        # Spawn the persistent reader task BEFORE awaiting the ack. The
+        # reader pumps frames into the pending map for the lifetime of
+        # the connection.
         transport._reader_task = asyncio.create_task(transport._reader_loop())
+        try:
+            # Any id-correlated envelope = authenticated (ack result OR
+            # an old daemon's method_not_found error envelope). A bare
+            # auth-rejection frame fails this future with the typed
+            # LoomRPCError; EOF fails it with LoomConnectionError.
+            await asyncio.wait_for(ack_future, timeout=_HANDSHAKE_TIMEOUT_S)
+        except asyncio.TimeoutError:
+            await transport.close()
+            raise LoomConnectionError(
+                "Daemon did not answer the HELLO handshake within "
+                f"{_HANDSHAKE_TIMEOUT_S:g}s (wedged daemon?)"
+            ) from None
+        except (LoomRPCError, LoomConnectionError):
+            await transport.close()
+            raise
         return transport
 
     async def call(self, method: str, params: dict[str, Any]) -> Any:
