@@ -109,8 +109,7 @@ fn make_harness(config: WasmRuntimeConfig) -> Harness {
 
     let registry = HostFunctionRegistry::new(runtime.engine()).expect("registry");
     let obs = HostObservability::new(true);
-    let receipts = ReceiptMarshaller::new(core.manifest_writer(), core.budget_enforcer());
-    let trap_handler = TrapHandler::new(obs.clone(), receipts);
+    let trap_handler = TrapHandler::new(obs.clone());
     let executor = SessionExecutor::new(runtime, library, trap_handler, obs.clone());
     Harness {
         executor,
@@ -121,7 +120,7 @@ fn make_harness(config: WasmRuntimeConfig) -> Harness {
     }
 }
 
-fn make_session(abort_signal: Arc<Notify>) -> SessionHandle {
+fn make_session(h: &Harness, abort_signal: Arc<Notify>) -> SessionHandle {
     SessionHandle {
         session_id: SessionId("01PREEMPTTEST".into()),
         handle: tokio::runtime::Handle::current(),
@@ -135,6 +134,10 @@ fn make_session(abort_signal: Arc<Notify>) -> SessionHandle {
         no_determinism: false,
         profile: "safe".into(),
         downloads_dir: None,
+        determinism: Arc::new(loom_core::determinism_harness::DeterminismHarness::new(
+            42,
+            h.core.manifest_writer(),
+        )),
     }
 }
 
@@ -181,7 +184,7 @@ fn busy_action() -> Action {
 async fn run_busy(h: &Harness, abort_signal: Arc<Notify>) -> ActionOutcome {
     let linker = h.registry.linker_for(Mode::Live);
     let host_state = make_host_state(h);
-    let session = make_session(abort_signal);
+    let session = make_session(h, abort_signal);
     tokio::time::timeout(
         Duration::from_secs(30),
         h.executor

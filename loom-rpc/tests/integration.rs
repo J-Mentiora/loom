@@ -615,7 +615,9 @@ async fn test_content_get_malformed_artifact_ref_returns_schema_violation() {
         code, "internal_error",
         "well-formed ref must reach the core bridge; got: {resp}"
     );
-// ─── Test 6: Oversized frame → typed error envelope, then close ──────────────
+}
+
+// ─── Test 7: Oversized frame → typed error envelope, then close ──────────────
 
 /// Regression: a frame whose length prefix exceeds `MAX_FRAME_BYTES`
 /// (e.g. `loom import playwright` hex-encoding a >8 MiB trace into one
