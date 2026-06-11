@@ -73,11 +73,14 @@ jobs:
           INPUT_SCOPE: ${{ inputs.scope }}
         run: |
           set -euo pipefail
-          if npm access list packages "@$INPUT_SCOPE" >/tmp/pkgs.json 2>/tmp/pkgs.err; then
-            # `npm access list packages` returns either a JSON object or an
-            # empty body when the scope has zero packages (brand-new scope).
-            # Both are success signals — the auth + scope are valid. Fail
-            # only if the command itself errored.
+          if npm access list packages "@$INPUT_SCOPE" --json >/tmp/pkgs.json 2>/tmp/pkgs.err; then
+            # `--json` is required: without it npm 9/10 prints plain
+            # `name: permission` text lines, which the strict JSON parse
+            # below would reject whenever the scope has >=1 package. With
+            # `--json` the output is a JSON object (`{}` for a brand-new
+            # scope with zero packages); an empty body is kept as a
+            # defensive success signal too. Fail only if the command
+            # itself errored.
             if [ ! -s /tmp/pkgs.json ]; then
               echo "✓ token can manage scope @$INPUT_SCOPE (empty — no packages yet)"
               echo "::notice title=Scope @$INPUT_SCOPE::publish access confirmed (0 packages)"

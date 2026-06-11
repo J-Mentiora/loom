@@ -108,6 +108,9 @@ jobs:
     timeout-minutes: 10
     # Publish on a real tag push, or a manual dispatch with dry-run unchecked.
     # PRs and dry-run dispatches stop after the build job above.
+    # No prerelease gate needed here (unlike publish-npm.yml's dist-tag
+    # handling): PyPI has no dist-tag concept and pip excludes pre-release
+    # versions by default unless --pre or an exact pin is used.
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && !inputs.dry-run)
