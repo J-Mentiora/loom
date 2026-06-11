@@ -71,3 +71,59 @@ fn seven_individual_check_functions_compile() {
     let _ = check_session_health;
     let _ = check_browser_smoke;
 }
+
+// === browser_smoke at-capacity classification (typed-capacity-errors) ===
+//
+// A saturated-but-healthy daemon must surface as the warn-class
+// `at_capacity` status, never a `fail` — only the daemon's TYPED
+// `session_cap_exceeded` envelope qualifies.
+
+#[test]
+fn session_cap_detail_recognizes_typed_cap_envelope_with_counts() {
+    use super::doctor_runner::session_cap_detail;
+    use crate::CliError;
+
+    let e = CliError::Receipt(serde_json::json!({
+        "code": "session_cap_exceeded",
+        "message": "concurrent session cap reached (16/16)",
+        "data": { "active": 16, "cap": 16,
+                  "hint": "close sessions or run `loom session reap`" },
+    }));
+    let detail = session_cap_detail(&e).expect("typed cap envelope must classify");
+    assert!(
+        detail.contains("active_sessions=16") && detail.contains("cap=16"),
+        "detail must agree with session_health's counts: {detail}"
+    );
+    assert!(
+        detail.contains("loom session reap"),
+        "detail must carry the remediation: {detail}"
+    );
+}
+
+#[test]
+fn session_cap_detail_tolerates_missing_data_counts() {
+    use super::doctor_runner::session_cap_detail;
+    use crate::CliError;
+
+    // Typed code but no structured data (defensive: older daemon shape).
+    let e = CliError::Receipt(serde_json::json!({ "code": "session_cap_exceeded" }));
+    let detail = session_cap_detail(&e).expect("code alone must still classify");
+    assert!(detail.contains("at capacity"), "got: {detail}");
+}
+
+#[test]
+fn session_cap_detail_rejects_other_errors() {
+    use super::doctor_runner::session_cap_detail;
+    use crate::CliError;
+
+    // A genuine failure (the historic opaque shape) must stay a failure.
+    let internal = CliError::Receipt(serde_json::json!({
+        "code": "internal_error",
+        "message": "session.create failed",
+    }));
+    assert!(session_cap_detail(&internal).is_none());
+
+    // Non-receipt errors (connection faults etc.) must stay failures too.
+    let conn = CliError::Connection(crate::error_mapper::ConnectionError::DaemonNotRunning);
+    assert!(session_cap_detail(&conn).is_none());
+}

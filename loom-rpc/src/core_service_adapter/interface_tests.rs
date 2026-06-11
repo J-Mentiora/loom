@@ -5,7 +5,7 @@
 
 use super::core_service_adapter::{
     AdapterError, CoreFacadeBridge, CoreServiceAdapter, CoreServiceAdapterApi, CreateSessionParams,
-    DiffReport, ExportInfo, GrantInfo, GrantParams, SessionInfo, SessionInspection,
+    DiffReport, ExportInfo, GrantInfo, GrantParams, LoomError, SessionInfo, SessionInspection,
     ValidationResult, VaultAddInfo, VaultAddParams,
 };
 use std::sync::Arc;
@@ -38,10 +38,12 @@ fn grant_info_has_no_secret_token_or_value_fields() {
 
 #[test]
 fn create_session_signature() {
+    // Full `LoomError` (not a bare `AdapterError` code): the cap
+    // rejection's `{active, cap, hint}` context must reach the envelope.
     fn _ck<A: CoreServiceAdapterApi>(
         a: &A,
         p: CreateSessionParams,
-    ) -> Result<SessionInfo, AdapterError> {
+    ) -> Result<SessionInfo, LoomError> {
         a.create_session(p)
     }
     let _ = _ck::<CoreServiceAdapter>;

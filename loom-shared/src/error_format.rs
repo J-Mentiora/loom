@@ -107,6 +107,17 @@ pub enum LoomErrorCode {
     /// (capacity, default 30). The client should back off and retry;
     /// the bucket refills at the configured RPS.
     TooManyRequests,
+    /// `session.create` rejected because the daemon is at its concurrent-
+    /// session cap (`LOOM_MAX_CONCURRENT_SESSIONS`, default 16). Capacity,
+    /// NOT a fault: the daemon is busy-but-healthy, so back off and retry
+    /// after a slot frees (reconnecting cannot free one), or reclaim slots
+    /// with `loom session reap`. `LoomError.context` carries
+    /// `{active, cap, hint}` so callers can distinguish "back off" from
+    /// "daemon is broken" without string-matching the message. Previously
+    /// this rejection collapsed to the opaque daemon catch-all
+    /// `internal_error` at the AdapterError boundary.
+    /// Wire string: `"session_cap_exceeded"`.
+    SessionCapExceeded,
     /// Transient transport/connection fault on the MCP↔daemon socket — a
     /// broken pipe, a connection closed/EOF with no response, or a daemon
     /// idle-drop of a long-lived connection. **Retryable** via reconnect
@@ -236,6 +247,7 @@ impl LoomErrorCode {
             LoomErrorCode::RequestTimeout => "request_timeout",
             LoomErrorCode::RequestCancelled => "request_cancelled",
             LoomErrorCode::TooManyRequests => "too_many_requests",
+            LoomErrorCode::SessionCapExceeded => "session_cap_exceeded",
             LoomErrorCode::TransportDropped => "transport_dropped",
             LoomErrorCode::LlmCacheMiss => "llm_cache_miss",
             LoomErrorCode::Io => "io",
@@ -312,6 +324,7 @@ impl LoomErrorCode {
             "request-timeout" | "request_timeout" => RequestTimeout,
             "request-cancelled" | "request_cancelled" => RequestCancelled,
             "too-many-requests" | "too_many_requests" => TooManyRequests,
+            "session-cap-exceeded" | "session_cap_exceeded" => SessionCapExceeded,
             "transport-dropped" | "transport_dropped" => TransportDropped,
             "llm-cache-miss" | "llm_cache_miss" => LlmCacheMiss,
             "io" => Io,
@@ -343,11 +356,11 @@ impl LoomErrorCode {
             // A dropped connection: reconnect and retry (bounded, see
             // loom-mcp::rpc_client). Reconnecting re-establishes a fresh socket.
             LoomErrorCode::TransportDropped => RetryDisposition::Reconnect,
-            // Capacity: back off and retry later. Reconnecting cannot free a
-            // slot, so do NOT reconnect.
-            LoomErrorCode::TooManyRequests | LoomErrorCode::BudgetRateLimited => {
-                RetryDisposition::Backoff
-            }
+            // Capacity (rate limit or session-cap): back off and retry later.
+            // Reconnecting cannot free a slot, so do NOT reconnect.
+            LoomErrorCode::TooManyRequests
+            | LoomErrorCode::BudgetRateLimited
+            | LoomErrorCode::SessionCapExceeded => RetryDisposition::Backoff,
             _ => RetryDisposition::None,
         }
     }
@@ -446,6 +459,7 @@ mod tests {
         let cases = [
             LoomErrorCode::SessionNotFound,
             LoomErrorCode::TooManyRequests,
+            LoomErrorCode::SessionCapExceeded,
             LoomErrorCode::TransportDropped,
             LoomErrorCode::SchemaViolation,
             LoomErrorCode::SafeProfileDownloadBlocked,
@@ -535,6 +549,13 @@ mod tests {
             LoomErrorCode::TooManyRequests.retry_disposition(),
             RetryDisposition::Backoff
         );
+        // Cap-hit is capacity, not a fault: back off (reconnecting can't
+        // free a slot), and it IS worth retrying.
+        assert_eq!(
+            LoomErrorCode::SessionCapExceeded.retry_disposition(),
+            RetryDisposition::Backoff
+        );
+        assert!(LoomErrorCode::SessionCapExceeded.is_retryable());
         assert_eq!(
             LoomErrorCode::SessionNotFound.retry_disposition(),
             RetryDisposition::None

@@ -22,8 +22,9 @@ use std::sync::OnceLock;
 /// Maximum number of concurrently-active sessions a single daemon will hold.
 /// Caps unbounded chromium/context growth (each session spawns a chromium shim
 /// plus a `/tmp/loom-chromium-*` profile dir). Overridable via
-/// `LOOM_MAX_CONCURRENT_SESSIONS`; default 16. A cap-hit fails fast with
-/// `TooManyRequests` (retryable via back-off — reconnecting can't free a slot).
+/// `LOOM_MAX_CONCURRENT_SESSIONS`; default 16. A cap-hit fails fast with the
+/// typed `SessionCapExceeded` (wire `session_cap_exceeded`, retryable via
+/// back-off — reconnecting can't free a slot) carrying `{active, cap, hint}`.
 fn max_concurrent_sessions() -> usize {
     static CACHED: OnceLock<usize> = OnceLock::new();
     *CACHED.get_or_init(|| {
@@ -477,7 +478,7 @@ impl CoreFacadeBridge for CoreBridge {
         no_blocklist: bool,
         no_determinism: bool,
         clock_anchor: Option<u64>,
-    ) -> Result<(String, u64), AdapterError> {
+    ) -> Result<(String, u64), LoomError> {
         use loom_core::budget_enforcer::BudgetLimits;
         use loom_core::error::LoomErrorCode;
         use loom_core::session_manager::SessionCreateOpts;
@@ -495,9 +496,19 @@ impl CoreFacadeBridge for CoreBridge {
         // RuntimeCrash by the startup recovery sweep before serving, and
         // corrupt-WAL orphans (torn write from a hard kill) were never counted
         // by either source — the disk scanner reports them "corrupt" and they
-        // are reclaimed by quarantine / `session.reap`. Cap-hit →
-        // `TooManyRequests` so the caller backs off and retries when a slot
-        // frees (NOT a reconnect).
+        // are reclaimed by quarantine / `session.reap`. Cap-hit → typed
+        // `SessionCapExceeded` (wire `session_cap_exceeded`) carrying
+        // `{active, cap, hint}` so the caller can tell "busy — back off and
+        // retry when a slot frees (NOT a reconnect)" from "daemon is broken".
+        //
+        // Fail-open vs fail-closed on introspection errors: moot since the
+        // FSM-count rework — `active_session_count()` is infallible (an
+        // in-memory map walk; no I/O, no poisoning), so the old fail-open
+        // branch ("could not read active sessions; allowing create", metric
+        // `loom_daemon_cap_introspect_error`) no longer exists and the cap
+        // cannot be silently overshot by a read error. If counting ever
+        // becomes fallible again, the choice must be made deliberately here
+        // and any failure logged at ERROR, not WARN.
         //
         // This is a best-effort, eventually-consistent resource valve, not a
         // hard security boundary (the daemon is single-user/local): a check-then-
@@ -515,18 +526,23 @@ impl CoreFacadeBridge for CoreBridge {
                 cap,
                 "session.create rejected: concurrent session cap reached"
             );
-            return Err(map_loom_error(&LoomError::new(
-                LoomErrorCode::TooManyRequests,
+            return Err(LoomError::new(
+                LoomErrorCode::SessionCapExceeded,
                 format!(
-                    "concurrent session cap reached ({active}/{cap}); run `loom session reap` \
-                     to free leaked slots, or retry after a session closes"
+                    "concurrent session cap reached ({active}/{cap}); close sessions or run \
+                     `loom session reap` to free leaked slots, then retry"
                 ),
-            )));
+            )
+            .with_context(serde_json::json!({
+                "active": active,
+                "cap": cap,
+                "hint": "close sessions or run `loom session reap`",
+            })));
         }
 
         let limits: Option<BudgetLimits> = match budget {
             Some(value) => Some(serde_json::from_value(value).map_err(|e| {
-                map_loom_error(&LoomError::new(
+                map_loom_error_full(&LoomError::new(
                     LoomErrorCode::InvalidArgument,
                     format!("invalid budget JSON: {e}"),
                 ))
@@ -566,7 +582,7 @@ impl CoreFacadeBridge for CoreBridge {
             .core
             .session_manager
             .create(opts)
-            .map_err(|e| map_loom_error(&e))?;
+            .map_err(|e| map_loom_error_full(&e))?;
         let created_at_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
@@ -718,8 +734,8 @@ impl CoreFacadeBridge for CoreBridge {
         // `create_session` returns, so `is_corrupt_orphan` sees a well-formed
         // (non-corrupt) WAL and leaves it alone; (2) reap is only needed once
         // corrupt phantoms have saturated the cap — and then `session.create`
-        // is already rejected with `TooManyRequests`, so nothing new can race
-        // in. Quarantine is non-destructive (dir moved aside, not deleted), so
+        // is already rejected with `SessionCapExceeded`, so nothing new can
+        // race in. Quarantine is non-destructive (dir moved aside, not deleted), so
         // even a pathological miss is recoverable by moving the dir back.
         let skip = self.core.session_manager.live_session_ids();
         let outcome = self
@@ -829,7 +845,23 @@ pub(crate) fn map_loom_error(e: &LoomError) -> AdapterError {
         // for session ..." which gives the operator no actionable
         // signal about what to change.)
         CoreCode::InvalidArgument => RpcCode::SchemaViolation,
+        // Already wire-shaped: the cap rejection is emitted with its final
+        // code (defensive identity arm — without it the catch-all would
+        // collapse a re-routed cap error back to the opaque internal_error).
+        CoreCode::SessionCapExceeded => RpcCode::SessionCapExceeded,
         _ => RpcCode::InternalError,
+    }
+}
+
+/// Like [`map_loom_error`], but keeps the full error (message + context)
+/// alongside the translated wire code — for bridge methods whose signature
+/// carries `LoomError` (today: `create_session_raw`) so structured detail
+/// survives to the JSON-RPC envelope instead of collapsing to a bare code.
+pub(crate) fn map_loom_error_full(e: &LoomError) -> LoomError {
+    LoomError {
+        code: map_loom_error(e),
+        message: e.message.clone(),
+        context: e.context.clone(),
     }
 }
 
@@ -3912,6 +3944,61 @@ mod tests {
             1,
             "close must spawn host.shutdown_session into cleanup_tasks"
         );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Acceptance (typed-capacity-errors): saturating the cap yields the
+    /// typed `session_cap_exceeded` rejection with `{active, cap, hint}`
+    /// context (never the opaque internal catch-all); closing one session
+    /// frees a slot and create succeeds again.
+    #[tokio::test]
+    async fn create_session_raw_cap_hit_is_typed_and_recovers_after_close() {
+        // Pin the cap low. `max_concurrent_sessions` caches in a OnceLock,
+        // so an earlier test in this process may already have latched the
+        // default — read back whichever value won and saturate THAT, which
+        // keeps the test deterministic either way (tests run
+        // --test-threads=1, so process-env mutation is safe).
+        std::env::set_var("LOOM_MAX_CONCURRENT_SESSIONS", "2");
+        let cap = max_concurrent_sessions();
+        let tmp = test_scratch_dir("cap-typed-error");
+        let bridge = make_bridge(&tmp);
+
+        let mut sids = Vec::new();
+        for _ in 0..cap {
+            sids.push(create_session_via(&bridge));
+        }
+
+        let err = bridge
+            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .expect_err("create beyond the cap must be rejected");
+        assert_eq!(
+            err.code,
+            loom_core::error::LoomErrorCode::SessionCapExceeded,
+            "cap rejection must be the typed code, got: {err}"
+        );
+        assert!(
+            err.message.contains(&format!("({cap}/{cap})")),
+            "message must carry active/cap: {}",
+            err.message
+        );
+        let ctx = err.context.expect("cap rejection must carry context");
+        assert_eq!(ctx["active"].as_u64(), Some(cap as u64));
+        assert_eq!(ctx["cap"].as_u64(), Some(cap as u64));
+        assert!(
+            ctx["hint"]
+                .as_str()
+                .is_some_and(|h| h.contains("loom session reap")),
+            "hint must name the remediation; got: {ctx}"
+        );
+
+        // Close one → a slot frees → create succeeds again.
+        bridge
+            .close_session_raw(&sids[0])
+            .expect("close must succeed");
+        let _ = bridge
+            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .expect("create after freeing a slot must succeed");
+
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
