@@ -287,3 +287,28 @@ fn test_recovery_sweep_reconciles_crashed_actives_with_in_memory_count() {
         "recovery must terminal-mark the leftover so no source counts it active"
     );
 }
+
+// ─── Replay-refusal fidelity: facade session-not-found path ──────────────────
+
+/// `replay_session_to_id` on a missing session must surface the typed
+/// `SessionNotFound` WITH its human message (the wire layer passes both
+/// through verbatim — see loom-rpc/tests/replay_refusal_wire.rs).
+#[test]
+fn test_replay_unknown_session_returns_typed_not_found_with_message() {
+    let dir = TempDir::new().unwrap();
+    let core = make_core(&dir);
+
+    let err = core
+        .replay_session_to_id("01NONEXISTENT0000000000000")
+        .expect_err("replay of unknown session must fail");
+    assert_eq!(
+        err.code,
+        LoomErrorCode::SessionNotFound,
+        "unknown replay source must return SessionNotFound; got {:?}",
+        err.code
+    );
+    assert_eq!(
+        err.message, "session 01NONEXISTENT0000000000000 does not exist",
+        "refusal message must name the missing session"
+    );
+}

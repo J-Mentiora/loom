@@ -271,8 +271,13 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
     fn replay_session_to_id(
         &self,
         _s: &str,
-    ) -> Result<String, loom_rpc::core_service_adapter::core_service_adapter::AdapterError> {
-        Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)
+    ) -> Result<String, loom_rpc::error_translator::error_translator::LoomError> {
+        Err(
+            loom_rpc::error_translator::error_translator::LoomError::new(
+                loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError,
+                "",
+            ),
+        )
     }
     fn diff_sessions_json(
         &self,
@@ -295,7 +300,7 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         &self,
         _s: &str,
     ) -> Result<
-        (bool, Vec<String>),
+        loom_rpc::core_service_adapter::core_service_adapter::ValidationResult,
         loom_rpc::core_service_adapter::core_service_adapter::AdapterError,
     > {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError)

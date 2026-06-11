@@ -150,11 +150,16 @@ impl CoreApiFacade {
         }))
     }
 
-    /// Validate hash chain integrity + blob presence. Returns `(passed, reasons)`.
+    /// Validate hash chain integrity + blob presence.
+    ///
+    /// `passed` covers integrity only; `replayable` additionally applies the
+    /// replay-refusal checks (crashed/aborted source, `--no-determinism`
+    /// recording) via the helpers shared with `ReplayEngine::replay`, so
+    /// PASS ≠ replayable.
     pub fn validate_session_result(
         &self,
         session_id: &str,
-    ) -> Result<(bool, Vec<String>), LoomError> {
+    ) -> Result<crate::replay_engine::ValidationResult, LoomError> {
         // Path-traversal gate.
         if !loom_shared::types::is_valid_session_id(session_id) {
             return Err(LoomError::new(
@@ -186,6 +191,20 @@ impl CoreApiFacade {
 
         // 2. Blob presence check (reuse `wal_path` from the
         // SessionNotFound pre-flight above; we know it exists here).
+        // Tolerant per-line parse, matching the blob scan below — a torn
+        // line must not turn validate into a hard error.
+        let mut determinism_refusal = None;
+        if let Ok(content) = std::fs::read_to_string(&wal_path) {
+            let entries: Vec<ManifestEntry> = content
+                .lines()
+                .filter(|l| !l.is_empty())
+                .filter_map(|l| serde_json::from_str(l).ok())
+                .collect();
+            determinism_refusal = crate::replay_engine::non_deterministic_refusal(
+                &entries,
+                &SessionId(session_id.to_string()),
+            );
+        }
         if let Ok(content) = std::fs::read_to_string(&wal_path) {
             for line in content.lines() {
                 if line.is_empty() {
@@ -229,6 +248,28 @@ impl CoreApiFacade {
             }
         }
 
-        Ok((reasons.is_empty(), reasons))
+        // 3. Replayability verdict — mirrors `replay()`'s refusal order
+        // (unclean source, then determinism), then folds in integrity:
+        // a failed chain/blob check is refused by replay's pre-flight too.
+        let refusal = crate::replay_engine::unclean_source_refusal(
+            &self.sessions_root,
+            &SessionId(session_id.to_string()),
+        )
+        .or(determinism_refusal)
+        .map(|e| e.message);
+        let passed = reasons.is_empty();
+        let (replayable, not_replayable_reason) = match refusal {
+            Some(reason) => (false, Some(reason)),
+            None if !passed => (false, Some("validation failed (see reasons)".to_string())),
+            None => (true, None),
+        };
+
+        Ok(crate::replay_engine::ValidationResult {
+            session_id: session_id.to_string(),
+            passed,
+            reasons,
+            replayable,
+            not_replayable_reason,
+        })
     }
 }

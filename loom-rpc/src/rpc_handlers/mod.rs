@@ -256,10 +256,23 @@ impl RpcHandlers {
     ) -> HandlerResult<SessionInfo> {
         self.core
             .replay_session(&s, sp, nm.as_deref())
-            .map_err(|code| JsonRpcError {
-                code,
-                message: format!("session.replay failed for session {s}"),
-                data: None,
+            .map_err(|e| {
+                // Replay-refusal fidelity: the adapter hands back a full
+                // `LoomError`, so surface its typed code AND its compiled-in
+                // human refusal reason (e.g. the `--no-determinism` / crashed-
+                // source / missing-blob explanations from loom-core's replay
+                // engine) instead of the old generic template. The generic
+                // message remains only as a fallback for empty messages.
+                let message = if e.message.is_empty() {
+                    format!("session.replay failed for session {s}")
+                } else {
+                    truncate_wire_message(e.message)
+                };
+                JsonRpcError {
+                    code: e.code,
+                    message,
+                    data: e.context,
+                }
             })
     }
 
@@ -526,4 +539,17 @@ impl RpcHandlers {
 /// chars, the content store's addressing scheme (`sha256_hex`).
 fn is_plausible_sha256(r: &str) -> bool {
     r.len() == 64 && r.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Enforce the translator's wire contract (`message` ≤ 280 chars,
+/// truncated with an ellipsis) on a pass-through message. Char-boundary
+/// safe; messages within the limit pass unchanged.
+fn truncate_wire_message(msg: String) -> String {
+    use crate::error_translator::error_translator::MAX_MESSAGE_LEN;
+    if msg.chars().count() <= MAX_MESSAGE_LEN {
+        return msg;
+    }
+    let mut truncated: String = msg.chars().take(MAX_MESSAGE_LEN - 1).collect();
+    truncated.push('…');
+    truncated
 }

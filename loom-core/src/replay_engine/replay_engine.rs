@@ -81,6 +81,22 @@ pub struct ValidationResult {
     pub session_id: String,
     pub passed: bool,
     pub reasons: Vec<String>,
+    /// `true` when `replay()` would accept this session. PASS ≠ replayable:
+    /// a `--no-determinism` recording validates clean (intact chain, blobs
+    /// present) yet is non-replayable by design, and crashed/aborted sources
+    /// are refused too. Serde-default `true` so payloads from before this
+    /// field (which implied PASS ⇒ replayable) keep their old meaning.
+    #[serde(default = "default_replayable")]
+    pub replayable: bool,
+    /// Human reason when `replayable == false` (the same compiled-in
+    /// explanation `session.replay` would refuse with). `None` when
+    /// replayable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_replayable_reason: Option<String>,
+}
+
+pub(crate) fn default_replayable() -> bool {
+    true
 }
 
 /// Concrete ReplayEngine implementation.

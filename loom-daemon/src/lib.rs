@@ -414,10 +414,15 @@ impl CoreFacadeBridge for CoreBridge {
             .map_err(|e| map_loom_error(&e))
     }
 
-    fn replay_session_to_id(&self, session_id: &str) -> Result<String, AdapterError> {
-        self.core
-            .replay_session_to_id(session_id)
-            .map_err(|e| map_loom_error(&e))
+    fn replay_session_to_id(&self, session_id: &str) -> Result<String, LoomError> {
+        // Replay-refusal fidelity: pass the canonical `LoomError` through
+        // UNTRANSLATED. Every code the replay path emits is already a
+        // canonical wire code (`session_not_found`, `session_aborted`,
+        // `manifest_corrupt`, `replay_missing_blob`, `not_replayable`,
+        // `io`, `internal`), and `map_loom_error` would both coarsen the
+        // code (e.g. ManifestCorrupt → StoreIntegrityFailed) and drop the
+        // compiled-in refusal message on the floor.
+        self.core.replay_session_to_id(session_id)
     }
 
     fn diff_sessions_json(
@@ -444,10 +449,21 @@ impl CoreFacadeBridge for CoreBridge {
     fn validate_session_result(
         &self,
         session_id: &str,
-    ) -> Result<(bool, Vec<String>), AdapterError> {
-        self.core
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::ValidationResult, AdapterError>
+    {
+        let r = self
+            .core
             .validate_session_result(session_id)
-            .map_err(|e| map_loom_error(&e))
+            .map_err(|e| map_loom_error(&e))?;
+        Ok(
+            loom_rpc::core_service_adapter::core_service_adapter::ValidationResult {
+                session_id: r.session_id,
+                passed: r.passed,
+                reasons: r.reasons,
+                replayable: r.replayable,
+                not_replayable_reason: r.not_replayable_reason,
+            },
+        )
     }
 
     fn import_playwright_from_bytes(
@@ -835,6 +851,11 @@ pub(crate) fn map_loom_error(e: &LoomError) -> AdapterError {
         // context — this arm only matters if a downstream emitter routes
         // ProfileRestricted through `LoomError`.
         CoreCode::ProfileRestricted => RpcCode::ProfileRestricted,
+        // Wire-stable replay-refusal kind (the replay path itself bypasses
+        // this map — see `replay_session_to_id` — but keep the arm 1:1 so a
+        // future emit site can never degrade it to the InternalError
+        // catchall).
+        CoreCode::NotReplayable => RpcCode::NotReplayable,
         CoreCode::Unsupported => RpcCode::SurfaceUnavailable,
         // InvalidArgument carries a typed message (e.g. "unsupported
         // export format: cdp"). Map to SchemaViolation on the wire so

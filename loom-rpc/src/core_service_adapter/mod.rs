@@ -94,7 +94,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
         // from the manifest; there is no page-network mode to choose.
         // Current SDKs no longer send the field.
         _network_mode: Option<&str>,
-    ) -> Result<SessionInfo, AdapterError> {
+    ) -> Result<SessionInfo, LoomError> {
         let new_id = self.core.replay_session_to_id(session_id)?;
         Ok(SessionInfo {
             // The replay session is the NEW one created by the engine;
@@ -137,12 +137,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
     }
 
     fn validate_session(&self, session_id: &str) -> Result<ValidationResult, AdapterError> {
-        let (passed, reasons) = self.core.validate_session_result(session_id)?;
-        Ok(ValidationResult {
-            session_id: session_id.to_string(),
-            passed,
-            reasons,
-        })
+        self.core.validate_session_result(session_id)
     }
 
     fn import_playwright(&self, trace_bytes: &[u8]) -> Result<PlaywrightImportInfo, AdapterError> {

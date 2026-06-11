@@ -49,7 +49,14 @@ pub trait CoreFacadeBridge: Send + Sync {
     fn list_sessions_info(&self) -> Result<Vec<(String, String, u64)>, AdapterError>;
 
     /// Replay a session; returns the new replay session_id string.
-    fn replay_session_to_id(&self, session_id: &str) -> Result<String, AdapterError>;
+    ///
+    /// Errors carry the full canonical `LoomError` (code + human message +
+    /// context), NOT a bare `AdapterError` code: replay refusals are typed
+    /// in loom-core (`not_replayable`, `session_aborted`, `manifest_corrupt`,
+    /// `replay_missing_blob`, `session_not_found`) and their compiled-in
+    /// refusal reason must survive to the wire `message` instead of
+    /// degrading to a translator default.
+    fn replay_session_to_id(&self, session_id: &str) -> Result<String, LoomError>;
 
     /// Diff two sessions; returns the DiffReport as a JSON value.
     fn diff_sessions_json(
@@ -66,11 +73,10 @@ pub trait CoreFacadeBridge: Send + Sync {
         at_action: Option<u64>,
     ) -> Result<serde_json::Value, AdapterError>;
 
-    /// Validate a session; returns `(passed, reasons)`.
-    fn validate_session_result(
-        &self,
-        session_id: &str,
-    ) -> Result<(bool, Vec<String>), AdapterError>;
+    /// Validate a session; returns the full wire `ValidationResult`
+    /// (integrity verdict + the `replayable` verdict — PASS ≠ replayable,
+    /// see `ValidationResult::replayable`).
+    fn validate_session_result(&self, session_id: &str) -> Result<ValidationResult, AdapterError>;
 
     /// `session.reap` — quarantine corrupt-WAL orphan sessions that are stuck in
     /// the on-disk active set (and thus consuming concurrency slots) without a
@@ -264,6 +270,22 @@ pub struct ValidationResult {
     pub session_id: String,
     pub passed: bool,
     pub reasons: Vec<String>,
+    /// `true` when `session.replay` would accept this session. PASS ≠
+    /// replayable: a `--no-determinism` recording validates clean yet is
+    /// non-replayable by design, and crashed/aborted sources are refused
+    /// too. Serde-default `true` so a payload from an older daemon (which
+    /// implied PASS ⇒ replayable) keeps its old meaning, and older clients
+    /// that don't know the field still validate (additive change).
+    #[serde(default = "default_replayable")]
+    pub replayable: bool,
+    /// Human reason when `replayable == false` — the same compiled-in
+    /// explanation `session.replay` refuses with. Skipped when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_replayable_reason: Option<String>,
+}
+
+fn default_replayable() -> bool {
+    true
 }
 
 /// Result of `import.playwright`. Mirrors the loom-core `PlaywrightImportResult`
@@ -502,8 +524,9 @@ pub struct VaultDiagnoseLastError {
 pub type AdapterError = crate::error_translator::error_translator::LoomErrorCode;
 
 // Full canonical error (code + message + structured `context`) for adapter
-// methods whose rejections carry wire data — today only the create-session
-// path (`session_cap_exceeded` → `{active, cap, hint}`).
+// methods whose rejections carry wire data — the create-session path
+// (`session_cap_exceeded` → `{active, cap, hint}`) and the replay path
+// (refusal fidelity — see `replay_session_to_id`).
 pub use crate::error_translator::error_translator::LoomError;
 
 /// Trait surface for `CoreServiceAdapter` so `RpcHandlers` can be
@@ -530,12 +553,16 @@ pub trait CoreServiceAdapterApi: Send + Sync {
     /// `network_mode` is accepted for wire back-compat (released SDKs
     /// ≤0.10.x sent `"replay"`) but ignored — replay re-executes from
     /// the manifest; there is no page-network mode.
+    ///
+    /// Errors carry the full `LoomError` (see `CoreFacadeBridge::
+    /// replay_session_to_id`) so `RpcHandlers::session_replay` can put the
+    /// real refusal reason on the wire.
     fn replay_session(
         &self,
         session_id: &str,
         speed: Option<f32>,
         network_mode: Option<&str>,
-    ) -> Result<SessionInfo, AdapterError>;
+    ) -> Result<SessionInfo, LoomError>;
 
     fn diff_sessions(
         &self,

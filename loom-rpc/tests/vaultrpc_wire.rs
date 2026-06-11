@@ -84,8 +84,16 @@ impl CoreFacadeBridge for RecordingCoreBridge {
     fn list_sessions_info(&self) -> Result<Vec<(String, String, u64)>, LoomErrorCode> {
         Ok(vec![])
     }
-    fn replay_session_to_id(&self, _: &str) -> Result<String, LoomErrorCode> {
-        Err(LoomErrorCode::InternalError)
+    fn replay_session_to_id(
+        &self,
+        _: &str,
+    ) -> Result<String, loom_rpc::error_translator::error_translator::LoomError> {
+        Err(
+            loom_rpc::error_translator::error_translator::LoomError::new(
+                LoomErrorCode::InternalError,
+                "",
+            ),
+        )
     }
     fn diff_sessions_json(
         &self,
@@ -102,7 +110,11 @@ impl CoreFacadeBridge for RecordingCoreBridge {
     ) -> Result<serde_json::Value, LoomErrorCode> {
         Err(LoomErrorCode::InternalError)
     }
-    fn validate_session_result(&self, _: &str) -> Result<(bool, Vec<String>), LoomErrorCode> {
+    fn validate_session_result(
+        &self,
+        _: &str,
+    ) -> Result<loom_rpc::core_service_adapter::core_service_adapter::ValidationResult, LoomErrorCode>
+    {
         Err(LoomErrorCode::InternalError)
     }
     fn import_playwright_from_bytes(
