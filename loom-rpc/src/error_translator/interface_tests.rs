@@ -136,13 +136,20 @@ fn from_unknown_profile_serialises_correctly() {
 
 #[test]
 fn from_invalid_network_mode_serialises_correctly() {
-    let env = ErrorTranslator::from_invalid_network_mode("bogus", &["live", "recorded", "mixed"]);
+    let env = ErrorTranslator::from_invalid_network_mode("bogus", &["live"]);
     let s = serde_json::to_string(&env).unwrap();
     assert!(
         s.contains("\"code\":\"invalid_network_mode\""),
         "envelope: {s}"
     );
     assert!(s.contains("\"provided\":\"bogus\""), "envelope: {s}");
+    // The rejection must explain itself, not read like a typo hint.
+    assert!(
+        env.message.contains("page traffic is always live"),
+        "message must state the page-network truth; got: {}",
+        env.message
+    );
+    assert!(env.message.len() <= MAX_MESSAGE_LEN);
     assert_eq!(env.code, LoomErrorCode::InvalidNetworkMode);
 }
 

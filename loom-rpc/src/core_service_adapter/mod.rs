@@ -88,6 +88,11 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
         &self,
         session_id: &str,
         _speed: Option<f32>,
+        // Tolerated-but-ignored: released SDKs (≤0.10.x) unconditionally
+        // sent `network_mode: "replay"` on session.replay, so rejecting
+        // would break every deployed replay() call. Replay re-executes
+        // from the manifest; there is no page-network mode to choose.
+        // Current SDKs no longer send the field.
         _network_mode: Option<&str>,
     ) -> Result<SessionInfo, AdapterError> {
         let new_id = self.core.replay_session_to_id(session_id)?;

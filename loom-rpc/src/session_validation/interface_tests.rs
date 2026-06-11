@@ -57,7 +57,7 @@ fn validate_accepts_canonical_with_canonical_budget_keys() {
     // because the CLI pre-validates before sending.
     let p = params(
         "standard",
-        "recorded",
+        "live",
         Some(serde_json::json!({"network": "10MB", "wall_clock": "30s"})),
     );
     assert!(validate_create_session_params(&p).is_ok());
@@ -80,6 +80,22 @@ fn validate_rejects_invalid_network_mode() {
     assert_eq!(err.code, LoomErrorCode::InvalidNetworkMode);
     let data = err.data.expect("must carry data");
     assert_eq!(data["provided"], "bogus");
+}
+
+/// `recorded`/`mixed` used to pass validation and then be silently
+/// discarded — the session fetched live page traffic regardless. They
+/// (and the never-existent `replay`) must now reject loudly, and the
+/// envelope must advertise the honest allowlist: `["live"]`.
+#[test]
+fn validate_rejects_inert_page_network_modes_loudly() {
+    for mode in ["recorded", "mixed", "replay"] {
+        let p = params("safe", mode, None);
+        let err = validate_create_session_params(&p).expect_err("must reject");
+        assert_eq!(err.code, LoomErrorCode::InvalidNetworkMode, "{mode}");
+        let data = err.data.expect("must carry data");
+        assert_eq!(data["provided"], mode);
+        assert_eq!(data["available"], serde_json::json!(["live"]));
+    }
 }
 
 #[test]

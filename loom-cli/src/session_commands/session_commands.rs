@@ -57,7 +57,10 @@ pub struct CreateArgs {
     /// guards). Omitting the flag uses `safe`.
     #[arg(long)]
     pub profile: Option<String>,
-    /// Network mode override.
+    /// Network mode. `live` (the default) is the only mode: page
+    /// traffic is always fetched live and response bodies are never
+    /// recorded, so there is no page-network record/replay to select.
+    /// Any other value is rejected with `invalid_network_mode`.
     #[arg(long = "network-mode")]
     pub network_mode: Option<String>,
     /// Determinism seed (replay anchor).
