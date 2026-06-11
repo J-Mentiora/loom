@@ -255,3 +255,47 @@ fn matrix_covers_all_documented_subprocess_reachable_codes() {
          or update this guard if the code is no longer subprocess-reachable"
     );
 }
+
+// KNOWN-BUG (audit 2026-06-10, "Any action argument whose value is exactly
+// '-h'/'--help' silently turns the command into a help printout with exit
+// 0"): `detect_per_action_help_request` scans the ENTIRE argv for
+// `--help`/`-h`, including option VALUES. So typing the literal text "-h"
+// (`web.type ... --text -h`) short-circuits to the per-action help renderer
+// and exits 0 without contacting the daemon — a script observing exit 0
+// believes the action succeeded while the manifest records nothing. The
+// intended behavior is that help tokens are only honored in KEY position;
+// a `-h` value must flow through as the action argument (here: failing with
+// the daemon-not-running error under the hermetic HOME, exit != 0, and no
+// help text on stdout). Red until the help scan skips `--key` values.
+#[test]
+#[ignore = "KNOWN-BUG: '-h' in option-value position triggers per-action help with exit 0 \
+            instead of executing the action — see audit 2026-06-10"]
+fn known_bug_help_token_in_value_position_must_not_short_circuit() {
+    let home = TempDir::new().unwrap();
+    let out = spawn_loom(
+        &[
+            "action",
+            "web.type",
+            "--session",
+            "01HZTESTSESSIONHELPVAL0000",
+            "--selector",
+            "#q",
+            "--text",
+            "-h",
+        ],
+        &home.path().to_path_buf(),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "typing the literal text \"-h\" must execute the action (and fail \
+         against the absent daemon), never exit 0 via the help renderer; \
+         stdout was: {stdout:?}"
+    );
+    assert!(
+        !stdout.to_lowercase().contains("usage") && !stdout.to_lowercase().contains("--selector <"),
+        "stdout must not be the per-action help text when -h is a value; \
+         got: {stdout:?}"
+    );
+}
