@@ -92,3 +92,70 @@ describe("Transport: framing + auth + call/response", () => {
     await assert.rejects(() => t.connect(), LoomConnectionError);
   });
 });
+
+// ─── bare daemon error frames (the real HELLO auth-failure wire shape) ────
+// On HELLO auth failure the real daemon sends a BARE serialized JsonRpcError
+// — {"code": ..., "message": ...} with NO {"error": ...} wrapper and NO id
+// (loom-rpc connection_handler::send_error) — then closes the connection.
+// The MockDaemon emits that exact shape, so these tests exercise the true
+// wire contract.
+describe("Transport: bare daemon error frames", () => {
+  let daemon: MockDaemon;
+
+  before(async () => {
+    daemon = new MockDaemon();
+    await daemon.start();
+  });
+
+  after(async () => {
+    await daemon.stop();
+  });
+
+  test("bare auth-failure frame surfaces code AND message, not a generic close", async () => {
+    const t = new LoomTransport(daemon.socketPath, "wrong-token");
+    await t.connect();
+    await assert.rejects(
+      () => t.call("session.list", {}),
+      (err: unknown) => {
+        assert.ok(err instanceof LoomRPCError);
+        assert.strictEqual((err as LoomRPCError).code, "protocol_auth_required");
+        assert.match((err as LoomRPCError).message, /token mismatch/);
+        return true;
+      },
+    );
+    await t.close();
+  });
+
+  test("auth failure is latched: subsequent calls re-throw the typed error", async () => {
+    const t = new LoomTransport(daemon.socketPath, "wrong-token");
+    await t.connect();
+    await assert.rejects(() => t.call("session.list", {}), LoomRPCError);
+    // The daemon already closed the connection; the second call must
+    // surface the same typed auth error, not a generic connection error.
+    await assert.rejects(
+      () => t.call("session.list", {}),
+      (err: unknown) => {
+        assert.ok(err instanceof LoomRPCError);
+        assert.strictEqual((err as LoomRPCError).code, "protocol_auth_required");
+        return true;
+      },
+    );
+    await t.close();
+  });
+
+  test("fromBareFrame rejects normal envelopes and non-string code/message", () => {
+    assert.ok(
+      LoomRPCError.fromBareFrame({ code: "protocol_auth_required", message: "nope" }) instanceof
+        LoomRPCError,
+    );
+    assert.equal(LoomRPCError.fromBareFrame({ id: 1, result: {} }), null);
+    assert.equal(
+      LoomRPCError.fromBareFrame({ id: 1, error: { code: "x", message: "y" } }),
+      null,
+    );
+    assert.equal(LoomRPCError.fromBareFrame({ error: { code: "x", message: "y" } }), null);
+    assert.equal(LoomRPCError.fromBareFrame({ result: null }), null);
+    assert.equal(LoomRPCError.fromBareFrame({ code: 401, message: "nope" }), null);
+    assert.equal(LoomRPCError.fromBareFrame({ code: "x" }), null);
+  });
+});

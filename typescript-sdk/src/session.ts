@@ -12,6 +12,7 @@ import type {
   ValidationResult,
   GrantInfo,
   Receipt,
+  ReceiptError,
   SchemaRegistry,
   JsonSchemaObject,
   DaemonHealthResult,
@@ -42,11 +43,36 @@ function toSessionInfo(d: Record<string, unknown>): SessionInfo {
   };
 }
 
+function toReceiptError(raw: unknown): ReceiptError | undefined {
+  // The daemon serializes `error: null` on success — treat null/non-object
+  // the same as absent.
+  if (raw === null || typeof raw !== "object") return undefined;
+  const e = raw as Record<string, unknown>;
+  return { kind: (e["kind"] as string) ?? "", detail: e["detail"] };
+}
+
 function toReceipt(d: Record<string, unknown>): Receipt {
+  // Receipt-level outcome ("success" | "error" | "aborted"). Failed actions
+  // return as a SUCCESSFUL JSON-RPC result whose receipt has status="error"
+  // — surface it so callers can distinguish failures from successes.
+  const status = (d["status"] as string) ?? "success";
   return {
     actionHash: (d["action_hash"] as string) ?? "",
     outcomeHash: (d["outcome_hash"] as string) ?? "",
     emittedAtMs: (d["emitted_at_ms"] as number) ?? 0,
+    status,
+    ok: status === "success",
+    error: toReceiptError(d["error"]),
+    // navigate tier-2 fields: absent (→ undefined) for non-navigate verbs.
+    url: d["url"] as string | undefined,
+    finalUrl: d["final_url"] as string | undefined,
+    title: d["title"] as string | undefined,
+    statusCode: d["status_code"] as number | undefined,
+    domSnapshotHash: d["dom_snapshot_hash"] as string | undefined,
+    screenshotAfterHash: d["screenshot_after_hash"] as string | undefined,
+    // evaluate tier fields.
+    returnValueJson: d["return_value_json"] as string | undefined,
+    returnValueBlobRef: d["return_value_blob_ref"] as string | undefined,
     // settle-capture: present on navigate receipts; absent (→ undefined) on
     // verbs without a readiness gate.
     settleUntil: d["settle_until"] as string | undefined,
@@ -86,27 +112,40 @@ export class Session {
   static async create(opts: SessionCreateOptions = {}): Promise<Session> {
     const transport = new LoomTransport(opts.socketPath, opts.token);
     await transport.connect();
-    const params: Record<string, unknown> = {
-      profile: opts.profile ?? "default",
-      network_mode: opts.networkMode ?? "live",
-      capture: opts.capture ?? true,
-    };
-    if (opts.seed !== undefined) params["seed"] = opts.seed;
-    if (opts.budget !== undefined) params["budget"] = opts.budget;
-    if (opts.noDeterminism) params["no_determinism"] = true;
-    const result = (await transport.call("session.create", params)) as Record<string, unknown>;
-    return new Session(
-      result["session_id"] as string,
-      (result["status"] as string) ?? "active",
-      transport,
-    );
+    try {
+      const params: Record<string, unknown> = {
+        profile: opts.profile ?? "default",
+        network_mode: opts.networkMode ?? "live",
+        capture: opts.capture ?? true,
+      };
+      if (opts.seed !== undefined) params["seed"] = opts.seed;
+      if (opts.budget !== undefined) params["budget"] = opts.budget;
+      if (opts.noDeterminism) params["no_determinism"] = true;
+      const result = (await transport.call("session.create", params)) as Record<string, unknown>;
+      return new Session(
+        result["session_id"] as string,
+        (result["status"] as string) ?? "active",
+        transport,
+      );
+    } catch (err) {
+      // Don't leak the connected socket when the RPC fails (schema
+      // violation, unknown profile, auth failure, …) — an open net.Socket
+      // is an active libuv handle that keeps the process alive.
+      await transport.close();
+      throw err;
+    }
   }
 
   async close(): Promise<SessionInfo> {
-    const result = (await this._transport.call("session.close", {
-      session_id: this.sessionId,
-    })) as Record<string, unknown> | null;
-    await this._transport.close();
+    let result: Record<string, unknown> | null;
+    try {
+      result = (await this._transport.call("session.close", {
+        session_id: this.sessionId,
+      })) as Record<string, unknown> | null;
+    } finally {
+      // Always release the socket, even when the RPC fails.
+      await this._transport.close();
+    }
     if (result) return toSessionInfo(result);
     return { sessionId: this.sessionId, status: "closed", createdAtMs: 0 };
   }
@@ -362,9 +401,12 @@ export async function sessionList(opts: {
 } = {}): Promise<SessionInfo[]> {
   const transport = new LoomTransport(opts.socketPath, opts.token);
   await transport.connect();
-  const result = (await transport.call("session.list", {})) as Array<Record<string, unknown>>;
-  await transport.close();
-  return (result ?? []).map(toSessionInfo);
+  try {
+    const result = (await transport.call("session.list", {})) as Array<Record<string, unknown>>;
+    return (result ?? []).map(toSessionInfo);
+  } finally {
+    await transport.close();
+  }
 }
 
 export async function vaultGrant(
@@ -377,21 +419,24 @@ export async function vaultGrant(
 ): Promise<GrantInfo> {
   const transport = new LoomTransport(opts.socketPath, opts.token);
   await transport.connect();
-  const result = (await transport.call("vault.grant", {
-    session_id: sessionId,
-    origin,
-    scopes,
-    ttl_seconds: ttlSeconds,
-    label,
-  })) as Record<string, unknown>;
-  await transport.close();
-  return {
-    grantId: result["grant_id"] as string,
-    origin: (result["origin"] as string) ?? "",
-    scopes: (result["scopes"] as string[]) ?? [],
-    ttlSeconds: (result["ttl_seconds"] as number) ?? 0,
-    label: (result["label"] as string) ?? "",
-  };
+  try {
+    const result = (await transport.call("vault.grant", {
+      session_id: sessionId,
+      origin,
+      scopes,
+      ttl_seconds: ttlSeconds,
+      label,
+    })) as Record<string, unknown>;
+    return {
+      grantId: result["grant_id"] as string,
+      origin: (result["origin"] as string) ?? "",
+      scopes: (result["scopes"] as string[]) ?? [],
+      ttlSeconds: (result["ttl_seconds"] as number) ?? 0,
+      label: (result["label"] as string) ?? "",
+    };
+  } finally {
+    await transport.close();
+  }
 }
 
 export async function vaultRevoke(
@@ -401,8 +446,11 @@ export async function vaultRevoke(
 ): Promise<void> {
   const transport = new LoomTransport(opts.socketPath, opts.token);
   await transport.connect();
-  await transport.call("vault.revoke", { grant_id: grantId, reason });
-  await transport.close();
+  try {
+    await transport.call("vault.revoke", { grant_id: grantId, reason });
+  } finally {
+    await transport.close();
+  }
 }
 
 export async function vaultListGrants(
@@ -411,19 +459,22 @@ export async function vaultListGrants(
 ): Promise<GrantInfo[]> {
   const transport = new LoomTransport(opts.socketPath, opts.token);
   await transport.connect();
-  const params: Record<string, unknown> = {};
-  if (sessionId !== undefined) params["session_id"] = sessionId;
-  const result = (await transport.call("vault.list_grants", params)) as Array<
-    Record<string, unknown>
-  >;
-  await transport.close();
-  return (result ?? []).map((g) => ({
-    grantId: g["grant_id"] as string,
-    origin: (g["origin"] as string) ?? "",
-    scopes: (g["scopes"] as string[]) ?? [],
-    ttlSeconds: (g["ttl_seconds"] as number) ?? 0,
-    label: (g["label"] as string) ?? "",
-  }));
+  try {
+    const params: Record<string, unknown> = {};
+    if (sessionId !== undefined) params["session_id"] = sessionId;
+    const result = (await transport.call("vault.list_grants", params)) as Array<
+      Record<string, unknown>
+    >;
+    return (result ?? []).map((g) => ({
+      grantId: g["grant_id"] as string,
+      origin: (g["origin"] as string) ?? "",
+      scopes: (g["scopes"] as string[]) ?? [],
+      ttlSeconds: (g["ttl_seconds"] as number) ?? 0,
+      label: (g["label"] as string) ?? "",
+    }));
+  } finally {
+    await transport.close();
+  }
 }
 
 // ─── admin RPCs (session.kill, daemon.health) ────────────────────────────

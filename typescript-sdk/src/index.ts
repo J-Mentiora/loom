@@ -35,6 +35,7 @@ export type {
   SessionInfo,
   SessionInspection,
   Receipt,
+  ReceiptError,
   DiffReport,
   ExportInfo,
   ValidationResult,

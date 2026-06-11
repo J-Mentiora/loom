@@ -80,6 +80,12 @@ export class LoomTransport {
   // ───────────────────────────────────────────────────────────────────────
   private _nextId = 1;
   private _pending = new Map<number, PendingCall>();
+  // Latched daemon-level protocol error (e.g. the HELLO auth-failure
+  // frame — a bare JsonRpcError with no id, after which the daemon
+  // closes). Once set, every subsequent call() throws it instead of a
+  // generic connection error, even when no call was pending when the
+  // frame arrived.
+  private _daemonError: LoomRPCError | null = null;
 
   constructor(socketPath?: string, token?: string) {
     this._path = socketPath ?? defaultSocketPath();
@@ -118,6 +124,9 @@ export class LoomTransport {
     params: Record<string, unknown>,
     opts?: CallOptions,
   ): Promise<unknown> {
+    if (this._daemonError) {
+      throw this._daemonError;
+    }
     if (!this._socket) {
       throw new LoomConnectionError("Transport not connected. Call connect() first.");
     }
@@ -229,7 +238,10 @@ export class LoomTransport {
   };
 
   private _onError = (err: Error): void => {
-    const e = new LoomConnectionError(`Connection error mid-frame: ${err.message}`);
+    // Prefer the latched daemon error (e.g. auth failure) — the daemon
+    // closes right after sending it, so the socket error is a symptom.
+    const e =
+      this._daemonError ?? new LoomConnectionError(`Connection error mid-frame: ${err.message}`);
     for (const [, entry] of this._pending) {
       entry.reject(e);
     }
@@ -237,7 +249,7 @@ export class LoomTransport {
   };
 
   private _onClose = (): void => {
-    const e = new LoomConnectionError("Connection closed by daemon");
+    const e = this._daemonError ?? new LoomConnectionError("Connection closed by daemon");
     for (const [, entry] of this._pending) {
       entry.reject(e);
     }
@@ -257,10 +269,20 @@ export class LoomTransport {
     if (typeof id !== "number") {
       // No id. A no-id ERROR frame is a daemon-level protocol error
       // (auth failure, malformed request) — reject ALL pending with it
-      // so the first pending call surfaces the typed envelope. Anything
-      // else (notification, malformed) we silently drop.
-      if ("error" in envelope) {
-        const e = LoomRPCError.fromEnvelope(envelope);
+      // so the first pending call surfaces the typed envelope. The real
+      // daemon's HELLO auth-failure frame is a BARE serialized
+      // JsonRpcError — {"code": ..., "message": ...} with no
+      // {"error": ...} wrapper (loom-rpc connection_handler send_error)
+      // — so recognize both shapes. Latch the error so a later call()
+      // surfaces it even when nothing was pending when the frame
+      // arrived. Anything else (notification, malformed) we silently
+      // drop.
+      const e =
+        "error" in envelope
+          ? LoomRPCError.fromEnvelope(envelope)
+          : LoomRPCError.fromBareFrame(envelope);
+      if (e) {
+        this._daemonError = e;
         for (const [, entry] of this._pending) {
           entry.reject(e);
         }
