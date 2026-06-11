@@ -6,6 +6,79 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-11 — Hardening Sweep: Determinism, Protocol, Security + MCP Determinism Surface
+
+A large correctness, robustness, and security pass: a deep multi-agent audit produced
+~100 verified findings that were fixed and regression-pinned, alongside seven
+feature/contract specs driven by downstream (agentic-test-studio) needs. The headline
+addition is a determinism surface over MCP so agent clients can drive seed/clock-anchor
+recording and the record/replay diff oracle without the CLI. All changes preserve the
+replay-equal hash chain (NFR-DET-01); the wire stays compatible with deployed ≤0.10.x
+clients. (#138–#173)
+
+### Added
+
+- **Determinism + session surface over MCP (#162).** `loom-mcp` now reads
+  `LOOM_MCP_SESSION_SEED` / `LOOM_MCP_SESSION_CLOCK_ANCHOR` / `LOOM_MCP_SESSION_PROFILE`
+  for the implicit session, self-heals it on idle eviction (recreate + retry once), and
+  exposes `loom.session.reset` / `info` / `diff` (+ `validate`/`export`) tools — the
+  cross-run regression oracle over MCP. The implicit-session `tools/call` path is now
+  allow-listed; control-plane requests (`ping`/`initialize`/`tools-list`) dispatch
+  concurrently to avoid head-of-line blocking, while session-mutating tool calls stay
+  serialized in submission order (one browser per session).
+- **SDK `clockAnchor` / `clock_anchor`** in both SDKs; receipts now expose
+  `status` / `error` / result fields so failed actions are distinguishable from
+  successes; `ValidationResult.replayable`.
+- **Epoch-based guest preemption (#159).** CPU-bound WASM guests are now interruptible:
+  abort and budget-kill actually fire against a busy loop (epoch ticker + per-invocation
+  deadline; fuel knob wired).
+- **Typed `session_cap_exceeded`** with `{active, cap, hint}`; `doctor` reports
+  `at_capacity` (warn) instead of failing at peak load; `doctor --daemon-only`.
+
+### Fixed
+
+- **Determinism.** Per-session serialization of manifest hash-chain appends (concurrent
+  appends could fork the chain, #140); deterministic vault-audit payloads and trap-receipt
+  timestamps; a single truthful receipt per trapped action; per-session RNG harness so
+  `--seed` actually isolates concurrent sessions; replay header fidelity
+  (budgets/capture-policy) and a coherent replay-close path.
+- **Security.** SSRF guard on the `net_request` host primitive — scheme allow-list +
+  loopback/private/link-local/metadata block on the resolved address (DNS-rebind
+  resistant) + per-hop redirect re-validation; bearer tokens zeroized and redacted;
+  keychain `allow_prompt` honored, items pinned this-device-only (no iCloud sync), Linux
+  D-Bus owner-pin check and op on one connection; cookie-name RFC 6265 enforcement; path
+  normalization; restrictive socket permissions.
+- **Protocol.** Connection protocol v2 — concurrent per-connection dispatch so
+  `request.cancel` works, `spawn_blocking` with result fencing so timeouts/cancel preempt,
+  honored per-action `deadline_ms`, and an opt-in HELLO ack (no more 50 ms/5 s connect
+  stalls) compatible both directions; SDK transports parse the daemon's bare auth-failure
+  frame; daemon panic hardening (`shard_path`, message truncation on UTF-8 boundaries).
+- **Wired-but-dead features.** `wait_for` alias, default `profile`, `session.reap` and
+  vault RPCs added to the builtin-method allowlist; MCP `resources/list` + `resources/read`
+  wire shapes; `validate --json` emits the full `ValidationResult`; tarball export writes a
+  self-describing manifest; `--no-determinism` replay refusals carry the real
+  `not_replayable` reason; network modes are honest (`live`-only page traffic).
+- **Lifecycle / leaks.** SIGTERM graceful shutdown (daemon + `loom-mcp`); circuit-breaker
+  recovery and failure-class-aware shim eviction; CLOEXEC on shim IPC; session-table
+  eviction; abort tears down the shim; reaper group-liveness + safe orphan GC.
+
+### Changed
+
+- CI is substantially faster (per-ref cancel groups, build caching, path filters, trimmed
+  matrix) (#171). `loom session validate` and other commands follow the D-7 output
+  contract: piped/non-TTY emits JSON, TTY emits curated text.
+
+### Known issues (deferred, non-blocking)
+
+- SIGTERM leaves the daemon socket file on disk (auto-reclaimed on next start).
+- The shim's fixed 10 s per-CDP-command timeout can trap navigates on a heavily-loaded
+  host. Minor doc/contract items: checkpoint-cadence config, post-terminal cache
+  tombstone, a profile-dir/pkill ordering race.
+- The daemon's per-connection concurrent dispatch shares the same-session action
+  reordering hazard class as the (now-fixed) MCP path, but it is unreachable by current
+  clients (CLI/SDK/MCP are all single-in-flight per connection); a defensive per-session
+  serialization guard is a planned follow-up.
+
 ## [0.10.1] — 2026-06-10 — Cross-Run Determinism + Session Reaper
 
 Cross-run hash equality lands: two independent fresh recordings of the same actions
