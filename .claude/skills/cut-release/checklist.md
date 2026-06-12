@@ -61,10 +61,12 @@ Evidence: changelog_entry_added=
 
 ---
 
-## Step 4: Regenerate generated artifacts (only if their source changed this cycle)
-- [ ] If `loom-rpc/src/action_registry/` changed since the last release:
-  `cargo run --example gen-docs -p loom-cli`; commit `docs/actions.md`, `docs/loom.1`,
-  `docs/loom-action.1`. (CI `gen-docs` job blocks a stale `docs/`.) Else: skip.
+## Step 4: Regenerate generated artifacts
+- [ ] **ALWAYS** run `cargo run --example gen-docs -p loom-cli` after the version bump —
+  the man pages embed the workspace version, so the bump alone stales `docs/loom.1`
+  and the CI `gen-docs` job blocks the PR (bit v0.11.1). Commit whatever changed under
+  `docs/` (`docs/actions.md`, `docs/loom.1`, `docs/loom-action.1`); often it's just the
+  version line in `loom.1`.
 - [ ] If `loom-surface-web/` changed: `just vendor-wasm`; commit
   `loom-cli/vendor/loom_surface_web.wasm`. **Cross-host gotcha:** macOS-built wasm won't
   byte-match Linux CI — if `vendored-wasm staleness` fails on the PR, download that job's
