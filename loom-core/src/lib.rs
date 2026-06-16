@@ -30,7 +30,6 @@ pub mod determinism_harness;
 pub mod error_types;
 pub mod exporters;
 pub mod importers;
-pub mod llm_cache;
 pub mod manifest_writer;
 pub mod observability;
 pub mod profile_registry;

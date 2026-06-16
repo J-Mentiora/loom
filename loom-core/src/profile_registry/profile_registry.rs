@@ -41,9 +41,8 @@ pub fn resolve_profile_alias(s: &str) -> &str {
 /// this allowlist but were silently inert (validated, then discarded
 /// before session creation), so they are rejected loudly now via
 /// `invalid_network_mode` instead of implying replay semantics that
-/// don't exist. The record/replay vocabulary belongs to the LLM-cache
-/// axis (`loom_shared::llm_types::LlmMode`), a separate knob that is
-/// not wired to `session.create`.
+/// don't exist. loom also does not cache LLM responses — there is no
+/// LLM call surface and therefore no record/replay knob of any kind.
 pub const KNOWN_NETWORK_MODES: &[&str] = &["live"];
 
 /// Canonical budget keys. Mirrors `parse_budget_string` accepted keys.

@@ -154,9 +154,10 @@ pub struct ReceiptPayload {
     // ---- Screenshot before-blob — full capture override ----
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_before_blob_ref: Option<ContentRef>,
-    // ---- LLM cache hit flag ----
-    /// True when an LLM call was served from the session LLM cache;
-    /// None for non-LLM actions.
+    // ---- LLM cache hit flag (vestigial) ----
+    /// Always `None`: loom has no LLM-response cache. Retained only so the
+    /// receipt wire shape is unchanged; `skip_serializing_if` keeps it absent
+    /// from canonical bytes, so the always-`None` field is hash-neutral.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_cache_hit: Option<bool>,
     /// Receipt status: Ok or Error.
@@ -372,45 +373,6 @@ impl ReceiptBuilder {
             llm_cache_hit: None,
             status: ReceiptStatus::Error,
             surface,
-            timing_ticks,
-            console_lines: Vec::new(),
-            url: None,
-            final_url: None,
-            title: None,
-            status_code: None,
-            dom_snapshot_hash: None,
-            console_count: None,
-            network_count: None,
-            emitted_at_ms: None,
-            settle_until: None,
-            settle_outcome: None,
-        }
-    }
-
-    /// LLM call receipt: records LLM response body + cache-hit flag.
-    pub fn build_llm_receipt(
-        action_id: String,
-        timing_ticks: u64,
-        response_body: serde_json::Value,
-        cache_hit: bool,
-    ) -> ReceiptPayload {
-        ReceiptPayload {
-            action_id,
-            code: ReceiptCode::WebActionCompleted,
-            details: Some(response_body),
-            dom_after_hash: None,
-            dom_after_blob_ref: None,
-            dom_before_blob_ref: None,
-            message: None,
-            network_events: Vec::new(),
-            return_value_json: None,
-            return_value_blob_ref: None,
-            screenshot_after_hash: None,
-            screenshot_after_blob_ref: None,
-            screenshot_before_blob_ref: None,
-            llm_cache_hit: Some(cache_hit),
-            status: ReceiptStatus::Ok,
-            surface: ReceiptSurface::Web,
             timing_ticks,
             console_lines: Vec::new(),
             url: None,
