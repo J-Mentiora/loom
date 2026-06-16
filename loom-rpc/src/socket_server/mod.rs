@@ -44,6 +44,11 @@ impl SocketServer {
         let path = &config.socket_path;
 
         let listener = try_bind(path)?;
+        // Arm socket-file cleanup the instant the bind succeeds: if a later step
+        // in `new` (chmod / set_nonblocking) fails, the guard drops on the early
+        // return and removes the partial socket; on success it rides on the
+        // returned handle and unlinks `loom.sock` at graceful shutdown (#141).
+        let socket_guard = SocketFileGuard::new(path.clone());
         apply_permissions(path)?;
         listener.set_nonblocking(true).map_err(|e| BindError::Io {
             reason: e.to_string(),
@@ -53,6 +58,7 @@ impl SocketServer {
             listener,
             deps,
             token,
+            _socket_guard: socket_guard,
         })
     }
 
@@ -125,6 +131,10 @@ fn try_bind(path: &Path) -> Result<StdUnixListener, BindError> {
         Err(e) if e.kind() == ErrorKind::AddrInUse => match StdUnixStream::connect(path) {
             Ok(_) => Err(BindError::AddressInUse),
             Err(_) => {
+                tracing::warn!(
+                    path = ?path,
+                    "removing stale loom.sock from a previous daemon (connect refused)"
+                );
                 std::fs::remove_file(path).map_err(|e| BindError::Io {
                     reason: e.to_string(),
                 })?;

@@ -26,12 +26,65 @@
 
 use crate::auth_middleware::auth_middleware::Token;
 use crate::connection_handler::connection_handler::ConnectionHandlerDeps;
+use std::os::unix::fs::MetadataExt as _;
 use std::os::unix::net::UnixListener;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// Socket file mode required by.
 pub const SOCKET_MODE: u32 = 0o600;
+
+/// `(st_dev, st_ino)` identity of the inode currently at `path`, or `None` if it
+/// can't be stat'd (gone / unreadable). Used to prove the file we're about to
+/// unlink is still the exact inode we bound.
+fn socket_identity(path: &Path) -> Option<(u64, u64)> {
+    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
+
+/// RAII guard that unlinks the bound socket path when dropped.
+///
+/// Graceful SIGTERM shutdown (#141) previously left `loom.sock` on disk: the
+/// daemon closes the listener FD when `serve` returns but never `remove_file`s
+/// the socket inode. A dangling socket file breaks naive liveness checks
+/// (`test -S …/loom.sock`) and confuses operators. Holding this guard on the
+/// `SocketServer` removes the file on normal return, on panic-unwind, and even
+/// if `SocketServer::new` succeeds but the daemon errors before it serves.
+///
+/// Mirrors the `UmaskGuard` RAII idiom in the sibling module. A separate guard
+/// (rather than `impl Drop for SocketServer`) is required because `serve(self)`
+/// moves `listener`/`deps`/`token` out of `self`, which Rust forbids for a type
+/// that implements `Drop`.
+///
+/// Identity-checked: it captures the bound inode's `(dev, ino)` at construction
+/// and only unlinks if the path STILL resolves to that exact inode. This closes
+/// the otherwise-new shutdown race — if a successor daemon reclaims the path
+/// (after our listener FD closed but before this guard runs) and rebinds a fresh
+/// socket, the inode differs and we leave the successor's live socket untouched.
+pub(crate) struct SocketFileGuard {
+    path: PathBuf,
+    /// `(dev, ino)` of the socket we bound; `None` if the post-bind stat failed,
+    /// in which case Drop conservatively unlinks nothing (we can't prove it ours).
+    identity: Option<(u64, u64)>,
+}
+
+impl SocketFileGuard {
+    pub(crate) fn new(path: PathBuf) -> Self {
+        let identity = socket_identity(&path);
+        Self { path, identity }
+    }
+}
+
+impl Drop for SocketFileGuard {
+    fn drop(&mut self) {
+        // Only remove the file when it still refers to the inode we bound — never
+        // a successor daemon's freshly rebound socket at the same path. A `None`
+        // identity (stat failed at bind) or a mismatch leaves the file in place.
+        // Best-effort: a missing file on shutdown is benign (idempotent).
+        if self.identity.is_some() && socket_identity(&self.path) == self.identity {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
 
 /// Configuration loaded by the daemon (precedence).
 #[derive(Debug, Clone)]
@@ -62,4 +115,8 @@ pub struct SocketServer {
     pub(crate) listener: UnixListener,
     pub(crate) deps: Arc<ConnectionHandlerDeps>,
     pub token: Arc<Token>,
+    /// Unlinks the bound socket path on drop (graceful-shutdown cleanup, #141).
+    /// `serve(self)` moves the other fields out but leaves this one, so it drops
+    /// — and removes `loom.sock` — when the consumed `self` goes out of scope.
+    pub(crate) _socket_guard: SocketFileGuard,
 }
