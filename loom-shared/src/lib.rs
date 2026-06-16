@@ -2,7 +2,6 @@
 //!
 //! - `error_format` — canonical `LoomError` + `LoomErrorCode` enum
 //!   shared across every crate so error types don't fork.
-//! - `llm_types` — LLM passthrough types shared across loom-core/rpc/mcp .
 //! - `logging` — `tracing_subscriber` setup with secret-redaction layer.
 //! - `auth_token` — `HelloToken` shared by daemon + CLI + MCP.
 //! - `redacted` — `Redacted<T>` newtype hiding values in
@@ -20,7 +19,6 @@ pub mod chromium_resolver;
 pub mod cookie_types;
 pub mod dom_normalize;
 pub mod error_format;
-pub mod llm_types;
 pub mod logging;
 pub mod navigate_outcome;
 pub mod redacted;

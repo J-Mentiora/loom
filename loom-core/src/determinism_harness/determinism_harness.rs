@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// One frame on the side-effect tape. Each variant is what was observed
-/// (clock read, RNG draw, network response, blob ref, LLM response) during
+/// (clock read, RNG draw, network response, blob ref) during
 /// recording and what gets replayed during replay.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -44,15 +44,6 @@ pub enum TapeFrame {
     BlobRead {
         sha256: String,
         size_bytes: u64,
-    },
-    /// LLM response recorded during a session.
-    /// `ReplayEngine` uses this frame to seed the `LlmCache` on replay.
-    LlmResponse {
-        model: String,
-        /// sha256(JCS(prompt_json)) — 64 lowercase hex chars.
-        prompt_hash: String,
-        tool_schema_version: String,
-        body_json: serde_json::Value,
     },
 }
 
