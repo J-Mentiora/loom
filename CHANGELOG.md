@@ -6,6 +6,14 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Graceful SIGTERM shutdown unlinks the daemon socket.** `SocketServer` now holds an
+  RAII guard that `remove_file`s the bound `loom.sock` on shutdown (and on panic), so a
+  stopped daemon no longer leaves a dangling socket that breaks naive `test -S` liveness
+  checks. The startup stale-socket reclaim — previously silent — now logs a `WARN` when it
+  removes a socket left by a dead daemon.
+
 ## [0.11.1] — 2026-06-11 — Embedded-First Schema Validation
 
 Patch release fixing a v0.11.0 regression where MCP `tools/call` rejected the
@@ -104,7 +112,6 @@ clients. (#138–#173)
 
 ### Known issues (deferred, non-blocking)
 
-- SIGTERM leaves the daemon socket file on disk (auto-reclaimed on next start).
 - The shim's fixed 10 s per-CDP-command timeout can trap navigates on a heavily-loaded
   host. Minor doc/contract items: checkpoint-cadence config, post-terminal cache
   tombstone, a profile-dir/pkill ordering race.

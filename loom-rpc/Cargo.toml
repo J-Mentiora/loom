@@ -41,6 +41,8 @@ libc = { workspace = true }
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+# Scoped subscriber for asserting the stale-socket-reclaim warn is emitted.
+tracing-subscriber = { workspace = true }
 
 [features]
 default = []
