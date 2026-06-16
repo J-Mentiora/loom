@@ -283,3 +283,76 @@ async fn web_screenshot_tool_result_keeps_text_receipt_block() {
         "receipt text block carrying screenshot_after_hash must be preserved"
     );
 }
+
+// === Error-envelope decode preserves structured `data` as context (P2.3) ===
+//
+// The wire JSON-RPC error envelope carries structured detail under `data`
+// (`JsonRpcError.data`), but `LoomError` deserializes its payload from
+// `context`. `decode_error_envelope` must copy it across so the daemon's typed
+// detail (e.g. session_cap_exceeded's {active, cap, hint}) reaches MCP callers
+// structurally instead of dying inside the human message.
+
+use crate::error_mapper::{ErrorMapper, TypedReceipt};
+
+#[test]
+fn decode_error_envelope_preserves_wire_data_as_context() {
+    let envelope = json!({
+        "code": "session_cap_exceeded",
+        "message": "concurrent session cap reached (2/2)",
+        "data": { "active": 2, "cap": 2, "hint": "close sessions or run `loom session reap`" }
+    });
+    let err = super::decode_error_envelope(&envelope);
+    let ctx = err
+        .context
+        .expect("wire `data` must be preserved as LoomError::context");
+    assert_eq!(ctx.get("active").and_then(|v| v.as_u64()), Some(2));
+    assert_eq!(ctx.get("cap").and_then(|v| v.as_u64()), Some(2));
+    assert!(ctx.get("hint").and_then(|v| v.as_str()).is_some());
+}
+
+#[test]
+fn decode_error_envelope_without_data_has_no_context() {
+    let envelope = json!({ "code": "invalid_argument", "message": "bad arg" });
+    let err = super::decode_error_envelope(&envelope);
+    assert!(
+        err.context.is_none(),
+        "absent wire `data` must leave context None"
+    );
+}
+
+#[test]
+fn mcp_error_path_surfaces_structured_cap_context_end_to_end() {
+    // Decode (wire) -> map (TypedReceipt) is the full MCP error path minus the
+    // socket: the structured cap detail must land in TypedReceipt.data.
+    let envelope = json!({
+        "code": "session_cap_exceeded",
+        "message": "concurrent session cap reached (2/2); run `loom session reap`",
+        "data": { "active": 2, "cap": 2, "hint": "close sessions or run `loom session reap`" }
+    });
+    let err = super::decode_error_envelope(&envelope);
+    let result: ToolResult = ErrorMapper::to_tool_result(err);
+    assert!(result.is_error);
+
+    let text = match &result.content[0] {
+        McpContent::Text { text } => text,
+        other => panic!("expected text content block, got {other:?}"),
+    };
+    let receipt: TypedReceipt = serde_json::from_str(text).expect("parse TypedReceipt");
+    let data = receipt.data.expect("data must carry structured cap detail");
+    assert_eq!(
+        data.get("active").and_then(|v| v.as_u64()),
+        Some(2),
+        "data={data}"
+    );
+    assert_eq!(
+        data.get("cap").and_then(|v| v.as_u64()),
+        Some(2),
+        "data={data}"
+    );
+    assert!(data.get("hint").is_some(), "data={data}");
+    assert_eq!(
+        data.get("retry").and_then(|v| v.as_str()),
+        Some("backoff"),
+        "retry disposition overlaid alongside context; data={data}"
+    );
+}

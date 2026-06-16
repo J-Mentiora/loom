@@ -25,6 +25,37 @@ pub(crate) fn is_64_hex(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Decode a JSON-RPC error envelope (`{code, message, data}`) into a
+/// [`LoomError`], preserving the structured `data` block.
+///
+/// `LoomError` deserializes its structured payload from a field named
+/// `context`, but the wire envelope (`loom_rpc::error_translator::JsonRpcError`)
+/// carries it under `data`. A plain `from_value::<LoomError>` therefore silently
+/// drops it, so `session_cap_exceeded`'s `{active, cap, hint}` (and every other
+/// code's context, e.g. `profile_restricted`'s `{matched_pattern, profile,
+/// violation}`) would survive only inside the human message. Copy the wire
+/// `data` onto `LoomError::context` so MCP callers receive it structurally.
+///
+/// The tolerant decode (`loom_shared::from_wire`) accepts the daemon's
+/// snake_case codes and maps unknowns to `internal`, so `from_value` only fails
+/// on a genuinely malformed envelope — in which case we fall back to a
+/// non-retryable protocol error that carries no context.
+pub(crate) fn decode_error_envelope(err_val: &serde_json::Value) -> LoomError {
+    match serde_json::from_value::<LoomError>(err_val.clone()) {
+        Ok(mut err) => {
+            if err.context.is_none() {
+                if let Some(data) = err_val.get("data") {
+                    if !data.is_null() {
+                        err.context = Some(data.clone());
+                    }
+                }
+            }
+            err
+        }
+        Err(_) => ErrorMapper::from_malformed_response(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Concrete framed-socket caller
 // ---------------------------------------------------------------------------
@@ -126,12 +157,7 @@ impl JsonRpcCaller for FramedCaller {
         let resp: serde_json::Value =
             serde_json::from_slice(&frame).map_err(|_| ErrorMapper::from_malformed_response())?;
         if let Some(err_val) = resp.get("error") {
-            // Tolerant decode (loom_shared::from_wire) accepts the daemon's
-            // snake_case codes and maps unknowns to `internal`, so this only
-            // falls back on a genuinely malformed envelope.
-            let loom_err: LoomError = serde_json::from_value(err_val.clone())
-                .unwrap_or_else(|_| ErrorMapper::from_malformed_response());
-            return Err(loom_err);
+            return Err(decode_error_envelope(err_val));
         }
         Ok(resp
             .get("result")

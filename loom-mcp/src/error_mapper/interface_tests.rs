@@ -138,3 +138,82 @@ fn mcp_content_text_variant_serialises_with_text_tag() {
     let s = serde_json::to_string(&block).unwrap();
     assert!(s.contains("\"type\":\"text\""), "got {s}");
 }
+
+// === Structured error context surfaces in TypedReceipt.data (P2.3) ===
+
+/// Parse the single text content block of an error `ToolResult` back into the
+/// `TypedReceipt` it carries.
+fn receipt_of(result: &ToolResult) -> TypedReceipt {
+    assert_eq!(result.content.len(), 1, "exactly one content block");
+    let text = match &result.content[0] {
+        McpContent::Text { text } => text,
+        other => panic!("expected text content block, got {other:?}"),
+    };
+    serde_json::from_str(text).expect("content text must parse as a TypedReceipt")
+}
+
+#[test]
+fn session_cap_exceeded_to_tool_result_carries_structured_active_cap_hint() {
+    // Mirrors loom-cli/tests/integration_session_cap.rs but at the MCP layer:
+    // the daemon attaches {active, cap, hint} to the session_cap_exceeded
+    // error's context, and `to_tool_result` must surface those NUMERICALLY in
+    // the TypedReceipt `data` — not merely inside the human message string.
+    let err = LoomError::new(
+        LoomErrorCode::SessionCapExceeded,
+        "concurrent session cap reached (2/2); close sessions or run `loom session reap`",
+    )
+    .with_context(serde_json::json!({
+        "active": 2,
+        "cap": 2,
+        "hint": "close sessions or run `loom session reap`",
+    }));
+
+    let result = ErrorMapper::to_tool_result(err);
+    assert!(result.is_error);
+    let receipt = receipt_of(&result);
+    assert_eq!(receipt.code, "session_cap_exceeded");
+
+    let data = receipt.data.expect("data must be present");
+    assert_eq!(
+        data.get("active").and_then(|v| v.as_u64()),
+        Some(2),
+        "active must be numeric 2; data={data}"
+    );
+    assert_eq!(
+        data.get("cap").and_then(|v| v.as_u64()),
+        Some(2),
+        "cap must be numeric 2 (== cap); data={data}"
+    );
+    assert!(
+        data.get("hint")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("loom session reap"))
+            .unwrap_or(false),
+        "actionable hint must survive structurally; data={data}"
+    );
+    // Retryability is still overlaid alongside the structured context
+    // (session_cap_exceeded => Backoff).
+    assert_eq!(
+        data.get("retryable").and_then(|v| v.as_bool()),
+        Some(true),
+        "retryable must remain; data={data}"
+    );
+    assert_eq!(
+        data.get("retry").and_then(|v| v.as_str()),
+        Some("backoff"),
+        "retry disposition must remain; data={data}"
+    );
+}
+
+#[test]
+fn to_tool_result_without_context_or_retry_emits_no_data() {
+    // Regression guard: a non-retryable error with no context still yields
+    // `data: None` (the pre-fix contract for the empty case).
+    let err = LoomError::new(LoomErrorCode::InvalidArgument, "bad arg");
+    let receipt = receipt_of(&ErrorMapper::to_tool_result(err));
+    assert!(
+        receipt.data.is_none(),
+        "no context + non-retryable must omit data; got {:?}",
+        receipt.data
+    );
+}
