@@ -32,20 +32,32 @@ impl DispatchPhase {
 impl ErrorMapper {
     pub fn to_tool_result(err: LoomError) -> ToolResult {
         let msg = truncate_chars(&err.message, MAX_MESSAGE_CHARS);
-        // Surface retryability so MCP callers (e.g. the studio) can distinguish
-        // an infra flake from a real page error. `data.retryable` /
-        // `data.retry` carry the disposition; the success return shapes of the
-        // `web.*` verbs are unchanged (this only enriches the error envelope).
-        let data = match err.code.retry_disposition() {
+        // Start `data` from the error's structured context so MCP callers get the
+        // typed fields the daemon attached — `session_cap_exceeded`'s
+        // {active, cap, hint}, `profile_restricted`'s {matched_pattern, profile,
+        // violation}, etc. — structurally, not just buried in `message`. Then
+        // overlay retryability (`retryable`/`retry`) so callers can still
+        // distinguish an infra flake from a real page error. The overlay wins on
+        // a key clash, but the daemon's context keys never collide with these.
+        let mut data_obj = match err.context {
+            Some(serde_json::Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+        if let Some(retry) = match err.code.retry_disposition() {
             loom_rpc::error::RetryDisposition::None => None,
-            disp => Some(serde_json::json!({
-                "retryable": true,
-                "retry": match disp {
-                    loom_rpc::error::RetryDisposition::Reconnect => "reconnect",
-                    loom_rpc::error::RetryDisposition::Backoff => "backoff",
-                    loom_rpc::error::RetryDisposition::None => "none",
-                },
-            })),
+            loom_rpc::error::RetryDisposition::Reconnect => Some("reconnect"),
+            loom_rpc::error::RetryDisposition::Backoff => Some("backoff"),
+        } {
+            data_obj.insert("retryable".to_string(), serde_json::Value::Bool(true));
+            data_obj.insert(
+                "retry".to_string(),
+                serde_json::Value::String(retry.to_string()),
+            );
+        }
+        let data = if data_obj.is_empty() {
+            None
+        } else {
+            Some(serde_json::Value::Object(data_obj))
         };
         let receipt = TypedReceipt {
             code: err.code.as_wire().to_string(),
