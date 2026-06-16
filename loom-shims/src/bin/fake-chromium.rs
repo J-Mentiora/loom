@@ -341,6 +341,13 @@ async fn handle_connection(
             if let FakeUrlPattern::Error(ref code) = nav_url_pattern {
                 result["errorText"] = json!(code);
             }
+            // `http://fake.test/slow/<MS>`: stall this navigate's response so a
+            // shim per-CDP-command navigate-budget timeout fires. Drives the
+            // `LOOM_SHIM_CDP_TIMEOUT_MS` e2e (both the raised-budget success and
+            // the default-budget typed-timeout cases).
+            if let FakeUrlPattern::Slow(ms) = nav_url_pattern {
+                tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+            }
         }
 
         // Stale-event injection sentinel for Runtime.evaluate
@@ -869,7 +876,10 @@ async fn handle_connection(
                         .send(Message::Text(iframe_resp.to_string().into()))
                         .await;
                 }
-                FakeUrlPattern::None => {}
+                // The `/slow/<MS>` delay was already applied before the
+                // navigate response above; from here it behaves like a plain
+                // navigate (no synthetic network event).
+                FakeUrlPattern::Slow(_) | FakeUrlPattern::None => {}
             }
 
             // Emit Page.loadEventFired after Page.navigate so the daemon's
@@ -942,6 +952,11 @@ enum FakeUrlPattern {
     /// status_code=200 — the iframe 404 stays in `network_events` for
     /// observability only (main-document failure scoping).
     PageWithIframe404,
+    /// `http://fake.test/slow/<MS>` → sleep <MS> milliseconds BEFORE sending
+    /// the `Page.navigate` response, so a shim per-CDP-command navigate-budget
+    /// timeout (`LOOM_SHIM_CDP_TIMEOUT_MS`) fires deterministically. The delay
+    /// is on the navigate command's own response — the binding CDP roundtrip.
+    Slow(u64),
     /// Anything else — emit no synthetic Network event (status_code
     /// will remain 0 from the shim's perspective, mirroring real
     /// Chromium with caching disabled).
@@ -1098,6 +1113,15 @@ fn parse_fake_url_pattern(url: &str) -> FakeUrlPattern {
         let code = rest.split('?').next().unwrap_or("");
         if !code.is_empty() {
             return FakeUrlPattern::Error(code.to_string());
+        }
+    }
+    if let Some(rest) = url
+        .strip_prefix("http://fake.test/slow/")
+        .or_else(|| url.strip_prefix("https://fake.test/slow/"))
+    {
+        let n: &str = rest.split('?').next().unwrap_or("");
+        if let Ok(ms) = n.parse::<u64>() {
+            return FakeUrlPattern::Slow(ms);
         }
     }
     if url == "http://fake.test/page-with-tracker" || url == "https://fake.test/page-with-tracker" {

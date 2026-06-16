@@ -61,8 +61,9 @@ pub enum ShimErrorCode {
     /// `Supervisor` restart budget exhausted, or process died and could
     /// not be respawned. Mapped to `LoomErrorCode::SurfaceTrap`.
     ChromiumUnavailable,
-    /// CDP roundtrip exceeded the action's budget. Mapped to
-    /// `LoomErrorCode::WebActionTimeout`.
+    /// CDP roundtrip exceeded the action's budget (the per-CDP-command
+    /// navigate budget is configurable via `LOOM_SHIM_CDP_TIMEOUT_MS`). Mapped
+    /// to `LoomErrorCode::ShimTimeout`.
     CdpTimeout,
     /// chromiumoxide returned a CDP-protocol error response (e.g.
     /// invalid params, target detached). Mapped to
