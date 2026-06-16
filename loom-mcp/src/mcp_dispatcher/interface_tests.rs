@@ -404,6 +404,7 @@ async fn implicit_session_create_forwards_seed_clock_anchor_profile() {
         seed: Some(42),
         clock_anchor: Some(1_700_000_000_000),
         profile: Some("full".into()),
+        budget: None,
     };
     let (dispatcher, caller) = primed_dispatcher(options, HashMap::new()).await;
     let result = dispatcher.tools_call(navigate_params()).await;
@@ -461,38 +462,51 @@ async fn implicit_session_create_with_default_options_is_unchanged() {
 #[test]
 fn session_options_parse_valid_invalid_and_empty_values() {
     assert_eq!(
-        SessionOptions::from_values(None, None, None).unwrap(),
+        SessionOptions::from_values(None, None, None, None).unwrap(),
         SessionOptions::default()
     );
     assert_eq!(
         SessionOptions::from_values(
             Some("42".into()),
             Some("1700000000000".into()),
-            Some("standard".into())
+            Some("standard".into()),
+            Some(r#"{"session_walltime_ms":30000}"#.into()),
         )
         .unwrap(),
         SessionOptions {
             seed: Some(42),
             clock_anchor: Some(1_700_000_000_000),
             profile: Some("standard".into()),
+            budget: Some(json!({ "session_walltime_ms": 30000 })),
         }
     );
     // Shell `VAR=` (empty/whitespace) means unset, not an error.
     assert_eq!(
-        SessionOptions::from_values(Some(String::new()), Some("  ".into()), Some(String::new()))
-            .unwrap(),
+        SessionOptions::from_values(
+            Some(String::new()),
+            Some("  ".into()),
+            Some(String::new()),
+            Some("   ".into()),
+        )
+        .unwrap(),
         SessionOptions::default()
     );
     // Malformed numerics fail loudly — a silently-dropped seed would
     // yield non-deterministic captures that look deterministic.
-    let err = SessionOptions::from_values(Some("not-a-number".into()), None, None).unwrap_err();
+    let err =
+        SessionOptions::from_values(Some("not-a-number".into()), None, None, None).unwrap_err();
     assert_eq!(err.code, LoomErrorCode::InvalidArgument);
     assert!(err.message.contains("LOOM_MCP_SESSION_SEED"), "{err}");
-    let err = SessionOptions::from_values(None, Some("-5".into()), None).unwrap_err();
+    let err = SessionOptions::from_values(None, Some("-5".into()), None, None).unwrap_err();
     assert!(
         err.message.contains("LOOM_MCP_SESSION_CLOCK_ANCHOR"),
         "{err}"
     );
+    // Malformed budget JSON fails loudly too — a silently-dropped budget
+    // would let a runaway page outlive its intended kill deadline.
+    let err = SessionOptions::from_values(None, None, None, Some("{not json".into())).unwrap_err();
+    assert_eq!(err.code, LoomErrorCode::InvalidArgument);
+    assert!(err.message.contains("LOOM_MCP_SESSION_BUDGET"), "{err}");
 }
 
 #[test]
@@ -502,16 +516,19 @@ fn session_options_from_env_reads_process_env() {
     std::env::set_var(super::ENV_SESSION_SEED, "7");
     std::env::set_var(super::ENV_SESSION_CLOCK_ANCHOR, "1700000000001");
     std::env::set_var(super::ENV_SESSION_PROFILE, "standard");
+    std::env::set_var(super::ENV_SESSION_BUDGET, r#"{"wall_clock":"30s"}"#);
     let opts = SessionOptions::from_env().unwrap();
     std::env::remove_var(super::ENV_SESSION_SEED);
     std::env::remove_var(super::ENV_SESSION_CLOCK_ANCHOR);
     std::env::remove_var(super::ENV_SESSION_PROFILE);
+    std::env::remove_var(super::ENV_SESSION_BUDGET);
     assert_eq!(
         opts,
         SessionOptions {
             seed: Some(7),
             clock_anchor: Some(1_700_000_000_001),
             profile: Some("standard".into()),
+            budget: Some(json!({ "wall_clock": "30s" })),
         }
     );
     assert_eq!(
@@ -531,6 +548,7 @@ async fn evicted_implicit_session_recreates_with_same_options_and_retries() {
             seed: Some(9),
             clock_anchor: None,
             profile: None,
+            budget: None,
         };
         let dead = HashMap::from([("fixture-session-1".to_string(), gone)]);
         let (dispatcher, caller) = primed_dispatcher(options, dead).await;
@@ -699,6 +717,7 @@ async fn session_reset_closes_old_session_and_merges_options_over_env_baseline()
         seed: Some(1),
         clock_anchor: Some(2),
         profile: None,
+        budget: None,
     };
     let (dispatcher, caller) = primed_dispatcher(baseline, HashMap::new()).await;
     // First tool call creates fixture-session-1 with the baseline.
@@ -749,6 +768,63 @@ async fn session_reset_closes_old_session_and_merges_options_over_env_baseline()
 }
 
 #[tokio::test]
+async fn session_reset_forwards_budget_and_falls_back_to_baseline() {
+    // The P3.1 contract: budget mirrors seed/clock_anchor/profile — an
+    // explicit reset budget overrides the env baseline, and an
+    // argument-less reset is hermetic (baseline budget, not the prior
+    // override). Forwarded opaque; the daemon owns BudgetLimits.
+    let baseline = SessionOptions {
+        seed: None,
+        clock_anchor: None,
+        profile: None,
+        budget: Some(json!({ "wall_clock": "60s" })),
+    };
+    let (dispatcher, caller) = primed_dispatcher(baseline, HashMap::new()).await;
+    // First tool call creates fixture-session-1 with the baseline budget.
+    assert!(!dispatcher.tools_call(navigate_params()).await.is_error);
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates[0],
+        json!({ "profile": "standard", "budget": { "wall_clock": "60s" } }),
+        "baseline budget must reach the first session.create"
+    );
+
+    // Reset with an explicit typed budget (the cleanest MCP contract —
+    // the daemon deserializes BudgetLimits directly): overrides baseline.
+    let result = dispatcher
+        .tools_call(call(
+            TOOL_SESSION_RESET,
+            json!({ "budget": { "session_walltime_ms": 30000 } }),
+        ))
+        .await;
+    assert_eq!(
+        result_json(&result),
+        json!({ "session_id": "fixture-session-2" })
+    );
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates[1],
+        json!({ "profile": "standard", "budget": { "session_walltime_ms": 30000 } }),
+        "explicit reset budget must override the baseline and reach session.create"
+    );
+
+    // Argument-less reset is hermetic: back to the baseline budget, NOT
+    // the previous reset's override.
+    assert!(
+        !dispatcher
+            .tools_call(call(TOOL_SESSION_RESET, json!({})))
+            .await
+            .is_error
+    );
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates[2],
+        json!({ "profile": "standard", "budget": { "wall_clock": "60s" } }),
+        "argument-less reset falls back to the baseline budget"
+    );
+}
+
+#[tokio::test]
 async fn session_reset_rejects_malformed_arguments_without_daemon_calls() {
     let (dispatcher, caller) = primed_dispatcher(SessionOptions::default(), HashMap::new()).await;
     let result = dispatcher
@@ -775,6 +851,7 @@ async fn session_info_reports_id_options_and_created_at() {
         seed: Some(5),
         clock_anchor: Some(7),
         profile: None,
+        budget: None,
     };
     let (dispatcher, _caller) = primed_dispatcher(baseline, HashMap::new()).await;
     let result = dispatcher
@@ -787,6 +864,7 @@ async fn session_info_reports_id_options_and_created_at() {
             "seed": 5,
             "clock_anchor": 7,
             "profile": "standard",
+            "budget": null,
             "created_at_ms": 1_700_000_000_001_u64,
         })
     );

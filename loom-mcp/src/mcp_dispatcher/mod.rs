@@ -20,6 +20,7 @@ impl SessionOptions {
             std::env::var(ENV_SESSION_SEED).ok(),
             std::env::var(ENV_SESSION_CLOCK_ANCHOR).ok(),
             std::env::var(ENV_SESSION_PROFILE).ok(),
+            std::env::var(ENV_SESSION_BUDGET).ok(),
         )
     }
 
@@ -32,6 +33,7 @@ impl SessionOptions {
         seed: Option<String>,
         clock_anchor: Option<String>,
         profile: Option<String>,
+        budget: Option<String>,
     ) -> Result<Self, LoomError> {
         Ok(Self {
             seed: parse_env_u64(ENV_SESSION_SEED, seed)?,
@@ -39,6 +41,7 @@ impl SessionOptions {
             profile: profile
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty()),
+            budget: parse_env_json(ENV_SESSION_BUDGET, budget)?,
         })
     }
 
@@ -62,6 +65,9 @@ impl SessionOptions {
         if let Some(anchor) = self.clock_anchor {
             params.insert("clock_anchor".to_string(), serde_json::json!(anchor));
         }
+        if let Some(budget) = &self.budget {
+            params.insert("budget".to_string(), budget.clone());
+        }
         serde_json::Value::Object(params)
     }
 }
@@ -76,6 +82,25 @@ fn parse_env_u64(var: &str, raw: Option<String>) -> Result<Option<u64>, LoomErro
         LoomError::new(
             LoomErrorCode::InvalidArgument,
             format!("{var} must be a non-negative integer, got {trimmed:?}"),
+        )
+    })
+}
+
+/// Parse an env-shaped JSON value (the budget baseline). Empty/whitespace
+/// is unset (shell `VAR=`); a malformed value is a hard startup error —
+/// silently dropping the budget would let a runaway page outlive its
+/// intended kill deadline while LOOKING budgeted. Shape is validated
+/// daemon-side (`session_validation`), so this only checks it parses.
+fn parse_env_json(var: &str, raw: Option<String>) -> Result<Option<serde_json::Value>, LoomError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    serde_json::from_str(trimmed).map(Some).map_err(|e| {
+        LoomError::new(
+            LoomErrorCode::InvalidArgument,
+            format!("{var} must be valid JSON, got {trimmed:?}: {e}"),
         )
     })
 }
@@ -358,13 +383,18 @@ impl McpDispatcher {
                 name: TOOL_SESSION_RESET.into(),
                 description: "Close the current implicit session and start a fresh one. \
                               Omitted options fall back to the LOOM_MCP_SESSION_* env \
-                              baseline, so each reset is hermetic. Returns {session_id}."
+                              baseline, so each reset is hermetic. `budget` sets per-test \
+                              limits (e.g. {\"wall_clock\":\"30s\"} or \
+                              {\"session_walltime_ms\":30000}) — a runaway page is \
+                              budget-killed with error.kind=\"budget_exceeded\". \
+                              Returns {session_id}."
                     .into(),
                 input_schema: obj(
                     serde_json::json!({
                         "seed": uint,
                         "clock_anchor": uint,
                         "profile": { "type": "string" },
+                        "budget": { "type": "object" },
                     }),
                     serde_json::json!([]),
                 ),
@@ -372,8 +402,8 @@ impl McpDispatcher {
             Tool {
                 name: TOOL_SESSION_INFO.into(),
                 description: "Describe the current implicit session: {session_id, seed, \
-                              clock_anchor, profile, created_at_ms}. Creates the session \
-                              lazily if none exists yet."
+                              clock_anchor, profile, budget, created_at_ms}. Creates the \
+                              session lazily if none exists yet."
                     .into(),
                 input_schema: obj(serde_json::json!({}), serde_json::json!([])),
             },
@@ -592,6 +622,7 @@ impl McpDispatcher {
             seed: p.seed.or(self.baseline_options.seed),
             clock_anchor: p.clock_anchor.or(self.baseline_options.clock_anchor),
             profile: p.profile.or_else(|| self.baseline_options.profile.clone()),
+            budget: p.budget.or_else(|| self.baseline_options.budget.clone()),
         };
         let mut guard = self.implicit_session.lock().await;
         // Close the outgoing session best-effort: an error just means the
@@ -633,6 +664,7 @@ impl McpDispatcher {
                 .profile
                 .as_deref()
                 .unwrap_or(IMPLICIT_SESSION_PROFILE),
+            "budget": session.options.budget,
             "created_at_ms": session.created_at_ms,
         }))
     }

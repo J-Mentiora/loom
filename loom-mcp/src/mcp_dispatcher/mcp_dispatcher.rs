@@ -73,6 +73,11 @@ pub const ENV_SESSION_SEED: &str = "LOOM_MCP_SESSION_SEED";
 pub const ENV_SESSION_CLOCK_ANCHOR: &str = "LOOM_MCP_SESSION_CLOCK_ANCHOR";
 /// Env var: optional profile override for the implicit session.
 pub const ENV_SESSION_PROFILE: &str = "LOOM_MCP_SESSION_PROFILE";
+/// Env var: optional JSON object of budget limits forwarded as `budget`
+/// to `session.create` (e.g. `{"wall_clock":"30s"}` or
+/// `{"session_walltime_ms":30000}`). Parsed as opaque JSON here; the
+/// daemon owns `BudgetLimits` deserialization + key-allowlisting.
+pub const ENV_SESSION_BUDGET: &str = "LOOM_MCP_SESSION_BUDGET";
 
 /// Profile used for the implicit session when no override is configured.
 /// `standard` so denylist surprises don't confuse MCP clients (the
@@ -85,11 +90,18 @@ pub const IMPLICIT_SESSION_PROFILE: &str = "standard";
 /// can override per-reset. `None` fields are omitted from the
 /// `session.create` wire params, so the all-default shape stays
 /// byte-identical to the pre-feature `{"profile":"standard"}`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// `Eq` is intentionally NOT derived: `budget` is opaque `serde_json::Value`
+/// (forwarded to the daemon, which owns `BudgetLimits`), and `Value` is only
+/// `PartialEq` (it can hold `f64`). Nothing keys a map/set on `SessionOptions`.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SessionOptions {
     pub seed: Option<u64>,
     pub clock_anchor: Option<u64>,
     pub profile: Option<String>,
+    /// Opaque budget limits forwarded verbatim to `session.create`
+    /// (`{"wall_clock":"30s"}` or `{"session_walltime_ms":30000}`).
+    pub budget: Option<serde_json::Value>,
 }
 
 /// Live implicit-session record: the daemon-assigned id plus the exact
@@ -132,6 +144,9 @@ pub struct SessionResetParams {
     pub seed: Option<u64>,
     pub clock_anchor: Option<u64>,
     pub profile: Option<String>,
+    /// Opaque budget limits; merged over the env baseline like the other
+    /// knobs and forwarded to `session.create` (daemon validates).
+    pub budget: Option<serde_json::Value>,
 }
 
 /// Arguments of `loom.session.diff`.
