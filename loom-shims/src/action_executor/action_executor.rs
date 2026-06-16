@@ -37,6 +37,7 @@ use loom_shared::navigate_outcome::ShimConsoleLine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::Duration;
 use tokio::sync::oneshot;
 
@@ -49,7 +50,37 @@ pub const DEFAULT_ACTION_BUDGET: Duration = Duration::from_secs(30);
 /// receipt within the network-error budget window. CDP itself fast-
 /// fails DNS / connection-refused sub-second; this constant bounds
 /// the slow-TLS / unresponsive-host worst case.
+///
+/// Overridable at process start via `LOOM_SHIM_CDP_TIMEOUT_MS` (see
+/// [`navigate_budget`]) — production topologies running many orchestrator
+/// instances can raise it so a slow-but-healthy navigate on a CPU-saturated
+/// host isn't trapped as a timeout. The default is unchanged.
 pub const DEFAULT_NAVIGATE_BUDGET: Duration = Duration::from_secs(10);
+
+/// Env var (milliseconds) overriding the per-CDP-command navigate budget.
+const NAVIGATE_BUDGET_ENV: &str = "LOOM_SHIM_CDP_TIMEOUT_MS";
+
+/// Parse a `LOOM_SHIM_CDP_TIMEOUT_MS` value into a navigate budget. A missing,
+/// non-numeric, or non-positive value falls back to [`DEFAULT_NAVIGATE_BUDGET`]
+/// (a `0`/garbage knob must not disable the budget — that would re-introduce
+/// the unbounded-navigate trap this guards against). Pure so the parse policy
+/// is unit-testable without the process-global env or the cache below.
+pub(crate) fn parse_navigate_budget(raw: Option<&str>) -> Duration {
+    raw.and_then(|s| s.parse::<u64>().ok())
+        .filter(|&ms| ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_NAVIGATE_BUDGET)
+}
+
+/// Per-CDP-command navigate budget, read from `LOOM_SHIM_CDP_TIMEOUT_MS` once
+/// per process and cached (mirrors `connection_handler::max_concurrent_requests`).
+/// Used only when the caller passes no explicit `budget` — which the dispatcher
+/// always does for `Page.navigate`, so this is the binding timeout in production.
+fn navigate_budget() -> Duration {
+    static CACHED: OnceLock<Duration> = OnceLock::new();
+    *CACHED
+        .get_or_init(|| parse_navigate_budget(std::env::var(NAVIGATE_BUDGET_ENV).ok().as_deref()))
+}
 
 /// settle-capture: serde defaults for the readiness fields on
 /// `ActionResult::Navigated`, so a pre-feature CBOR payload decodes unchanged.
@@ -357,8 +388,10 @@ impl ActionExecutor for ChromiumActionExecutor {
 
         // Tighter default for navigate so unreachable hosts surface a
         // typed-error receipt within the network-error budget window. Callers
-        // passing an explicit `budget` keep their value.
-        let timeout = budget.unwrap_or(DEFAULT_NAVIGATE_BUDGET);
+        // passing an explicit `budget` keep their value; otherwise the
+        // env-configurable `navigate_budget()` applies (the dispatcher passes
+        // `None`, so it is the binding per-CDP-command timeout in production).
+        let timeout = budget.unwrap_or_else(navigate_budget);
 
         // STEP 1: subscribe to Page.loadEventFired BEFORE issuing navigate
         // (per practitioner bug magnet #1: cached / data: URLs fire fast,
@@ -802,7 +835,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         // the per-tick observation sequence in virtual ticks (DET-CORE), so it
         // replays identically; the tick ceiling (from `budget`) bounds it to a
         // typed `timeout`/`dom_unstable` instead of hanging.
-        let timeout = budget.unwrap_or(DEFAULT_NAVIGATE_BUDGET);
+        let timeout = budget.unwrap_or_else(navigate_budget);
         let settle = crate::readiness_monitor::wait_for_settle(
             &self.cdp,
             target_id,

@@ -4,7 +4,8 @@
 // no CDP payload escape (`ActionResult` is typed), error mapping.
 
 use super::action_executor::{
-    action_error_to_response, ActionError, ActionResult, DEFAULT_ACTION_BUDGET,
+    action_error_to_response, parse_navigate_budget, ActionError, ActionResult,
+    DEFAULT_ACTION_BUDGET, DEFAULT_NAVIGATE_BUDGET,
 };
 use crate::ipc_endpoint::ipc_endpoint::{ShimErrorCode, ShimResponse};
 use ciborium::value::Value as CborValue;
@@ -15,6 +16,62 @@ use std::time::Duration;
 #[test]
 fn default_action_budget_is_thirty_seconds() {
     assert_eq!(DEFAULT_ACTION_BUDGET, Duration::from_secs(30));
+}
+
+// === Navigate budget knob (LOOM_SHIM_CDP_TIMEOUT_MS) ===
+// The per-CDP-command navigate budget is configurable; on expiry it surfaces
+// typed (CdpTimeout → ShimTimeout → wire `shim_timeout`), distinct from a
+// broken page. These pin the parse policy (the cached env read is process-
+// global, so the parse is factored pure for deterministic in-process testing;
+// the wire-level expiry behaviour is covered by the fake-chromium e2e
+// `integration_navigate_timeout_budget`).
+
+#[test]
+fn default_navigate_budget_is_ten_seconds() {
+    // Regression guard: the documented default must stay 10s so an absent knob
+    // keeps the pre-feature behaviour exactly.
+    assert_eq!(DEFAULT_NAVIGATE_BUDGET, Duration::from_secs(10));
+}
+
+#[test]
+fn navigate_budget_unset_falls_back_to_default() {
+    assert_eq!(parse_navigate_budget(None), DEFAULT_NAVIGATE_BUDGET);
+}
+
+#[test]
+fn navigate_budget_parses_explicit_millis() {
+    // 30000ms is the acceptance "raise it so a slow navigate succeeds" value.
+    assert_eq!(
+        parse_navigate_budget(Some("30000")),
+        Duration::from_secs(30)
+    );
+    assert_eq!(
+        parse_navigate_budget(Some("1500")),
+        Duration::from_millis(1500)
+    );
+}
+
+#[test]
+fn navigate_budget_rejects_zero_and_garbage_to_default() {
+    // A `0` or non-numeric knob must NOT disable the budget — that would
+    // re-open the unbounded-navigate trap this guards against.
+    assert_eq!(parse_navigate_budget(Some("0")), DEFAULT_NAVIGATE_BUDGET);
+    assert_eq!(parse_navigate_budget(Some("")), DEFAULT_NAVIGATE_BUDGET);
+    assert_eq!(parse_navigate_budget(Some("abc")), DEFAULT_NAVIGATE_BUDGET);
+    assert_eq!(parse_navigate_budget(Some("-5")), DEFAULT_NAVIGATE_BUDGET);
+    assert_eq!(parse_navigate_budget(Some("10.5")), DEFAULT_NAVIGATE_BUDGET);
+}
+
+#[test]
+fn cdp_timeout_is_distinct_from_broken_page_codes() {
+    // The typed timeout (→ LoomErrorCode::ShimTimeout) must be distinguishable
+    // from a broken page, which surfaces as a SurfaceTrap-family shim code.
+    assert_ne!(ShimErrorCode::CdpTimeout, ShimErrorCode::CdpProtocolError);
+    assert_ne!(
+        ShimErrorCode::CdpTimeout,
+        ShimErrorCode::ChromiumUnavailable
+    );
+    assert_ne!(ShimErrorCode::CdpTimeout, ShimErrorCode::ShimInternalError);
 }
 
 // === ActionResult is typed, no raw CDP bytes for navigate ===
