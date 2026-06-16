@@ -548,11 +548,16 @@ async fn bad_hello_with_pipelined_probe_gets_bare_error_then_close() {
         .send(Bytes::from(&b"HELLO wrong-token"[..]))
         .await
         .unwrap();
-    send_json(
-        &mut framed,
-        &request(0.into(), "daemon.hello", serde_json::json!({})),
-    )
-    .await;
+    // Pipeline the probe onto a connection the daemon is about to reject.
+    // This send races the rejection: the daemon may already have closed
+    // the socket, so a `BrokenPipe` here is an accepted outcome — it only
+    // means the probe never reached the daemon (still "never answered").
+    // Tolerate the send error rather than `.unwrap()`-ing it.
+    let _ = framed
+        .send(Bytes::from(
+            serde_json::to_vec(&request(0.into(), "daemon.hello", serde_json::json!({}))).unwrap(),
+        ))
+        .await;
 
     let resp = recv_json(&mut framed).await;
     assert_eq!(
@@ -564,12 +569,20 @@ async fn bad_hello_with_pipelined_probe_gets_bare_error_then_close() {
         resp.get("jsonrpc").is_none() && resp.get("id").is_none(),
         "rejection frame is bare (no envelope keys); got: {resp}"
     );
-    // Connection closes without ever acking the probe.
-    let next = framed.next().await;
-    assert!(
-        next.is_none(),
-        "daemon must close after auth rejection; got a frame"
-    );
+    // The connection closes without ever acking the probe. The close
+    // surfaces either as a clean EOF (`None`) or — when the daemon closes
+    // with the pipelined probe still unread in its receive buffer — as a
+    // transport reset (`Some(Err(_))`, e.g. ECONNRESET) on this read. Both
+    // mean "closed, probe never answered"; the bare error is always
+    // delivered ahead of the reset, so the assertions above stay reliable.
+    // The only forbidden outcome is the daemon actually answering the
+    // probe with a frame.
+    match framed.next().await {
+        None | Some(Err(_)) => {}
+        Some(Ok(frame)) => panic!(
+            "daemon must close after auth rejection, never ack the probe; got a frame: {frame:?}"
+        ),
+    }
 }
 
 /// The probe is answered on the fast lane even while a slow dispatch
