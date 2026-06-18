@@ -60,6 +60,13 @@ pub const DEFAULT_NAVIGATE_BUDGET: Duration = Duration::from_secs(10);
 /// Env var (milliseconds) overriding the per-CDP-command navigate budget.
 const NAVIGATE_BUDGET_ENV: &str = "LOOM_SHIM_CDP_TIMEOUT_MS";
 
+/// Upper bound for the best-effort virtual-time RESUME on a navigate exit
+/// (animation-capture Mode A). The resume is a single `setVirtualTimePolicy`
+/// round-trip, so it should return sub-second on a healthy renderer; capping it
+/// here keeps a failed navigate's cleanup from inheriting the full navigate budget
+/// (which can be 10s+) and guarantees the cleanup can never itself wedge.
+const RESUME_CDP_TIMEOUT: Duration = Duration::from_secs(2);
+
 /// Parse a `LOOM_SHIM_CDP_TIMEOUT_MS` value into a navigate budget. A missing,
 /// non-numeric, or non-positive value falls back to [`DEFAULT_NAVIGATE_BUDGET`]
 /// (a `0`/garbage knob must not disable the budget — that would re-introduce
@@ -245,6 +252,33 @@ impl ChromiumActionExecutor {
             .cdp
             .register_event_handler(EventFilter::new(method), handler);
         (rx, reg)
+    }
+
+    /// animation-capture Mode A: best-effort RESUME of virtual time after a
+    /// navigate. Issues `setVirtualTimePolicy{advance}` so a renderer left paused
+    /// at the (possibly half-drained) budget horizon commits frames again and the
+    /// NEXT standalone command (e.g. `Page.captureScreenshot`) is not wedged for
+    /// the full 30s CDP timeout. Errors are swallowed — this is a cleanup guard,
+    /// not a failure path — and it uses the caller's timeout so it can never wedge.
+    async fn resume_virtual_time(&self, target_id: TargetId, timeout: Duration) {
+        let msg = CdpMessage {
+            method: crate::determinism_injector::determinism_injector::VIRTUAL_TIME_METHOD
+                .to_string(),
+            params:
+                crate::determinism_injector::determinism_injector::build_virtual_time_resume_params(
+                ),
+        };
+        // Bound this best-effort cleanup TIGHTLY (a single `setVirtualTimePolicy`
+        // round-trip) so it can't add the full navigate budget's worth of latency to
+        // an already-failing navigate, and so the cleanup itself can never wedge.
+        let resume_to = timeout.min(RESUME_CDP_TIMEOUT);
+        if let Err(e) = self.cdp.command(target_id, msg, Some(resume_to)).await {
+            tracing::debug!(
+                target_id,
+                error = %e,
+                "navigate: virtual-time resume (advance) failed; renderer may stay paused"
+            );
+        }
     }
 }
 
@@ -525,6 +559,15 @@ impl ActionExecutor for ChromiumActionExecutor {
             tokio::time::timeout(timeout, rx).await.is_ok()
         };
 
+        // animation-capture (Mode A): tracks whether THIS navigate's virtual-time
+        // budget was confirmed drained. A cleanly drained budget leaves the
+        // renderer at a screenshottable horizon with a frozen (deterministic)
+        // clock — no resume needed, so determinism is preserved on the clean path.
+        // A NOT-drained budget (rearm fail / drain timeout / capture error) can
+        // leave the renderer paused mid-flight, wedging the next command for the
+        // full 30s CDP timeout — so we resume (`advance`) on exit ONLY then.
+        let mut budget_drained = false;
+
         if vt_active {
             // Subscribe to the budget-expiry event immediately BEFORE issuing
             // the arm command — after the prior navigate's awaits, not at
@@ -558,38 +601,43 @@ impl ActionExecutor for ChromiumActionExecutor {
                 if let Some(rx) = load_rx.take() {
                     load_fired = tokio::time::timeout(timeout, rx).await.is_ok();
                 }
-                if determinism_enabled {
-                    // Under determinism, block DOM capture until the budget
-                    // drains so all ≤budget virtual timers (e.g. a setTimeout-
-                    // driven reveal) have deterministically fired — making
-                    // `dom_snapshot_hash` cross-run stable. Bounded-determinism:
-                    // a pathological page (perpetual network / runaway timers)
-                    // can exhaust the wall-clock timeout before the budget
-                    // elapses; on timeout we warn + fall through to the
-                    // existing settle (non-fatal), so that navigate may diverge
-                    // cross-run but never hangs (D-INTAKE).
-                    let budget_drained = tokio::time::timeout(timeout, vt_expired_rx).await.is_ok();
-                    if budget_drained {
-                        tracing::debug!(
-                            target_id,
-                            "navigate: virtualTimeBudgetExpired arrived; DOM capture is virtual-time settled"
-                        );
-                    } else {
-                        tracing::warn!(
-                            target_id,
-                            "navigate: virtualTimeBudgetExpired did not arrive within timeout; \
-                             settle may be non-deterministic — falling back to wait_for_settle"
-                        );
-                    }
+                // animation-capture (Mode C, C3): block DOM capture until the
+                // virtual-time budget drains REGARDLESS of `determinism_enabled`.
+                // Previously this awaited only under determinism, so a
+                // `--no-determinism` (or budget-rearm) capture raced the reveal and
+                // grabbed a pre-reveal `opacity:0` frame. All ≤budget virtual timers
+                // (e.g. a setTimeout/whileInView reveal) fire first, making the
+                // captured DOM stable. Bounded-determinism: a pathological page can
+                // exhaust the wall-clock timeout before the budget elapses; on
+                // timeout we warn + fall through to the existing settle (non-fatal)
+                // so capture never hangs (D-INTAKE), and `budget_drained` stays
+                // false so the exit guard resumes the renderer.
+                budget_drained = tokio::time::timeout(timeout, vt_expired_rx).await.is_ok();
+                if budget_drained {
+                    tracing::debug!(
+                        target_id,
+                        "navigate: virtualTimeBudgetExpired arrived; DOM capture is virtual-time settled"
+                    );
+                } else {
+                    tracing::warn!(
+                        target_id,
+                        "navigate: virtualTimeBudgetExpired did not arrive within timeout; \
+                         settle may be non-deterministic — falling back to wait_for_settle"
+                    );
                 }
             }
         }
 
         // STEP 4b (settle-capture): gate the capture on the requested readiness
         // state. The verdict is a pure function of the per-tick observation
-        // sequence in virtual ticks (DET-CORE), so it is replay-equal. `load`
-        // mode returns immediately once load fired; networkidle/settled poll
-        // until quiet or the tick ceiling (a bounded, typed fallback).
+        // sequence in virtual ticks (DET-CORE), so it is replay-equal. `load` mode
+        // returns immediately once load fired; networkidle/settled poll until quiet
+        // or the tick ceiling (a bounded, typed fallback). animation-
+        // capture Mode C: intersection-gated `whileInView` reveals fire AT MOUNT
+        // (the deterministic IntersectionObserver override installed at inject —
+        // see `determinism_injector::REVEAL_IO_OVERRIDE_JS`), so by the time the
+        // budget above has drained they have animated to completion and the settled
+        // capture below is post-reveal, not a pre-reveal blank.
         let settle = crate::readiness_monitor::wait_for_settle(
             &self.cdp,
             target_id,
@@ -611,11 +659,18 @@ impl ActionExecutor for ChromiumActionExecutor {
                 (CborValue::Text("pierce".into()), CborValue::Bool(true)),
             ]),
         };
-        let dom_result = self
-            .cdp
-            .command(target_id, dom_msg, Some(timeout))
-            .await
-            .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
+        let dom_result = match self.cdp.command(target_id, dom_msg, Some(timeout)).await {
+            Ok(r) => r,
+            Err(e) => {
+                // animation-capture (Mode A): un-pause before bailing so the next
+                // command isn't wedged on a paused clock (only when the budget was
+                // not cleanly drained).
+                if vt_active && !budget_drained {
+                    self.resume_virtual_time(target_id, timeout).await;
+                }
+                return Err(action_error_to_response(ActionError::Cdp(e), 0, None));
+            }
+        };
         // Strip the ephemeral per-navigation `frameId` (and any future ephemeral
         // CDP id) from the DOM CBOR before it is hashed or stored, so two
         // independent same-seed captures of byte-identical content produce the
@@ -633,11 +688,16 @@ impl ActionExecutor for ChromiumActionExecutor {
                 CborValue::Text("png".into()),
             )]),
         };
-        let shot_result = self
-            .cdp
-            .command(target_id, shot_msg, Some(timeout))
-            .await
-            .map_err(|e| action_error_to_response(ActionError::Cdp(e), 0, None))?;
+        let shot_result = match self.cdp.command(target_id, shot_msg, Some(timeout)).await {
+            Ok(r) => r,
+            Err(e) => {
+                // animation-capture (Mode A): un-pause before bailing (see STEP 5).
+                if vt_active && !budget_drained {
+                    self.resume_virtual_time(target_id, timeout).await;
+                }
+                return Err(action_error_to_response(ActionError::Cdp(e), 0, None));
+            }
+        };
         // Decode the CDP screenshot envelope (CBOR `{data: <base64-PNG>}`)
         // into raw PNG bytes so the content store holds a renderable image
         // rather than a double-encoded envelope. On the rare decode failure
@@ -783,6 +843,16 @@ impl ActionExecutor for ChromiumActionExecutor {
             .and_then(|i| network_events.get(i as usize))
             .map(|e| e.status)
             .unwrap_or(0);
+
+        // animation-capture (Mode A): on the SUCCESS path resume the renderer ONLY
+        // when the budget was NOT cleanly drained (rearm fail / drain timeout) —
+        // those leave it paused mid-flight and would wedge the next command. A
+        // cleanly drained budget leaves a screenshottable horizon with a frozen,
+        // deterministic clock, so we DON'T resume it (preserving replay-equality
+        // for a subsequent web.evaluate clock read).
+        if vt_active && !budget_drained {
+            self.resume_virtual_time(target_id, timeout).await;
+        }
 
         Ok(ActionResult::Navigated {
             target_id,

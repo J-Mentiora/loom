@@ -117,13 +117,15 @@ async fn create_new_target_actually_awaits_inject_and_sends_cdp_command() {
         .expect("create_new_target must succeed when inject succeeds");
 
     let methods = cdp.methods();
+    // inject installs TWO scripts on the wire: the determinism script + the
+    // Mode C IntersectionObserver override (animation-capture).
     assert_eq!(
         methods
             .iter()
             .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
             .count(),
-        1,
-        "exactly one addScriptToEvaluateOnNewDocument must be sent on the wire"
+        2,
+        "the determinism script + the IO override must both be sent on the wire"
     );
     assert!(
         mgr.determinism_ready(target_id),
@@ -178,12 +180,14 @@ async fn create_new_target_idempotent_per_session() {
     assert_eq!(t1, t2, "same session must yield same target_id");
 
     let methods = cdp.methods();
+    // First create_new_target injects 2 scripts (determinism + IO override); the
+    // second must NOT re-inject, so the count stays 2 (not 4).
     assert_eq!(
         methods
             .iter()
             .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
             .count(),
-        1,
-        "second create_new_target must NOT re-inject"
+        2,
+        "second create_new_target must NOT re-inject (count stays at the first inject's 2)"
     );
 }

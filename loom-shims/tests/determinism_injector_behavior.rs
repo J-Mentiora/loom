@@ -197,13 +197,17 @@ async fn test_inject_idempotent_second_call_is_noop() {
         .expect("second inject — must be noop, not error");
 
     let methods = cdp.recorded_methods();
+    // A single inject installs TWO scripts via addScriptToEvaluateOnNewDocument —
+    // the determinism script AND the Mode C IntersectionObserver override — so the
+    // count after two injects is 2 (the first inject's two), proving the second was
+    // a no-op (not 4).
     assert_eq!(
         methods
             .iter()
             .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
             .count(),
-        1,
-        "second inject must be a no-op (only 1 CDP call, not 2)"
+        2,
+        "second inject must be a no-op (the 2 CDP calls from the first inject, not 4)"
     );
 }
 
@@ -294,13 +298,15 @@ async fn test_clear_target_removes_from_registry() {
         .await
         .expect("re-inject after clear");
     let methods = cdp2.recorded_methods();
+    // Each inject installs 2 scripts (determinism + Mode C IO override), so inject
+    // + re-inject-after-clear = 4 addScript calls total.
     assert_eq!(
         methods
             .iter()
             .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
             .count(),
-        2,
-        "re-inject after clear must send 2 CDP calls total"
+        4,
+        "re-inject after clear must send a fresh pair of CDP calls (4 total)"
     );
 }
 
@@ -318,8 +324,17 @@ async fn test_inject_substitutes_seed_into_wire_source() {
         .expect("inject");
 
     let sources = cdp.recorded_inject_sources();
-    assert_eq!(sources.len(), 1, "exactly one inject command sent");
-    let s = &sources[0];
+    // inject installs the determinism script (sent first, carries the seed) AND the
+    // Mode C IntersectionObserver override.
+    assert_eq!(
+        sources.len(),
+        2,
+        "determinism script + IO override are both injected"
+    );
+    let s = sources
+        .iter()
+        .find(|s| s.contains("0x0000002a"))
+        .expect("the determinism source carrying the rendered seed");
     assert!(
         s.contains("0x0000002a"),
         "seed_lo=0x2a (42) must appear in rendered source"
