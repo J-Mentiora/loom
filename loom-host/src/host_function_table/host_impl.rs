@@ -576,19 +576,19 @@ impl Host for HostState {
             // target via TargetManager::create_new_target, threading the
             // seed/epoch_ms into the determinism JS injection.
             let outcome = shim_manager
-                .send_navigate(
-                    effective_id,
+                .send_navigate(crate::shim_manager::SendNavigateParams {
+                    id: effective_id,
                     action_id,
-                    shim_session_id,
-                    0,
-                    url.clone(),
+                    session_id: shim_session_id,
+                    target_id: 0,
+                    url: url.clone(),
                     budget_ms,
                     seed,
                     epoch_ms,
                     blocklist_enabled,
                     until,
                     determinism_enabled,
-                )
+                })
                 .await
                 .map_err(loom_to_wit_error)?;
 
@@ -803,17 +803,17 @@ impl Host for HostState {
             // target_id = 0 → resolves to the session's current target (the
             // shim's WaitFor handler runs after an idempotent SpawnTarget).
             let outcome = shim_manager
-                .send_wait_for(
-                    effective_id,
+                .send_wait_for(crate::shim_manager::SendWaitForParams {
+                    id: effective_id,
                     action_id,
-                    shim_session_id,
-                    0,
+                    session_id: shim_session_id,
+                    target_id: 0,
                     until,
                     budget_ms,
                     seed,
                     epoch_ms,
                     determinism_enabled,
-                )
+                })
                 .await
                 .map_err(loom_to_wit_error)?;
 
@@ -875,17 +875,17 @@ impl Host for HostState {
             // the determinism-injected target via SpawnTarget before
             // dispatching the actual Runtime.evaluate.
             let outcome = shim_manager
-                .send_evaluate(
-                    effective_id,
+                .send_evaluate(crate::shim_manager::SendEvaluateParams {
+                    id: effective_id,
                     action_id,
-                    shim_session_id,
-                    0,
+                    session_id: shim_session_id,
+                    target_id: 0,
                     expression,
                     budget_ms,
                     seed,
                     epoch_ms,
                     determinism_enabled,
-                )
+                })
                 .await
                 .map_err(loom_to_wit_error)?;
 
@@ -981,18 +981,18 @@ impl Host for HostState {
             // (upload_guard). target_id = 0 → resolves to the session target,
             // same as send_evaluate.
             let outcome = shim_manager
-                .send_set_input_files(
-                    effective_id,
+                .send_set_input_files(crate::shim_manager::SendSetInputFilesParams {
+                    id: effective_id,
                     action_id,
-                    shim_session_id,
-                    0,
+                    session_id: shim_session_id,
+                    target_id: 0,
                     selector,
-                    paths,
+                    files: paths,
                     budget_ms,
                     seed,
                     epoch_ms,
                     determinism_enabled,
-                )
+                })
                 .await
                 .map_err(loom_to_wit_error)?;
 

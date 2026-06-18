@@ -1,0 +1,236 @@
+// ShimManager — shared types.
+//
+// Plain data types used across the shim-manager submodules: ids, config,
+// breaker / failure classification, per-shim live + snapshot state, the typed
+// verb outcomes (`EvaluateOutcome` / `SetInputFilesOutcome`), and the per-verb
+// `send_*` params structs. Split out of `shim_manager.rs` (behavior-preserving).
+//
+// All items are re-exported from `shim_manager.rs` (`pub use super::types::*`)
+// so existing paths — `loom_host::shim_manager::{...}` and the in-crate
+// `crate::shim_manager::{...}` / `super::shim_manager::{...}` — resolve
+// unchanged.
+
+use loom_shared::types::{EpochMs, Seed};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+/// Logical shim id. Production keys are `format!("{name}:{session_id}")`
+/// (e.g. `"chromium:01HXYZ..."`). Tests may use bare names.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+pub struct ShimId(pub String);
+
+/// Spawn config per shim. Loaded from `HostConfig` once at startup.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShimConfig {
+    pub binary_path: PathBuf,
+    pub args: Vec<String>,
+    /// Environment variables to set on the child. The daemon populates
+    /// `LOOM_SHIM_CHROMIUM_PATH` and `LOOM_SHIM_USER_DATA_DIR` here;
+    /// `LOOM_SHIM_FD` is set automatically at spawn time.
+    pub env: Vec<(String, String)>,
+    pub spawn_retry: u8,       // soft default 1
+    pub breaker_threshold: u8, // soft default 3
+    pub breaker_open_ms: u64,  // soft default 5000
+    pub send_timeout_ms: u64,
+    pub recv_timeout_ms: u64,
+}
+
+impl Default for ShimConfig {
+    fn default() -> Self {
+        Self {
+            binary_path: PathBuf::from("/usr/local/bin/loom-shim-stub"),
+            args: vec![],
+            env: vec![],
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 5_000,
+            recv_timeout_ms: 30_000,
+        }
+    }
+}
+
+/// animation-capture (Mode B, D11): process-level RPC request-timeout cap
+/// (`LOOM_REQUEST_TIMEOUT_MS`, mirrors `connection_handler::request_timeout`).
+/// A non-positive / unparseable value falls back to the 30s default.
+pub(crate) const RPC_REQUEST_TIMEOUT_ENV: &str = "LOOM_REQUEST_TIMEOUT_MS";
+pub(crate) fn rpc_request_timeout_ms() -> u64 {
+    std::env::var(RPC_REQUEST_TIMEOUT_ENV)
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&ms| ms > 0)
+        .unwrap_or(30_000)
+}
+
+/// animation-capture (Mode B, D11): effective recv timeout for the generic
+/// `CdpSend` leg = the larger of the shim's configured recv timeout and the RPC
+/// request-timeout cap. The standalone `web.screenshot` rides this generic leg,
+/// so without cap-alignment a heavy full-page PNG is cut at a flat 30s shim recv
+/// even when the operator raised `LOOM_REQUEST_TIMEOUT_MS` (and the RPC layer
+/// allowed more). Stateless (no per-call state → race-free under concurrent
+/// dispatch) and WIT-free; per-call `deadline_ms` still TIGHTENS at the RPC layer.
+/// Pure for unit-testability.
+pub(crate) fn effective_generic_recv_ms(recv_timeout_ms: u64, rpc_cap_ms: u64) -> u64 {
+    recv_timeout_ms.max(rpc_cap_ms)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BreakerState {
+    Closed,
+    Open,
+    HalfOpen,
+}
+
+/// Failure classification for `record_failure`.
+///
+/// - `Transport`: the subprocess or its socket is unhealthy (spawn
+///   failure, channel closed, send/recv timeout, crash, framing/demux
+///   protocol violation). Counts toward the breaker AND evicts the live
+///   process so the next admitted call respawns fresh.
+/// - `Application`: a live, responsive shim REPORTED an error (e.g.
+///   `CdpProtocolError` / `TargetUnknown` from a bad `Runtime.evaluate`),
+///   or the host failed to decode the guest's payload before the shim
+///   was ever involved. Counts toward the breaker threshold but does NOT
+///   evict — killing the subprocess here would destroy a healthy
+///   Chromium's mid-session browser state (current page, in-memory
+///   state, in-flight navigation) over an error the browser survived.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FailureClass {
+    Transport,
+    Application,
+}
+
+/// Per-shim live state. Tracked by `ShimManager`.
+pub struct ShimState {
+    pub id: ShimId,
+    pub breaker: BreakerState,
+    pub consecutive_failures: u8,
+    pub opened_at_ms: Option<u64>,
+    /// Lifecycle counters. Lives on `ShimState` (not `ShimProcess`) because
+    /// `ShimProcess` is replaced on every respawn; these counters persist
+    /// across the replacement so the operator can see "this shim has been
+    /// restarted N times" via `daemon.health({deep:true})`.
+    pub restart_count: u32,
+    pub last_restart_at_ms: Option<u64>,
+}
+
+/// Owned snapshot of `ShimState` for callers that need to read it outside
+/// the DashMap guard (e.g. async aggregators that can't hold a Ref across
+/// `.await`). Mirror of the live struct.
+#[derive(Debug, Clone)]
+pub struct ShimStateSnapshot {
+    pub id: ShimId,
+    pub breaker: BreakerState,
+    pub consecutive_failures: u8,
+    pub opened_at_ms: Option<u64>,
+    pub restart_count: u32,
+    pub last_restart_at_ms: Option<u64>,
+}
+
+/// Outcome of a `set_input_files` CDP sequence. `SelectorNotFound` /
+/// `NotAFileInput` are application outcomes (the host maps them to typed
+/// wire `kind` strings), distinct from transport `Err(LoomError)`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetInputFilesOutcome {
+    Ok { file_count: u32 },
+    SelectorNotFound,
+    NotAFileInput,
+}
+
+/// Parsed result of a `Runtime.evaluate` CDP call. Exactly one of `result`
+/// / `exception` is `Some` per CDP semantics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvaluateOutcome {
+    /// On success: the raw CBOR `result.value`. None when the page threw.
+    pub result: Option<ciborium::value::Value>,
+    /// On exception: structured details. None on successful evaluation.
+    pub exception: Option<EvaluateException>,
+}
+
+/// Structured page-side exception details from CDP `exceptionDetails`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EvaluateException {
+    /// `exceptionDetails.text` — usually `"Uncaught"`.
+    pub text: String,
+    /// Extracted exception message (`exception.description` or
+    /// stringified `exception.value`). Used for the
+    /// `details.exception` field on page-side throws.
+    pub message: String,
+    pub line: u32,
+    pub column: u32,
+}
+
+// ─── Per-verb send_* params ──────────────────────────────────────────────────
+//
+// These group the call-varying arguments of the typed verb senders so the
+// signatures clear clippy's `too_many_arguments` threshold without the
+// per-fn `#[allow]`. `action_id` is the WASM-guest-computed action hash
+// (sha256 of the action payload), threaded for host-side receipt correlation
+// / observability (Q5); the shim never sees it. `seed` / `epoch_ms` ride the
+// wire to the shim where they're rendered into the determinism JS template.
+
+/// Params for [`ShimManager::send_navigate`].
+///
+/// `budget_ms` overrides the recv timeout when larger than the default.
+/// `blocklist_enabled` toggles the shim's `Fetch.enable` interception path
+/// (affirmative form on the wire so logs read directly). `until` is the
+/// settle-capture readiness mode gating the capture; `determinism_enabled`
+/// is the per-session determinism toggle.
+#[derive(Debug, Clone)]
+pub struct SendNavigateParams {
+    pub id: ShimId,
+    pub action_id: String,
+    pub session_id: u64,
+    pub target_id: u64,
+    pub url: String,
+    pub budget_ms: u64,
+    pub seed: Seed,
+    pub epoch_ms: EpochMs,
+    pub blocklist_enabled: bool,
+    pub until: String,
+    pub determinism_enabled: bool,
+}
+
+/// Params for [`ShimManager::send_wait_for`].
+#[derive(Debug, Clone)]
+pub struct SendWaitForParams {
+    pub id: ShimId,
+    pub action_id: String,
+    pub session_id: u64,
+    pub target_id: u64,
+    pub until: String,
+    pub budget_ms: u64,
+    pub seed: Seed,
+    pub epoch_ms: EpochMs,
+    pub determinism_enabled: bool,
+}
+
+/// Params for [`ShimManager::send_evaluate`].
+#[derive(Debug, Clone)]
+pub struct SendEvaluateParams {
+    pub id: ShimId,
+    pub action_id: String,
+    pub session_id: u64,
+    pub target_id: u64,
+    pub expression: String,
+    pub budget_ms: u64,
+    pub seed: Seed,
+    pub epoch_ms: EpochMs,
+    pub determinism_enabled: bool,
+}
+
+/// Params for [`ShimManager::send_set_input_files`].
+#[derive(Debug, Clone)]
+pub struct SendSetInputFilesParams {
+    pub id: ShimId,
+    pub action_id: String,
+    pub session_id: u64,
+    pub target_id: u64,
+    pub selector: String,
+    pub files: Vec<String>,
+    pub budget_ms: u64,
+    pub seed: Seed,
+    pub epoch_ms: EpochMs,
+    pub determinism_enabled: bool,
+}

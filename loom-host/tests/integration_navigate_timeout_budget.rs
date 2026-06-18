@@ -110,21 +110,21 @@ async fn navigate(
 ) -> Result<loom_shared::navigate_outcome::NavigateOutcome, loom_core::error::LoomError> {
     tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
             id,
-            "test-action".to_string(),
-            0,
-            0,
-            url.to_string(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: url.to_string(),
             // Host-side outer budget — deliberately large so the SHIM's
             // per-command timeout (not this) is the one under test.
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true,
-            "settled".to_string(),
-            true,
-        ),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate did not return within 45s")
