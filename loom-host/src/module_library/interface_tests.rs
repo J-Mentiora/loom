@@ -103,6 +103,103 @@ fn surfaces_dir_is_passed_at_construction_not_resolved_internally() {
     let _ = _ck;
 }
 
+// === Composite install stamp verified at load (engine-compat strand) ===
+
+/// A sidecar whose compat line (line 2) does not match the live engine must be
+/// rejected with a typed `StoreIntegrityFailed` carrying the "engine-incompatible
+/// — run `loom postinstall`" remediation, BEFORE the costlier `deserialize_file`
+/// (so the bogus cwasm bytes here never need to be a real component).
+#[test]
+fn load_one_rejects_engine_compat_mismatch_before_deserialize() {
+    use crate::surface_stamp::format_surface_sidecar;
+    let dir = tempfile::tempdir().unwrap();
+    let cwasm = dir.path().join("loom_surface_web.cwasm");
+    std::fs::write(&cwasm, b"not a real cwasm - compat check fires first").unwrap();
+    let sidecar = dir.path().join("loom_surface_web.sha256");
+    std::fs::write(
+        &sidecar,
+        format_surface_sidecar("abc", "wh-bogus-engine-wt0.0.0"),
+    )
+    .unwrap();
+
+    let rt = WasmRuntime::new(WasmRuntimeConfig::default()).unwrap();
+    let lib = ModuleLibrary::new(rt, dir.path().to_path_buf());
+    // Empty expected_sha → source-SHA strand skipped; the compat strand fires.
+    let err = lib
+        .load_one_with_expected_sha(&SurfaceName("loom_surface_web".into()), &cwasm, "")
+        .expect_err("compat mismatch must fail to load");
+    assert_eq!(err.code, LoomErrorCode::StoreIntegrityFailed);
+    assert!(
+        err.message.contains("engine-incompatible"),
+        "want engine-incompatible remediation, got: {}",
+        err.message
+    );
+    assert!(
+        err.message.contains("loom postinstall"),
+        "want postinstall remediation, got: {}",
+        err.message
+    );
+}
+
+/// A legacy single-line sidecar (source SHA only, no compat line) must NOT be
+/// rejected by the engine-compat check — it falls through to `deserialize_file`,
+/// the real engine-format backstop. With bogus cwasm bytes the load still fails,
+/// but with the deserialize error, NOT the engine-incompatible message.
+#[test]
+fn load_one_legacy_single_line_sidecar_skips_compat_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let cwasm = dir.path().join("loom_surface_web.cwasm");
+    std::fs::write(&cwasm, b"not a real cwasm").unwrap();
+    let sidecar = dir.path().join("loom_surface_web.sha256");
+    // Legacy format: just the source SHA, single line.
+    std::fs::write(&sidecar, b"abc").unwrap();
+
+    let rt = WasmRuntime::new(WasmRuntimeConfig::default()).unwrap();
+    let lib = ModuleLibrary::new(rt, dir.path().to_path_buf());
+    let err = lib
+        .load_one_with_expected_sha(&SurfaceName("loom_surface_web".into()), &cwasm, "")
+        .expect_err("bogus cwasm bytes must still fail to deserialize");
+    // The compat check was skipped (legacy sidecar) → this is the deserialize
+    // backstop failing, not the early engine-incompat rejection.
+    assert!(
+        !err.message.contains("engine-incompatible"),
+        "legacy sidecar must skip the compat check, got: {}",
+        err.message
+    );
+}
+
+/// The source-SHA strand still rejects a wrong line-1 SHA, now with the
+/// "stale surface artifact — run `loom postinstall`" remediation.
+#[test]
+fn load_one_rejects_wrong_source_sha_with_remediation() {
+    use crate::surface_stamp::format_surface_sidecar;
+    let dir = tempfile::tempdir().unwrap();
+    let cwasm = dir.path().join("loom_surface_web.cwasm");
+    std::fs::write(&cwasm, b"not a real cwasm").unwrap();
+    let sidecar = dir.path().join("loom_surface_web.sha256");
+    std::fs::write(
+        &sidecar,
+        format_surface_sidecar("actual-sha", "wh-bogus-engine-wt0.0.0"),
+    )
+    .unwrap();
+
+    let rt = WasmRuntime::new(WasmRuntimeConfig::default()).unwrap();
+    let lib = ModuleLibrary::new(rt, dir.path().to_path_buf());
+    let err = lib
+        .load_one_with_expected_sha(
+            &SurfaceName("loom_surface_web".into()),
+            &cwasm,
+            "expected-sha",
+        )
+        .expect_err("source SHA mismatch must fail");
+    assert_eq!(err.code, LoomErrorCode::StoreIntegrityFailed);
+    assert!(
+        err.message.contains("SHA-256 mismatch") && err.message.contains("loom postinstall"),
+        "want source-SHA-mismatch remediation, got: {}",
+        err.message
+    );
+}
+
 // Reference the fixture symbol so the unused-fn lint stays quiet.
 #[allow(dead_code)]
 const _FIXTURE_PIN: fn() -> Arc<ModuleLibrary> = fixture;

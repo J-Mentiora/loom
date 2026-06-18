@@ -44,11 +44,27 @@ fn step_outcome_variant_set_locked() {
         match o {
             StepOutcome::Skipped => "skipped",
             StepOutcome::Compiled(_) => "compiled",
+            StepOutcome::Refreshed(_) => "refreshed",
             StepOutcome::Downloaded => "downloaded",
             StepOutcome::Wrote => "wrote",
         }
     }
     let _ = _ck;
+}
+
+#[test]
+fn refreshed_outcome_serialises_as_tagged_path() {
+    // The engine-aware idempotence guard recompiles a stale artifact and reports
+    // `Refreshed` (vs `Compiled` for a fresh install) — the receipt's
+    // "this surface was stale and got rebuilt" signal.
+    let v = serde_json::to_value(StepOutcome::Refreshed(
+        "/tmp/surfaces/loom_surface_web.cwasm".into(),
+    ))
+    .expect("must serialise");
+    assert_eq!(
+        v,
+        serde_json::json!({ "refreshed": "/tmp/surfaces/loom_surface_web.cwasm" })
+    );
 }
 
 #[test]

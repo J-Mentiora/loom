@@ -17,10 +17,15 @@
 //   each tick (so `SessionExecutor`'s abort/budget `select!` arm can
 //   fire mid-execution) and trap after `guest_cpu_deadline_ms` worth
 //   of guest-CPU ticks (runaway-loop backstop).
-// - **Cwasm precompile signature is part of the artifact path.** The
-//   engine's `precompile_compatibility_hash` is folded into the cache
-//   key; a wasmtime version bump invalidates artifacts and triggers
-//   `StartupManager` recovery (§3.3).
+// - **Cwasm precompile signature is the engine dimension of the install
+//   stamp.** `precompile_compatibility_hash` (`wh-<arch>-<opt_level>-wt<ver>`)
+//   is written as line 2 of the `<name>.sha256` sidecar by `loom postinstall`
+//   and verified at `ModuleLibrary::load_one` / by `loom doctor`. It is an
+//   IDENTITY STRING, NOT a hash of compiled bytes — a wasmtime/arch/opt-level
+//   change flips it, so the postinstall idempotence guard recompiles and the
+//   daemon rejects a stale artifact early (before `deserialize_file`). It is
+//   NOT yet folded into the on-disk cwasm *path* (the path is a bare
+//   `<name>.cwasm`); the sidecar carries the compat dimension instead.
 // - **No surfaces of `wasmtime::Engine` directly to higher modules.**
 //   `WasmHost`, `Compiler`, `ModuleLibrary`, `SessionExecutor` accept
 //   `Arc<WasmRuntime>` and call `.engine()` to get the engine handle.
@@ -180,13 +185,32 @@ impl WasmRuntime {
         &self.config
     }
 
-    /// Precompile-compatibility hash. Folded into `.cwasm` artifact paths
-    /// so a wasmtime version bump triggers `StartupManager` recovery.
+    /// Precompile-compatibility hash for this runtime's config — the engine
+    /// dimension of the `.cwasm` install stamp (sidecar line 2). A mismatch vs
+    /// a stored stamp means the installed artifact was compiled by an
+    /// incompatible engine and must be recompiled.
     pub fn precompile_compatibility_hash(&self) -> Result<String, LoomError> {
-        Ok(format!(
-            "wh-{}-{}",
-            std::env::consts::ARCH,
-            self.config.opt_level
-        ))
+        Ok(precompile_compatibility_hash_for(&self.config.opt_level))
     }
+}
+
+/// Engine-free compatibility-hash computation — the single source of truth for
+/// both the live [`WasmRuntime::precompile_compatibility_hash`] and
+/// out-of-process consumers (`loom postinstall`, `loom doctor`) that need the
+/// expected stamp WITHOUT constructing an `Engine`.
+///
+/// `wh-<arch>-<opt_level>-wt<wasmtime_version>`:
+/// - `arch` (`std::env::consts::ARCH`) — a different-arch cwasm is not loadable.
+/// - `opt_level` — Cranelift opt level affects the compiled format.
+/// - `wasmtime_version` — the resolved wasmtime crate version (build-time env
+///   from `Cargo.lock`); folds in a pure-wasmtime bump that leaves source +
+///   opt-level unchanged. An identity STRING, never compiled bytes, so the hash
+///   is host-stable (macOS == Linux) — see CLAUDE.md's vendored-wasm gotcha.
+pub fn precompile_compatibility_hash_for(opt_level: &str) -> String {
+    format!(
+        "wh-{}-{}-wt{}",
+        std::env::consts::ARCH,
+        opt_level,
+        env!("LOOM_WASMTIME_VERSION"),
+    )
 }

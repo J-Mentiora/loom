@@ -1,33 +1,40 @@
-// DoctorRunner — `loom doctor` 8-check health probe.
+// DoctorRunner — `loom doctor` 9-check health probe.
 //
 // # Contract semantics
-// - **Exactly 8 checks, no more, no fewer:**
+// - **Exactly 9 checks, no more, no fewer:**
 //   1. Socket reachable at platform path (mode 0600).
 //   2. Daemon responsive (single `rpc.ping`).
 //   3. AOT artifacts present (`~/.../surfaces/*.cwasm` non-empty).
-//   4. Chromium binary present + sha256 matches pinned hash.
-//   5. Vault key material accessible (Keychain ACL probe via
+//   4. AOT artifacts current (the installed `loom_surface_web` sidecar's
+//      source SHA + engine-compat hash still match THIS binary). RPC-free;
+//      flags a STALE surface that would trap on first dispatch with a typed
+//      "run `loom postinstall`" — distinct from a generic `browser_smoke`
+//      failure. Passes when the artifact is absent (check 3 owns that) or
+//      carries only a legacy single-line stamp (the daemon would still boot
+//      a compatible legacy artifact).
+//   5. Chromium binary present + sha256 matches pinned hash.
+//   6. Vault key material accessible (Keychain ACL probe via
 //      `security-framework`'s read-only ACL check).
-//   6. macOS Gatekeeper quarantine clear on the Chromium binary
+//   7. macOS Gatekeeper quarantine clear on the Chromium binary
 //      (`com.apple.quarantine` xattr absent; no-op pass off macOS).
-//   7. Session health (active sessions / orphan browser trees / oldest
+//   8. Session health (active sessions / orphan browser trees / oldest
 //      session age, via `daemon.health`). Informational: `warn` when
 //      orphan trees exist, never a hard failure.
-//   8. Browser smoke (full session round-trip; skipped if prereqs failed).
+//   9. Browser smoke (full session round-trip; skipped if prereqs failed).
 //      Reports `at_capacity` (warn-class, NOT a failure) when the daemon
 //      rejects the smoke's `session.create` with the typed
 //      `session_cap_exceeded` — a saturated-but-healthy daemon must not
 //      flip doctor red (monitoring keyed on the exit code would
-//      false-positive at exactly peak load). Agrees with check 7's
+//      false-positive at exactly peak load). Agrees with check 8's
 //      `active_sessions` count.
 // - **Exit 0 if all healthy; exit 1 with typed
 //   `DoctorReport { checks, failures }` if any fails.**
 //   Warn-class statuses (`warn`, `at_capacity`) are not failures → exit 0.
 //   Exit-code mapping owned by `ErrorMapper`.
-// - **RPC-free for checks 1, 3, 4, 5, 6.** Checks 2, 7, 8 use the daemon
+// - **RPC-free for checks 1, 3, 4, 5, 6, 7.** Checks 2, 8, 9 use the daemon
 //   (`RpcClient::ping` / `daemon.health` / a real session round-trip).
 // - **`--daemon-only` scopes the verdict to checks 1-2** (socket + daemon)
-//   and reports checks 3-8 as `skipped`, preserving the exactly-8 report
+//   and reports checks 3-9 as `skipped`, preserving the exactly-9 report
 //   shape. For hosts where Chromium/AOT artifacts are absent by design
 //   (e.g. the Docker runtime image's HEALTHCHECK).
 
@@ -51,8 +58,9 @@ pub struct DoctorArgs {
     pub daemon_only: bool,
 }
 
-/// Resolved paths used by the 6 checks. (`chromium_binary` feeds both the
-/// presence/sha check 4 and the macOS quarantine check 6.)
+/// Resolved paths used by the filesystem checks. (`chromium_binary` feeds both
+/// the presence/sha check 5 and the macOS quarantine check 7; `surfaces_dir`
+/// feeds both the AOT-present check 3 and the AOT-current check 4.)
 #[derive(Debug, Clone)]
 pub struct DoctorPaths {
     pub socket_path: PathBuf,
@@ -70,6 +78,7 @@ pub const CHECK_NAMES: &[&str] = &[
     "socket_reachable",
     "daemon_responsive",
     "aot_artifacts_present",
+    "aot_artifacts_current",
     "chromium_present_and_verified",
     "vault_keychain_accessible",
     "macos_quarantine_clear",
@@ -80,10 +89,14 @@ pub const CHECK_NAMES: &[&str] = &[
 /// Prerequisite checks that must be `ok` for `browser_smoke` to be meaningful.
 /// If any failed, the smoke is skipped rather than run against a known-broken
 /// base (a missing-chromium failure is reported once, by the check that owns it).
+/// A STALE surface (`aot_artifacts_current` fail) would trap on the smoke's first
+/// dispatch, so the smoke is skipped and the staleness is reported by its own
+/// typed check, not as a generic smoke failure.
 const BROWSER_SMOKE_PREREQS: &[&str] = &[
     "socket_reachable",
     "daemon_responsive",
     "aot_artifacts_present",
+    "aot_artifacts_current",
     "chromium_present_and_verified",
 ];
 
@@ -158,6 +171,10 @@ pub async fn run(
     run_check!(
         "aot_artifacts_present",
         check_aot_artifacts(&paths.surfaces_dir)
+    );
+    run_check!(
+        "aot_artifacts_current",
+        check_aot_artifacts_current(&paths.surfaces_dir)
     );
     run_check!(
         "chromium_present_and_verified",
@@ -315,7 +332,7 @@ pub async fn check_session_health(rpc: &RpcClient) -> Result<(u64, u64, Option<u
     Ok((active, orphans, oldest))
 }
 
-/// Check 7 — real browser smoke. Drives a full ephemeral session end-to-end so
+/// Check 9 — real browser smoke. Drives a full ephemeral session end-to-end so
 /// a wedged browser/connection (crashed chromium, dead CDP, dropped socket)
 /// fails the check, where the liveness+presence checks alone would stay green.
 /// Always tears the session down (best-effort) even when a step fails, so the
@@ -412,7 +429,81 @@ pub async fn check_aot_artifacts(surfaces_dir: &std::path::Path) -> Result<(), C
     Ok(())
 }
 
-/// Check 4 — Chromium binary present + sha256 matches pinned.
+/// Check 4 — AOT artifacts current (stale-surface guard, RPC-free).
+///
+/// For the known `loom_surface_web` surface, read its `<name>.sha256` sidecar and
+/// compare line 1 to THIS binary's embedded source SHA and line 2 to the live
+/// engine-compat hash. A mismatch means the installed `.cwasm` was compiled from
+/// different source bytes or by an incompatible engine — it will fail to load and
+/// every dispatch will trap (`surface 'loom_surface_web' not loaded`). Returns a
+/// TYPED "stale surface artifact — run `loom postinstall`" so the failure is
+/// actionable BEFORE first dispatch and distinct from a generic `browser_smoke`
+/// failure.
+///
+/// Passes (no false red) when: the artifact or sidecar is absent (check 3 owns
+/// "present"); the sidecar is a legacy single-line stamp with no compat line (the
+/// daemon would still boot a compatible legacy artifact); or this is a dev build
+/// with no embedded source SHA (the daemon skips the source check too). Computes
+/// the expected compat hash engine-free against the default runtime config — what
+/// `loom postinstall` stamps.
+#[cfg(feature = "postinstall")]
+pub async fn check_aot_artifacts_current(surfaces_dir: &std::path::Path) -> Result<(), CliError> {
+    use loom_host::surface_stamp::{embedded_surface_web_sha256, parse_surface_sidecar};
+    use loom_host::wasm_runtime::{precompile_compatibility_hash_for, WasmRuntimeConfig};
+
+    let name = "loom_surface_web";
+    let cwasm = surfaces_dir.join(format!("{name}.cwasm"));
+    let sidecar = surfaces_dir.join(format!("{name}.sha256"));
+
+    // Artifact absent → check 3 ("present") owns that failure; nothing to verify.
+    if !cwasm.exists() || !sidecar.exists() {
+        return Ok(());
+    }
+
+    let contents = std::fs::read_to_string(&sidecar)
+        .map_err(|e| CliError::Internal(format!("read {name} sidecar: {e}")))?;
+    let (sidecar_sha, sidecar_compat) = parse_surface_sidecar(&contents);
+
+    // Source-SHA strand. Skipped when this binary has no embedded SHA (dev build),
+    // mirroring `ModuleLibrary::load_one`.
+    let expected_sha = embedded_surface_web_sha256();
+    if !expected_sha.is_empty() {
+        if let Some(actual) = sidecar_sha {
+            if actual != expected_sha {
+                return Err(CliError::Internal(format!(
+                    "stale surface artifact '{name}': sidecar source SHA '{actual}' != this \
+                     binary's '{expected_sha}' — run `loom postinstall`"
+                )));
+            }
+        }
+    }
+
+    // Engine-compat strand. Enforced only when the sidecar carries a compat line
+    // (legacy single-line stamps are not flagged — the daemon still boots a
+    // compatible legacy artifact, and the next `loom postinstall` upgrades it).
+    if let Some(stored_compat) = sidecar_compat {
+        let live_compat =
+            precompile_compatibility_hash_for(&WasmRuntimeConfig::default().opt_level);
+        if stored_compat != live_compat {
+            return Err(CliError::Internal(format!(
+                "stale surface artifact '{name}': compiled for engine '{stored_compat}', this \
+                 binary is '{live_compat}' — run `loom postinstall`"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+/// Check 4 (non-postinstall build) — `loom-host` isn't linked, so the expected
+/// stamp can't be computed. The non-postinstall binary is the RPC-only image
+/// that runs `--daemon-only` (this check is reported `skipped`); pass otherwise.
+#[cfg(not(feature = "postinstall"))]
+pub async fn check_aot_artifacts_current(_surfaces_dir: &std::path::Path) -> Result<(), CliError> {
+    Ok(())
+}
+
+/// Check 5 — Chromium binary present + sha256 matches pinned.
 pub async fn check_chromium(
     chromium: &ChromiumDownloader,
     binary: &std::path::Path,
@@ -422,7 +513,7 @@ pub async fn check_chromium(
     chromium.verify(expected_sha256).await
 }
 
-/// Check 5 — Keychain ACL probe (read-only accessibility check).
+/// Check 6 — Keychain ACL probe (read-only accessibility check).
 #[cfg(target_os = "macos")]
 pub async fn check_keychain_acl(keychain_label: &str) -> Result<(), CliError> {
     let _ = keychain_label;
@@ -438,7 +529,7 @@ pub async fn check_keychain_acl(keychain_label: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-/// Check 6 — macOS Gatekeeper quarantine clear on the Chromium binary.
+/// Check 7 — macOS Gatekeeper quarantine clear on the Chromium binary.
 ///
 /// macOS tags files that arrive from the internet with the
 /// `com.apple.quarantine` extended attribute; Gatekeeper then blocks or
