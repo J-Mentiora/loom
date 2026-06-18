@@ -111,7 +111,7 @@ fn make_session_manager(
         be,
         Observability::new(PathBuf::from("/dev/null"), false),
         0,
-        PathBuf::from("/tmp/loom-test/sessions"),
+        tmp.path().join("sessions"),
     )
 }
 

@@ -73,15 +73,7 @@ fn make_env() -> Env {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be_concrete = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = be_concrete.clone();
-    let sm = LocalSessionManager::new(
-        cs,
-        mw,
-        v,
-        be.clone(),
-        obs,
-        0,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
-    );
+    let sm = LocalSessionManager::new(cs, mw, v, be.clone(), obs, 0, root.join("sessions"));
     Env { sm, be, _tmp: tmp }
 }
 
