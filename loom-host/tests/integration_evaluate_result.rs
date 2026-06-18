@@ -107,17 +107,17 @@ async fn evaluate(
 ) -> Result<EvaluateOutcome, loom_core::error::LoomError> {
     tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_evaluate(
+        mgr.send_evaluate(loom_host::shim_manager::SendEvaluateParams {
             id,
-            "test-action".to_string(),
-            0,
-            0,
-            expression.to_string(),
-            30_000,
-            loom_shared::types::Seed(42),
-            loom_shared::types::EpochMs(1_700_000_000_000),
-            true,
-        ),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            expression: expression.to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(42),
+            epoch_ms: loom_shared::types::EpochMs(1_700_000_000_000),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_evaluate did not return within 45s")

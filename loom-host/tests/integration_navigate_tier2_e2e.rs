@@ -113,19 +113,19 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
-            id.clone(),
-            "test-action".to_string(),
-            0,
-            0,
-            "http://fake.test/status/200".into(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true,
-            "settled".to_string(),
-            true,
-        ),
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: "http://fake.test/status/200".into(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate timed out")
@@ -302,19 +302,19 @@ async fn error_navigate_summary_counts_4xx_as_error() {
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
-            id.clone(),
-            "test-action".to_string(),
-            0,
-            0,
-            "http://fake.test/status/404".into(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true,
-            "settled".to_string(),
-            true,
-        ),
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: "http://fake.test/status/404".into(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate timed out")
@@ -348,19 +348,19 @@ async fn navigate_dom_bytes(session_label: &str) -> Vec<u8> {
     let (mgr, id, _udd) = make_manager(session_label);
     let outcome = tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
-            id.clone(),
-            "test-action".to_string(),
-            0,
-            0,
-            "http://fake.test/status/200".into(),
-            30_000,
-            loom_shared::types::Seed(42),
-            loom_shared::types::EpochMs(0),
-            true,
-            "settled".to_string(),
-            true,
-        ),
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: "http://fake.test/status/200".into(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(42),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate timed out")
