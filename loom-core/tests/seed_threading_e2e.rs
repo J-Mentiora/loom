@@ -70,7 +70,7 @@ fn make_sm(tmp: &str, default_seed: u64) -> Arc<LocalSessionManager> {
         be,
         obs,
         default_seed,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
+        PathBuf::from(format!("{tmp}/sessions")),
     )
 }
 
@@ -85,6 +85,7 @@ fn opts(seed: Option<u64>) -> SessionCreateOpts {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     }
 }

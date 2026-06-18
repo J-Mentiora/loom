@@ -111,7 +111,7 @@ fn make_session_manager(
         be,
         Observability::new(PathBuf::from("/dev/null"), false),
         0,
-        PathBuf::from("/tmp/loom-test/sessions"),
+        tmp.path().join("sessions"),
     )
 }
 
@@ -439,6 +439,74 @@ fn test_replay_proceeds_on_missing_screenshot_blob() {
     assert!(
         result.is_ok(),
         "replay must NOT abort for missing screenshot blob: {:?}",
+        result.err()
+    );
+}
+
+// video-capture (THE determinism gate): a screencast `.webm` blob is
+// non-deterministic + EXCLUDED from the replay integrity gate exactly like a
+// screenshot. A receipt that references a `screencast_after_blob_ref` whose blob
+// is absent from the CAS must still replay (proving the named-field blob
+// collection tags it "screencast" and the pre-flight skips excluded kinds).
+#[test]
+fn test_replay_proceeds_on_missing_screencast_blob() {
+    let tmp = tmp_path();
+    let obs = make_obs(&tmp);
+    let sessions_root = tmp.path().join("sessions");
+    let mw = make_manifest_writer(&tmp, obs.clone());
+    let cs = make_content_store(&tmp, obs.clone()); // empty CAS
+    let dh = make_harness(42, mw.clone() as Arc<dyn ManifestWriter>);
+    let sm = make_session_manager(
+        &tmp,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        obs.clone(),
+    );
+    let engine = make_engine(
+        &tmp,
+        cs.clone() as Arc<dyn ContentStore>,
+        mw.clone() as Arc<dyn ManifestWriter>,
+        dh.clone(),
+        sm.clone(),
+    );
+
+    let id = SessionId("01TESTSCREENCAST00000".to_string());
+    std::fs::create_dir_all(sessions_root.join(&id.0)).unwrap();
+    mw.open_manifest(id.clone(), None).unwrap();
+
+    // Real receipts carry the screencast blob in the NAMED field — exercise the
+    // `collect_content_refs` path that tags it kind "screencast".
+    let receipt_json = serde_json::json!({
+        "action_id": 0,
+        "screencast_after_hash": "c".repeat(64),
+        "screencast_after_blob_ref": {"sha256": "c".repeat(64), "size_bytes": 4096},
+    });
+    let receipt_bytes = serde_jcs::to_string(&receipt_json).unwrap().into_bytes();
+    mw.append(
+        id.clone(),
+        ManifestEntry::ActionReceipt {
+            action_id: 0,
+            emitted_at_ms: 1_000_000,
+            receipt_canonical_bytes: receipt_bytes,
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+    mw.append(
+        id.clone(),
+        ManifestEntry::SessionTerminal {
+            action_id: 1,
+            emitted_at_ms: 1_000_100,
+            reason: "close".to_string(),
+            prev_hash: String::new(),
+        },
+    )
+    .unwrap();
+
+    let result = engine.replay(id, ReplayOpts::default());
+    assert!(
+        result.is_ok(),
+        "replay must NOT abort for a missing screencast blob (excluded like screenshots): {:?}",
         result.err()
     );
 }

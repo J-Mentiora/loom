@@ -73,15 +73,7 @@ fn make_env() -> Env {
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be_concrete = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = be_concrete.clone();
-    let sm = LocalSessionManager::new(
-        cs,
-        mw,
-        v,
-        be.clone(),
-        obs,
-        0,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
-    );
+    let sm = LocalSessionManager::new(cs, mw, v, be.clone(), obs, 0, root.join("sessions"));
     Env { sm, be, _tmp: tmp }
 }
 
@@ -96,6 +88,7 @@ fn opts_with_limits(limits: BudgetLimits) -> SessionCreateOpts {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     }
 }
@@ -324,6 +317,7 @@ async fn replay_sessions_skip_budget_timer() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     };
     let id = env.sm.create(opts).expect("create replay");

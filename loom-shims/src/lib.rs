@@ -19,6 +19,7 @@ pub mod log_forwarder;
 pub mod network_interceptor;
 pub mod process_monitor;
 pub mod readiness_monitor;
+pub mod screencast_recorder;
 pub mod supervisor;
 pub mod target_manager;
 

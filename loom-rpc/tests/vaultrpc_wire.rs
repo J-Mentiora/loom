@@ -283,6 +283,7 @@ impl WasmHostBridge for NoopHostBridge {
             status_code: None,
             dom_snapshot_hash: None,
             screenshot_after_hash: None,
+            screencast_after_hash: None,
             console_count: None,
             network_count: None,
             console_lines: vec![],

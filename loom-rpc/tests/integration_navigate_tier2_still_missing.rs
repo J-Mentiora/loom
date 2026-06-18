@@ -149,6 +149,7 @@ fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
         status_code: Some(200),
         dom_snapshot_hash: Some(dom_hash),
         screenshot_after_hash: Some(ss_hash),
+        screencast_after_hash: None,
         console_count: Some(console_lines.len() as u64),
         network_count: Some(network_events.len() as u64),
         console_lines,

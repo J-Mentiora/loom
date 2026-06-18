@@ -196,6 +196,8 @@ impl WasmHostBridge for CannedHostBridge {
             | Action::WebScroll { session_id, .. }
             | Action::WebWait { session_id, .. }
             | Action::WebSnapshot { session_id } => session_id.clone(),
+            Action::WebStartRecording { session_id, .. }
+            | Action::WebStopRecording { session_id } => session_id.clone(),
             Action::WebWaitFor { session_id, .. } => session_id.clone(),
             Action::WebSetInputFiles { session_id, .. } => session_id.clone(),
             // v0.9.6 cookie verbs.
@@ -221,6 +223,7 @@ impl WasmHostBridge for CannedHostBridge {
             status_code: None,
             dom_snapshot_hash: None,
             screenshot_after_hash: None,
+            screencast_after_hash: None,
             console_count: None,
             network_count: None,
             console_lines: vec![],

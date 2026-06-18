@@ -93,12 +93,12 @@ pub trait CoreFacadeBridge: Send + Sync {
     /// Create a new session from the wire params. Returns `(session_id, created_at_ms)`.
     ///
     /// Takes `CreateSessionParams` by value — the same shape every `vault_*` bridge method
-    /// uses — so adding a session option is a new struct field, not another positional arg.
-    /// Per-field semantics live on `CreateSessionParams`'s own field docs. `network_mode` is
-    /// carried on the struct but ignored: it is always `"live"` (`session_validation` rejects
-    /// everything else upstream) and no page-network record/replay engine exists. The daemon's
-    /// `CoreBridge` deserialises `budget` (a `serde_json::Value`) into
-    /// `loom_core::budget_enforcer::BudgetLimits`.
+    /// uses — so adding a session option (e.g. `record_screencast`) is a new struct field, not
+    /// another positional arg. Per-field semantics live on `CreateSessionParams`'s own field
+    /// docs. `network_mode` is carried on the struct but ignored: it is always `"live"`
+    /// (`session_validation` rejects everything else upstream) and no page-network record/replay
+    /// engine exists. The daemon's `CoreBridge` deserialises `budget` (a `serde_json::Value`)
+    /// into `loom_core::budget_enforcer::BudgetLimits`.
     ///
     /// Errors as the full `LoomError`, not a bare `AdapterError` code: the daemon's
     /// `session_cap_exceeded` rejection carries `{active, cap, hint}` in `context`, which must
@@ -340,6 +340,13 @@ pub struct CreateSessionParams {
     /// behavior unchanged). No effect under `--no-determinism`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_anchor: Option<u64>,
+    /// video-capture: operator's `session create --record-screencast` opt-in.
+    /// Default `false`. Maps to `SessionCreateOpts.record_screencast`; when set,
+    /// the host records a whole-session screencast (create→close) and writes the
+    /// resulting `.webm` hash to the per-session `recordings.jsonl` sidecar
+    /// (surfaced by `session.info`). Pre-feature clients omit the field → `false`.
+    #[serde(default)]
+    pub record_screencast: bool,
 }
 
 fn default_profile() -> String {

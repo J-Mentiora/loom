@@ -25,10 +25,10 @@ use loom_core::session_manager::{
     TERMINAL_RETENTION_CAP,
 };
 use loom_core::vault::{KeychainAccess, LocalVault, Vault};
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
+use tempfile::TempDir;
 use zeroize::Zeroizing;
 
 struct StubKc;
@@ -60,28 +60,27 @@ impl KeychainAccess for StubKc {
     }
 }
 
-fn make_sm(tmp: &str) -> Arc<LocalSessionManager> {
-    let obs = Observability::new(PathBuf::from(format!("{tmp}/loom.log")), false);
-    let cs: Arc<dyn ContentStore> = Arc::new(LocalContentStore::new(
-        PathBuf::from(format!("{tmp}/store")),
-        obs.clone(),
-    ));
-    let mw: Arc<dyn ManifestWriter> = Arc::new(LocalManifestWriter::new(
-        PathBuf::from(format!("{tmp}/sessions")),
-        obs.clone(),
-    ));
+// Each test gets its own `tempfile::TempDir` (auto-removed on drop) so a stale
+// session table / WAL / downloads tree from a previous run can never leak into
+// the next — the same hermetic-per-run pattern as manifest_writer_behavior.rs.
+// `make_sm()` returns the TempDir alongside the manager so the caller keeps it
+// alive (and can resolve on-disk paths from it); bind it as `_tmp` when unused.
+fn make_sm() -> (Arc<LocalSessionManager>, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let sm = make_sm_at(tmp.path());
+    (sm, tmp)
+}
+
+fn make_sm_at(root: &std::path::Path) -> Arc<LocalSessionManager> {
+    let obs = Observability::new(root.join("loom.log"), false);
+    let cs: Arc<dyn ContentStore> =
+        Arc::new(LocalContentStore::new(root.join("store"), obs.clone()));
+    let mw: Arc<dyn ManifestWriter> =
+        Arc::new(LocalManifestWriter::new(root.join("sessions"), obs.clone()));
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    LocalSessionManager::new(
-        cs,
-        mw,
-        v,
-        be,
-        obs,
-        0,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
-    )
+    LocalSessionManager::new(cs, mw, v, be, obs, 0, root.join("sessions"))
 }
 
 fn default_opts() -> SessionCreateOpts {
@@ -95,6 +94,7 @@ fn default_opts() -> SessionCreateOpts {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     }
 }
@@ -103,7 +103,7 @@ fn default_opts() -> SessionCreateOpts {
 
 #[test]
 fn activity_methods_track_in_flight_and_last_activity() {
-    let sm = make_sm("/tmp/loom-test-activity-track");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     let s = sm.get(id).unwrap();
     assert_eq!(s.in_flight(), 0);
@@ -124,7 +124,7 @@ fn activity_methods_track_in_flight_and_last_activity() {
 
 #[test]
 fn evict_if_idle_closes_idle_session_but_spares_busy_and_fresh() {
-    let sm = make_sm("/tmp/loom-test-evict-idle");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     let base = sm.get(id.clone()).unwrap().last_activity();
     let ttl = 1_000u64;
@@ -158,7 +158,7 @@ fn evict_if_idle_closes_idle_session_but_spares_busy_and_fresh() {
 
 #[test]
 fn oldest_active_age_tracks_least_recently_active() {
-    let sm = make_sm("/tmp/loom-test-oldest-age");
+    let (sm, _tmp) = make_sm();
     assert_eq!(
         sm.oldest_active_age_secs(1_000_000),
         None,
@@ -174,7 +174,7 @@ fn oldest_active_age_tracks_least_recently_active() {
 
 #[test]
 fn test_create_returns_ulid_session_id() {
-    let sm = make_sm("/tmp/loom-test-create-ulid");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     // ULID: 26 chars, Crockford base32 lowercase.
     assert_eq!(id.0.len(), 26, "session id must be 26-char ULID");
@@ -187,10 +187,9 @@ fn test_create_returns_ulid_session_id() {
 
 #[test]
 fn test_create_persists_manifest_header() {
-    let tmp = "/tmp/loom-test-create-header";
-    let sm = make_sm(tmp);
+    let (sm, tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", id.0));
+    let wal_path = tmp.path().join("sessions").join(&id.0).join("manifest.wal");
     assert!(wal_path.exists(), "manifest.wal must exist after create");
     let contents = std::fs::read_to_string(&wal_path).unwrap();
     let first_line: serde_json::Value = serde_json::from_str(contents.lines().next().unwrap())
@@ -206,7 +205,7 @@ fn test_create_persists_manifest_header() {
 
 #[test]
 fn test_unknown_session_returns_session_not_found_error() {
-    let sm = make_sm("/tmp/loom-test-unknown");
+    let (sm, _tmp) = make_sm();
     let result = sm.get(SessionId("00000000000000000000000000".into()));
     let err = match result {
         Err(e) => e,
@@ -217,12 +216,10 @@ fn test_unknown_session_returns_session_not_found_error() {
 
 #[test]
 fn test_no_implicit_session_creation_on_unknown_id() {
-    let tmp = "/tmp/loom-test-no-implicit";
-    let _ = std::fs::remove_dir_all(tmp);
-    let sm = make_sm(tmp);
+    let (sm, tmp) = make_sm();
     let unknown = SessionId("00000000000000000000000000".into());
     let _ = sm.get(unknown.clone());
-    let session_dir = PathBuf::from(format!("{tmp}/sessions/{}", unknown.0));
+    let session_dir = tmp.path().join("sessions").join(&unknown.0);
     assert!(
         !session_dir.exists(),
         "get on unknown id must not create session directory"
@@ -233,7 +230,7 @@ fn test_no_implicit_session_creation_on_unknown_id() {
 
 #[tokio::test]
 async fn test_close_transitions_to_closed_status() {
-    let sm = make_sm("/tmp/loom-test-close-status");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     sm.close(id.clone()).unwrap();
     let session = sm.get(id).unwrap();
@@ -244,11 +241,10 @@ async fn test_close_transitions_to_closed_status() {
 
 #[test]
 fn test_close_finalizes_manifest_with_terminal_entry() {
-    let tmp = "/tmp/loom-test-close-terminal";
-    let sm = make_sm(tmp);
+    let (sm, tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     sm.close(id.clone()).unwrap();
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", id.0));
+    let wal_path = tmp.path().join("sessions").join(&id.0).join("manifest.wal");
     let contents = std::fs::read_to_string(&wal_path).unwrap();
     let has_terminal = contents.lines().any(|line| {
         serde_json::from_str::<serde_json::Value>(line)
@@ -263,7 +259,7 @@ fn test_close_finalizes_manifest_with_terminal_entry() {
 
 #[test]
 fn test_action_on_closed_session_returns_session_already_closed() {
-    let sm = make_sm("/tmp/loom-test-close-idempotent");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     sm.close(id.clone()).unwrap();
     // Second close on already-closed session must return SessionAlreadyClosed.
@@ -288,7 +284,7 @@ fn test_profile_mutation_returns_session_profile_immutable() {
 
 #[tokio::test]
 async fn test_abort_sets_abort_flag_and_notifies() {
-    let sm = make_sm("/tmp/loom-test-abort-flag");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     sm.abort(
         id.clone(),
@@ -310,8 +306,7 @@ async fn test_abort_sets_abort_flag_and_notifies() {
 
 #[test]
 fn test_abort_appends_terminal_entry_to_manifest() {
-    let tmp = "/tmp/loom-test-abort-terminal";
-    let sm = make_sm(tmp);
+    let (sm, tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     sm.abort(
         id.clone(),
@@ -321,7 +316,7 @@ fn test_abort_appends_terminal_entry_to_manifest() {
     )
     .unwrap();
     // Give the async task up to 1s to write the terminal entry.
-    let wal_path = PathBuf::from(format!("{tmp}/sessions/{}/manifest.wal", id.0));
+    let wal_path = tmp.path().join("sessions").join(&id.0).join("manifest.wal");
     let deadline = Instant::now() + std::time::Duration::from_secs(1);
     loop {
         let contents = std::fs::read_to_string(&wal_path).unwrap_or_default();
@@ -342,7 +337,7 @@ fn test_abort_appends_terminal_entry_to_manifest() {
 
 #[test]
 fn test_abort_completes_within_1s_wall_clock() {
-    let sm = make_sm("/tmp/loom-test-abort-timing");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     let start = Instant::now();
     sm.abort(
@@ -364,7 +359,7 @@ fn test_abort_completes_within_1s_wall_clock() {
 
 #[test]
 fn test_abort_all_aborts_every_active_session() {
-    let sm = make_sm("/tmp/loom-test-abort-all");
+    let (sm, _tmp) = make_sm();
     let id1 = sm.create(default_opts()).unwrap();
     let id2 = sm.create(default_opts()).unwrap();
     let id3 = sm.create(default_opts()).unwrap();
@@ -398,9 +393,7 @@ fn test_abort_all_aborts_every_active_session() {
 
 #[test]
 fn terminal_sessions_evicted_beyond_retention_cap() {
-    let tmp = "/tmp/loom-test-terminal-retention";
-    let _ = std::fs::remove_dir_all(tmp);
-    let sm = make_sm(tmp);
+    let (sm, _tmp) = make_sm();
 
     // An ACTIVE session must survive any amount of terminal churn.
     let active_id = sm.create(default_opts()).unwrap();
@@ -473,9 +466,7 @@ fn terminal_sessions_evicted_beyond_retention_cap() {
 
 #[test]
 fn terminal_retention_keeps_sessions_within_cap() {
-    let tmp = "/tmp/loom-test-terminal-retention-within";
-    let _ = std::fs::remove_dir_all(tmp);
-    let sm = make_sm(tmp);
+    let (sm, _tmp) = make_sm();
 
     // Closing FEWER than cap sessions evicts nothing — every terminal
     // session stays addressable with its typed status.
@@ -497,7 +488,7 @@ fn test_active_session_count_tracks_fsm_transitions() {
     // The daemon's session-cap check reads this count on EVERY session.create
     // (instead of re-parsing every WAL on disk) — it must track the in-memory
     // FSM exactly: create increments, close/abort immediately decrement.
-    let sm = make_sm("/tmp/loom-test-active-count");
+    let (sm, _tmp) = make_sm();
     assert_eq!(sm.active_session_count(), 0);
 
     let id1 = sm.create(default_opts()).unwrap();

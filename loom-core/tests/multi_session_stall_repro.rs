@@ -86,6 +86,7 @@ fn opts(limits: Option<BudgetLimits>) -> SessionCreateOpts {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     }
 }

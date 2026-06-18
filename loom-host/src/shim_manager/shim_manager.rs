@@ -26,7 +26,7 @@
 use crate::host_observability::HostObservability;
 use crate::shim_manager::process::{send_and_await, shutdown_process, ShimProcess, SpawnConfig};
 use loom_core::error::{LoomError, LoomErrorCode};
-use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome};
+use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome, ScreencastOutcome};
 use loom_shared::shim_protocol::{
     ciborium_from_slice, ciborium_to_vec, CdpMessage, ShimHealthInfo, ShimRequest, ShimResponse,
 };
@@ -546,6 +546,139 @@ impl ShimManager {
                     LoomError::new(
                         LoomErrorCode::ShimFailure,
                         format!("shim {}: network_log outcome decode: {e}", id.0),
+                    )
+                })
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id, shim_error_class(&code));
+                Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ))
+            }
+            Ok(other) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(e)
+            }
+        }
+    }
+
+    /// video-capture: start a screencast recording on the target
+    /// (`ShimRequest::StartRecording`). Returns `Ok(())` on confirmation; a
+    /// recording-already-active / startScreencast failure surfaces as a typed
+    /// `LoomError`.
+    pub async fn send_start_recording(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+        max_duration_ms: u64,
+        max_bytes: u64,
+        frame_rate: u32,
+    ) -> Result<(), LoomError> {
+        self.check_breaker(&id)?;
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(&id, &config).await?;
+        let request = ShimRequest::StartRecording {
+            request_id: 0,
+            session_id,
+            target_id,
+            max_duration_ms,
+            max_bytes,
+            frame_rate,
+        };
+        match send_and_await(
+            &process,
+            request,
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(config.recv_timeout_ms),
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { .. }) => {
+                self.record_success(&id);
+                Ok(())
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id, shim_error_class(&code));
+                Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ))
+            }
+            Ok(other) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(e)
+            }
+        }
+    }
+
+    /// video-capture: stop the active recording (`ShimRequest::StopRecording`)
+    /// and return the decoded `ScreencastOutcome` (the host then writes the
+    /// `webm_bytes` to CAS). A LONGER receive timeout is used because the shim
+    /// runs the ffmpeg encode synchronously before responding.
+    pub async fn send_stop_recording(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+    ) -> Result<ScreencastOutcome, LoomError> {
+        self.check_breaker(&id)?;
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(&id, &config).await?;
+        let request = ShimRequest::StopRecording {
+            request_id: 0,
+            session_id,
+            target_id,
+        };
+        // Encoding can take seconds for a multi-minute recording; give the
+        // recv a generous floor independent of the per-CDP-command budget.
+        let recv_timeout = Duration::from_millis(config.recv_timeout_ms.max(120_000));
+        match send_and_await(
+            &process,
+            request,
+            Duration::from_millis(config.send_timeout_ms),
+            recv_timeout,
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { payload, .. }) => {
+                self.record_success(&id);
+                let mut bytes = Vec::new();
+                if let Err(e) = ciborium::ser::into_writer(&payload, &mut bytes) {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: stop_recording response re-encode: {e}", id.0),
+                    ));
+                }
+                ciborium_from_slice::<ScreencastOutcome>(&bytes).map_err(|e| {
+                    LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: screencast outcome decode: {e}", id.0),
                     )
                 })
             }

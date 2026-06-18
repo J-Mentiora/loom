@@ -71,6 +71,7 @@ function toReceipt(d: Record<string, unknown>): Receipt {
     statusCode: d["status_code"] as number | undefined,
     domSnapshotHash: d["dom_snapshot_hash"] as string | undefined,
     screenshotAfterHash: d["screenshot_after_hash"] as string | undefined,
+    screencastAfterHash: d["screencast_after_hash"] as string | undefined,
     // evaluate tier fields.
     returnValueJson: d["return_value_json"] as string | undefined,
     returnValueBlobRef: d["return_value_blob_ref"] as string | undefined,
@@ -408,6 +409,63 @@ export class Session {
       buildActionParams(this.sessionId, "screenshot", {}, opts.deadlineMs ?? 5000),
     )) as Record<string, unknown>;
     return toReceipt(result);
+  }
+
+  /**
+   * Start recording a video (screencast) of the page. Bracket a sequence of
+   * actions between `startRecording()` and `stopRecording()`; the latter returns
+   * the `.webm` content hash. Caps (all optional, safe defaults) auto-stop the
+   * recording: `maxDurationMs` (300000), `maxBytes` (268435456), `frameRate` (10).
+   *
+   * NOTE: a recording captures whatever is on screen — including any passwords
+   * or PII rendered during the window (same posture as `screenshot()`).
+   */
+  async startRecording(
+    opts: { maxDurationMs?: number; maxBytes?: number; frameRate?: number; deadlineMs?: number } = {},
+  ): Promise<Receipt> {
+    const payload: Record<string, unknown> = {};
+    if (opts.maxDurationMs !== undefined) payload["max_duration_ms"] = opts.maxDurationMs;
+    if (opts.maxBytes !== undefined) payload["max_bytes"] = opts.maxBytes;
+    if (opts.frameRate !== undefined) payload["frame_rate"] = opts.frameRate;
+    const result = (await this._transport.call(
+      "action.web.start_recording",
+      buildActionParams(this.sessionId, "start_recording", payload, opts.deadlineMs ?? 5000),
+    )) as Record<string, unknown>;
+    return toReceipt(result);
+  }
+
+  /**
+   * Stop the active recording, encode it to `.webm`, and return a Receipt whose
+   * `screencastAfterHash` points at the video in CAS. The default deadline is
+   * generous because the encode runs synchronously. A best-effort encode failure
+   * returns an error receipt (the session is unaffected).
+   */
+  async stopRecording(opts: { deadlineMs?: number } = {}): Promise<Receipt> {
+    const result = (await this._transport.call(
+      "action.web.stop_recording",
+      buildActionParams(this.sessionId, "stop_recording", {}, opts.deadlineMs ?? 120000),
+    )) as Record<string, unknown>;
+    return toReceipt(result);
+  }
+
+  /**
+   * Fetch the recorded `.webm` referenced by a `stopRecording()` receipt and
+   * return its bytes. Throws if the receipt carries no `screencastAfterHash`
+   * (e.g. the encode failed).
+   */
+  async fetchRecording(receipt: Receipt): Promise<Uint8Array> {
+    if (!receipt.screencastAfterHash) {
+      throw new Error("receipt has no screencastAfterHash (recording failed?)");
+    }
+    const content = (await this._transport.call("content.get", {
+      artifact_ref: receipt.screencastAfterHash,
+    })) as Record<string, unknown>;
+    const hex = content["data_hex"] as string;
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    }
+    return bytes;
   }
 
   async snapshot(opts: { deadlineMs?: number } = {}): Promise<Receipt> {

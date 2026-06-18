@@ -40,6 +40,12 @@ pub const METHOD_ALIASES: &[(&str, &str)] = &[
     ("action.web.evaluate", "web.evaluate"),
     ("action.web.screenshot", "web.screenshot"),
     ("action.web.snapshot", "web.snapshot"),
+    // video-capture: both SDKs spell these `action.web.start_recording` /
+    // `action.web.stop_recording` (python `Session.start_recording`, typescript
+    // `Session.startRecording`). A missing row here = method_not_found on every
+    // real-daemon call (the canonicaliser is table-only — no generic strip).
+    ("action.web.start_recording", "web.start_recording"),
+    ("action.web.stop_recording", "web.stop_recording"),
 ];
 
 /// Resolve `method` to its canonical name. Unknown or already-canonical
