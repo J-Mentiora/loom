@@ -15,6 +15,18 @@ use loom_cli::postinstall_runner::{compile_step, schema_step, SchemaStepOutcome,
 use loom_cli::schema_cache::SchemaCache;
 use tempfile::TempDir;
 
+/// Serializes the whole file: every test here drives the postinstall steps, which READ
+/// `LOOM_WASM_DIR` / `CARGO_MANIFEST_DIR` from the process environment, and several tests
+/// mutate those vars (save → set → restore). Env is per-process, so under parallel execution
+/// (cargo's default) a mutating test clobbers a concurrent reader. Each test takes this lock
+/// for its full duration. (nextest runs each test in its own process and is immune; this keeps
+/// plain `cargo test` solid.)
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 // ---------------------------------------------------------------------------
 // compile_step works in the default build (no --features flag)
 // ---------------------------------------------------------------------------
@@ -25,6 +37,7 @@ use tempfile::TempDir;
 // gated on cfg(feature)); the cargo feature is now a default.
 #[test]
 fn test_compile_step_works_without_feature_flag() {
+    let _g = env_guard();
     let surfaces_dir = TempDir::new().unwrap();
 
     // No LOOM_WASM_DIR set → falls back to embedded bytes path.
@@ -65,6 +78,7 @@ fn test_compile_step_works_without_feature_flag() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_schema_step_creates_and_populates_dir() {
+    let _g = env_guard();
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
 
@@ -120,6 +134,7 @@ fn test_schema_step_creates_and_populates_dir() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_schema_cache_load_succeeds_after_postinstall() {
+    let _g = env_guard();
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
 
@@ -149,6 +164,7 @@ fn test_schema_cache_load_succeeds_after_postinstall() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_wasm_discovered_without_loom_wasm_dir() {
+    let _g = env_guard();
     let surfaces_dir = TempDir::new().unwrap();
 
     // Ensure both discovery paths are unavailable.
@@ -192,6 +208,7 @@ fn test_wasm_discovered_without_loom_wasm_dir() {
 // the composite stamp still match.
 #[test]
 fn compile_step_skips_when_composite_stamp_current() {
+    let _g = env_guard();
     let surfaces = TempDir::new().unwrap();
 
     let prev = std::env::var("LOOM_WASM_DIR").ok();
@@ -226,6 +243,7 @@ fn compile_step_skips_when_composite_stamp_current() {
 // re-stamped with the live compat hash.
 #[test]
 fn compile_step_refreshes_on_stale_engine_compat() {
+    let _g = env_guard();
     let surfaces = TempDir::new().unwrap();
 
     let prev = std::env::var("LOOM_WASM_DIR").ok();
@@ -263,6 +281,7 @@ fn compile_step_refreshes_on_stale_engine_compat() {
 // ---------------------------------------------------------------------------
 #[test]
 fn compile_step_refreshes_on_wrong_source_sha() {
+    let _g = env_guard();
     let surfaces = TempDir::new().unwrap();
 
     let prev = std::env::var("LOOM_WASM_DIR").ok();
@@ -302,6 +321,7 @@ fn compile_step_refreshes_on_wrong_source_sha() {
 // stamp to the two-line composite format.
 #[test]
 fn compile_step_refreshes_legacy_single_line_sidecar() {
+    let _g = env_guard();
     let surfaces = TempDir::new().unwrap();
 
     let prev = std::env::var("LOOM_WASM_DIR").ok();
@@ -346,6 +366,7 @@ fn compile_step_refreshes_legacy_single_line_sidecar() {
 // Command::Postinstall arm. This is confirmed by the module dependency graph.
 #[test]
 fn test_compile_module_structural_invariant_documented() {
+    let _g = env_guard();
     // compile_module is unreachable from the default CLI action
     // dispatch path. Enforcement is by code structure (PostinstallRunner is
     // the only caller of compile_step; action_commands/rpc path has no edge
@@ -372,6 +393,7 @@ fn test_compile_module_structural_invariant_documented() {
 // No LOOM_WASM_DIR override; no --features flag (uses default = ["postinstall"]).
 #[test]
 fn test_postinstall_action_roundtrip() {
+    let _g = env_guard();
     let surfaces_dir = TempDir::new().unwrap();
     let schemas_dir = TempDir::new().unwrap();
     let v1_dir = schemas_dir.path().join("v1");
