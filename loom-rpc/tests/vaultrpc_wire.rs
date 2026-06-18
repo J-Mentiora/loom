@@ -266,6 +266,7 @@ impl WasmHostBridge for NoopHostBridge {
     fn dispatch_action_blocking(
         &self,
         _: Action,
+        _: Option<u64>,
     ) -> Result<Receipt, loom_rpc::host_service_adapter::host_service_adapter::AdapterError> {
         Ok(Receipt {
             action_id: 0,

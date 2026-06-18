@@ -361,6 +361,7 @@ impl loom_rpc::host_service_adapter::host_service_adapter::WasmHostBridge for St
     fn dispatch_action_blocking(
         &self,
         _action: loom_rpc::host_service_adapter::host_service_adapter::Action,
+        _deadline_ms: Option<u64>,
     ) -> Result<
         loom_rpc::host_service_adapter::host_service_adapter::Receipt,
         loom_rpc::host_service_adapter::host_service_adapter::AdapterError,

@@ -44,6 +44,7 @@ The audit chain receives a `CookiesCleared{target_id, session_id, count_before}`
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `clear_cookies_result: {"cleared_count": u32}`.
 
@@ -69,6 +70,7 @@ Animations and transitions are forced to 0s under loom's deterministic profile, 
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the target element. Standard CSS Level 3 syntax. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"` and `side_effects` populated when the click triggered DOM mutations. Selector miss → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (the evaluate returns `undefined`, so it is CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain. It captures the synchronous post-action DOM, so insert an explicit `web.wait_for` before reading it when the effect is async (timer/fetch-driven).
 
@@ -97,6 +99,7 @@ The verb performs a `getCookies` peek before AND after the CDP call to determine
 | `url` | `string` | optional | Optional URL scoping. If set, CDP derives domain/path from it. |
 | `domain` | `string` | optional | Optional domain scoping. Overrides any domain derived from `url`. |
 | `path` | `string` | optional | Optional path scoping. Overrides any path derived from `url`. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `delete_cookies_result: {"name": String, "matched": bool}`.
 
@@ -126,6 +129,7 @@ Security: the expression is executed verbatim in the page. Treat it as untrusted
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `expression` | `string` | required | JavaScript expression. Returned value is JSON-canonicalised; >64 KB → content blob ref. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `return_value_json` — a JSON-string-encoded value (e.g. `"\"hello\""` for a string `"hello"`, `"42"` for the number 42). Decode with one extra `JSON.parse`. Returns ≥64 KB are stored in CAS and `return_value_json` carries a `{"content_ref":"<sha256>"}` wrapper instead of inline bytes. `kind: "js_throw"` on uncaught exception. The evaluate `outcome_hash` is `sha256("E:" ‖ canonical-JSON return value)` (truncated returns use the domain-separated `E:T:` blob-ref hash) — content-bearing on the evaluated value.
 
@@ -151,6 +155,7 @@ Per D7, raw cookie *values* appear in the operator-facing receipt — this verb 
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `urls` | `array` | optional | Optional JSON array of URLs to restrict the cookie read. Maps to CDP `Network.getCookies({urls})`. Omit for all cookies in the active jar. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `get_cookies_result: Vec<NetworkCookie>` — full CDP cookie objects (`name, value, domain, path, expires, size, httpOnly, secure, session, sameSite, priority, sourceScheme, sourcePort, partitionKey, partitionKeyOpaque`).
 
@@ -176,6 +181,7 @@ Failure mode: selector miss surfaces as `kind: "js_throw"`. The hover does not w
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the element to hover. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"`. Selector miss → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM (content-bearing; in the manifest hash chain). Note a hover that only changes CSS/layout — not the DOM tree — yields a `dom_after_hash` equal to the pre-hover DOM.
 
@@ -210,6 +216,7 @@ Readiness: the DOM + screenshot are captured once the page reaches the `until` s
 | `url` | `string` | required | Target URL. Must be `http://`, `https://`, or `about:blank` — other schemes are rejected. |
 | `until` | `string` | optional | Readiness state to wait for before capture: `load`, `networkidle`, or `settled` (default). |
 | `timeout_ms` | `u64` | optional | Maximum time to wait for the readiness state. Optional; defaults to the daemon's settle timeout. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`, `until`, `settle_outcome` (`reached`|`timeout`|`dom_unstable`). Failure modes: `kind: "http_status"|"dns_failure"|"network_failure"|"url_blocked"`. The navigate `outcome_hash` is `sha256(dom_snapshot_hash ‖ screenshot_after_hash)` — content-bearing (unlike the interaction verbs' constant `outcome_hash`); the screenshot hash rides observationally and is excluded from the replay hash chain.
 
@@ -234,6 +241,7 @@ This is OBSERVATIONAL metadata sourced from the Chrome DevTools Protocol — nev
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `network_entries: [{url, method, status, resource_type, from_cache, request_id, ts_ms}]` (or `network_entries_blob_ref: <sha256>` when offloaded; fetch via `loom blob get <hash>`), plus `network_entries_truncated: bool`.
 
@@ -259,6 +267,7 @@ The PNG is stored in the content-addressed blob store; the receipt carries a `sc
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | optional | Optional CSS selector. When set, screenshot is clipped to the element's bounding rect. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `screenshot_after_hash: <sha256>` pointing to the PNG in CAS — fetch via `loom blob get <hash>`. With `selector` and a miss → `kind: "js_throw"`.
 
@@ -286,6 +295,7 @@ A selector that matches nothing falls back to scrolling the viewport. The scroll
 | `selector` | `string` | optional | CSS query selector for the scrollable element. Optional — omit (or use `body`/`html`) to scroll the page viewport. |
 | `delta_x` | `i64` | optional | Horizontal scroll offset in CSS pixels. Optional, defaults to 0. |
 | `delta_y` | `i64` | optional | Vertical scroll offset in CSS pixels. Optional, defaults to 0. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `scroll_result: {"x": <window.scrollX>, "y": <window.scrollY>}` — the viewport scroll position after the scroll (clamps at the scroll max).
 
@@ -312,6 +322,7 @@ Loom does not validate that `value` matches one of the `<option>` values; the ho
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the `<select>` element. |
 | `value` | `string` | required | Value to assign. Should match one of the `<option>` `value` attributes. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"`. Selector miss / non-select target → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
 
@@ -339,6 +350,7 @@ Receipt records cookie *names* and per-cookie success but never values — value
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `source` | `object` | required | JSON-encoded `CookieSource`. Inline: `{"source":"inline","cookies":[{"name":"sid","value":"...","domain":"..."}]}`. Grant: `{"source":"grant","grant_id":"<id>"}`. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `set_cookies_result: Vec<SetCookieResult>` — one entry per validated cookie with `success: true`. Typed validation errors (`name_empty` / `name_invalid` / `value_too_large` / `too_many_cookies` / `invalid_expires`) short-circuit pre-CDP and surface as `error_code: "cookie_validation_error"` in the receipt details.
 
@@ -365,6 +377,7 @@ SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. If `LOO
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the target <input type=file>. Standard CSS Level 3 syntax. |
 | `paths` | `array` | required | Absolute file paths to upload. Each must resolve under LOOM_UPLOAD_ROOT. Single-file inputs use paths[0]. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"`. Security/selector/element errors surface as typed `kind` strings (e.g. `upload_path_blocked`, `selector_not_found`, `not_a_file_input`).
 
@@ -389,6 +402,7 @@ Snapshots include the deterministic profile's effects — frozen time, seeded ra
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `dom_snapshot_hash: <sha256>` pointing to the serialised DOM in CAS — fetch via `loom blob get <hash>`.
 
@@ -418,6 +432,7 @@ PRIVACY: a recording captures whatever is on screen, INCLUDING any passwords, PI
 | `max_duration_ms` | `u64` | optional | Optional auto-stop after this many ms (default 300000 = 5 min). |
 | `max_bytes` | `u64` | optional | Optional auto-stop once the buffered frames exceed this many bytes (default 268435456 = 256 MiB). |
 | `frame_rate` | `u64` | optional | Optional ENCODE/playback frames-per-second for the output .webm (default 10, clamped 1..=60). This is the muxed output rate; the browser still emits a frame per visual change (it does not decimate capture). |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt confirming the recording started (`code: web_action_completed`). The video hash is returned by `web.stop_recording`.
 
@@ -442,6 +457,7 @@ If the bundled ffmpeg encoder is unavailable (download failed / offline / the `v
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `screencast_after_hash: <sha256>` pointing to the `.webm` in CAS — fetch via `loom blob get <hash>`. A best-effort encode failure (ffmpeg unavailable / zero frames) returns an error receipt (`kind: "recording_failed"`) without aborting the session.
 
@@ -470,6 +486,7 @@ Failure mode: selector miss → `kind: "js_throw"`. Non-input targets also surfa
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the input element. |
 | `text` | `string` | required | Text to set as the element's value. Sent in one batch (not keystroke-by-keystroke). |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"`. Selector miss / non-input target → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
 
@@ -498,6 +515,7 @@ Typed error: `kind: "wait_predicate_false"` if the selector never resolves befor
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector. Wait succeeds the first poll where this resolves. |
 | `timeout_ms` | `u64` | optional | Maximum wait time in milliseconds. Optional; defaults to the daemon's configured wait timeout. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"` once the selector resolves. Timeout → `kind: "wait_predicate_false"`.
 
@@ -530,6 +548,7 @@ Use after a `web.navigate` (or an interaction that triggers async re-render) to 
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `until` | `string` | optional | Readiness state to wait for: `load` \| `networkidle` \| `settled`. Optional; defaults to `settled`. |
 | `timeout_ms` | `u64` | optional | Maximum wait time in milliseconds before the bounded fallback returns a typed `timeout`/`dom_unstable` receipt. Optional; defaults to the daemon's navigate budget. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `settle_until` (the requested mode) and `settle_outcome`: `reached` (the requested state was satisfied before the bound), `timeout` (the bound was hit while the load/network condition never went quiet), or `dom_unstable` (the bound was hit while the network was quiet and the document complete but the DOM kept mutating). `timeout`/`dom_unstable` mean readiness was never reached within the bound — the call still returns, it never hangs.
 

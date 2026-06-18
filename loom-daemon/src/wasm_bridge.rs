@@ -33,7 +33,11 @@ use std::sync::Arc;
 struct StubHostBridge;
 
 impl WasmHostBridge for StubHostBridge {
-    fn dispatch_action_blocking(&self, _action: Action) -> Result<Receipt, HostAdapterError> {
+    fn dispatch_action_blocking(
+        &self,
+        _action: Action,
+        _deadline_ms: Option<u64>,
+    ) -> Result<Receipt, HostAdapterError> {
         use loom_rpc::error_translator::error_translator::LoomErrorCode;
         Err(LoomErrorCode::SurfaceUnavailable)
     }
@@ -64,7 +68,11 @@ struct WasmBridge {
 }
 
 impl WasmHostBridge for WasmBridge {
-    fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, HostAdapterError> {
+    fn dispatch_action_blocking(
+        &self,
+        action: Action,
+        deadline_ms: Option<u64>,
+    ) -> Result<Receipt, HostAdapterError> {
         use loom_host::session_executor::{Action as HostAction, ActionOutcome, SessionHandle};
         use loom_rpc::error_translator::error_translator::LoomErrorCode;
 
@@ -487,6 +495,10 @@ impl WasmHostBridge for WasmBridge {
             surface: action_surface(&action).to_string(),
             method: action_verb(&action).to_string(),
             args_canonical_bytes,
+            // Per-action kill deadline (dispatch metadata; excluded from the
+            // hash chain — see Action::deadline_ms). The executor races it
+            // against the guest call and traps `request_timeout` on expiry.
+            deadline_ms,
         };
 
         let host = Arc::clone(&self.host);

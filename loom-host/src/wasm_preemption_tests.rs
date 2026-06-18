@@ -180,17 +180,22 @@ fn busy_action() -> Action {
         surface: SURFACE.into(),
         method: "busy".into(),
         args_canonical_bytes: vec![],
+        deadline_ms: None,
     }
 }
 
 async fn run_busy(h: &Harness, abort_signal: Arc<Notify>) -> ActionOutcome {
+    run_busy_action(h, abort_signal, busy_action()).await
+}
+
+async fn run_busy_action(h: &Harness, abort_signal: Arc<Notify>, action: Action) -> ActionOutcome {
     let linker = h.registry.linker_for(Mode::Live);
     let host_state = make_host_state(h);
     let session = make_session(h, abort_signal);
     tokio::time::timeout(
         Duration::from_secs(30),
         h.executor
-            .run(busy_action(), session, Mode::Live, linker, host_state),
+            .run(action, session, Mode::Live, linker, host_state),
     )
     .await
     .expect("busy-loop guest must be preemptible — run() hung past 30s")
@@ -278,6 +283,88 @@ async fn fuel_per_invocation_knob_traps_busy_loop_out_of_fuel() {
             }
         ),
     }
+}
+
+/// (d) A per-action `deadline_ms` kills a slow/hanging guest DAEMON-side with a
+/// typed `request_timeout` trapped outcome — distinct from both the abort path
+/// (`Aborted`) and the hard guest-CPU epoch deadline (`SurfaceTrap`). The
+/// guest-CPU deadline is parked far away so the per-action deadline arm — NOT the
+/// epoch trap — is what fires. This is the unit-level proof of the enforcement
+/// half: the busy-loop guest stands in for any hanging action (navigate, etc.).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn per_action_deadline_traps_request_timeout() {
+    let h = make_harness(WasmRuntimeConfig {
+        opt_level: "none".into(),
+        epoch_tick_ms: 5, // guest yields so the select! deadline arm can win
+        guest_cpu_deadline_ms: 60_000, // far away: the per-action deadline must win
+        ..WasmRuntimeConfig::default()
+    });
+    let action = Action {
+        deadline_ms: Some(100),
+        ..busy_action()
+    };
+    let started = std::time::Instant::now();
+    let outcome = run_busy_action(&h, Arc::new(Notify::new()), action).await;
+    match outcome {
+        ActionOutcome::Trapped { loom_error, .. } => {
+            assert_eq!(
+                loom_error.code,
+                LoomErrorCode::RequestTimeout,
+                "a per-action deadline kill must be RequestTimeout, got {:?} ({})",
+                loom_error.code,
+                loom_error.message
+            );
+            assert_eq!(loom_error.code.as_wire(), "request_timeout");
+            assert!(
+                loom_error.message.contains("deadline_ms"),
+                "timeout message must attribute the action deadline; got: {}",
+                loom_error.message
+            );
+            assert_ne!(
+                loom_error.code,
+                LoomErrorCode::SurfaceTrap,
+                "a deadline kill must NOT be conflated with the epoch-deadline SurfaceTrap"
+            );
+        }
+        other => panic!(
+            "deadlined busy loop must trap RequestTimeout, got {}",
+            match other {
+                ActionOutcome::Success { .. } => "Success",
+                ActionOutcome::Aborted { .. } => "Aborted",
+                ActionOutcome::Trapped { .. } => unreachable!(),
+            }
+        ),
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "deadline_ms=100 must fire long before the 60s guest-CPU deadline; took {:?}",
+        started.elapsed()
+    );
+}
+
+/// (e) Control: with NO `deadline_ms`, the deadline arm is INERT — a user abort
+/// still wins mid-loop (proving the new `select!` arm never spuriously fires for
+/// the default no-deadline dispatch, i.e. byte-for-byte unchanged behavior).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn no_deadline_keeps_arm_inert() {
+    let h = make_harness(WasmRuntimeConfig {
+        opt_level: "none".into(),
+        epoch_tick_ms: 5,
+        guest_cpu_deadline_ms: 60_000,
+        ..WasmRuntimeConfig::default()
+    });
+    let abort_signal = Arc::new(Notify::new());
+    let notifier = abort_signal.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        notifier.notify_one();
+    });
+    // busy_action() has deadline_ms: None.
+    let outcome = run_busy(&h, abort_signal).await;
+    assert!(
+        matches!(outcome, ActionOutcome::Aborted { .. }),
+        "with no deadline_ms the abort must still win — the deadline arm is inert"
+    );
 }
 
 // === capture-policy=fingerprint host fn (capture_dom_after_hash) gating ===

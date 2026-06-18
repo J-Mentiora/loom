@@ -78,7 +78,7 @@ fn dispatch_action_signature_is_async_returns_receipt_or_error() {
     // measures.
     fn _ck() {
         async fn _go<A: HostServiceAdapterApi>(a: &A, ac: Action) -> Result<Receipt, AdapterError> {
-            a.dispatch_action(ac).await
+            a.dispatch_action(ac, None).await
         }
         let _ = _go::<HostServiceAdapter>;
     }
@@ -95,9 +95,10 @@ fn adapter_has_no_session_or_vault_methods_per_ic_rpc_09_split() {
         let _: fn(
             &A,
             Action,
+            Option<u64>,
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<Receipt, AdapterError>> + Send + '_>,
-        > = |a, ac| Box::pin(a.dispatch_action(ac));
+        > = |a, ac, d| Box::pin(a.dispatch_action(ac, d));
     }
     let _ = _audit::<HostServiceAdapter>;
 }

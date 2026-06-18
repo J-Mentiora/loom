@@ -150,7 +150,7 @@ fn action_dispatch_returns_receipt_via_host_adapter() {
     // Single host dispatch path; typed Receipt only.
     fn _ck() {
         async fn _go(h: &RpcHandlers, a: Action) -> HandlerResult<Receipt> {
-            h.action_dispatch(a).await
+            h.action_dispatch(a, None).await
         }
         let _ = _go;
     }
@@ -279,7 +279,11 @@ mod vault_grant_response_validation {
 
     #[async_trait::async_trait]
     impl HostServiceAdapterApi for NoopHost {
-        async fn dispatch_action(&self, _: Action) -> Result<Receipt, AdapterError> {
+        async fn dispatch_action(
+            &self,
+            _: Action,
+            _: Option<u64>,
+        ) -> Result<Receipt, AdapterError> {
             unimplemented!()
         }
     }
@@ -443,7 +447,11 @@ mod session_cap_envelope {
 
     #[async_trait::async_trait]
     impl HostServiceAdapterApi for NoopHost {
-        async fn dispatch_action(&self, _: Action) -> Result<Receipt, AdapterError> {
+        async fn dispatch_action(
+            &self,
+            _: Action,
+            _: Option<u64>,
+        ) -> Result<Receipt, AdapterError> {
             unimplemented!()
         }
         // default has_chromium() = true, so session_create reaches the core.

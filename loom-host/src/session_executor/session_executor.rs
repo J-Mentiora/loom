@@ -53,6 +53,15 @@ pub struct Action {
     pub surface: String,
     pub method: String,
     pub args_canonical_bytes: Vec<u8>,
+    /// Optional per-action kill deadline in milliseconds. Dispatch metadata
+    /// threaded from the RPC layer (`request_router` extracts the flat
+    /// `deadline_ms` arg) — deliberately NOT part of the action identity:
+    /// it is excluded from `args_canonical_bytes` and from the WIT
+    /// `deadline-ms` hashed field, so it can never perturb the replay hash
+    /// chain (NFR-DET-01). `None`/`Some(0)` ⇒ no deadline (default recv
+    /// timeout governs). On expiry `run()` traps with `request_timeout`.
+    #[serde(default)]
+    pub deadline_ms: Option<u64>,
 }
 
 /// Session handle threaded from `loom-core::SessionManager` through
@@ -247,6 +256,10 @@ impl SessionExecutor {
 
         let abort_signal = session.abort_signal.clone();
         let kill_reason_slot = session.kill_reason.clone();
+        // Per-action kill deadline (request_router threaded the flat `deadline_ms`
+        // arg here). `None`/`Some(0)` ⇒ no deadline. Captured as a Copy local so
+        // the `select!` deadline arm can own it without borrowing `action`.
+        let deadline_ms = action.deadline_ms.filter(|ms| *ms > 0);
         let call_result = tokio::select! {
             result = func.call_async(&mut store, &input_args, &mut output_slot) => result,
             _ = abort_signal.notified() => {
@@ -300,6 +313,61 @@ impl SessionExecutor {
                         Ok(ActionOutcome::Aborted { builder })
                     }
                 };
+            }
+            // Per-action kill deadline. INERT unless `deadline_ms` is a positive
+            // value: with `None` the arm awaits `pending()` (never resolves), so
+            // default no-deadline dispatch is byte-for-byte unchanged. On expiry
+            // the action dies DAEMON-side with a typed `request_timeout` Trapped
+            // outcome (mirrors the budget-kill arm above):
+            //   - `run()` returns promptly, so the caller's blocking dispatch
+            //     returns and the daemon's RAII dispatch_slot guard drops — the
+            //     next same-session call is NOT fenced with `too_many_requests`
+            //     (the action died here rather than running detached to the recv
+            //     timeout while the RPC future was abandoned).
+            //   - Determinism (NFR-DET-01): like the budget-kill Trapped path, the
+            //     receipt IS queued to the WAL/manifest — but it stays replay-safe
+            //     because (a) the deadline VALUE never enters the action's hashed
+            //     identity (excluded from `args_canonical_bytes`; the WIT
+            //     `deadline-ms` field stays 0 — see `build_action_val`), (b) under
+            //     determinism every receipt field is a pure function of inputs
+            //     (`finished_at_ms` from `action_id`; the message from the caller's
+            //     `ms`), and (c) replay is structural — it copies recorded bytes and
+            //     never re-runs this arm. Whether the deadline fires at all is
+            //     wall-clock-dependent (record-time), exactly like budget-kill and
+            //     the server request timeout; replay-equality is unaffected.
+            // Dropping `func.call_async` cancels the in-flight host/shim await
+            // exactly like the abort/budget-kill arms above.
+            _ = async {
+                match deadline_ms {
+                    Some(ms) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(ms)).await
+                    }
+                    None => std::future::pending::<()>().await,
+                }
+            } => {
+                builder.finished_at_ms = if determinism_on {
+                    action
+                        .action_id
+                        .saturating_add(1)
+                        .saturating_mul(ACTION_DELTA_MS)
+                } else {
+                    let delta_ms = (dispatch_t0.elapsed().as_millis() as u64).max(1);
+                    harness.begin_action(delta_ms);
+                    harness.clock_now()
+                };
+                let ms = deadline_ms.unwrap_or(0);
+                let loom_error = LoomError::new(
+                    LoomErrorCode::RequestTimeout,
+                    format!(
+                        "action deadline_ms of {ms} ms exceeded before the action completed"
+                    ),
+                );
+                // Truthful trapped status (defaults to Ok otherwise) so the
+                // queued receipt can never read as a completed action.
+                builder.status = ReceiptStatus::Trapped;
+                builder.error_code = Some(format!("{:?}", loom_error.code));
+                builder.error_details = Some(loom_error.message.clone());
+                return Ok(ActionOutcome::Trapped { builder, loom_error });
             }
         };
 

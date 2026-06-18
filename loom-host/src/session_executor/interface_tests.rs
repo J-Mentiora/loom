@@ -127,6 +127,7 @@ fn action_struct_has_integer_action_id_and_string_surface_method() {
         surface: "stocktwits".into(),
         method: "post_idea".into(),
         args_canonical_bytes: vec![],
+        deadline_ms: None,
     };
     let _: u64 = a.action_id;
     assert_eq!(a.surface, "stocktwits");
@@ -389,6 +390,7 @@ fn build_action_val_emits_kebab_case_record_with_three_fields() {
         surface: "web".into(),
         method: "navigate".into(),
         args_canonical_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        deadline_ms: None,
     };
     let val = build_action_val(&action);
     let fields = match val {

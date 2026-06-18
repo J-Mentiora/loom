@@ -192,7 +192,11 @@ impl CoreFacadeBridge for NoopCoreBridge {
 
 struct StubHostBridge;
 impl WasmHostBridge for StubHostBridge {
-    fn dispatch_action_blocking(&self, _: Action) -> Result<Receipt, LoomErrorCode> {
+    fn dispatch_action_blocking(
+        &self,
+        _: Action,
+        _: Option<u64>,
+    ) -> Result<Receipt, LoomErrorCode> {
         Err(LoomErrorCode::SurfaceUnavailable)
     }
 }

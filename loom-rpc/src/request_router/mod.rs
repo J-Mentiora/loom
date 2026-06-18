@@ -388,11 +388,21 @@ impl RequestRouterApi for RequestRouter {
                 // observability see only the canonical form
                 // (matches the wire discipline for canonical method names).
                 let canonical = loom_shared::action_aliases::canonicalise(method);
+                // Per-action deadline (dispatch metadata, verb-agnostic): the
+                // daemon kills the action with a typed `request_timeout` receipt
+                // when it exceeds `deadline_ms`. Extracted HERE — before `params`
+                // moves into `parse_action` — and threaded OUT-OF-BAND (never on
+                // the `Action` enum) so it can NEVER enter the hashed action bytes
+                // (NFR-DET-01). Already permitted by every web.* request schema as
+                // an optional integer.
+                let deadline_ms = params.get("deadline_ms").and_then(|v| v.as_u64());
                 match parse_action(canonical, params) {
-                    Ok(action) => match self.ctx.handlers.action_dispatch(action).await {
-                        Ok(receipt) => canonical_bytes(&receipt),
-                        Err(e) => error_bytes(&e),
-                    },
+                    Ok(action) => {
+                        match self.ctx.handlers.action_dispatch(action, deadline_ms).await {
+                            Ok(receipt) => canonical_bytes(&receipt),
+                            Err(e) => error_bytes(&e),
+                        }
+                    }
                     Err(e) => error_bytes(&e),
                 }
             }

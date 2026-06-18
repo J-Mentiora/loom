@@ -765,6 +765,27 @@ pub(crate) fn unwrap_sdk_envelope(params: serde_json::Value) -> serde_json::Valu
     serde_json::Value::Object(merged)
 }
 
+/// Mirror the SDK envelope-level `deadline_ms` into the flat (post-unwrap)
+/// params so the request router can extract it verb-agnostically and arm the
+/// per-action daemon-side kill. Flat-shape callers (MCP / CLI) already carry a
+/// top-level `deadline_ms`; this only fills the gap left by
+/// `unwrap_sdk_envelope` for SDK callers. Idempotent — never overwrites a
+/// top-level value the caller already set — and only injects a POSITIVE
+/// deadline (the SDKs send `0` for "no preference", which must stay absent so
+/// the executor's no-deadline path is unchanged).
+fn merge_envelope_deadline(
+    mut params: serde_json::Value,
+    deadline_ms: Option<u64>,
+) -> serde_json::Value {
+    if let Some(ms) = deadline_ms.filter(|m| *m > 0) {
+        if let serde_json::Value::Object(ref mut m) = params {
+            m.entry("deadline_ms".to_string())
+                .or_insert_with(|| serde_json::json!(ms));
+        }
+    }
+    params
+}
+
 /// Effective per-request deadline: the daemon-wide cap
 /// (`LOOM_REQUEST_TIMEOUT_MS`) clamped DOWN by the action's own
 /// `deadline_ms` when present. A client can tighten the bound for one
@@ -805,7 +826,15 @@ async fn handle_request(
     // `web.navigate`) and unwrap the SDK envelope shape so the validator
     // sees the flat-params shape its schemas were authored against.
     let canonical_method = loom_shared::action_aliases::canonicalise(method);
-    let params = unwrap_sdk_envelope(raw_params);
+    // `unwrap_sdk_envelope` keeps only payload fields + session, so the
+    // envelope-level `deadline_ms` would be lost. Mirror it into the flat
+    // params so the router's per-action DAEMON-side kill engages for SDK
+    // callers too — not just flat-shape (MCP/CLI) callers that already send a
+    // top-level `deadline_ms`. The `timeout` above still abandons the RPC
+    // future at the same deadline; this additionally makes the action die
+    // in-executor with a typed `request_timeout` receipt and releases the
+    // dispatch_slot (so the next same-session call is NOT fenced).
+    let params = merge_envelope_deadline(unwrap_sdk_envelope(raw_params), deadline_ms);
 
     // Per-connection rate limit for `daemon.health` (#58). The
     // `{deep:true}` form fans out one CBOR probe per running shim per

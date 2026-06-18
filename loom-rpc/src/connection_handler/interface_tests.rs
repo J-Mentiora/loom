@@ -207,6 +207,63 @@ fn unwrap_sdk_envelope_non_byte_elements_passthrough() {
     }
 }
 
+// ─── merge_envelope_deadline (SDK envelope deadline → flat params) ────
+//
+// `unwrap_sdk_envelope` keeps only payload fields + session, so the
+// envelope-level `deadline_ms` is mirrored back into the flat params by
+// `merge_envelope_deadline` — otherwise the router's per-action daemon-side
+// kill would never engage for SDK callers (only flat MCP/CLI callers).
+
+use super::merge_envelope_deadline;
+
+/// A positive envelope deadline is injected into the flat params so the
+/// router can extract it and arm the daemon-side kill.
+#[test]
+fn merge_envelope_deadline_injects_positive_into_flat_params() {
+    let params = json!({ "session": "s", "url": "https://example.com" });
+    let merged = merge_envelope_deadline(params, Some(2000));
+    assert_eq!(
+        merged.get("deadline_ms").and_then(|v| v.as_u64()),
+        Some(2000),
+        "SDK envelope deadline must reach the flat params so the router sees it"
+    );
+}
+
+/// `0` (the SDKs' "no preference") and `None` are NOT injected — the
+/// executor's no-deadline path must stay byte-for-byte unchanged.
+#[test]
+fn merge_envelope_deadline_skips_zero_and_none() {
+    for d in [Some(0u64), None] {
+        let params = json!({ "session": "s", "url": "u" });
+        let merged = merge_envelope_deadline(params, d);
+        assert!(
+            merged.get("deadline_ms").is_none(),
+            "deadline_ms={d:?} must not be injected (no-deadline path)"
+        );
+    }
+}
+
+/// Idempotent: a top-level `deadline_ms` a flat caller already set is never
+/// overwritten by the envelope value.
+#[test]
+fn merge_envelope_deadline_does_not_overwrite_existing() {
+    let params = json!({ "session": "s", "deadline_ms": 500 });
+    let merged = merge_envelope_deadline(params, Some(9999));
+    assert_eq!(
+        merged.get("deadline_ms").and_then(|v| v.as_u64()),
+        Some(500),
+        "an existing top-level deadline_ms must win over the envelope value"
+    );
+}
+
+/// A non-object value passes through untouched (defensive).
+#[test]
+fn merge_envelope_deadline_non_object_passthrough() {
+    let params = json!(["a", "b"]);
+    let merged = merge_envelope_deadline(params.clone(), Some(2000));
+    assert_eq!(merged, params);
+}
+
 // ─── effective_request_timeout (per-action deadline_ms clamp) ────────
 
 use super::effective_request_timeout;

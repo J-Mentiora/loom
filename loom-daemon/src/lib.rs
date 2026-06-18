@@ -157,6 +157,14 @@ pub(crate) fn map_loom_error(e: &LoomError) -> AdapterError {
         | CoreCode::ShimFailure
         | CoreCode::ShimTimeout
         | CoreCode::ShimBreakerOpen => RpcCode::SurfaceTrap,
+        // Per-action deadline kill: the executor traps with `RequestTimeout`
+        // when an action exceeds its `deadline_ms`. Identity arm so the typed
+        // `request_timeout` survives daemon → wire translation instead of
+        // collapsing to the `_ => InternalError` catch-all (which would mask a
+        // deliberate deadline kill as an internal fault). Distinct from the
+        // RPC-connection-envelope `request_timeout` in `connection_handler`,
+        // which abandons the RPC future rather than killing the action.
+        CoreCode::RequestTimeout => RpcCode::RequestTimeout,
         // profile-restricted is a wire-stable kind
         // that survives daemon → wire translation. Detail (matched_pattern,
         // profile, violation) is currently constructed at the daemon gate
@@ -671,6 +679,23 @@ mod tests {
     };
     use loom_rpc::host_service_adapter::host_service_adapter::{Action, Receipt};
     use std::path::PathBuf;
+
+    // ─── Per-action deadline kill → typed request_timeout on the wire ──────────
+    // The executor traps an over-deadline action with LoomErrorCode::RequestTimeout
+    // (see loom-host session_executor). map_loom_error must carry that to the wire
+    // code `request_timeout` rather than collapsing to the InternalError catch-all
+    // (which would mask a deliberate deadline kill as an internal fault).
+    #[test]
+    fn map_loom_error_preserves_request_timeout() {
+        use loom_core::error::{LoomError, LoomErrorCode};
+        let e = LoomError::new(
+            LoomErrorCode::RequestTimeout,
+            "action deadline_ms of 2000 ms exceeded before the action completed".to_string(),
+        );
+        let wire = map_loom_error(&e);
+        assert_eq!(wire, LoomErrorCode::RequestTimeout);
+        assert_eq!(wire.as_wire(), "request_timeout");
+    }
 
     // ─── Vault label validation (D37) ──────────
     // Direct coverage for the canonical rule shared by vault_set_secret /
