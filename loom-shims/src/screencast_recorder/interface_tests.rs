@@ -93,10 +93,20 @@ fn recorder(cdp: TestCdp, enc: Result<Vec<u8>, String>) -> ScreencastRecorder {
     ScreencastRecorder::new(Arc::new(cdp), Arc::new(FakeEncoder { result: enc }))
 }
 
+/// Serializes tests that read or mutate the process-global `LOOM_DISABLE_RECORDING` env:
+/// `kill_switch_blocks_start` SETS it for its window, while every recording-start test READS
+/// it inside `start()`. Env is per-process, so under parallel execution the kill-switch test
+/// would make a concurrent `start().expect("start ok")` see recording disabled and fail. Each
+/// such test holds this lock (`ENV_LOCK.lock().await`) for its duration. A `tokio::sync::Mutex`
+/// (not `std`) so the guard can be held across `.await` without tripping `await_holding_lock`.
+/// nextest isolates per-process regardless; this keeps plain `cargo test` solid.
+static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 const TARGET: TargetId = 7;
 
 #[tokio::test]
 async fn start_streams_frames_acks_each_then_stop_encodes() {
+    let _env = ENV_LOCK.lock().await;
     let cdp = TestCdp::default();
     let rec = recorder(cdp.clone(), Ok(b"WEBM-OK".to_vec()));
 
@@ -123,6 +133,7 @@ async fn start_streams_frames_acks_each_then_stop_encodes() {
 
 #[tokio::test]
 async fn byte_cap_drops_over_cap_frames_and_reports_reason() {
+    let _env = ENV_LOCK.lock().await;
     let cdp = TestCdp::default();
     let rec = recorder(cdp.clone(), Ok(b"X".to_vec()));
     // Cap that admits the first ~10-byte frame but not the second.
@@ -157,6 +168,7 @@ async fn stop_without_start_is_a_clean_error() {
 
 #[tokio::test]
 async fn double_start_is_rejected() {
+    let _env = ENV_LOCK.lock().await;
     let rec = recorder(TestCdp::default(), Ok(vec![]));
     rec.start(TARGET, Caps::default()).await.expect("first ok");
     let err = rec.start(TARGET, Caps::default()).await.unwrap_err();
@@ -166,6 +178,7 @@ async fn double_start_is_rejected() {
 
 #[tokio::test]
 async fn zero_frames_reports_no_frames() {
+    let _env = ENV_LOCK.lock().await;
     let rec = recorder(TestCdp::default(), Ok(b"unused".to_vec()));
     rec.start(TARGET, Caps::default()).await.expect("start ok");
     let outcome = rec.stop(TARGET).await;
@@ -177,6 +190,7 @@ async fn zero_frames_reports_no_frames() {
 
 #[tokio::test]
 async fn encoder_failure_is_best_effort() {
+    let _env = ENV_LOCK.lock().await;
     let cdp = TestCdp::default();
     let rec = recorder(cdp.clone(), Err("ffmpeg unavailable".to_string()));
     rec.start(TARGET, Caps::default()).await.expect("start ok");
@@ -191,6 +205,7 @@ async fn encoder_failure_is_best_effort() {
 
 #[tokio::test]
 async fn kill_switch_blocks_start() {
+    let _env = ENV_LOCK.lock().await;
     // Tests run single-threaded (CLAUDE.md), so mutating env here is safe.
     std::env::set_var("LOOM_DISABLE_RECORDING", "1");
     let rec = recorder(TestCdp::default(), Ok(vec![]));
