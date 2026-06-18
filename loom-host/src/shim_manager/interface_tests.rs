@@ -4,7 +4,9 @@
 // exclusion, and per-shim error code mapping.
 
 use super::process::{host_read_loop, ShimProcess, ShimTasks};
-use super::shim_manager::{BreakerState, FailureClass, ShimConfig, ShimId, ShimManager};
+use super::shim_manager::{
+    effective_generic_recv_ms, BreakerState, FailureClass, ShimConfig, ShimId, ShimManager,
+};
 use crate::host_observability::HostObservability;
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_shared::shim_protocol::{ShimRequest, ShimResponse};
@@ -468,4 +470,19 @@ async fn shutdown_session_must_remove_host_session_ids_entry() {
         "shutdown_session must remove the session's host_session_ids entry \
          alongside processes/states/configs, or the map grows unbounded"
     );
+}
+
+// animation-capture (Mode B, D11): the generic CdpSend leg's recv timeout must
+// be the larger of the shim's configured recv timeout and the RPC request-timeout
+// cap — so a heavy standalone screenshot riding this leg isn't cut at the flat
+// 30s shim recv when the operator raised LOOM_REQUEST_TIMEOUT_MS (and the RPC
+// allowed more). Pure function; covers the no-op default and the raised-cap case.
+#[test]
+fn generic_recv_timeout_caps_align_with_rpc_request_timeout() {
+    // Defaults agree (30s == 30s): no change.
+    assert_eq!(effective_generic_recv_ms(30_000, 30_000), 30_000);
+    // Operator raised the RPC cap above the shim recv: the shim leg follows it up.
+    assert_eq!(effective_generic_recv_ms(30_000, 120_000), 120_000);
+    // A larger shim recv than the cap is preserved (max, never shrinks the leg).
+    assert_eq!(effective_generic_recv_ms(45_000, 30_000), 45_000);
 }

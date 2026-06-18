@@ -112,3 +112,76 @@ fn virtual_time_budget_params_have_budget_and_starvation_cap() {
         "budget params must set the virtual-time policy: {keys:?}"
     );
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// animation-capture (specs/2026-06-18-animation-capture): TDD RED→GREEN guards
+// for the three capture-failure modes on framer-motion `whileInView` reveal
+// pages. Modes A + C are pinned hermetically here (pure helpers / script source);
+// Mode B's host transport leg is pinned in loom-host; the behavioral acceptance
+// lives in the gated-live `loom-cli/tests/live_animation_render_regression.rs`.
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Mode A (no 30s wedge): after `page_navigate` arms the per-navigation
+/// virtual-time budget, the renderer is left PAUSED at the budget horizon; an
+/// error/early-return exit that skips the drain leaves it paused so the NEXT
+/// `Page.captureScreenshot` blocks to the 30s CDP timeout ("Daemon unresponsive
+/// after 30s"). The fix issues a final resume on every exit. The resume params
+/// MUST set `policy:"advance"` (un-pause) and carry NO `budget` — a budget would
+/// re-pause at expiry and re-wedge the next command.
+#[test]
+fn virtual_time_resume_params_advance_without_budget() {
+    use ciborium::value::Value;
+    use loom_shims::determinism_injector::determinism_injector::build_virtual_time_resume_params;
+
+    let Value::Map(entries) = build_virtual_time_resume_params() else {
+        panic!("resume params must be a CBOR map");
+    };
+    let policy = entries.iter().find_map(|(k, v)| match (k, v) {
+        (Value::Text(k), Value::Text(v)) if k == "policy" => Some(v.clone()),
+        _ => None,
+    });
+    assert_eq!(
+        policy.as_deref(),
+        Some("advance"),
+        "Mode A resume must set policy:advance to un-pause the renderer so the next \
+         command is not wedged on a paused virtual-time clock"
+    );
+    assert!(
+        !entries
+            .iter()
+            .any(|(k, _)| matches!(k, Value::Text(s) if s == "budget")),
+        "Mode A resume must NOT carry a budget — a budget re-pauses at expiry, \
+         re-introducing the wedge it is meant to clear"
+    );
+}
+
+/// Mode C (deterministic reveal capture): `whileInView` reveals are
+/// intersection-triggered, so on a never-scrolled page they sit at `opacity:0` and
+/// `settled` captures a pre-reveal blank frame. Rather than scroll (IntersectionObserver
+/// delivery under CDP virtual time proved unreliable), loom installs a deterministic
+/// `IntersectionObserver` override at inject so every observed element is reported
+/// intersecting at mount → reveals fire like a mount animation, which virtual time
+/// fast-forwards to completion before capture. Hermetic: assert the override's shape.
+#[test]
+fn reveal_io_override_reports_intersecting_on_observe() {
+    use loom_shims::determinism_injector::determinism_injector::REVEAL_IO_OVERRIDE_JS;
+    let s = REVEAL_IO_OVERRIDE_JS;
+    assert!(
+        s.contains("window.IntersectionObserver"),
+        "Mode C: must replace window.IntersectionObserver:\n{s}"
+    );
+    assert!(
+        s.contains("isIntersecting: true") || s.contains("isIntersecting:true"),
+        "Mode C: the override must report observed elements as intersecting so \
+         whileInView reveals fire at mount:\n{s}"
+    );
+    assert!(
+        s.contains(".observe"),
+        "Mode C: the override must shim observe():\n{s}"
+    );
+    // Idempotency guard so a re-injected document doesn't double-wrap.
+    assert!(
+        s.contains("__loomIoOverridden"),
+        "Mode C: the override must be idempotent:\n{s}"
+    );
+}

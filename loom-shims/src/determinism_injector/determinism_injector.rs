@@ -109,6 +109,89 @@ pub fn build_virtual_time_budget_params() -> ciborium::value::Value {
     ])
 }
 
+/// Virtual-time RESUME policy. `advance` lets virtual time progress freely
+/// (never pausing), so a renderer left paused at a drained/half-drained budget
+/// horizon will commit frames again. Used by `page_navigate`'s exit guard
+/// (animation-capture Mode A) to un-pause the renderer on EVERY navigate exit so
+/// the next standalone command (e.g. `Page.captureScreenshot`) is not wedged for
+/// the full 30s CDP timeout ("Daemon unresponsive after 30s").
+pub const VIRTUAL_TIME_RESUME_POLICY: &str = "advance";
+
+/// Pure helper: build the CBOR params for the navigate-exit virtual-time RESUME.
+/// `{policy:"advance"}` with NO `budget` — a budget would re-pause at expiry and
+/// re-introduce the wedge this is meant to clear (animation-capture Mode A; the
+/// `virtual_time_resume_params_advance_without_budget` contract test pins this).
+pub fn build_virtual_time_resume_params() -> ciborium::value::Value {
+    use ciborium::value::Value;
+    Value::Map(vec![(
+        Value::Text("policy".into()),
+        Value::Text(VIRTUAL_TIME_RESUME_POLICY.into()),
+    )])
+}
+
+/// animation-capture Mode C — deterministic `IntersectionObserver` override.
+///
+/// framer-motion `whileInView` (and every intersection-gated reveal) sits at
+/// `opacity:0` until its element scrolls into view. loom's capture never scrolls,
+/// and driving the reveal by SCROLLING under CDP virtual time proved unreliable —
+/// `IntersectionObserver` delivery is a sub-frame race that fires the reveal only
+/// intermittently in real Chrome. Instead, this script (injected before the page's
+/// own scripts, via `addScriptToEvaluateOnNewDocument`) replaces
+/// `IntersectionObserver` with a shim that reports every observed element as fully
+/// intersecting on a microtask. So whileInView reveals fire AT MOUNT — exactly like
+/// a time/mount-triggered reveal, which virtual time already fast-forwards to
+/// completion before capture. Fully deterministic (fixed script, microtask delivery
+/// under virtual time) and replay-equal. Semantics: "capture the page as if every
+/// observed element is in view", which is the right capture intent.
+///
+/// TRADE-OFF (intentional): this also fires NON-reveal IntersectionObserver uses —
+/// lazy-load, infinite scroll, analytics-in-view, sticky-header toggles. For a
+/// capture (we want the fully-materialized page) that is usually desirable, and it
+/// is BOUNDED: any lazy-loaded work runs under the per-navigate virtual-time budget
+/// and the settle tick ceiling, so an infinite-scroll page can't load unbounded. For
+/// pages where it is wrong, the env kill-switch `LOOM_CAPTURE_REVEAL=0` skips
+/// installing it (the page keeps the real IntersectionObserver). Errors are swallowed
+/// (try/catch) so a malformed environment never breaks capture.
+pub const REVEAL_IO_OVERRIDE_JS: &str = r#"(function(){'use strict';
+  try {
+    if (typeof window.IntersectionObserver !== 'function') return;
+    if (window.__loomIoOverridden) return;
+    window.__loomIoOverridden = true;
+    function LoomIO(cb){ this._cb = cb; }
+    LoomIO.prototype.observe = function(el){
+      var cb = this._cb, self = this;
+      Promise.resolve().then(function(){
+        try {
+          var r = (el && el.getBoundingClientRect) ? el.getBoundingClientRect() : null;
+          cb([{
+            target: el,
+            isIntersecting: true,
+            intersectionRatio: 1,
+            boundingClientRect: r,
+            intersectionRect: r,
+            rootBounds: r,
+            time: 0
+          }], self);
+        } catch(e) {}
+      });
+    };
+    LoomIO.prototype.unobserve = function(){};
+    LoomIO.prototype.disconnect = function(){};
+    LoomIO.prototype.takeRecords = function(){ return []; };
+    LoomIO.prototype.root = null;
+    LoomIO.prototype.rootMargin = '0px';
+    LoomIO.prototype.thresholds = [0];
+    window.IntersectionObserver = LoomIO;
+  } catch(e) {}
+})()"#;
+
+/// Whether to install the deterministic IntersectionObserver override
+/// (animation-capture Mode C). Default on; `LOOM_CAPTURE_REVEAL=0` disables
+/// it (shared kill-switch with the legacy scroll path).
+pub fn reveal_capture_enabled() -> bool {
+    std::env::var("LOOM_CAPTURE_REVEAL").as_deref() != Ok("0")
+}
+
 /// Deterministic clock-FREEZE fallback. Injected ONLY when virtual time is
 /// disabled (`LOOM_CAPTURE_VIRTUAL_TIME=0`) or when arming it fails — so the
 /// rollback / failure path restores the prior *deterministic* frozen-clock
@@ -307,6 +390,25 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
                  still get the overrides via addScriptToEvaluateOnNewDocument, \
                  but the about:blank context retains real Date.now/Math.random"
             );
+        }
+
+        // animation-capture Mode C: register the deterministic IntersectionObserver
+        // override so intersection-gated `whileInView` reveals fire AT MOUNT (before
+        // the page's own scripts run, via runImmediately) instead of needing an
+        // unreliable scroll pass. Best-effort: a failure leaves the real IO in place.
+        if reveal_capture_enabled() {
+            let io_msg = CdpMessage {
+                method: ADD_SCRIPT_METHOD.to_string(),
+                params: build_inject_params(REVEAL_IO_OVERRIDE_JS),
+            };
+            if let Err(e) = self.cdp.command(target_id, io_msg, None).await {
+                tracing::warn!(
+                    target_id,
+                    error = %e,
+                    "determinism: IntersectionObserver override addScript failed; \
+                     whileInView reveals may capture pre-reveal"
+                );
+            }
         }
 
         // Install the deterministic, advancing virtual-time clock so client-side

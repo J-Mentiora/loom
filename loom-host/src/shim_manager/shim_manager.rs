@@ -74,6 +74,30 @@ impl Default for ShimConfig {
     }
 }
 
+/// animation-capture (Mode B, D11): process-level RPC request-timeout cap
+/// (`LOOM_REQUEST_TIMEOUT_MS`, mirrors `connection_handler::request_timeout`).
+/// A non-positive / unparseable value falls back to the 30s default.
+const RPC_REQUEST_TIMEOUT_ENV: &str = "LOOM_REQUEST_TIMEOUT_MS";
+fn rpc_request_timeout_ms() -> u64 {
+    std::env::var(RPC_REQUEST_TIMEOUT_ENV)
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|&ms| ms > 0)
+        .unwrap_or(30_000)
+}
+
+/// animation-capture (Mode B, D11): effective recv timeout for the generic
+/// `CdpSend` leg = the larger of the shim's configured recv timeout and the RPC
+/// request-timeout cap. The standalone `web.screenshot` rides this generic leg,
+/// so without cap-alignment a heavy full-page PNG is cut at a flat 30s shim recv
+/// even when the operator raised `LOOM_REQUEST_TIMEOUT_MS` (and the RPC layer
+/// allowed more). Stateless (no per-call state → race-free under concurrent
+/// dispatch) and WIT-free; per-call `deadline_ms` still TIGHTENS at the RPC layer.
+/// Pure for unit-testability.
+pub(crate) fn effective_generic_recv_ms(recv_timeout_ms: u64, rpc_cap_ms: u64) -> u64 {
+    recv_timeout_ms.max(rpc_cap_ms)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BreakerState {
@@ -236,11 +260,15 @@ impl ShimManager {
             message: cdp_msg,
         };
 
+        // animation-capture (Mode B, D11): cap-align the generic CdpSend recv
+        // timeout with the RPC request-timeout so a heavy standalone screenshot
+        // (which rides this leg) isn't cut short while the RPC layer allowed more.
+        let recv_ms = effective_generic_recv_ms(config.recv_timeout_ms, rpc_request_timeout_ms());
         match send_and_await(
             &process,
             request,
             Duration::from_millis(config.send_timeout_ms),
-            Duration::from_millis(config.recv_timeout_ms),
+            Duration::from_millis(recv_ms),
         )
         .await
         {
