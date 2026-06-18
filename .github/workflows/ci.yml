@@ -6,11 +6,17 @@ name: CI
 # out why before raising the number.
 #
 #   job                       measured      budget   notes
-#   cargo test (ubuntu)       ≤ 18 min      ≤ 20     cargo-nextest, parallel
-#                                                    (process-per-test). Was
-#                                                    28-30 min serial under the
-#                                                    retired --test-threads=1.
-#   cargo test (macos)        ≤ 25 min      ≤ 30     main pushes + ci:macos
+#   cargo test (ubuntu)       35-43 min     ≤ 45     cargo-nextest, parallel
+#                                                    (process-per-test). Test
+#                                                    EXECUTION is now ~40s (was
+#                                                    a serial --test-threads=1
+#                                                    run); the job is dominated
+#                                                    by the RELEASE compile of
+#                                                    the test binaries (~35 min,
+#                                                    not cached by rust-cache) —
+#                                                    that is the remaining long
+#                                                    pole, a separate follow-up.
+#   cargo test (macos)        35-45 min     ≤ 50     main pushes + ci:macos
 #                                                    label only
 #   build (ubuntu/macos)       4-7 min      ≤ 10
 #   smoke (ubuntu)             4-9 min      ≤ 12     rebuild + daemon RPC
