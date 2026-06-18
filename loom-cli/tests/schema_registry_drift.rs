@@ -65,6 +65,36 @@ fn every_registry_verb_has_a_builtin_schema_permitting_its_params() {
 }
 
 #[test]
+fn deadline_ms_is_permitted_by_every_web_request_schema() {
+    // The per-action kill deadline rides as a flat `deadline_ms` arg on every
+    // web.* call. With `additionalProperties:false`, the daemon would reject it
+    // at the RPC boundary unless each web request schema declares it (optional).
+    // Pin that here so a future schema edit that drops it fails loudly.
+    for (method, json) in BUILTIN_SCHEMAS {
+        if !method.starts_with("web.") {
+            continue;
+        }
+        let schema: Value =
+            serde_json::from_str(json).unwrap_or_else(|e| panic!("schema {method} invalid: {e}"));
+        let props = &schema["request"]["properties"];
+        assert!(
+            props.get("deadline_ms").is_some(),
+            "web verb `{method}` request schema must permit `deadline_ms` (the daemon \
+             would otherwise reject the per-action deadline at the RPC boundary)"
+        );
+        // It MUST stay optional — never in the required set.
+        let required = schema["request"]["required"].as_array();
+        let in_required = required
+            .map(|r| r.iter().any(|v| v == "deadline_ms"))
+            .unwrap_or(false);
+        assert!(
+            !in_required,
+            "`deadline_ms` must be OPTIONAL on `{method}` (not in `required`)"
+        );
+    }
+}
+
+#[test]
 fn settle_capture_params_are_in_the_navigate_and_wait_for_schemas() {
     // Pin the exact settle-capture additions so a future schema edit that drops
     // them fails loudly (this is the precise regression the real-browser run hit).

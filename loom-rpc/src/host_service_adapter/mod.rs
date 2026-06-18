@@ -12,7 +12,11 @@ use std::sync::Arc;
 
 #[async_trait::async_trait]
 impl HostServiceAdapterApi for HostServiceAdapter {
-    async fn dispatch_action(&self, action: Action) -> Result<Receipt, AdapterError> {
+    async fn dispatch_action(
+        &self,
+        action: Action,
+        deadline_ms: Option<u64>,
+    ) -> Result<Receipt, AdapterError> {
         // Run the blocking bridge call on tokio's blocking pool so this
         // future stays poll-able: the per-request timeout/cancel arms in
         // `handle_request`'s select! can preempt a slow or wedged
@@ -29,7 +33,11 @@ impl HostServiceAdapterApi for HostServiceAdapter {
         // has actually finished, so its late side effects can't
         // interleave with a newer action's.
         let host = Arc::clone(&self.host);
-        match tokio::task::spawn_blocking(move || host.dispatch_action_blocking(action)).await {
+        match tokio::task::spawn_blocking(move || {
+            host.dispatch_action_blocking(action, deadline_ms)
+        })
+        .await
+        {
             Ok(result) => result,
             // JoinError: the blocking task panicked (or the runtime is
             // shutting down). Surface a typed internal error rather

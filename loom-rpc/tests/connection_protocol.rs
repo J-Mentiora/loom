@@ -316,7 +316,11 @@ struct SlowBlockingBridge {
 }
 
 impl WasmHostBridge for SlowBlockingBridge {
-    fn dispatch_action_blocking(&self, _action: Action) -> Result<Receipt, AdapterError> {
+    fn dispatch_action_blocking(
+        &self,
+        _action: Action,
+        _deadline_ms: Option<u64>,
+    ) -> Result<Receipt, AdapterError> {
         std::thread::sleep(self.delay);
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::SurfaceUnavailable)
     }
@@ -340,7 +344,7 @@ impl RequestRouterApi for BlockingRouter {
                     until: None,
                     timeout_ms: None,
                 };
-                match self.host.dispatch_action(action).await {
+                match self.host.dispatch_action(action, None).await {
                     Ok(receipt) => serde_json::to_vec(&receipt).unwrap(),
                     Err(code) => serde_json::to_vec(&serde_json::json!({
                         "__loom_rpc_error": true,

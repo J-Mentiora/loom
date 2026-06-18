@@ -41,61 +41,61 @@ use tokio::net::UnixStream;
 static WEB_SCHEMAS: &[(&str, &str, &str)] = &[
     (
         "web.navigate",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"url":{"type":"string"}},"required":["url"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"url":{"type":"string"}},"required":["url"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.click",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"}},"required":["selector"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"}},"required":["selector"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         // Canonical name `web.type` (was `web.type_text`); the legacy
         // spelling resolves here via `loom_shared::action_aliases`.
         "web.type",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"},"text":{"type":"string"}},"required":["selector","text"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"text":{"type":"string"}},"required":["selector","text"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.select",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"},"value":{"type":"string"}},"required":["selector","value"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"value":{"type":"string"}},"required":["selector","value"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.hover",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"}},"required":["selector"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"}},"required":["selector"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.scroll",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"},"delta_x":{"type":"integer"},"delta_y":{"type":"integer"}},"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"delta_x":{"type":"integer"},"delta_y":{"type":"integer"}},"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.wait",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["selector"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"timeout_ms":{"type":"integer"}},"required":["selector"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         // settle-capture readiness verb; the SDKs spell it
         // `action.web.wait_for` (resolved via `loom_shared::action_aliases`).
         "web.wait_for",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"until":{"type":"string","enum":["load","networkidle","settled"]},"timeout_ms":{"type":"integer"}},"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"until":{"type":"string","enum":["load","networkidle","settled"]},"timeout_ms":{"type":"integer"}},"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.evaluate",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"expression":{"type":"string"}},"required":["expression"],"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"expression":{"type":"string"}},"required":["expression"],"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.screenshot",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"selector":{"type":"string"}},"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"}},"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
     (
         "web.snapshot",
-        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"}},"additionalProperties":false}"#,
+        r#"{"type":"object","properties":{"session_id":{"type":"string"},"session":{"type":"string"},"deadline_ms":{"type":"integer"}},"additionalProperties":false}"#,
         r#"{"type":"object","properties":{"action_id":{"type":"integer"},"session_id":{"type":"string"},"status":{"type":"string"}},"required":["action_id","session_id","status"]}"#,
     ),
 ];
@@ -184,6 +184,7 @@ impl WasmHostBridge for CannedHostBridge {
     fn dispatch_action_blocking(
         &self,
         action: Action,
+        _deadline_ms: Option<u64>,
     ) -> Result<Receipt, loom_rpc::host_service_adapter::host_service_adapter::AdapterError> {
         let session_id = match &action {
             Action::WebNavigate { session_id, .. }

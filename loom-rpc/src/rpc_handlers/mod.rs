@@ -380,9 +380,13 @@ impl RpcHandlers {
 
     // === Action method stub — implemented by wasm-host features ===
 
-    pub async fn action_dispatch(&self, a: Action) -> HandlerResult<Receipt> {
+    pub async fn action_dispatch(
+        &self,
+        a: Action,
+        deadline_ms: Option<u64>,
+    ) -> HandlerResult<Receipt> {
         self.host
-            .dispatch_action(a)
+            .dispatch_action(a, deadline_ms)
             .await
             .map_err(|code| JsonRpcError {
                 code,

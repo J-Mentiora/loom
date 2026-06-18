@@ -42,7 +42,15 @@ pub trait WasmHostBridge: Send + Sync {
     /// Implementations may therefore drive inner async work with a
     /// plain `Handle::block_on` — and must NOT use `block_in_place`,
     /// which panics off the runtime's worker threads.
-    fn dispatch_action_blocking(&self, action: Action) -> Result<Receipt, AdapterError>;
+    /// `deadline_ms` is the optional per-action kill deadline (dispatch
+    /// metadata; NOT part of the `Action` identity, so it never enters the
+    /// hashed action bytes). On expiry the executor returns a typed
+    /// `request_timeout` trapped outcome.
+    fn dispatch_action_blocking(
+        &self,
+        action: Action,
+        deadline_ms: Option<u64>,
+    ) -> Result<Receipt, AdapterError>;
 
     /// true iff a chromium template was registered at host boot. False
     /// when the chromium_resolver returned `BrowserNotFound` at daemon
@@ -347,7 +355,11 @@ pub trait HostServiceAdapterApi: Send + Sync {
     /// future on the caller's task (no extra spawn).
     /// The interval of this await is recorded as `host_dispatch_us`
     /// and excluded from the budget .
-    async fn dispatch_action(&self, action: Action) -> Result<Receipt, AdapterError>;
+    async fn dispatch_action(
+        &self,
+        action: Action,
+        deadline_ms: Option<u64>,
+    ) -> Result<Receipt, AdapterError>;
 
     /// true iff a chromium template was registered at host
     /// boot. False when the chromium_resolver returned `BrowserNotFound`
