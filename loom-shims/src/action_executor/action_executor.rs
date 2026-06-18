@@ -207,6 +207,10 @@ pub struct ChromiumActionExecutor {
     pub(crate) network: Arc<dyn NetworkInterceptor>,
     pub(crate) targets: Arc<dyn TargetManager>,
     pub(crate) default_budget: Duration,
+    /// video-capture: per-target screencast recordings. Shares `cdp` so the
+    /// recorder issues `Page.startScreencast`/`Ack`/`stopScreencast` on the
+    /// same connection.
+    pub(crate) recorder: Arc<crate::screencast_recorder::ScreencastRecorder>,
 }
 
 impl ChromiumActionExecutor {
@@ -215,11 +219,16 @@ impl ChromiumActionExecutor {
         network: Arc<dyn NetworkInterceptor>,
         targets: Arc<dyn TargetManager>,
     ) -> Self {
+        let recorder = Arc::new(crate::screencast_recorder::ScreencastRecorder::new(
+            cdp.clone(),
+            Arc::new(crate::screencast_recorder::FfmpegSidecarEncoder),
+        ));
         Self {
             cdp,
             network,
             targets,
             default_budget: DEFAULT_ACTION_BUDGET,
+            recorder,
         }
     }
 
@@ -346,6 +355,31 @@ pub trait ActionExecutor: Send + Sync {
     /// Default returns empty (only `ChromiumActionExecutor` accumulates).
     fn read_network_log(&self, _target_id: TargetId) -> (Vec<LoomNetworkEntry>, bool) {
         (Vec::new(), false)
+    }
+
+    /// video-capture: start a `Page.startScreencast` recording on `target_id`.
+    /// `Err(detail)` (no session abort) when a recording is already active, the
+    /// kill-switch is set, or `Page.startScreencast` fails. Default impl (non-
+    /// Chromium executors) reports unsupported.
+    async fn start_recording(
+        &self,
+        _target_id: TargetId,
+        _caps: crate::screencast_recorder::Caps,
+    ) -> Result<(), String> {
+        Err("screencast recording not supported by this executor".to_string())
+    }
+
+    /// video-capture: stop the active recording, encode it, and return the
+    /// outcome (errors are embedded in the outcome, never at the call boundary).
+    async fn stop_recording(
+        &self,
+        _target_id: TargetId,
+    ) -> loom_shared::navigate_outcome::ScreencastOutcome {
+        loom_shared::navigate_outcome::ScreencastOutcome {
+            stop_reason: "error".to_string(),
+            error: Some("screencast recording not supported by this executor".to_string()),
+            ..Default::default()
+        }
     }
 }
 
@@ -952,6 +986,21 @@ impl ActionExecutor for ChromiumActionExecutor {
         } else {
             from_zero
         }
+    }
+
+    async fn start_recording(
+        &self,
+        target_id: TargetId,
+        caps: crate::screencast_recorder::Caps,
+    ) -> Result<(), String> {
+        self.recorder.start(target_id, caps).await
+    }
+
+    async fn stop_recording(
+        &self,
+        target_id: TargetId,
+    ) -> loom_shared::navigate_outcome::ScreencastOutcome {
+        self.recorder.stop(target_id).await
     }
 }
 

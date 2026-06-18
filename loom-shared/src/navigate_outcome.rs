@@ -80,6 +80,37 @@ pub struct NetworkLogOutcome {
     pub network_entries_truncated: bool,
 }
 
+/// Decoded result of a `ShimRequest::StopRecording` call (video-capture).
+///
+/// The shim encodes the buffered screencast frames to a `.webm` and returns the
+/// bytes inline (the HOST writes them to the content-addressed store and derives
+/// the `screencast_after_hash`, mirroring how screenshot bytes flow shim→host).
+/// On a best-effort failure (encoder unavailable / no frames) `webm_bytes` is
+/// empty and `error` is set — the action then surfaces an error receipt but the
+/// session is never aborted. `serde(default)` on every field for CBOR wire
+/// back-compat.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ScreencastOutcome {
+    /// Encoded `.webm` bytes (empty on best-effort failure / zero frames).
+    /// Plain `Vec<u8>` to match the existing `screenshot_bytes`/`dom_bytes`
+    /// shim→host transport.
+    #[serde(default)]
+    pub webm_bytes: Vec<u8>,
+    /// Number of frames captured.
+    #[serde(default)]
+    pub frame_count: u64,
+    /// Recording wall-clock duration in milliseconds.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Why the recording stopped: `explicit` | `duration_cap` | `byte_cap` |
+    /// `session_close` | `no_frames` | `encoder_unavailable` | `error`.
+    #[serde(default)]
+    pub stop_reason: String,
+    /// Set on a best-effort failure (encoder missing / encode error / no frames).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Console line captured by the shim (currently always empty; real capture is followup work).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShimConsoleLine {

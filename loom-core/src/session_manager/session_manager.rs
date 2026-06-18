@@ -86,6 +86,16 @@ pub struct SessionCreateOpts {
     /// is unchanged (inject still runs + flips the readiness flag).
     #[serde(default)]
     pub no_determinism: bool,
+    /// video-capture: operator's `session create --record-screencast` opt-in.
+    /// Default `false`. When `true`, the host starts a CDP screencast on the
+    /// session's active page target at create time and finalizes it (encode →
+    /// CAS) at session close/reset, writing the resulting hash to the per-session
+    /// `recordings.jsonl` sidecar (surfaced by `loom.session.info`). The webm
+    /// bytes are non-deterministic and live OUTSIDE the manifest hash chain, so
+    /// this never affects replay-equality (NFR-DET-01). Opt-in mirrors the
+    /// screenshot privacy posture: recordings capture whatever is on screen.
+    #[serde(default)]
+    pub record_screencast: bool,
     /// Operator's `--profile` choice — `"safe" | "standard" | "full"`. Wire-default
     /// is `"safe"` (per `loom_rpc::core_service_adapter::CreateSessionParams::default_profile`).
     /// Daemon's evaluate gate and shim's download confinement
@@ -110,6 +120,7 @@ impl Default for SessionCreateOpts {
             capture_policy: None,
             no_blocklist: false,
             no_determinism: false,
+            record_screencast: false,
             profile: default_profile_string(),
         }
     }
@@ -247,6 +258,10 @@ pub struct Session {
     /// path to compute the per-request `determinism_enabled = !no_determinism`
     /// so the shim injects the freeze template (true) or a pass-through (false).
     pub no_determinism: bool,
+    /// video-capture: operator's `session create --record-screencast` opt-in.
+    /// `false` by default. Read by the daemon to auto-start a whole-session
+    /// screencast after the first navigate and finalize it at close.
+    pub record_screencast: bool,
     /// Per-session determinism seed. The `Option<u64> → Seed` collapse
     /// happens exactly once, at `LocalSessionManager::create` —
     /// `opts.seed.unwrap_or(default_seed)`. Downstream layers (HostState,

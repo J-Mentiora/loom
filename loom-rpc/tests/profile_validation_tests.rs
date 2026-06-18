@@ -93,6 +93,7 @@ impl CoreFacadeBridge for NoopCoreBridge {
         _: bool,
         _: bool,
         _: Option<u64>,
+        _: bool,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
         // the handler must resolve the SDK
@@ -244,6 +245,7 @@ fn create_params(
         budget,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         clock_anchor: None,
     }
 }

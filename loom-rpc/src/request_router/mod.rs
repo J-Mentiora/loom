@@ -558,6 +558,8 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.evaluate" => &["session_id", "expression"],
         "web.set_input_files" => &["session_id", "selector", "paths"],
         "web.screenshot" => &["session_id"],
+        "web.start_recording" => &["session_id"],
+        "web.stop_recording" => &["session_id"],
         "web.snapshot" => &["session_id"],
         // v0.9.6 web-cookie-injection.
         "web.set_cookies" => &["session_id", "source"],
@@ -586,6 +588,8 @@ pub fn known_router_methods() -> &'static [&'static str] {
         "web.set_cookies",
         "web.set_input_files",
         "web.snapshot",
+        "web.start_recording",
+        "web.stop_recording",
         "web.type",
         "web.wait",
         "web.wait_for",
@@ -746,6 +750,22 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         "web.snapshot" => {
             let session_id = session_id_from_params(&params)?;
             Ok(Action::WebSnapshot { session_id })
+        }
+        "web.start_recording" => {
+            let session_id = session_id_from_params(&params)?;
+            let max_duration_ms = params.get("max_duration_ms").and_then(|v| v.as_u64());
+            let max_bytes = params.get("max_bytes").and_then(|v| v.as_u64());
+            let frame_rate = params.get("frame_rate").and_then(|v| v.as_u64());
+            Ok(Action::WebStartRecording {
+                session_id,
+                max_duration_ms,
+                max_bytes,
+                frame_rate,
+            })
+        }
+        "web.stop_recording" => {
+            let session_id = session_id_from_params(&params)?;
+            Ok(Action::WebStopRecording { session_id })
         }
         "web.network_log" => {
             let session_id = session_id_from_params(&params)?;

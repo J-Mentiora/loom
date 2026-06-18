@@ -54,6 +54,7 @@ pub fn run(config: &BenchmarkConfig) -> Result<ReceiptOverheadReport, BenchmarkE
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     };
 
@@ -173,6 +174,7 @@ mod tests {
                 capture_policy: None,
                 no_blocklist: false,
                 no_determinism: false,
+                record_screencast: false,
                 profile: "safe".to_string(),
             })
             .unwrap();

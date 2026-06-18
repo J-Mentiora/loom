@@ -86,6 +86,21 @@ pub enum Action {
         session_id: String,
         selector: Option<String>,
     },
+    // video-capture: bracketed screencast recording. start begins a CDP
+    // Page.startScreencast on the active target; stop encodes the collected
+    // frames to .webm and returns its content hash. At most one active per session.
+    WebStartRecording {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        frame_rate: Option<u64>,
+    },
+    WebStopRecording {
+        session_id: String,
+    },
     WebSelect {
         session_id: String,
         selector: String,
@@ -203,6 +218,12 @@ pub struct Receipt {
     pub dom_snapshot_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_after_hash: Option<String>,
+    /// video-capture: SHA-256 of the recorded `.webm` in CAS, set on a
+    /// `web.stop_recording` receipt. Fetch via `loom blob get <hash>`. The webm
+    /// bytes live OUTSIDE the manifest hash chain (recording is intercepted
+    /// host-side, like `web.network_log`), so this never affects replay-equality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screencast_after_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -57,6 +57,14 @@ impl ReceiptPayload {
             self.screenshot_after_blob_ref = None;
         }
 
+        // screencast_after_blob_ref → screencast_after_hash downgrade.
+        if !keep_field(scope, profile, CaptureField::ScreencastAfterBlobRef) {
+            if let Some(ref r) = self.screencast_after_blob_ref {
+                self.screencast_after_hash = Some(r.sha256.clone());
+            }
+            self.screencast_after_blob_ref = None;
+        }
+
         // Before-refs: plain strip.
         if !keep_field(scope, profile, CaptureField::DomBeforeBlobRef) {
             self.dom_before_blob_ref = None;
