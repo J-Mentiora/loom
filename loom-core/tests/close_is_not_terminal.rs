@@ -23,8 +23,8 @@ use loom_core::session_manager::{
     AbortReason, LocalSessionManager, SessionCreateOpts, SessionStatus,
 };
 use loom_core::vault::{KeychainAccess, LocalVault, Vault};
-use std::path::PathBuf;
 use std::sync::Arc;
+use tempfile::TempDir;
 use zeroize::Zeroizing;
 
 // ─── Test helpers ────────────────────────────────────────────────────────────
@@ -58,28 +58,25 @@ impl KeychainAccess for StubKc {
     }
 }
 
-fn make_sm(tmp: &str) -> Arc<LocalSessionManager> {
-    let obs = Observability::new(PathBuf::from(format!("{tmp}/loom.log")), false);
-    let cs: Arc<dyn ContentStore> = Arc::new(LocalContentStore::new(
-        PathBuf::from(format!("{tmp}/store")),
-        obs.clone(),
-    ));
-    let mw: Arc<dyn ManifestWriter> = Arc::new(LocalManifestWriter::new(
-        PathBuf::from(format!("{tmp}/sessions")),
-        obs.clone(),
-    ));
+// Each test gets its own `tempfile::TempDir` (auto-removed on drop) — hermetic
+// per-run state, same pattern as manifest_writer_behavior.rs. Bind the returned
+// TempDir as `_tmp` to keep it alive for the test's duration.
+fn make_sm() -> (Arc<LocalSessionManager>, TempDir) {
+    let tmp = TempDir::new().unwrap();
+    let sm = make_sm_at(tmp.path());
+    (sm, tmp)
+}
+
+fn make_sm_at(root: &std::path::Path) -> Arc<LocalSessionManager> {
+    let obs = Observability::new(root.join("loom.log"), false);
+    let cs: Arc<dyn ContentStore> =
+        Arc::new(LocalContentStore::new(root.join("store"), obs.clone()));
+    let mw: Arc<dyn ManifestWriter> =
+        Arc::new(LocalManifestWriter::new(root.join("sessions"), obs.clone()));
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v: Arc<dyn Vault> = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be: Arc<dyn BudgetEnforcer> = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    LocalSessionManager::new(
-        cs,
-        mw,
-        v,
-        be,
-        obs,
-        0,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
-    )
+    LocalSessionManager::new(cs, mw, v, be, obs, 0, root.join("sessions"))
 }
 
 fn default_opts() -> SessionCreateOpts {
@@ -130,7 +127,7 @@ fn dispatch_guard(sm: &LocalSessionManager, session_id: &str) -> Result<(), Loom
 /// The daemon maps this to the RPC `session_closed` code.
 #[test]
 fn closed_session_dispatch_returns_session_closed() {
-    let sm = make_sm("/tmp/loom-test-close-terminal-01");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
 
     // Close the session — transitions Active → Closed.
@@ -153,7 +150,7 @@ fn closed_session_dispatch_returns_session_closed() {
 /// `LoomErrorCode::SessionAborted`.
 #[test]
 fn aborted_session_dispatch_returns_session_aborted() {
-    let sm = make_sm("/tmp/loom-test-close-terminal-02");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
 
     // Abort the session — transitions Active → Aborted.
@@ -183,7 +180,7 @@ fn aborted_session_dispatch_returns_session_aborted() {
 /// described in the feature description.
 #[test]
 fn create_close_dispatch_full_lifecycle() {
-    let sm = make_sm("/tmp/loom-test-close-terminal-03");
+    let (sm, _tmp) = make_sm();
 
     // 1. Create a session (simulates `loom session create`).
     let id = sm.create(default_opts()).unwrap();
@@ -221,7 +218,7 @@ fn create_close_dispatch_full_lifecycle() {
 /// guard.  Without this, the fix would break normal operation.
 #[test]
 fn active_session_dispatch_is_not_rejected() {
-    let sm = make_sm("/tmp/loom-test-close-terminal-04");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
 
     let result = dispatch_guard(&sm, &id.0);
@@ -243,7 +240,7 @@ fn active_session_dispatch_is_not_rejected() {
 /// panics" sentinel stub makes the guarantee executable.
 #[test]
 fn shim_is_never_called_for_closed_session() {
-    let sm = make_sm("/tmp/loom-test-close-terminal-05");
+    let (sm, _tmp) = make_sm();
     let id = sm.create(default_opts()).unwrap();
     sm.close(id.clone()).unwrap();
 

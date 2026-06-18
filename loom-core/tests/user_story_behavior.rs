@@ -131,15 +131,7 @@ fn make_session_manager(
     let kc: Arc<dyn KeychainAccess> = Arc::new(StubKc);
     let v = Arc::new(LocalVault::new(kc, mw.clone(), obs.clone()));
     let be = Arc::new(LocalBudgetEnforcer::new(obs.clone()));
-    LocalSessionManager::new(
-        cs,
-        mw,
-        v,
-        be,
-        obs,
-        0,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
-    )
+    LocalSessionManager::new(cs, mw, v, be, obs, 0, tmp.path().join("sessions"))
 }
 
 fn sha256_hex(b: &[u8]) -> String {
@@ -396,7 +388,10 @@ fn test_agent_never_sees_raw_secret_in_manifest() {
 
 #[test]
 fn test_runaway_tab_killed_by_js_heap_budget() {
-    let obs = Observability::new("/tmp/loom-us-agt04.log".into(), false);
+    // Budget enforcer is in-memory; Observability's log path is never written to
+    // disk here — anchor it to a throwaway TempDir instead of a shared /tmp literal.
+    let tmp = TempDir::new().unwrap();
+    let obs = Observability::new(tmp.path().join("loom.log"), false);
     let be = LocalBudgetEnforcer::new(obs);
     let sid = SessionId("01USAGT04RUNAWAY".to_string());
 
@@ -708,7 +703,10 @@ fn test_har_export_is_har_12_valid() {
 
 #[test]
 fn test_js_heap_budget_kills_within_60s() {
-    let obs = Observability::new("/tmp/loom-us-eval04.log".into(), false);
+    // Budget enforcer is in-memory; Observability's log path is never written to
+    // disk here — anchor it to a throwaway TempDir instead of a shared /tmp literal.
+    let tmp = TempDir::new().unwrap();
+    let obs = Observability::new(tmp.path().join("loom.log"), false);
     let be = LocalBudgetEnforcer::new(obs);
     let sid = SessionId("01USEVAL04CI".to_string());
 
