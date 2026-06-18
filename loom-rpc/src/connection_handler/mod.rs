@@ -113,6 +113,164 @@ fn authenticated_idle_timeout() -> Duration {
     })
 }
 
+/// A request routed to a per-session ordered worker. Carries everything
+/// [`dispatch_request_task`] needs; the connection-scoped handles
+/// (`deps`, `cancels`, …) are cloned into the worker when it spawns.
+struct OrderedJob {
+    id: serde_json::Value,
+    method: String,
+    raw_params: serde_json::Value,
+    key: String,
+    token: CancellationToken,
+}
+
+/// Classify a request onto the per-session ORDERED lane. Returns the
+/// session id when `method` is a session-mutating surface verb — the
+/// `web.*` family, i.e. the exact set the router parses into an `Action`
+/// and dispatches through the per-session host fence, producing WAL +
+/// receipt entries. Two such requests on the same session MUST execute in
+/// submission order, so they funnel through one FIFO worker.
+///
+/// Everything else rides the concurrent lane: control-plane methods
+/// (`session.*`, `daemon.*`, `health.*`, `rpc.*`, `vault.*`; plus
+/// `request.cancel` / `daemon.hello`, already answered inline on the read
+/// loop) never produce session-ordered WAL entries, and a request with no
+/// resolvable session id can't corrupt order (validation rejects it
+/// downstream). The method is canonicalised first so SDK aliases
+/// (`action.web.navigate`) classify identically to their canonical form,
+/// and the session id is read from either the SDK-envelope top level
+/// (`session_id`) or the flat shape (`session`) — mirroring
+/// `request_router`'s `session_id_from_params`.
+///
+/// Reusing `known_router_methods()` as the source of truth means a newly
+/// added web verb is ordered automatically — no second list to drift.
+fn session_ordered_key(method: &str, params: &serde_json::Value) -> Option<String> {
+    let canonical = loom_shared::action_aliases::canonicalise(method);
+    if !crate::request_router::known_router_methods().contains(&canonical) {
+        return None;
+    }
+    params
+        .get("session_id")
+        .or_else(|| params.get("session"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// The per-request dispatch body, shared verbatim by both lanes: the
+/// concurrent lane `tokio::spawn`s it (one task per request) and each
+/// per-session ordered worker `await`s it per job in FIFO order. Waits for
+/// a connection dispatch slot (racing the cancel token so a queued request
+/// answers `request-cancelled` immediately instead of after a slot frees
+/// up), runs `handle_request` under panic isolation, removes the
+/// cancel-registry entry, then enqueues the response. Acquiring the slot
+/// HERE (not on the read loop) keeps `request.cancel` frames readable while
+/// requests queue, and bounds TOTAL in-flight across both lanes by the
+/// connection semaphore.
+#[allow(clippy::too_many_arguments)]
+async fn dispatch_request_task(
+    id: serde_json::Value,
+    method: String,
+    raw_params: serde_json::Value,
+    key: String,
+    token: CancellationToken,
+    deps: Arc<ConnectionHandlerDeps>,
+    cancels: ConnectionCancelRegistry,
+    health_limiter: ConnectionHealthLimiter,
+    dispatch_slots: Arc<tokio::sync::Semaphore>,
+    resp_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+) {
+    // Wait for a dispatch slot, racing the cancel token so a queued
+    // request answers `request-cancelled` immediately instead of after a
+    // slot frees up.
+    let _permit = tokio::select! {
+        _ = token.cancelled() => {
+            if !key.is_empty() {
+                cancels.lock().remove(&key);
+            }
+            tracing::info!(
+                metric = "loom_daemon_request_cancelled",
+                method = %method,
+                request_id = %key,
+                reason = "client",
+            );
+            let response = jsonrpc_err(
+                id,
+                LoomErrorCode::RequestCancelled,
+                "request cancelled by client",
+            );
+            let _ = resp_tx.send(response).await;
+            return;
+        }
+        permit = dispatch_slots.acquire_owned() => match permit {
+            Ok(p) => p,
+            // Semaphore closed — connection torn down.
+            Err(_) => return,
+        },
+    };
+    // Per-task panic isolation: a panicking handler must fail only its own
+    // request with a typed `internal_error` envelope, never silently drop
+    // the connection.
+    let response = match std::panic::AssertUnwindSafe(handle_request(
+        id.clone(),
+        &method,
+        raw_params,
+        &deps,
+        &token,
+        &health_limiter,
+    ))
+    .catch_unwind()
+    .await
+    {
+        Ok(bytes) => bytes,
+        Err(_panic) => jsonrpc_err(
+            id,
+            LoomErrorCode::InternalError,
+            "internal error: request handler panicked",
+        ),
+    };
+    // Remove from the registry BEFORE enqueueing the response so a serial
+    // client reusing the id for its next call can never race the stale
+    // entry.
+    if !key.is_empty() {
+        cancels.lock().remove(&key);
+    }
+    let _ = resp_tx.send(response).await;
+}
+
+/// Spawn a per-session ordered worker: a single task that drains its
+/// bounded mpsc and `await`s each dispatch in turn, so session-mutating
+/// actions on this session execute in strict submission (read) order. The
+/// connection-scoped handles are cloned in; the worker exits when every
+/// `job_tx` clone drops (the read loop drops the map at teardown) after
+/// draining its queue. Modeled on the MCP ordered worker
+/// (`loom-mcp/src/stdio_transport/mod.rs`).
+fn spawn_session_worker(
+    mut job_rx: tokio::sync::mpsc::Receiver<OrderedJob>,
+    deps: Arc<ConnectionHandlerDeps>,
+    cancels: ConnectionCancelRegistry,
+    health_limiter: ConnectionHealthLimiter,
+    dispatch_slots: Arc<tokio::sync::Semaphore>,
+    resp_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+) {
+    tokio::spawn(async move {
+        while let Some(job) = job_rx.recv().await {
+            dispatch_request_task(
+                job.id,
+                job.method,
+                job.raw_params,
+                job.key,
+                job.token,
+                Arc::clone(&deps),
+                Arc::clone(&cancels),
+                Arc::clone(&health_limiter),
+                Arc::clone(&dispatch_slots),
+                resp_tx.clone(),
+            )
+            .await;
+        }
+    });
+}
+
 impl ConnectionHandler {
     pub fn new(deps: Arc<ConnectionHandlerDeps>) -> Self {
         Self {
@@ -186,6 +344,20 @@ impl ConnectionHandler {
         // loop never blocks on a saturated semaphore — `request.cancel`
         // frames must stay readable while requests queue.
         let dispatch_slots = Arc::new(tokio::sync::Semaphore::new(max_concurrent_requests()));
+
+        // Per-session ordered-dispatch workers. A session-mutating surface
+        // verb (`web.*`) routes to its session's single FIFO worker so two
+        // pipelined same-session actions execute in submission order;
+        // distinct sessions get distinct workers and stay concurrent
+        // (bounded by `dispatch_slots`, acquired inside the task). Local to
+        // this task — dropped, tearing the workers down, when the
+        // connection ends. A worker parks on `recv` between actions and is
+        // not evicted mid-connection, so the map holds one (cheap, idle)
+        // entry per distinct session seen on THIS connection — bounded by the
+        // connection lifetime (idle-timeout reaped) and the realistic
+        // sessions-per-connection count, so no separate GC is warranted.
+        let mut session_workers: HashMap<String, tokio::sync::mpsc::Sender<OrderedJob>> =
+            HashMap::new();
 
         // Authenticated: request read loop. One spawned task per request;
         // `request.cancel` is handled inline (fast lane).
@@ -373,69 +545,106 @@ impl ConnectionHandler {
                 continue;
             }
 
-            let deps = Arc::clone(&deps);
-            let cancels = Arc::clone(&cancels);
-            let health_limiter = Arc::clone(&health_limiter);
-            let dispatch_slots = Arc::clone(&dispatch_slots);
-            let resp_tx = resp_tx.clone();
-            tokio::spawn(async move {
-                // Wait for a dispatch slot, racing the cancel token so a
-                // queued request answers `request-cancelled` immediately
-                // instead of after a slot frees up.
-                let _permit = tokio::select! {
-                    _ = token.cancelled() => {
-                        if !key.is_empty() {
-                            cancels.lock().remove(&key);
-                        }
-                        tracing::info!(
-                            metric = "loom_daemon_request_cancelled",
-                            method = %method,
-                            request_id = %key,
-                            reason = "client",
-                        );
-                        let response = jsonrpc_err(
-                            id,
-                            LoomErrorCode::RequestCancelled,
-                            "request cancelled by client",
-                        );
-                        let _ = resp_tx.send(response).await;
-                        return;
-                    }
-                    permit = dispatch_slots.acquire_owned() => match permit {
-                        Ok(p) => p,
-                        // Semaphore closed — connection torn down.
-                        Err(_) => return,
-                    },
-                };
-                // Per-task panic isolation: a panicking handler must fail
-                // only its own request with a typed `internal_error`
-                // envelope, never silently drop the connection.
-                let response = match std::panic::AssertUnwindSafe(handle_request(
-                    id.clone(),
-                    &method,
+            // ORDERED lane: session-mutating surface verbs (`web.*`) on the
+            // same session must execute in submission order. Route them to a
+            // per-session single-worker FIFO queue (lazily spawned). The
+            // cancel token is already installed above, so even a request
+            // sitting in the queue stays cancellable. Control-plane requests
+            // fall through to the concurrent spawn lane unchanged.
+            if let Some(sid) = session_ordered_key(&method, &raw_params) {
+                let job = OrderedJob {
+                    id,
+                    method,
                     raw_params,
-                    &deps,
-                    &token,
-                    &health_limiter,
-                ))
-                .catch_unwind()
-                .await
-                {
-                    Ok(bytes) => bytes,
-                    Err(_panic) => jsonrpc_err(
-                        id,
-                        LoomErrorCode::InternalError,
-                        "internal error: request handler panicked",
-                    ),
+                    key,
+                    token,
                 };
-                // Remove from the registry BEFORE enqueueing the response
-                // so a serial client reusing the id for its next call can
-                // never race the stale entry.
-                if !key.is_empty() {
-                    cancels.lock().remove(&key);
+                let job_tx = match session_workers.get(&sid) {
+                    Some(tx) => tx.clone(),
+                    None => {
+                        // Bounded depth (MCP parity): caps how many same-session
+                        // actions may queue before backpressure.
+                        let (tx, rx) =
+                            tokio::sync::mpsc::channel::<OrderedJob>(max_concurrent_requests());
+                        spawn_session_worker(
+                            rx,
+                            Arc::clone(&deps),
+                            Arc::clone(&cancels),
+                            Arc::clone(&health_limiter),
+                            Arc::clone(&dispatch_slots),
+                            resp_tx.clone(),
+                        );
+                        session_workers.insert(sid.clone(), tx.clone());
+                        tx
+                    }
+                };
+                // NON-BLOCKING enqueue (`try_send`, never `.await`): the read
+                // loop must never block on dispatch backpressure, or a
+                // same-session pipeline deeper than the queue would freeze the
+                // `request.cancel` / `daemon.hello` fast lane (the very
+                // mechanism that could un-stick a slow head-of-line dispatch).
+                // This is why the connection semaphore is acquired INSIDE the
+                // task, not here — the ordered lane must keep that property.
+                match job_tx.try_send(job) {
+                    Ok(()) => {}
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(job)) => {
+                        // Queue saturated: more than `max_concurrent_requests`
+                        // same-session actions already pipelined. Reject with
+                        // back-off semantics (every client retries on
+                        // `too_many_requests`) instead of blocking the read
+                        // loop. Realistic pipelining (≤ depth) always queues;
+                        // only a flood rejects.
+                        if !job.key.is_empty() {
+                            cancels.lock().remove(&job.key);
+                        }
+                        let response = jsonrpc_err(
+                            job.id,
+                            LoomErrorCode::TooManyRequests,
+                            "too many pipelined actions queued for this session; \
+                             back off and retry",
+                        );
+                        if resp_tx.send(response).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(job)) => {
+                        // Worker gone. `handle_request` is panic-isolated, so
+                        // the worker loop never panics — effectively
+                        // unreachable — but recover defensively: drop the dead
+                        // worker (a later request respawns it), clear the leaked
+                        // cancel entry, and answer a typed internal error so the
+                        // client isn't left hanging.
+                        session_workers.remove(&sid);
+                        if !job.key.is_empty() {
+                            cancels.lock().remove(&job.key);
+                        }
+                        let response = jsonrpc_err(
+                            job.id,
+                            LoomErrorCode::InternalError,
+                            "internal error: session dispatch worker unavailable",
+                        );
+                        if resp_tx.send(response).await.is_err() {
+                            break;
+                        }
+                    }
                 }
-                let _ = resp_tx.send(response).await;
-            });
+                continue;
+            }
+
+            // CONCURRENT lane: control-plane requests dispatch immediately,
+            // one task per request (unchanged from the pre-guard design).
+            tokio::spawn(dispatch_request_task(
+                id,
+                method,
+                raw_params,
+                key,
+                token,
+                Arc::clone(&deps),
+                Arc::clone(&cancels),
+                Arc::clone(&health_limiter),
+                Arc::clone(&dispatch_slots),
+                resp_tx.clone(),
+            ));
         }
 
         // Teardown: fire every still-registered token so in-flight
@@ -445,6 +654,11 @@ impl ConnectionHandler {
         for (_, tok) in cancels.lock().drain() {
             tok.cancel();
         }
+        // Drop every per-session worker sender so each worker drains its
+        // queued jobs — which now observe the fired cancel tokens and answer
+        // `request-cancelled` promptly — then exits, releasing its `resp_tx`
+        // clone so the writer can finish.
+        drop(session_workers);
         dispatch_slots.close();
         drop(resp_tx);
     }
