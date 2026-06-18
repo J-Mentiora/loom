@@ -417,14 +417,16 @@ hash chain (only the settled DOM + content hash are chained).",
     },
     ActionMeta {
         name: "web.scroll",
-        summary: "Scroll an element by a (delta_x, delta_y) offset.",
+        summary: "Scroll the page (or an element) by a (delta_x, delta_y) offset.",
         description: "\
-Calls `element.scrollBy(delta_x, delta_y)` on the resolved selector. \
-Both deltas are optional and default to 0; passing only one is fine. \
-Useful for revealing virtualised list rows or triggering scroll-based \
-lazy loading before observing the result.\n\n\
-Failure mode: selector miss → `kind: \"js_throw\"`. The scroll does \
-not wait for any subsequent layout — pair with `web.wait` on a \
+Scrolls by `(delta_x, delta_y)` CSS pixels. With no `selector` (or with \
+`body`/`html`/the document element) it scrolls the viewport via \
+`document.scrollingElement` — so \"scroll the page down\" needs no selector. \
+With a real CSS selector it scrolls that element. Both deltas are optional \
+and default to 0; passing only one is fine. Useful for revealing virtualised \
+list rows or triggering scroll-based lazy loading before observing the result.\n\n\
+A selector that matches nothing falls back to scrolling the viewport. The \
+scroll does not wait for subsequent layout — pair with `web.wait` on a \
 predicate that checks the post-scroll state if needed.",
         params: &[
             ParamMeta {
@@ -436,8 +438,8 @@ predicate that checks the post-scroll state if needed.",
             ParamMeta {
                 name: "selector",
                 ty: ParamType::String,
-                doc: "CSS query selector for the scrollable element.",
-                required: true,
+                doc: "CSS query selector for the scrollable element. Optional — omit (or use `body`/`html`) to scroll the page viewport.",
+                required: false,
             },
             ParamMeta {
                 name: "delta_x",
@@ -452,8 +454,8 @@ predicate that checks the post-scroll state if needed.",
                 required: false,
             },
         ],
-        returns: "Receipt with `status: \"ok\"`. Selector miss → `kind: \"js_throw\"`.",
-        example: &["loom", "action", "web.scroll", "--session", "<SESSION>", "--selector", ".feed", "--delta_y", "400"],
+        returns: "Receipt with `scroll_result: {\"x\": <window.scrollX>, \"y\": <window.scrollY>}` — the viewport scroll position after the scroll (clamps at the scroll max).",
+        example: &["loom", "action", "web.scroll", "--session", "<SESSION>", "--delta_y", "400"],
     },
     ActionMeta {
         name: "web.select",

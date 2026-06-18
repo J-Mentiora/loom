@@ -1387,6 +1387,21 @@ impl WasmHostBridge for WasmBridge {
                 format!("{mode}\n{url}").into_bytes()
             }
             Action::WebEvaluate { expression, .. } => expression.as_bytes().to_vec(),
+            // web.scroll reuses the evaluate tier: the daemon emits the scroll JS
+            // as a RAW expression (not a CBOR CdpMessage), so the guest's
+            // `scroll_verb` runs it via `evaluate_execute` and surfaces the
+            // post-scroll viewport position. action_hash = sha256(this expression)
+            // — covers selector + deltas + the viewport-target logic. Mirrors the
+            // WebEvaluate arm above. (Determinism: the JS string is a pure function
+            // of the inputs; replay copies recorded receipt bytes, so old scroll
+            // recordings still validate against their own bytes.)
+            Action::WebScroll {
+                selector,
+                delta_x,
+                delta_y,
+                ..
+            } => build_scroll_expression(selector, delta_x.unwrap_or(0), delta_y.unwrap_or(0))
+                .into_bytes(),
             // settle-capture: web.wait_for's guest verb (`wait_for_verb`) reads
             // the payload as the readiness mode string and calls the typed
             // `host::wait_for_execute`. Raw UTF-8 `until` bytes (default
@@ -1448,11 +1463,22 @@ impl WasmHostBridge for WasmBridge {
             })?;
 
         match outcome {
-            ActionOutcome::Success { builder, .. } => Ok(build_navigate_wire_receipt(
-                &builder,
-                session_id_str,
-                session.capture_policy.as_deref(),
-            )),
+            ActionOutcome::Success { builder, .. } => {
+                let mut receipt = build_navigate_wire_receipt(
+                    &builder,
+                    session_id_str,
+                    session.capture_policy.as_deref(),
+                );
+                // web.scroll surfaces its post-scroll viewport position through the
+                // evaluate tier (return_value_json). Promote it into the purpose-named
+                // `scroll_result` field (single source of truth for scroll). Follows
+                // the capture policy already applied to return_value_json (both
+                // stripped together under `minimal`).
+                if matches!(action, Action::WebScroll { .. }) {
+                    promote_scroll_result(&mut receipt);
+                }
+                Ok(receipt)
+            }
             ActionOutcome::Aborted { .. } => Err(LoomErrorCode::SessionAborted),
             ActionOutcome::Trapped { loom_error, .. } => {
                 // Propagate the typed code the host already mapped.
@@ -1544,6 +1570,7 @@ fn profile_restricted_evaluate_receipt(
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     }
 }
 
@@ -1598,6 +1625,7 @@ fn upload_error_receipt(action_id: u64, session_id: &str, kind: &str, message: S
         delete_cookies_result: None,
         settle_until: None,
         settle_outcome: None,
+        scroll_result: None,
     }
 }
 
@@ -1644,6 +1672,7 @@ fn build_network_log_receipt(
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     }
 }
 
@@ -1695,6 +1724,7 @@ fn cookie_validation_error_receipt(
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     }
 }
 
@@ -1751,6 +1781,30 @@ fn serde_json_value_to_cbor(v: serde_json::Value) -> Option<ciborium::value::Val
                 .collect(),
         )),
     }
+}
+
+/// Build the JS expression for `web.scroll`. Targets the viewport
+/// (`document.scrollingElement`) when the selector is absent, empty,
+/// non-matching, or refers to `body`/`html`/the document element; otherwise
+/// scrolls the resolved element. Returns `{x: window.scrollX, y: window.scrollY}`
+/// so the post-scroll viewport position can be surfaced on the receipt via the
+/// evaluate tier (the guest `scroll_verb` runs this through `evaluate_execute`).
+///
+/// `selector` is embedded via `serde_json::to_string` — a JSON string literal
+/// (e.g. `"body"`) or `null` when absent — so a selector containing `"` or `\`
+/// (the only user-controlled input) cannot break out of the JS string. Wrapped
+/// in an IIFE so the multi-statement body is a single expression whose value
+/// `Runtime.evaluate` returns.
+fn build_scroll_expression(selector: &Option<String>, delta_x: i64, delta_y: i64) -> String {
+    // `null` (no selector) or a JSON string literal like `"body"`.
+    let sel = serde_json::to_string(selector).unwrap_or_else(|_| "null".to_string());
+    format!(
+        "(()=>{{const el={sel}?document.querySelector({sel}):null;\
+         const box=(!el||el===document.body||el===document.documentElement)\
+         ?(document.scrollingElement||document.documentElement):el;\
+         box.scrollBy({delta_x},{delta_y});\
+         return{{x:window.scrollX,y:window.scrollY}};}})()"
+    )
 }
 
 fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
@@ -1866,12 +1920,14 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
             delta_y,
             ..
         } => {
-            let sel = serde_json::to_string(selector).ok()?;
-            let dx = delta_x.unwrap_or(0);
-            let dy = delta_y.unwrap_or(0);
-            runtime_evaluate(format!(
-                "(document.querySelector({sel}) || document.scrollingElement)\
-                 .scrollBy({dx}, {dy})"
+            // Dead-for-dispatch: scroll uses the raw-expression `args_canonical_bytes`
+            // path (like WebEvaluate), not this CBOR envelope. Kept for the
+            // `build_chromium_args_*` tests + parity with the WebEvaluate arm.
+            // Single source of the scroll JS = `build_scroll_expression`.
+            runtime_evaluate(build_scroll_expression(
+                selector,
+                delta_x.unwrap_or(0),
+                delta_y.unwrap_or(0),
             ))
         }
 
@@ -2041,6 +2097,26 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+/// Promote a `web.scroll` receipt's evaluate-tier return value into the
+/// purpose-named `scroll_result` field. The value is the canonical-JSON `{x,y}`
+/// the guest's `scroll_verb` produced via `evaluate_execute`. On success the
+/// value moves to `scroll_result` and `return_value_json` is cleared, so a
+/// scroll receipt has a single source of truth.
+///
+/// If the value somehow does not parse as JSON (practically impossible — the
+/// host always emits canonical JSON, and `{x,y}` never exceeds the inline-offload
+/// threshold), `return_value_json` is left intact rather than silently dropped.
+fn promote_scroll_result(receipt: &mut Receipt) {
+    if let Some(parsed) = receipt
+        .return_value_json
+        .as_deref()
+        .and_then(|j| serde_json::from_str::<serde_json::Value>(j).ok())
+    {
+        receipt.scroll_result = Some(parsed);
+        receipt.return_value_json = None;
+    }
+}
+
 /// Construct the wire `Receipt` for a successful action outcome.
 ///
 /// Decodes the three navigate JSON blobs (`navigate_*_json`) into
@@ -2208,6 +2284,7 @@ fn build_navigate_wire_receipt(
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     };
 
     // apply per-session capture-policy at the wire
@@ -3378,7 +3455,7 @@ mod tests {
             (
                 Action::WebScroll {
                     session_id: session.clone(),
-                    selector: s("body"),
+                    selector: Some(s("body")),
                     delta_x: Some(0),
                     delta_y: Some(100),
                 },
@@ -3442,6 +3519,95 @@ mod tests {
         let msg = decode_cdp(&action).expect("Some");
         assert_eq!(msg.method, "Runtime.evaluate");
         assert_eq!(expr_of(&msg), "1+1");
+    }
+
+    // ---- web.scroll viewport-targeting JS (build_scroll_expression) ----
+
+    /// `--selector body` must target the document scrolling box
+    /// (`document.scrollingElement`), NOT `body.scrollBy` (a no-op on standard
+    /// pages). The `el === document.body` guard routes body → scrollingElement.
+    #[test]
+    fn build_scroll_expression_targets_scrolling_element_for_body() {
+        let js = build_scroll_expression(&Some(s("body")), 0, 1400);
+        assert!(
+            js.contains("document.scrollingElement"),
+            "body scroll must target scrollingElement: {js}"
+        );
+        assert!(
+            js.contains("document.body"),
+            "must guard el === document.body: {js}"
+        );
+        // returns the post-scroll viewport position
+        assert!(js.contains("window.scrollX") && js.contains("window.scrollY"));
+        assert!(js.contains("scrollBy(0,1400)"));
+    }
+
+    /// No selector (the new default) → `null`, so the box resolves to
+    /// `document.scrollingElement` and the page viewport scrolls.
+    #[test]
+    fn build_scroll_expression_null_selector_falls_back_to_scrolling_element() {
+        let js = build_scroll_expression(&None, 0, 800);
+        // selector is embedded as the JS literal `null`
+        assert!(
+            js.contains("const el=null?"),
+            "absent selector must embed as null: {js}"
+        );
+        assert!(js.contains("document.scrollingElement"));
+        assert!(js.contains("scrollBy(0,800)"));
+    }
+
+    /// A real CSS selector is embedded as its querySelector argument; the box
+    /// falls through to the resolved element (not scrollingElement).
+    #[test]
+    fn build_scroll_expression_uses_resolved_selector_for_real_css() {
+        let js = build_scroll_expression(&Some(s(".feed")), 10, 0);
+        assert!(
+            js.contains(r#"document.querySelector(".feed")"#),
+            "must query the real selector: {js}"
+        );
+        assert!(js.contains("scrollBy(10,0)"));
+    }
+
+    /// Injection guard: a selector containing `"` is JSON-escaped via
+    /// `serde_json::to_string`, so it cannot break out of the JS string literal.
+    #[test]
+    fn build_scroll_expression_quotes_selector_with_double_quote() {
+        let js = build_scroll_expression(&Some(s(r#"a"b"#)), 0, 0);
+        // exact escaped form: the JS string literal "a\"b"
+        assert!(
+            js.contains(r#""a\"b""#),
+            "double-quote selector must be JSON-escaped: {js}"
+        );
+        // and never the unescaped break-out
+        assert!(!js.contains(r#"querySelector(a"b)"#));
+    }
+
+    /// scroll_result promotion: a valid `{x,y}` value moves into `scroll_result`
+    /// and `return_value_json` is cleared (single source of truth — anti-drift).
+    #[test]
+    fn promote_scroll_result_moves_value_and_clears_return_value_json() {
+        let mut r = profile_restricted_evaluate_receipt(1, "sess", "p");
+        r.return_value_json = Some(r#"{"x":0,"y":1400}"#.to_string());
+        promote_scroll_result(&mut r);
+        assert_eq!(
+            r.return_value_json, None,
+            "return_value_json must be cleared"
+        );
+        let sr = r.scroll_result.expect("scroll_result populated");
+        assert_eq!(sr["y"], 1400);
+        assert_eq!(sr["x"], 0);
+    }
+
+    /// Robustness: an unparseable value is NOT silently dropped — `return_value_json`
+    /// is preserved and `scroll_result` stays None. (Cannot happen for canonical
+    /// host JSON, but guards against silent data loss.)
+    #[test]
+    fn promote_scroll_result_preserves_unparseable_value() {
+        let mut r = profile_restricted_evaluate_receipt(1, "sess", "p");
+        r.return_value_json = Some("not json{".to_string());
+        promote_scroll_result(&mut r);
+        assert!(r.scroll_result.is_none());
+        assert_eq!(r.return_value_json.as_deref(), Some("not json{"));
     }
 
     /// click selects + clicks via Runtime.evaluate.

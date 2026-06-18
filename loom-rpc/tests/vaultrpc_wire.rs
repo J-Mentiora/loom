@@ -305,6 +305,7 @@ impl WasmHostBridge for NoopHostBridge {
             get_cookies_result: None,
             clear_cookies_result: None,
             delete_cookies_result: None,
+            scroll_result: None,
         })
     }
 }

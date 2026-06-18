@@ -18,7 +18,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.navigate`](#web-navigate) — Load a URL, follow redirects, capture DOM and screenshot.
 - [`web.network_log`](#web-network_log) — Read the per-request network entries observed since the last navigate.
 - [`web.screenshot`](#web-screenshot) — Capture a PNG screenshot of the page or a selected element.
-- [`web.scroll`](#web-scroll) — Scroll an element by a (delta_x, delta_y) offset.
+- [`web.scroll`](#web-scroll) — Scroll the page (or an element) by a (delta_x, delta_y) offset.
 - [`web.select`](#web-select) — Set the value of a `<select>` element and dispatch `change`.
 - [`web.set_cookies`](#web-set_cookies) — Inject cookies into the browser's network stack via CDP `Network.setCookies`.
 - [`web.set_input_files`](#web-set_input_files) — Upload local files into an <input type=file> by CSS selector.
@@ -270,27 +270,27 @@ loom action web.screenshot --session <SESSION>
 
 ### <a id="web-scroll"></a>`web.scroll`
 
-**Scroll an element by a (delta_x, delta_y) offset.**
+**Scroll the page (or an element) by a (delta_x, delta_y) offset.**
 
-Calls `element.scrollBy(delta_x, delta_y)` on the resolved selector. Both deltas are optional and default to 0; passing only one is fine. Useful for revealing virtualised list rows or triggering scroll-based lazy loading before observing the result.
+Scrolls by `(delta_x, delta_y)` CSS pixels. With no `selector` (or with `body`/`html`/the document element) it scrolls the viewport via `document.scrollingElement` — so "scroll the page down" needs no selector. With a real CSS selector it scrolls that element. Both deltas are optional and default to 0; passing only one is fine. Useful for revealing virtualised list rows or triggering scroll-based lazy loading before observing the result.
 
-Failure mode: selector miss → `kind: "js_throw"`. The scroll does not wait for any subsequent layout — pair with `web.wait` on a predicate that checks the post-scroll state if needed.
+A selector that matches nothing falls back to scrolling the viewport. The scroll does not wait for subsequent layout — pair with `web.wait` on a predicate that checks the post-scroll state if needed.
 
 **Parameters**
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
-| `selector` | `string` | required | CSS query selector for the scrollable element. |
+| `selector` | `string` | optional | CSS query selector for the scrollable element. Optional — omit (or use `body`/`html`) to scroll the page viewport. |
 | `delta_x` | `i64` | optional | Horizontal scroll offset in CSS pixels. Optional, defaults to 0. |
 | `delta_y` | `i64` | optional | Vertical scroll offset in CSS pixels. Optional, defaults to 0. |
 
-**Returns:** Receipt with `status: "ok"`. Selector miss → `kind: "js_throw"`.
+**Returns:** Receipt with `scroll_result: {"x": <window.scrollX>, "y": <window.scrollY>}` — the viewport scroll position after the scroll (clamps at the scroll max).
 
 **Example**
 
 ```sh
-loom action web.scroll --session <SESSION> --selector .feed --delta_y 400
+loom action web.scroll --session <SESSION> --delta_y 400
 ```
 
 ---
