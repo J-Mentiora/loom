@@ -174,6 +174,22 @@ fn evaluate_verb(a: Action) -> Result<Receipt, HostError> {
     })
 }
 
+/// Scroll verb: the daemon builds the scroll JS as a raw expression (see
+/// `build_scroll_expression` in loom-daemon), so scroll runs through the SAME
+/// typed evaluate path as `web.evaluate` — `evaluate_execute` runs the JS via
+/// `Runtime.evaluate` and surfaces the post-scroll `{x, y}` viewport position as
+/// `return-value-json`. The daemon then moves that value into the receipt's
+/// `scroll_result` field. We deliberately reuse `evaluate_verb` (not a bespoke
+/// `scroll_execute` host import) to avoid a WIT change — `evaluate_execute` is a
+/// generic "run JS, return its value" primitive; the evaluate-specific safe-profile
+/// denylist lives in the daemon keyed on `Action::WebEvaluate`, so scroll (whose
+/// JS is daemon-generated + selector-escaped, never arbitrary user code) is
+/// correctly NOT gated by it.
+#[cfg(target_arch = "wasm32")]
+fn scroll_verb(a: Action) -> Result<Receipt, HostError> {
+    evaluate_verb(a)
+}
+
 /// Set-input-files verb: calls the typed `set_input_files_execute` host
 /// function (mirrors navigate/evaluate). The guest forwards `a.payload` (the
 /// daemon-built canonical JSON `{selector,paths}`) verbatim — it has no JSON
@@ -489,7 +505,7 @@ impl exports::loom::surface::web_surface::Guest for SurfaceWebImpl {
         dispatch("hover", a)
     }
     fn scroll(a: Action) -> Result<Receipt, HostError> {
-        dispatch("scroll", a)
+        scroll_verb(a)
     }
     fn wait(a: Action) -> Result<Receipt, HostError> {
         dispatch("wait", a)

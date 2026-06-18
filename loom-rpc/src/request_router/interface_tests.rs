@@ -131,3 +131,38 @@ fn replay_speed_rejects_garbage_loudly() {
         );
     }
 }
+
+// web.scroll: `selector` is OPTIONAL — "scroll the page" needs no selector.
+#[test]
+fn web_scroll_parses_without_selector() {
+    let action = super::parse_action(
+        "web.scroll",
+        serde_json::json!({ "session_id": "01J0000000000000000000000A", "delta_y": 400 }),
+    )
+    .expect("web.scroll must parse without a selector");
+    match action {
+        super::Action::WebScroll {
+            selector, delta_y, ..
+        } => {
+            assert_eq!(selector, None, "absent selector must parse as None");
+            assert_eq!(delta_y, Some(400));
+        }
+        other => panic!("expected WebScroll, got {other:?}"),
+    }
+}
+
+// Back-compat: a selector still parses (now as Some).
+#[test]
+fn web_scroll_still_parses_with_selector() {
+    let action = super::parse_action(
+        "web.scroll",
+        serde_json::json!({ "session_id": "01J0000000000000000000000A", "selector": "body", "delta_y": 400 }),
+    )
+    .expect("web.scroll must still parse with a selector");
+    match action {
+        super::Action::WebScroll { selector, .. } => {
+            assert_eq!(selector.as_deref(), Some("body"));
+        }
+        other => panic!("expected WebScroll, got {other:?}"),
+    }
+}

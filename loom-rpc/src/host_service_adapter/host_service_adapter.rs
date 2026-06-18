@@ -97,7 +97,11 @@ pub enum Action {
     },
     WebScroll {
         session_id: String,
-        selector: String,
+        // `selector` is OPTIONAL: omitted (or body/html/document) scrolls the
+        // viewport (`document.scrollingElement`); a real CSS selector scrolls
+        // that element. See `build_scroll_expression` in loom-daemon.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selector: Option<String>,
         delta_x: Option<i64>,
         delta_y: Option<i64>,
     },
@@ -271,6 +275,17 @@ pub struct Receipt {
     /// `{"name": String, "matched": bool}` from `web.delete_cookies`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delete_cookies_result: Option<serde_json::Value>,
+    // ---- Scroll tier field ----
+    /// Post-scroll viewport position `{"x": <window.scrollX>, "y": <window.scrollY>}`
+    /// from `web.scroll`. Surfaced by reusing the evaluate-execute host import
+    /// (the guest `scroll_verb` runs the scroll JS via `Runtime.evaluate`); the
+    /// daemon moves the value out of `return_value_json` into this field so a
+    /// scroll receipt has a single, purpose-named source of truth
+    /// (`return_value_json` stays `None` for scroll). The position is already
+    /// hash-chained via `outcome_hash`; this field is wire-only (not in the
+    /// canonical replay chain).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scroll_result: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

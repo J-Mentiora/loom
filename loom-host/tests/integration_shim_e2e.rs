@@ -239,8 +239,12 @@ async fn host_to_shim_to_fake_chromium_round_trip_per_verb() {
              new MouseEvent('mouseover',{bubbles:true,cancelable:true}))",
         ), // hover
         runtime_eval(
-            "(document.querySelector(\"body\") || document.scrollingElement).scrollBy(0, 100)",
-        ), // scroll
+            "(()=>{const el=\"body\"?document.querySelector(\"body\"):null;\
+             const box=(!el||el===document.body||el===document.documentElement)\
+             ?(document.scrollingElement||document.documentElement):el;\
+             box.scrollBy(0,100);\
+             return{x:window.scrollX,y:window.scrollY};})()",
+        ), // scroll (viewport-targeting; see build_scroll_expression)
         runtime_eval("document.querySelector(\"a\") !== null"), // wait
         CdpMessage {
             method: "Page.captureScreenshot".into(),

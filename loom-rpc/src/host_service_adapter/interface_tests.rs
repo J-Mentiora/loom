@@ -268,6 +268,7 @@ fn receipt_with_set_cookies_result_populated_round_trips() {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     assert!(json.contains("set_cookies_result"));
@@ -310,6 +311,7 @@ fn receipt_with_no_cookie_fields_skips_them_in_serialization() {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     };
     let json = serde_json::to_string(&r).unwrap();
     // skip_serializing_if = "Option::is_none" — these MUST NOT appear.

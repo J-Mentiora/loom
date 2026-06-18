@@ -551,7 +551,8 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.type" => &["session_id", "selector", "text"],
         "web.select" => &["session_id", "selector", "value"],
         "web.hover" => &["session_id", "selector"],
-        "web.scroll" => &["session_id", "selector"],
+        // selector OPTIONAL: omitted → scroll the viewport.
+        "web.scroll" => &["session_id"],
         "web.wait" => &["session_id", "selector"],
         "web.wait_for" => &["session_id"],
         "web.evaluate" => &["session_id", "expression"],
@@ -654,7 +655,11 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         }
         "web.scroll" => {
             let session_id = session_id_from_params(&params)?;
-            let selector = required_str(&params, "selector")?;
+            // selector is OPTIONAL — omitted scrolls the viewport.
+            let selector = params
+                .get("selector")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
             let delta_x = params.get("delta_x").and_then(|v| v.as_i64());
             let delta_y = params.get("delta_y").and_then(|v| v.as_i64());
             Ok(Action::WebScroll {

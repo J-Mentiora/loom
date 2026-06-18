@@ -164,6 +164,7 @@ fn full_navigate_receipt(dom_hash: String, ss_hash: String) -> Receipt {
         get_cookies_result: None,
         clear_cookies_result: None,
         delete_cookies_result: None,
+        scroll_result: None,
     }
 }
 
