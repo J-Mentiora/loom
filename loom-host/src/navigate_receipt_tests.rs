@@ -651,6 +651,9 @@ fn harexport_marshaller_preserves_network_events_when_tier2_unset() {
         navigate_console_count: None,
         navigate_network_count: Some(events.len() as u64),
         navigate_side_effects_json: Some(side_effects_json),
+        // This test asserts real per-event sizes survive into the canonical
+        // receipt — that only happens for a non-deterministic session.
+        preserve_response_sizes: true,
         ..Default::default()
     };
 
@@ -697,11 +700,13 @@ fn harexport_marshaller_preserves_network_events_when_tier2_unset() {
 // Response sizes are volatile (CDN/gzip/chunk boundaries / encodedDataLength)
 // and would break cross-run manifest hash-chain equality. The navigate marshaller
 // zeroes response_body_size_bytes in the canonical receipt (the single
-// serialization that is BOTH hashed AND read back by the HAR exporter) when
-// determinism_enabled; deterministic fields (method/status/content_type) stay.
+// serialization that is BOTH hashed AND read back by the HAR exporter) unless
+// `preserve_response_sizes` (set only for a non-deterministic session);
+// deterministic fields (method/status/content_type) stay.
 // ---------------------------------------------------------------------------
 
-/// One-document navigate builder carrying `response_bytes`, determinism as given.
+/// One-document navigate builder carrying `response_bytes`. `determinism_enabled`
+/// is the session sense (the fail-safe builder flag is its inverse).
 fn navigate_builder_with_size(response_bytes: u64, determinism_enabled: bool) -> ReceiptBuilder {
     let event = LoomNetworkEvent {
         method: "GET".to_string(),
@@ -724,7 +729,7 @@ fn navigate_builder_with_size(response_bytes: u64, determinism_enabled: bool) ->
         navigate_status_code: Some(200),
         navigate_network_count: Some(1),
         navigate_side_effects_json: Some(serde_json::to_vec(&[event]).expect("serialize events")),
-        determinism_enabled,
+        preserve_response_sizes: !determinism_enabled,
         ..Default::default()
     }
 }

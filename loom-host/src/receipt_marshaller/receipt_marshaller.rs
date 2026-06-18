@@ -51,18 +51,21 @@ pub struct ReceiptBuilder {
     pub action_hash: String,
     pub outcome_hash: String,
     pub emitted_at_ms: u64,
-    /// When true, the navigate marshaller zeroes the volatile
-    /// `response_body_size_bytes` in the canonical (hashed + HAR-read) receipt,
-    /// keeping run-to-run-varying response sizes (CDN/gzip/chunking) OUT of the
-    /// replay-equal manifest hash chain (NFR-DET-01). `method`/`status`/
-    /// `content_type` are deterministic and stay. The real size still rides the
-    /// non-hashed wire surfaces (`navigate_network_summary_json.total_bytes`,
-    /// `navigate_network_entries_json`) and the canonical receipt under
-    /// `--no-determinism`. **Navigate-receipt producers MUST set this from
-    /// `!no_determinism`** — `SessionExecutor::run` is the single production site.
-    /// Defaults `false` (preserve sizes) for direct-builder tests, which model an
-    /// explicit no-determinism export.
-    pub determinism_enabled: bool,
+    /// Whether the navigate marshaller keeps the real (volatile)
+    /// `response_body_size_bytes` in the canonical (hashed + HAR-read) receipt.
+    ///
+    /// **Fail-safe default `false` = zero the sizes.** Response sizes vary
+    /// run-to-run (CDN/gzip/chunking) and would break the replay-equal manifest
+    /// hash chain (NFR-DET-01), so the SAFE default is to exclude them; a builder
+    /// that forgets to set this can only LOSE observability, never corrupt the
+    /// chain. Real sizes still ride the non-hashed wire surfaces
+    /// (`navigate_network_summary_json.total_bytes`, `navigate_network_entries_json`)
+    /// regardless of this flag. `method`/`status`/`content_type` are deterministic
+    /// and always kept. Set `true` ONLY for a non-deterministic session
+    /// (`--no-determinism`), where real sizes may safely enter the canonical
+    /// receipt (→ HAR `content.size`). `SessionExecutor::run` sets it from
+    /// `no_determinism`; direct-builder tests that assert real sizes set it true.
+    pub preserve_response_sizes: bool,
     // ---- Navigate tier-2 fields ----
     // Populated by decode_typed_receipt when the WIT receipt carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -415,16 +418,18 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
             response_body_sha256_hex: e.response_hash,
             // Determinism (NFR-DET-01): response sizes are volatile
             // (CDN/gzip/chunk boundaries / encodedDataLength) and would break
-            // cross-run manifest hash-chain equality. Zero them in the canonical
-            // receipt under determinism (this is the single serialization that is
-            // BOTH hashed AND read back by the HAR exporter). method/status_code/
-            // content_type are deterministic and kept. The real byte count still
-            // rides the non-hashed wire summary (total_bytes) + network_entries;
-            // and the canonical receipt (→ HAR content.size) under --no-determinism.
-            response_body_size_bytes: if builder.determinism_enabled {
-                0
-            } else {
+            // cross-run manifest hash-chain equality. This canonical serialization
+            // is BOTH hashed AND read back by the HAR exporter, so by default the
+            // size is EXCLUDED (fail-safe: a forgotten flag loses observability,
+            // never corrupts the chain). It is kept only for an explicitly
+            // non-deterministic session (`preserve_response_sizes`). method/
+            // status_code/content_type are deterministic and always kept. The real
+            // byte count always rides the non-hashed wire summary (total_bytes) +
+            // network_entries regardless.
+            response_body_size_bytes: if builder.preserve_response_sizes {
                 e.response_bytes
+            } else {
+                0
             },
             response_body_ref: None,
             // timing_ticks is microseconds; shim

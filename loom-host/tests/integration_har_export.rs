@@ -74,6 +74,10 @@ fn success_builder() -> ReceiptBuilder {
         navigate_console_count: Some(0),
         navigate_network_count: Some(1),
         navigate_side_effects_json: Some(side_effects_json),
+        // Models a no-determinism export: real response sizes are preserved in
+        // the canonical receipt (→ HAR content.size). Under determinism the
+        // marshaller zeroes them (covered by navigate_receipt_tests).
+        preserve_response_sizes: true,
         ..Default::default()
     }
 }
@@ -237,10 +241,9 @@ fn harexport_05_two_navigate_session_har_contents() {
     );
 
     // network-accounting-har: HAR must carry request.method + response
-    // content.size per entry (not just url+status). Both builders go through
-    // the marshaller with determinism_enabled defaulting false (direct
-    // builders model a no-determinism export), so the captured size survives
-    // into the canonical receipt the exporter reads.
+    // content.size per entry (not just url+status). Both builders set
+    // preserve_response_sizes:true (modeling a no-determinism export), so the
+    // captured size survives into the canonical receipt the exporter reads.
     let entry_200 = entries
         .iter()
         .find(|e| e["request"]["url"].as_str() == Some("http://fake.test/status/200"))

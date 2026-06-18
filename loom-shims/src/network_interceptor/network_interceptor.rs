@@ -1030,7 +1030,12 @@ fn cbor_map_bool(map: &[(CborValue, CborValue)], key: &str) -> Option<bool> {
 fn cbor_map_u64(map: &[(CborValue, CborValue)], key: &str) -> Option<u64> {
     match cbor_map_get(map, key)? {
         CborValue::Integer(i) => u64::try_from(i128::from(*i)).ok(),
-        CborValue::Float(f) if f.is_finite() && *f >= 0.0 => Some(*f as u64),
+        // Reject `>= 2^64` BEFORE the `as u64` cast — that cast saturates to
+        // u64::MAX, which would report an absurd ~18 EB response size instead of
+        // rejecting a malformed event. (A real encodedDataLength never approaches this.)
+        CborValue::Float(f) if f.is_finite() && *f >= 0.0 && *f < u64::MAX as f64 => {
+            Some(*f as u64)
+        }
         _ => None,
     }
 }
@@ -1223,6 +1228,20 @@ mod cbor_u64_tests {
         );
         assert_eq!(
             cbor_map_u64(&map(Value::Integer((-5i64).into())), "encodedDataLength"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_float_instead_of_saturating() {
+        // Without the `< u64::MAX` guard, `as u64` would saturate to u64::MAX
+        // and report a ~18 EB size; reject it instead.
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(1e30)), "encodedDataLength"),
+            None
+        );
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(f64::INFINITY)), "encodedDataLength"),
             None
         );
     }
