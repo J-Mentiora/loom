@@ -70,7 +70,7 @@ fn make_sm(tmp: &str, default_seed: u64) -> Arc<LocalSessionManager> {
         be,
         obs,
         default_seed,
-        std::path::PathBuf::from("/tmp/loom-test/sessions"),
+        PathBuf::from(format!("{tmp}/sessions")),
     )
 }
 
