@@ -113,19 +113,19 @@ async fn blocklist_ga_subresource_is_blocked_and_recorded() {
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
-            id.clone(),
-            "test-blocklist-action".to_string(),
-            0,
-            0,
-            "http://fake.test/page-with-tracker".to_string(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true, // blocklist_enabled
-            "settled".to_string(),
-            true,
-        ),
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+            id: id.clone(),
+            action_id: "test-blocklist-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: "http://fake.test/page-with-tracker".to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate did not return within 45s")
@@ -173,19 +173,19 @@ async fn blocklist_second_navigate_to_blocklisted_host_still_succeeds() {
     for nav in 0..2u32 {
         let outcome = tokio::time::timeout(
             Duration::from_secs(45),
-            mgr.send_navigate(
-                id.clone(),
-                format!("test-blocklist-action-{nav}"),
-                0,
-                0,
-                "https://www.google-analytics.com/page-with-tracker".to_string(),
-                30_000,
-                loom_shared::types::Seed(0),
-                loom_shared::types::EpochMs(0),
-                true, // blocklist_enabled
-                "settled".to_string(),
-                true,
-            ),
+            mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+                id: id.clone(),
+                action_id: format!("test-blocklist-action-{nav}"),
+                session_id: 0,
+                target_id: 0,
+                url: "https://www.google-analytics.com/page-with-tracker".to_string(),
+                budget_ms: 30_000,
+                seed: loom_shared::types::Seed(0),
+                epoch_ms: loom_shared::types::EpochMs(0),
+                blocklist_enabled: true,
+                until: "settled".to_string(),
+                determinism_enabled: true,
+            }),
         )
         .await
         .unwrap_or_else(|_| panic!("navigate #{nav} did not return within 45s"))
@@ -226,19 +226,19 @@ async fn no_blocklist_disables_enforcement() {
 
     let outcome = tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
-            id.clone(),
-            "test-blocklist-action".to_string(),
-            0,
-            0,
-            "http://fake.test/page-with-tracker".to_string(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            false, // blocklist_enabled — disabled per --no-blocklist
-            "settled".to_string(),
-            true,
-        ),
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+            id: id.clone(),
+            action_id: "test-blocklist-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: "http://fake.test/page-with-tracker".to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: false, // disabled per --no-blocklist
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate did not return within 45s")

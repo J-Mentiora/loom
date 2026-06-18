@@ -101,19 +101,19 @@ async fn navigate(
 ) -> loom_shared::navigate_outcome::NavigateOutcome {
     tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_navigate(
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
             id,
-            "test-action".to_string(),
-            0,
-            0,
-            url.to_string(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true,
-            "settled".to_string(),
-            true,
-        ),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: url.to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_navigate did not return within 45s")
@@ -280,17 +280,17 @@ async fn naverr_stale_document_events_do_not_leak_into_next_navigate() {
     // exactly the contamination window from the audit.
     let eval = tokio::time::timeout(
         Duration::from_secs(45),
-        mgr.send_evaluate(
-            id.clone(),
-            "test-action".to_string(),
-            0,
-            0,
-            "__loom_test_emit_doc_event__:404".to_string(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true,
-        ),
+        mgr.send_evaluate(loom_host::shim_manager::SendEvaluateParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            expression: "__loom_test_emit_doc_event__:404".to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_evaluate did not return within 45s");

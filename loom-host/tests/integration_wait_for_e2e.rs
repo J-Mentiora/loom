@@ -115,17 +115,17 @@ async fn wait_for_settled(
     // settles in ~25ms and never approaches it.
     tokio::time::timeout(
         Duration::from_secs(180),
-        mgr.send_wait_for(
-            id.clone(),
-            "test-action".to_string(),
-            0,
-            0,
-            "settled".to_string(),
-            30_000,
-            loom_shared::types::Seed(0),
-            loom_shared::types::EpochMs(0),
-            true,
-        ),
+        mgr.send_wait_for(loom_host::shim_manager::SendWaitForParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            until: "settled".to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            determinism_enabled: true,
+        }),
     )
     .await
     .expect("send_wait_for timed out (a never-settles case must return a TYPED verdict, not hang)")
