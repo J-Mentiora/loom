@@ -6,13 +6,57 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-19 — Video Capture + Per-Action Deadlines
+
+A feature-and-hardening minor. The headline is **browser video/screen capture** — record
+a target or a whole session to WebM through the shim, with a byte/duration cap enforced
+shim-side. Alongside it: **per-action deadlines** honored end-to-end over MCP/RPC (the
+daemon kills the in-flight action and returns a typed `request_timeout`), an opt-in
+**content-bearing `dom_after_hash`** fingerprint tier for interactions, and a sweep of
+capture/network/scroll fixes. Internally, the **test suite is now parallel-safe** under
+cargo-nextest (the `--test-threads=1` mandate is retired). All changes preserve the
+replay-equal hash chain (NFR-DET-01). (#178–#204)
+
+### Added
+
+- **Browser video / screen capture (#196).** New `web.start_recording` / `web.stop_recording`
+  surface verbs (plus a whole-session recording mode) stream `Page.screencastFrame` JPEGs
+  through the shim and encode WebM, with a configurable byte/duration cap enforced before
+  encode. A kill-switch (`LOOM_DISABLE_RECORDING`) refuses recording cleanly.
+- **Per-action deadlines over MCP/RPC (#202).** `deadline_ms` is now honored end-to-end:
+  the daemon enforces it server-side, kills the in-flight action when it expires, and
+  returns a typed `request_timeout` instead of hanging the client.
+- **Content-bearing `dom_after_hash` for interactions (#197),** behind an opt-in
+  fingerprint tier, so interaction receipts can carry a content hash of the post-action DOM.
+- **`recreated_count` in `loom.session.info` (#190)** — surfaces how many times an
+  evicted session was implicitly recreated.
+- **Configurable per-CDP-command navigate budget** via `LOOM_SHIM_CDP_TIMEOUT_MS` (#187).
+- **`budget` arg on `loom.session.reset` (#185),** mirroring `session.create`.
+
 ### Fixed
 
-- **Graceful SIGTERM shutdown unlinks the daemon socket.** `SocketServer` now holds an
-  RAII guard that `remove_file`s the bound `loom.sock` on shutdown (and on panic), so a
-  stopped daemon no longer leaves a dangling socket that breaks naive `test -S` liveness
-  checks. The startup stale-socket reclaim — previously silent — now logs a `WARN` when it
-  removes a socket left by a dead daemon.
+- **`web.scroll` scrolls the document/viewport and records `scroll_result` (#195).**
+- **Reliable framer-motion reveal capture (#194)** — un-wedge the page, honor a screenshot
+  deadline, and capture `whileInView` reveals.
+- **`network_events` + HAR populate method/status/sizes (#192);** byte sizes stay out of the
+  hashed chain under determinism.
+- **Per-session in-order serialization guard for concurrent dispatch (#193).**
+- **Engine-aware `.cwasm` staleness (#191)** — composite stamp, auto-refresh, doctor flag.
+- **Graceful SIGTERM shutdown unlinks the daemon socket (#188).** `SocketServer` holds an
+  RAII guard that `remove_file`s `loom.sock` on shutdown (and panic); the startup
+  stale-socket reclaim now logs a `WARN`.
+- **Structured error context surfaced in `TypedReceipt.data` over MCP (#184).**
+
+### Changed
+
+- **Parallel-safe test suite via cargo-nextest (#204).** The `--test-threads=1` mandate is
+  retired; the suite runs process-per-test (env/umask/OnceLock/tracing-callsite races fixed).
+  `cargo nextest run` is the canonical runner; plain `cargo test` also passes at default
+  parallelism. No production behavior change.
+- Internal refactors with no behavior change: split four oversized files + collapse
+  `too_many_arguments` (#203, #201, #200), `CreateSessionParams` for `create_session_raw`,
+  hermetic per-test `TempDir` for loom-core (#198), de-flake the pipelined-hello test (#189),
+  delete the dead `llm_cache` subsystem (#186).
 
 ## [0.11.1] — 2026-06-11 — Embedded-First Schema Validation
 
