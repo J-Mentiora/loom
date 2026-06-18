@@ -1409,6 +1409,11 @@ impl WasmHostBridge for WasmBridge {
             // SessionHandle so HostState can inject env vars at shim spawn.
             profile: session.profile.clone(),
             downloads_dir: session.downloads_dir.clone(),
+            // capture-policy=fingerprint tier: derived ONCE here from the
+            // authoritative session capture_policy. Gates the post-action DOM
+            // fingerprint (host fn + decode accept-gate). Other policies → false
+            // → no extra DOM.getDocument round-trip, byte-identical receipts.
+            capture_dom_after: session.capture_policy.as_deref() == Some("fingerprint"),
         };
 
         // Build the host-side action payload. Three shapes flow through
@@ -1634,6 +1639,7 @@ fn profile_restricted_evaluate_receipt(
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
         console_count: None,
@@ -1692,6 +1698,7 @@ fn upload_error_receipt(action_id: u64, session_id: &str, kind: &str, message: S
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
         console_count: None,
@@ -1740,6 +1747,7 @@ fn build_network_log_receipt(
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
         console_count: None,
@@ -1784,6 +1792,7 @@ fn build_recording_started_receipt(action_id: u64, session_id: &str) -> Receipt 
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
         console_count: None,
@@ -1864,6 +1873,7 @@ fn recording_error_receipt(
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
         console_count: None,
@@ -1917,6 +1927,7 @@ fn cookie_validation_error_receipt(
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
         console_count: None,
@@ -2476,6 +2487,10 @@ fn build_navigate_wire_receipt(
         title: builder.navigate_title.clone(),
         status_code: builder.navigate_status_code,
         dom_snapshot_hash: builder.navigate_dom_snapshot_hash.clone(),
+        // Interaction fingerprint (capture-policy=fingerprint). None for navigate
+        // and for non-fingerprint sessions (the host accept-gate already cleared
+        // it on the builder otherwise). Surfaces the manifest field on the wire.
+        dom_after_hash: builder.interaction_dom_after_hash.clone(),
         screenshot_after_hash: builder.navigate_screenshot_after_hash.clone(),
         screencast_after_hash: None,
         console_count: builder.navigate_console_count,

@@ -101,6 +101,13 @@ pub struct HostState {
     /// populated only when `profile == "safe"`. Read at shim-spawn time
     /// to inject `LOOM_SHIM_DOWNLOADS_DIR` into the shim env.
     pub downloads_dir: Option<std::path::PathBuf>,
+    /// Capture-policy=fingerprint tier flag. Derived once from
+    /// `Session.capture_policy == "fingerprint"` and threaded via `SessionHandle`.
+    /// The `capture_dom_after_hash` host fn returns `None` (no DOM round-trip)
+    /// unless this is true, and `decode_typed_receipt` only accepts the guest's
+    /// `dom-after-hash` into the canonical receipt when this is true (host-side
+    /// accept-gate: the host is authoritative for the fingerprint field).
+    pub capture_dom_after: bool,
 }
 
 impl WasiView for HostState {

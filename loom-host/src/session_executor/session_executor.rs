@@ -114,6 +114,11 @@ pub struct SessionHandle {
     /// `Browser.setDownloadBehavior(allowAndName, downloadPath=$DIR)`
     /// confines all downloads to this dir.
     pub downloads_dir: Option<std::path::PathBuf>,
+    /// Capture-policy=fingerprint tier flag. Derived once at the daemon from
+    /// `Session.capture_policy == "fingerprint"` and threaded onto
+    /// `HostState.capture_dom_after`. Gates the post-action DOM fingerprint
+    /// (`capture_dom_after_hash` host fn + the host-side decode accept-gate).
+    pub capture_dom_after: bool,
 }
 
 /// What the executor returns synchronously to `WasmHost::dispatch`.
@@ -177,6 +182,12 @@ impl SessionExecutor {
         let harness = host_state.determinism.clone();
         // Capture before host_state moves into the Store (decisions D9).
         let determinism_on = !host_state.no_determinism;
+        // Host-side accept-gate (D10): the fingerprint `dom_after_hash` is only
+        // accepted into the canonical receipt under the fingerprint tier. Captured
+        // here (before host_state moves) and enforced after decode below, so a
+        // misbehaving guest cannot leak the field into a non-fingerprint receipt
+        // (protects the byte-identical determinism guarantee + the trust boundary).
+        let capture_dom_after = host_state.capture_dom_after;
         let mut store = wasmtime::Store::new(engine, host_state);
         // Arm preemption BEFORE instantiate (component initializers run
         // guest code too): epoch yield per ticker tick keeps the abort
@@ -308,10 +319,17 @@ impl SessionExecutor {
 
         match call_result {
             Ok(()) => match decode_typed_receipt(&output_slot[0], &mut builder) {
-                Ok(()) => Ok(ActionOutcome::Success {
-                    builder,
-                    observed_costs: ObservedCosts::default(),
-                }),
+                Ok(()) => {
+                    // Host-side accept-gate (D10): the host is authoritative for the
+                    // fingerprint field — keeps non-fingerprint canonical bytes
+                    // byte-identical to pre-feature AND rejects malformed values even
+                    // if a guest misbehaves (NFR-DET-01 + trust boundary).
+                    apply_dom_after_hash_accept_gate(&mut builder, capture_dom_after);
+                    Ok(ActionOutcome::Success {
+                        builder,
+                        observed_costs: ObservedCosts::default(),
+                    })
+                }
                 Err(loom_error) => {
                     // Guest returned a host-error (or an undecodable shape).
                     // The queued builder is the action's single receipt —
@@ -426,6 +444,35 @@ pub(crate) fn build_action_val(action: &Action) -> Val {
 /// don't expect), not legitimate guest-error returns. Distinguishing
 /// the two is what lets operators tell "the guest is broken" from
 /// "wasmtime is broken".
+/// Host-side accept-gate (D10) for the fingerprint `dom_after_hash`. Clears the
+/// builder's interaction field UNLESS the session opted into the fingerprint tier
+/// AND the guest-supplied value is a well-formed sha256 (64 lowercase hex). The host
+/// is authoritative: this is what keeps a non-fingerprint session's canonical bytes
+/// byte-identical to pre-feature (NFR-DET-01) and prevents a misbehaving guest from
+/// stamping a malformed value into the manifest hash chain.
+pub(crate) fn apply_dom_after_hash_accept_gate(
+    builder: &mut ReceiptBuilder,
+    capture_dom_after: bool,
+) {
+    let keep = capture_dom_after
+        && builder
+            .interaction_dom_after_hash
+            .as_deref()
+            .is_some_and(is_sha256_hex);
+    if !keep {
+        builder.interaction_dom_after_hash = None;
+    }
+}
+
+/// True iff `s` is exactly 64 lowercase hex chars (a sha256 digest). The host's
+/// `capture_dom_after_hash` always produces this shape; anything else is a
+/// guest/decoding fault and is rejected by the accept-gate.
+fn is_sha256_hex(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 pub(crate) fn decode_typed_receipt(
     val: &Val,
     builder: &mut ReceiptBuilder,
@@ -469,6 +516,14 @@ pub(crate) fn decode_typed_receipt(
                         }
                         ("screenshot-after-hash", Val::Option(opt)) => {
                             builder.navigate_screenshot_after_hash = extract_opt_string(opt);
+                        }
+                        // Interaction fingerprint (capture-policy=fingerprint).
+                        // Decoded into the interaction-tier builder field (NOT a
+                        // navigate field — so the receipt stays on the default
+                        // canonical path). Kept only under the tier by the host-side
+                        // accept-gate in `run` (D10); decode itself is unconditional.
+                        ("dom-after-hash", Val::Option(opt)) => {
+                            builder.interaction_dom_after_hash = extract_opt_string(opt);
                         }
                         ("console-count", Val::Option(opt)) => {
                             builder.navigate_console_count = extract_opt_u64(opt);

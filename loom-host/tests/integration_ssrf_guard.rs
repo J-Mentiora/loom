@@ -92,6 +92,7 @@ fn live_host_state(fx: &Fixture) -> HostState {
         no_determinism: false,
         profile: "safe".into(),
         downloads_dir: None,
+        capture_dom_after: false,
     }
 }
 

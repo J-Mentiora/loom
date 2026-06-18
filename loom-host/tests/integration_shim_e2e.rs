@@ -489,6 +489,125 @@ async fn screenshot_capture_decodes_to_valid_png() {
     drop(user_data_dir);
 }
 
+/// Interaction-fingerprint (capture-policy=fingerprint) MECHANISM e2e.
+///
+/// Reproduces exactly what the host `capture_dom_after_hash` fn does — issue
+/// `DOM.getDocument {depth:-1, pierce:true}` via `ShimManager::send` and sha256
+/// the shim-normalized response — against an extended fake-chromium whose DOM
+/// varies by a prior DOM-mutating "click". Proves the two properties the
+/// per-verb-constant `outcome_hash` cannot provide.
+async fn dom_after_hash_via_shim(label: &str, mutate: bool) -> String {
+    let fake_path = fake_chromium_bin();
+    let shim_path = shim_bin();
+    if !std::path::Path::new(&fake_path).exists() {
+        panic!(
+            "fake-chromium binary not built at {fake_path}; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first"
+        );
+    }
+    if !std::path::Path::new(&shim_path).exists() {
+        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-cli --bin loom-shim-chromium` first");
+    }
+    let user_data_dir = tempfile::tempdir().expect("tempdir");
+    let mgr = ShimManager::new(HostObservability::new(true));
+    let id = ShimId(format!("chromium:{label}"));
+    mgr.register(
+        id.clone(),
+        ShimConfig {
+            binary_path: shim_path.into(),
+            args: vec![],
+            env: vec![
+                ("LOOM_SHIM_CHROMIUM_PATH".into(), fake_chromium_bin()),
+                (
+                    "LOOM_SHIM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+            ],
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 10_000,
+            recv_timeout_ms: 30_000,
+        },
+    );
+
+    if mutate {
+        // Model a DOM-mutating click: the fake flips per-connection state so the
+        // SUBSEQUENT DOM.getDocument returns content-differing DOM.
+        let click = CdpMessage {
+            method: "Runtime.evaluate".into(),
+            params: ciborium::value::Value::Map(vec![(
+                ciborium::value::Value::Text("expression".into()),
+                ciborium::value::Value::Text("__loom_test_dom_mutate__".into()),
+            )]),
+        };
+        let payload = ciborium_to_vec(&click).expect("encode click");
+        tokio::time::timeout(Duration::from_secs(30), mgr.send(id.clone(), payload))
+            .await
+            .expect("click did not return in 30s")
+            .expect("click errored");
+    }
+
+    // The exact envelope `capture_dom_after_hash` issues.
+    let dom = CdpMessage {
+        method: "DOM.getDocument".into(),
+        params: ciborium::value::Value::Map(vec![
+            (
+                ciborium::value::Value::Text("depth".into()),
+                ciborium::value::Value::Integer((-1i64).into()),
+            ),
+            (
+                ciborium::value::Value::Text("pierce".into()),
+                ciborium::value::Value::Bool(true),
+            ),
+        ]),
+    };
+    let payload = ciborium_to_vec(&dom).expect("encode DOM.getDocument");
+    let resp = tokio::time::timeout(Duration::from_secs(30), mgr.send(id.clone(), payload))
+        .await
+        .expect("DOM.getDocument did not return in 30s")
+        .expect("DOM.getDocument errored");
+
+    mgr.shutdown_session(label).await;
+    drop(user_data_dir);
+    // Same hash `capture_dom_after_hash` computes (sha256 of the normalized
+    // DOM.getDocument response).
+    loom_core::content_store::sha256_hex(&resp)
+}
+
+#[tokio::test]
+#[ignore = "requires fake-chromium binary; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first"]
+async fn interaction_dom_after_hash_is_deterministic_and_content_bearing() {
+    // Two independent same-shape "fingerprint" sessions that both perform the
+    // mutating interaction must produce the SAME dom_after_hash — determinism:
+    // each fake subprocess emits DIFFERENT ephemeral frameIds, which the shim's
+    // normalize seam strips, so the content-derived hash matches.
+    let h_mut_a = dom_after_hash_via_shim("fp-mut-a", true).await;
+    let h_mut_b = dom_after_hash_via_shim("fp-mut-b", true).await;
+    // A no-op interaction (no DOM mutation) must produce a DIFFERENT hash —
+    // proving the fingerprint is content-bearing, unlike the constant outcome_hash.
+    let h_noop = dom_after_hash_via_shim("fp-noop", false).await;
+
+    assert_eq!(h_mut_a.len(), 64, "dom_after_hash must be 64 hex chars");
+    assert!(
+        h_mut_a
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()),
+        "dom_after_hash must be lowercase hex"
+    );
+    assert_eq!(
+        h_mut_a, h_mut_b,
+        "two same-shape mutating sessions must yield an identical dom_after_hash (determinism)"
+    );
+    assert_ne!(
+        h_mut_a, h_noop,
+        "a DOM-mutating interaction must yield a different dom_after_hash than a no-op (content-bearing)"
+    );
+}
+
 /// Register a real shim wired to fake-chromium that emits `frames` synthetic
 /// screencast frames on `Page.startScreencast`. Shared by the video-capture
 /// e2e tests below. Panics with a build hint if the binaries are missing.
