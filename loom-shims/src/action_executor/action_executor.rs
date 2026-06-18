@@ -746,7 +746,10 @@ impl ActionExecutor for ChromiumActionExecutor {
             // specific error mapping, the host reads the typed kind.
             let kind = classify_chromium_nav_error(&err_text).to_string();
             network_events.push(LoomNetworkEvent {
-                method: String::new(),
+                // A page navigation is always a GET; populate it so failed-run HAR
+                // evidence carries the method (deterministic → safe in the hash).
+                // No HTTP response → response_bytes stays 0.
+                method: "GET".to_string(),
                 url: url.clone(),
                 request_hash: String::new(),
                 response_hash: String::new(),

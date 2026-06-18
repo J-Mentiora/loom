@@ -651,6 +651,9 @@ fn harexport_marshaller_preserves_network_events_when_tier2_unset() {
         navigate_console_count: None,
         navigate_network_count: Some(events.len() as u64),
         navigate_side_effects_json: Some(side_effects_json),
+        // This test asserts real per-event sizes survive into the canonical
+        // receipt — that only happens for a non-deterministic session.
+        preserve_response_sizes: true,
         ..Default::default()
     };
 
@@ -689,5 +692,100 @@ fn harexport_marshaller_preserves_network_events_when_tier2_unset() {
     assert!(
         payload.title.is_none(),
         "tier-2 title must be None to prove the regression scenario"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// network-accounting-har: determinism gate (NFR-DET-01).
+// Response sizes are volatile (CDN/gzip/chunk boundaries / encodedDataLength)
+// and would break cross-run manifest hash-chain equality. The navigate marshaller
+// zeroes response_body_size_bytes in the canonical receipt (the single
+// serialization that is BOTH hashed AND read back by the HAR exporter) unless
+// `preserve_response_sizes` (set only for a non-deterministic session);
+// deterministic fields (method/status/content_type) stay.
+// ---------------------------------------------------------------------------
+
+/// One-document navigate builder carrying `response_bytes`. `determinism_enabled`
+/// is the session sense (the fail-safe builder flag is its inverse).
+fn navigate_builder_with_size(response_bytes: u64, determinism_enabled: bool) -> ReceiptBuilder {
+    let event = LoomNetworkEvent {
+        method: "GET".to_string(),
+        url: "https://example.com/".to_string(),
+        request_hash: "0".repeat(64),
+        response_hash: "1".repeat(64),
+        status: 200,
+        content_type: "text/html".to_string(),
+        duration_ms: 50,
+        response_bytes,
+        error_reason: None,
+        error_kind: None,
+    };
+    ReceiptBuilder {
+        action_id: 7,
+        finished_at_ms: 100,
+        status: ReceiptStatus::Ok,
+        emitted_at_ms: 1_000,
+        navigate_url: Some("https://example.com/".to_string()),
+        navigate_status_code: Some(200),
+        navigate_network_count: Some(1),
+        navigate_side_effects_json: Some(serde_json::to_vec(&[event]).expect("serialize events")),
+        preserve_response_sizes: !determinism_enabled,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn determinism_on_zeroes_response_size_but_keeps_method_status_mime() {
+    use loom_core::receipt_builder::receipt_builder::ReceiptPayload;
+    let bytes =
+        ReceiptMarshaller::assemble_canonical_bytes(&navigate_builder_with_size(1234, true))
+            .expect("assemble");
+    let payload: ReceiptPayload = serde_json::from_slice(&bytes).expect("deserialize");
+    assert_eq!(
+        payload.network_events[0].response_body_size_bytes, 0,
+        "under determinism the volatile response size must be excluded from the hashed receipt"
+    );
+    assert_eq!(
+        payload.network_events[0].method, "GET",
+        "method is deterministic and must stay in the canonical receipt"
+    );
+    assert_eq!(
+        payload.network_events[0].status_code, 200,
+        "status is deterministic and must stay in the canonical receipt"
+    );
+    assert_eq!(
+        payload.network_events[0].content_type, "text/html",
+        "content_type is deterministic and must stay"
+    );
+}
+
+#[test]
+fn no_determinism_preserves_real_response_size() {
+    use loom_core::receipt_builder::receipt_builder::ReceiptPayload;
+    let bytes =
+        ReceiptMarshaller::assemble_canonical_bytes(&navigate_builder_with_size(1234, false))
+            .expect("assemble");
+    let payload: ReceiptPayload = serde_json::from_slice(&bytes).expect("deserialize");
+    assert_eq!(
+        payload.network_events[0].response_body_size_bytes, 1234,
+        "under --no-determinism the real response size is preserved in the canonical receipt (→ HAR)"
+    );
+}
+
+#[test]
+fn determinism_makes_canonical_bytes_size_invariant() {
+    // THE load-bearing assertion: two runs of the same navigate observing DIFFERENT
+    // live response sizes (CDN/gzip variance) must still produce byte-identical
+    // canonical bytes — so volatile sizes can never break the replay-equal manifest
+    // hash chain. The chain hash is sha256(hashable_line(canonical line)) and
+    // hashable_line includes receipt_canonical_bytes verbatim, so identical canonical
+    // bytes ⇒ identical chain (chain reproducibility follows transitively).
+    let a = ReceiptMarshaller::assemble_canonical_bytes(&navigate_builder_with_size(1024, true))
+        .expect("assemble a");
+    let b = ReceiptMarshaller::assemble_canonical_bytes(&navigate_builder_with_size(999_999, true))
+        .expect("assemble b");
+    assert_eq!(
+        a, b,
+        "canonical bytes must be identical regardless of (volatile) response size under determinism"
     );
 }

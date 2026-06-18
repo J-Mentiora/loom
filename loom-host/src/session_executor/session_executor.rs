@@ -218,6 +218,12 @@ impl SessionExecutor {
         let mut builder = ReceiptBuilder {
             action_id: action.action_id,
             started_at_ms: started_ms,
+            // Determinism (NFR-DET-01): keep real (volatile) response sizes in the
+            // canonical receipt ONLY for a non-deterministic session; under
+            // determinism they are zeroed so the replay hash chain stays
+            // byte-stable. Fail-safe default is exclude — see
+            // ReceiptBuilder::preserve_response_sizes.
+            preserve_response_sizes: !determinism_on,
             ..Default::default()
         };
 

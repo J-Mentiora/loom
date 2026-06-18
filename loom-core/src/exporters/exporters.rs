@@ -214,6 +214,21 @@ fn append_bytes_to_tar<W: std::io::Write>(
 }
 
 fn make_har_entry(emitted_at_ms: u64, ev: &NetworkEvent) -> serde_json::Value {
+    // HAR redaction policy (BY DESIGN — not a stub):
+    // loom captures NO request/response headers or cookies and NO response
+    // bodies, so this entry emits empty `headers`/`cookies` arrays and
+    // `headersSize: -1` / `bodySize: -1` (HAR 1.2's "unknown" sentinel). This is
+    // deliberate: not capturing headers/cookies means HAR can carry no
+    // `Authorization`/`Cookie`/`Set-Cookie` secrets or PII (aligns with the
+    // "logs/exports must not contain secrets/tokens/PII" invariant). What IS
+    // populated is non-sensitive request metadata: method, url, status, and the
+    // response body SIZE (`content.size`, on-wire bytes from
+    // Network.loadingFinished.encodedDataLength — never the body itself).
+    // `content.size` is 0 under determinism (volatile sizes are excluded from the
+    // hashed canonical receipt this exporter reads — NFR-DET-01); it carries the
+    // real size only under `--no-determinism`. A future header-allowlist with
+    // explicit Authorization/Cookie/Set-Cookie redaction is out of scope.
+    //
     // timing_ticks is microseconds; HAR `time` is ms.
     let total_ms: u64 = ev.timing_ticks / 1000;
     let mime_type: &str = if ev.content_type.is_empty() {

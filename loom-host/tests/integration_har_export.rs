@@ -74,6 +74,10 @@ fn success_builder() -> ReceiptBuilder {
         navigate_console_count: Some(0),
         navigate_network_count: Some(1),
         navigate_side_effects_json: Some(side_effects_json),
+        // Models a no-determinism export: real response sizes are preserved in
+        // the canonical receipt (→ HAR content.size). Under determinism the
+        // marshaller zeroes them (covered by navigate_receipt_tests).
+        preserve_response_sizes: true,
         ..Default::default()
     }
 }
@@ -234,6 +238,25 @@ fn harexport_05_two_navigate_session_har_contents() {
         entry_for("http://fake.test/status/404", 404),
         "expected entry for /status/404 with status=404 — typed-error \
          navigates must propagate captured network_events to HAR"
+    );
+
+    // network-accounting-har: HAR must carry request.method + response
+    // content.size per entry (not just url+status). Both builders set
+    // preserve_response_sizes:true (modeling a no-determinism export), so the
+    // captured size survives into the canonical receipt the exporter reads.
+    let entry_200 = entries
+        .iter()
+        .find(|e| e["request"]["url"].as_str() == Some("http://fake.test/status/200"))
+        .expect("entry for /status/200");
+    assert_eq!(
+        entry_200["request"]["method"].as_str(),
+        Some("GET"),
+        "HAR request.method must be populated from the captured event"
+    );
+    assert_eq!(
+        entry_200["response"]["content"]["size"].as_u64(),
+        Some(1024),
+        "HAR response.content.size must reflect response_body_size_bytes"
     );
 
     // HAR validates against the vendored Draft-04 schema.

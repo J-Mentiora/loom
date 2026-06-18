@@ -108,9 +108,12 @@ pub struct EventAttribution {
 /// to "unattributed", the conservative pre-attribution behavior).
 const MAX_DOC_REQUEST_ATTRIBUTIONS: usize = 1024;
 
-/// `requestId -> (frameId, loaderId)` correlation map for one target.
+/// `requestId -> (frameId, loaderId, method)` correlation map for one target.
+/// frame/loader attribute `loadingFailed` (which carries neither); `method`
+/// backfills the HTTP method onto the Document hashed event, since
+/// `Network.responseReceived` carries no method (it's on `requestWillBeSent`).
 /// See `ChromiumNetworkInterceptor::doc_request_attribution`.
-type DocRequestFrames = std::collections::BTreeMap<String, (String, String)>;
+type DocRequestFrames = std::collections::BTreeMap<String, (String, String, String)>;
 
 /// Default cap on the per-session network-entries accumulator. Mirrors the
 /// `SessionCreateOpts.max_network_entries` default; bounds in-memory growth for
@@ -351,10 +354,11 @@ pub struct ChromiumNetworkInterceptor {
     /// `max_network_entries` on top when building the receipt.
     pub(crate) entries_per_target:
         parking_lot::RwLock<std::collections::BTreeMap<TargetId, NetworkEntryAccumulator>>,
-    /// Per-target `requestId -> (frameId, loaderId)` for Document-type
+    /// Per-target `requestId -> (frameId, loaderId, method)` for Document-type
     /// `Network.requestWillBeSent` events — the correlation source for
     /// attributing `Network.loadingFailed` (which carries no frame ids)
-    /// to a frame. Kept across navigates (a late failure from a
+    /// to a frame, and for backfilling the HTTP method onto the Document hashed
+    /// event (responseReceived carries no method). Kept across navigates (a late failure from a
     /// superseded prior load must stay attributable to its ORIGINAL
     /// loader so loader matching excludes it); bounded by
     /// `MAX_DOC_REQUEST_ATTRIBUTIONS`; cleared on `clear_target`.
@@ -398,10 +402,21 @@ impl ChromiumNetworkInterceptor {
             // Document request's (frameId, loaderId) by requestId.
             interceptor.record_document_request(target_id, &msg.method, &msg.params);
             // Document-only hashed path (status_code derivation, replay chain).
-            if let Some((event, attribution)) = parse_network_event(&msg.method, &msg.params) {
+            if let Some((mut event, attribution)) = parse_network_event(&msg.method, &msg.params) {
                 let attribution = interceptor.resolve_attribution(target_id, attribution);
+                // Backfill the HTTP method from the correlated requestWillBeSent
+                // (responseReceived/loadingFailed carry none). Deterministic → safe in the hash.
+                if event.method.is_empty() {
+                    if let Some(m) =
+                        interceptor.doc_request_method(target_id, &attribution.request_id)
+                    {
+                        event.method = m;
+                    }
+                }
                 interceptor.append_attributed(target_id, event, attribution);
             }
+            // Backfill response size from a later loadingFinished (joined by requestId).
+            interceptor.record_response_size(target_id, &msg.method, &msg.params);
             // Full-capture observational path (xhr/fetch/subresource/document)
             // feeding `network_entries`. Separate accumulator — never touches
             // the hashed receipt.
@@ -461,12 +476,75 @@ impl ChromiumNetworkInterceptor {
         if frame_id.is_empty() && loader_id.is_empty() {
             return;
         }
+        // HTTP method lives on `request.method`; correlated by requestId so the
+        // Document hashed event (built later from responseReceived, which has no
+        // method) can be backfilled. Deterministic per request → safe in the hash.
+        let method = match cbor_map_get(map, "request") {
+            Some(CborValue::Map(req)) => cbor_map_text(req, "method").unwrap_or_default(),
+            _ => String::new(),
+        };
         let mut g = self.doc_request_attribution.write();
         let m = g.entry(target_id).or_default();
         if m.len() >= MAX_DOC_REQUEST_ATTRIBUTIONS {
             m.clear();
         }
-        m.insert(request_id, (frame_id, loader_id));
+        m.insert(request_id, (frame_id, loader_id, method));
+    }
+
+    /// Look up the HTTP method recorded for a Document `requestId` on a target
+    /// (from the matching `Network.requestWillBeSent`). `None` when no Document
+    /// request was correlated or the method was empty.
+    pub(crate) fn doc_request_method(
+        &self,
+        target_id: TargetId,
+        request_id: &str,
+    ) -> Option<String> {
+        self.doc_request_attribution
+            .read()
+            .get(&target_id)
+            .and_then(|m| m.get(request_id))
+            .map(|(_, _, method)| method.clone())
+            .filter(|method| !method.is_empty())
+    }
+
+    /// Backfill `response_bytes` on a captured Document hashed event from a
+    /// `Network.loadingFinished` event, correlated by `requestId`.
+    /// `encodedDataLength` is the on-wire byte count (chromium reports it without
+    /// a `getResponseBody` round-trip, so this avoids the decompression hazard).
+    /// `loadingFinished` carries no `type`, and only Document events live in
+    /// `per_target`, so a subresource's `loadingFinished` finds no match and is a
+    /// safe no-op. The size is volatile (CDN/gzip/chunking) — it is excluded from
+    /// the hashed canonical receipt under determinism (host marshaller); here it
+    /// is captured verbatim for the wire summary + HAR (under --no-determinism).
+    pub(crate) fn record_response_size(
+        &self,
+        target_id: TargetId,
+        method: &str,
+        params: &CborValue,
+    ) {
+        if method != "Network.loadingFinished" {
+            return;
+        }
+        let CborValue::Map(map) = params else {
+            return;
+        };
+        let request_id = match cbor_map_text(map, "requestId") {
+            Some(r) if !r.is_empty() => r,
+            _ => return,
+        };
+        let Some(encoded) = cbor_map_u64(map, "encodedDataLength") else {
+            return;
+        };
+        let mut g = self.per_target.write();
+        if let Some(events) = g.get_mut(&target_id) {
+            // Most-recent hop wins (mirrors the accumulator's last_index policy).
+            for (event, attr) in events.iter_mut().rev() {
+                if attr.request_id == request_id {
+                    event.response_bytes = encoded;
+                    return;
+                }
+            }
+        }
     }
 
     /// Backfill an unattributed event's frame/loader ids from the
@@ -483,7 +561,7 @@ impl ChromiumNetworkInterceptor {
             && !attribution.request_id.is_empty()
         {
             if let Some(m) = self.doc_request_attribution.read().get(&target_id) {
-                if let Some((frame_id, loader_id)) = m.get(&attribution.request_id) {
+                if let Some((frame_id, loader_id, _method)) = m.get(&attribution.request_id) {
                     attribution.frame_id = frame_id.clone();
                     attribution.loader_id = loader_id.clone();
                 }
@@ -945,6 +1023,23 @@ fn cbor_map_bool(map: &[(CborValue, CborValue)], key: &str) -> Option<bool> {
     }
 }
 
+/// CDP `encodedDataLength` (Network.loadingFinished) is typed `number` — usually
+/// an integer byte count, but tolerate a float encoding (e.g. `1234.0`). Negative
+/// or non-finite values are rejected (→ None), so a malformed event can't poison
+/// the size with a garbage cast.
+fn cbor_map_u64(map: &[(CborValue, CborValue)], key: &str) -> Option<u64> {
+    match cbor_map_get(map, key)? {
+        CborValue::Integer(i) => u64::try_from(i128::from(*i)).ok(),
+        // Reject `>= 2^64` BEFORE the `as u64` cast — that cast saturates to
+        // u64::MAX, which would report an absurd ~18 EB response size instead of
+        // rejecting a malformed event. (A real encodedDataLength never approaches this.)
+        CborValue::Float(f) if f.is_finite() && *f >= 0.0 && *f < u64::MAX as f64 => {
+            Some(*f as u64)
+        }
+        _ => None,
+    }
+}
+
 /// CDP `wallTime` is a float (epoch seconds). Tolerate an integer encoding too.
 fn cbor_map_f64(map: &[(CborValue, CborValue)], key: &str) -> Option<f64> {
     match cbor_map_get(map, key)? {
@@ -1093,4 +1188,70 @@ fn hex_encode(bytes: &[u8]) -> String {
         out.push(HEX[(b & 0x0f) as usize] as char);
     }
     out
+}
+
+#[cfg(test)]
+mod cbor_u64_tests {
+    use super::cbor_map_u64;
+    use ciborium::value::Value;
+
+    fn map(v: Value) -> Vec<(Value, Value)> {
+        vec![(Value::Text("encodedDataLength".into()), v)]
+    }
+
+    #[test]
+    fn reads_integer_byte_count() {
+        assert_eq!(
+            cbor_map_u64(&map(Value::Integer(1234i64.into())), "encodedDataLength"),
+            Some(1234)
+        );
+    }
+
+    #[test]
+    fn reads_float_byte_count() {
+        // CDP types encodedDataLength as `number`; Chromium may emit e.g. 1234.0.
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(1234.0)), "encodedDataLength"),
+            Some(1234)
+        );
+    }
+
+    #[test]
+    fn rejects_negative_and_nonfinite_floats() {
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(-1.0)), "encodedDataLength"),
+            None
+        );
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(f64::NAN)), "encodedDataLength"),
+            None
+        );
+        assert_eq!(
+            cbor_map_u64(&map(Value::Integer((-5i64).into())), "encodedDataLength"),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_out_of_range_float_instead_of_saturating() {
+        // Without the `< u64::MAX` guard, `as u64` would saturate to u64::MAX
+        // and report a ~18 EB size; reject it instead.
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(1e30)), "encodedDataLength"),
+            None
+        );
+        assert_eq!(
+            cbor_map_u64(&map(Value::Float(f64::INFINITY)), "encodedDataLength"),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_or_non_numeric_is_none() {
+        assert_eq!(
+            cbor_map_u64(&map(Value::Text("oops".into())), "encodedDataLength"),
+            None
+        );
+        assert_eq!(cbor_map_u64(&[], "encodedDataLength"), None);
+    }
 }

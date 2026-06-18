@@ -146,14 +146,20 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
         .find(|e| e.error_reason.is_none())
         .expect("expected a non-error network event");
     assert_eq!(doc.status, 200);
-    // doc.method is currently always empty: parse_network_event in
-    // loom-shims hardcodes method: String::new() because Network.
-    // responseReceived doesn't carry the request method (it's on
-    // Network.requestWillBeSent which the shim doesn't yet track per
-    // requestId). Wiring that mapping is v0.9.x follow-up; this
-    // assertion just pins the field so a future regression that drops
-    // the field is caught.
-    let _: &str = &doc.method;
+    // network-accounting-har: the Document hashed event now carries the real
+    // HTTP method (backfilled from the correlated
+    // Network.requestWillBeSent.request.method) and the on-wire response size
+    // (from Network.loadingFinished.encodedDataLength — no getResponseBody
+    // round-trip). fake-chromium emits loadingFinished{encodedDataLength:1234}
+    // for the /status/200 document, so the captured size is exactly 1234.
+    assert_eq!(
+        doc.method, "GET",
+        "method must be backfilled from the correlated requestWillBeSent"
+    );
+    assert_eq!(
+        doc.response_bytes, 1234,
+        "response_bytes must come from Network.loadingFinished.encodedDataLength"
+    );
     assert_eq!(doc.url, "http://fake.test/status/200");
 
     // (2) Precondition: outcome.console_lines is the structural source for
@@ -200,6 +206,14 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
     assert!(
         summary.total_count >= 1,
         "summary.total_count must reflect at least the document load"
+    );
+    // network-accounting-har: total_bytes is the sum of response_bytes over the
+    // Document-only network_events. Only the document (encodedDataLength=1234)
+    // contributes — the xhr lives in network_entries, not network_events — so
+    // the wire summary's total_bytes is exactly the document size.
+    assert_eq!(
+        summary.total_bytes, 1234,
+        "total_bytes must reflect the document's on-wire response size"
     );
 
     // (4)  precondition: dom + screenshot bytes exist for

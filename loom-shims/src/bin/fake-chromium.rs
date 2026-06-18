@@ -648,6 +648,26 @@ async fn handle_connection(
                     }
                     let _ = write.send(Message::Text(evt.to_string().into())).await;
 
+                    // Network.loadingFinished for the document (real Chromium order:
+                    // requestWillBeSent → responseReceived → loadingFinished). Carries
+                    // `encodedDataLength` — the on-wire response byte count the shim
+                    // records into LoomNetworkEvent.response_bytes (no getResponseBody
+                    // round-trip). Fixed 1234 so the captured size is deterministic.
+                    let mut doc_finished = json!({
+                        "method": "Network.loadingFinished",
+                        "params": {
+                            "requestId": "fake-req-1",
+                            "timestamp": 1.05,
+                            "encodedDataLength": 1234,
+                        },
+                    });
+                    if let Some(sid) = &session_id {
+                        doc_finished["sessionId"] = json!(sid);
+                    }
+                    let _ = write
+                        .send(Message::Text(doc_finished.to_string().into()))
+                        .await;
+
                     // A known xhr to `/api/thing` — exercises the full-capture
                     // network-entries path (NON-Document, with method+status+
                     // resource_type) that the studio's route footprints need.
