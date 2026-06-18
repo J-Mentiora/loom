@@ -236,6 +236,26 @@ fn harexport_05_two_navigate_session_har_contents() {
          navigates must propagate captured network_events to HAR"
     );
 
+    // network-accounting-har: HAR must carry request.method + response
+    // content.size per entry (not just url+status). Both builders go through
+    // the marshaller with determinism_enabled defaulting false (direct
+    // builders model a no-determinism export), so the captured size survives
+    // into the canonical receipt the exporter reads.
+    let entry_200 = entries
+        .iter()
+        .find(|e| e["request"]["url"].as_str() == Some("http://fake.test/status/200"))
+        .expect("entry for /status/200");
+    assert_eq!(
+        entry_200["request"]["method"].as_str(),
+        Some("GET"),
+        "HAR request.method must be populated from the captured event"
+    );
+    assert_eq!(
+        entry_200["response"]["content"]["size"].as_u64(),
+        Some(1024),
+        "HAR response.content.size must reflect response_body_size_bytes"
+    );
+
     // HAR validates against the vendored Draft-04 schema.
     let schema = load_har_schema();
     let validator =

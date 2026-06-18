@@ -218,6 +218,11 @@ impl SessionExecutor {
         let mut builder = ReceiptBuilder {
             action_id: action.action_id,
             started_at_ms: started_ms,
+            // Determinism (NFR-DET-01): when on, the navigate marshaller zeroes
+            // volatile response sizes in the canonical (hashed) receipt so the
+            // replay hash chain stays byte-stable across runs. Single production
+            // site that sets this — see ReceiptBuilder::determinism_enabled.
+            determinism_enabled: determinism_on,
             ..Default::default()
         };
 

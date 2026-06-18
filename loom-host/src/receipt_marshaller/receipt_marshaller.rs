@@ -51,6 +51,18 @@ pub struct ReceiptBuilder {
     pub action_hash: String,
     pub outcome_hash: String,
     pub emitted_at_ms: u64,
+    /// When true, the navigate marshaller zeroes the volatile
+    /// `response_body_size_bytes` in the canonical (hashed + HAR-read) receipt,
+    /// keeping run-to-run-varying response sizes (CDN/gzip/chunking) OUT of the
+    /// replay-equal manifest hash chain (NFR-DET-01). `method`/`status`/
+    /// `content_type` are deterministic and stay. The real size still rides the
+    /// non-hashed wire surfaces (`navigate_network_summary_json.total_bytes`,
+    /// `navigate_network_entries_json`) and the canonical receipt under
+    /// `--no-determinism`. **Navigate-receipt producers MUST set this from
+    /// `!no_determinism`** — `SessionExecutor::run` is the single production site.
+    /// Defaults `false` (preserve sizes) for direct-builder tests, which model an
+    /// explicit no-determinism export.
+    pub determinism_enabled: bool,
     // ---- Navigate tier-2 fields ----
     // Populated by decode_typed_receipt when the WIT receipt carries them.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -401,7 +413,19 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
             url: e.url,
             status_code: u32::from(e.status),
             response_body_sha256_hex: e.response_hash,
-            response_body_size_bytes: e.response_bytes,
+            // Determinism (NFR-DET-01): response sizes are volatile
+            // (CDN/gzip/chunk boundaries / encodedDataLength) and would break
+            // cross-run manifest hash-chain equality. Zero them in the canonical
+            // receipt under determinism (this is the single serialization that is
+            // BOTH hashed AND read back by the HAR exporter). method/status_code/
+            // content_type are deterministic and kept. The real byte count still
+            // rides the non-hashed wire summary (total_bytes) + network_entries;
+            // and the canonical receipt (→ HAR content.size) under --no-determinism.
+            response_body_size_bytes: if builder.determinism_enabled {
+                0
+            } else {
+                e.response_bytes
+            },
             response_body_ref: None,
             // timing_ticks is microseconds; shim
             // duration_ms is milliseconds.
