@@ -156,6 +156,22 @@ fn session_ordered_key(method: &str, params: &serde_json::Value) -> Option<Strin
         .map(|s| s.to_string())
 }
 
+/// The connection-scoped handles every dispatch needs, bundled so they
+/// travel as one unit instead of as a fan of positional arguments. Built
+/// once per connection and cheaply cloned into each spawned request task
+/// and each per-session ordered worker (every field is an `Arc`-backed or
+/// otherwise clonable handle). Pairs with [`OrderedJob`], which carries the
+/// per-request data; together they replace the 10-argument call signature
+/// [`dispatch_request_task`] used to take.
+#[derive(Clone)]
+struct ConnCtx {
+    deps: Arc<ConnectionHandlerDeps>,
+    cancels: ConnectionCancelRegistry,
+    health_limiter: ConnectionHealthLimiter,
+    dispatch_slots: Arc<tokio::sync::Semaphore>,
+    resp_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+}
+
 /// The per-request dispatch body, shared verbatim by both lanes: the
 /// concurrent lane `tokio::spawn`s it (one task per request) and each
 /// per-session ordered worker `await`s it per job in FIFO order. Waits for
@@ -166,19 +182,21 @@ fn session_ordered_key(method: &str, params: &serde_json::Value) -> Option<Strin
 /// HERE (not on the read loop) keeps `request.cancel` frames readable while
 /// requests queue, and bounds TOTAL in-flight across both lanes by the
 /// connection semaphore.
-#[allow(clippy::too_many_arguments)]
-async fn dispatch_request_task(
-    id: serde_json::Value,
-    method: String,
-    raw_params: serde_json::Value,
-    key: String,
-    token: CancellationToken,
-    deps: Arc<ConnectionHandlerDeps>,
-    cancels: ConnectionCancelRegistry,
-    health_limiter: ConnectionHealthLimiter,
-    dispatch_slots: Arc<tokio::sync::Semaphore>,
-    resp_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-) {
+async fn dispatch_request_task(job: OrderedJob, ctx: ConnCtx) {
+    let OrderedJob {
+        id,
+        method,
+        raw_params,
+        key,
+        token,
+    } = job;
+    let ConnCtx {
+        deps,
+        cancels,
+        health_limiter,
+        dispatch_slots,
+        resp_tx,
+    } = ctx;
     // Wait for a dispatch slot, racing the cancel token so a queued
     // request answers `request-cancelled` immediately instead of after a
     // slot frees up.
@@ -244,29 +262,10 @@ async fn dispatch_request_task(
 /// `job_tx` clone drops (the read loop drops the map at teardown) after
 /// draining its queue. Modeled on the MCP ordered worker
 /// (`loom-mcp/src/stdio_transport/mod.rs`).
-fn spawn_session_worker(
-    mut job_rx: tokio::sync::mpsc::Receiver<OrderedJob>,
-    deps: Arc<ConnectionHandlerDeps>,
-    cancels: ConnectionCancelRegistry,
-    health_limiter: ConnectionHealthLimiter,
-    dispatch_slots: Arc<tokio::sync::Semaphore>,
-    resp_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
-) {
+fn spawn_session_worker(mut job_rx: tokio::sync::mpsc::Receiver<OrderedJob>, ctx: ConnCtx) {
     tokio::spawn(async move {
         while let Some(job) = job_rx.recv().await {
-            dispatch_request_task(
-                job.id,
-                job.method,
-                job.raw_params,
-                job.key,
-                job.token,
-                Arc::clone(&deps),
-                Arc::clone(&cancels),
-                Arc::clone(&health_limiter),
-                Arc::clone(&dispatch_slots),
-                resp_tx.clone(),
-            )
-            .await;
+            dispatch_request_task(job, ctx.clone()).await;
         }
     });
 }
@@ -358,6 +357,18 @@ impl ConnectionHandler {
         // sessions-per-connection count, so no separate GC is warranted.
         let mut session_workers: HashMap<String, tokio::sync::mpsc::Sender<OrderedJob>> =
             HashMap::new();
+
+        // Connection-scoped handles every dispatch task needs, bundled once
+        // and cheaply cloned per spawn (concurrent lane + each ordered
+        // worker). Holds its own `resp_tx` clone; the original binding stays
+        // for the inline fast-lane sends and the teardown `drop(resp_tx)`.
+        let ctx = ConnCtx {
+            deps: Arc::clone(&deps),
+            cancels: Arc::clone(&cancels),
+            health_limiter: Arc::clone(&health_limiter),
+            dispatch_slots: Arc::clone(&dispatch_slots),
+            resp_tx: resp_tx.clone(),
+        };
 
         // Authenticated: request read loop. One spawned task per request;
         // `request.cancel` is handled inline (fast lane).
@@ -566,14 +577,7 @@ impl ConnectionHandler {
                         // actions may queue before backpressure.
                         let (tx, rx) =
                             tokio::sync::mpsc::channel::<OrderedJob>(max_concurrent_requests());
-                        spawn_session_worker(
-                            rx,
-                            Arc::clone(&deps),
-                            Arc::clone(&cancels),
-                            Arc::clone(&health_limiter),
-                            Arc::clone(&dispatch_slots),
-                            resp_tx.clone(),
-                        );
+                        spawn_session_worker(rx, ctx.clone());
                         session_workers.insert(sid.clone(), tx.clone());
                         tx
                     }
@@ -633,18 +637,14 @@ impl ConnectionHandler {
 
             // CONCURRENT lane: control-plane requests dispatch immediately,
             // one task per request (unchanged from the pre-guard design).
-            tokio::spawn(dispatch_request_task(
+            let job = OrderedJob {
                 id,
                 method,
                 raw_params,
                 key,
                 token,
-                Arc::clone(&deps),
-                Arc::clone(&cancels),
-                Arc::clone(&health_limiter),
-                Arc::clone(&dispatch_slots),
-                resp_tx.clone(),
-            ));
+            };
+            tokio::spawn(dispatch_request_task(job, ctx.clone()));
         }
 
         // Teardown: fire every still-registered token so in-flight
