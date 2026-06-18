@@ -128,15 +128,7 @@ impl CoreFacadeBridge for RecordingCoreBridge {
     }
     fn create_session_raw(
         &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-        _: Option<u64>,
-        _: Option<serde_json::Value>,
-        _: bool,
-        _: bool,
-        _: Option<u64>,
-        _: bool,
+        _: loom_rpc::core_service_adapter::core_service_adapter::CreateSessionParams,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
         Err(LoomErrorCode::InternalError.into())
