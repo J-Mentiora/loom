@@ -14,6 +14,9 @@ mod common;
 
 #[test]
 fn socket_mode_is_0600_after_bind() {
+    // try_bind flips a process-global umask around bind(2); serialize so a concurrent
+    // bind can't leak it into this test's tempdir/socket (see common::BIND_LOCK).
+    let _bind = common::bind_guard();
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("loom.sock");
 

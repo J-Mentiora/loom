@@ -22,6 +22,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::net::UnixStream;
 
+mod common;
+
 // ─── Test infrastructure ─────────────────────────────────────────────────────
 
 /// Minimal SchemaProvider that returns empty registry (no schemas = every
@@ -64,6 +66,10 @@ struct TestServer {
 
 /// Spin up a real SocketServer; return the test handle and a background join handle.
 async fn start_server() -> (TestServer, tokio::task::JoinHandle<()>) {
+    // Hold the bind lock across TempDir creation through the bind: `try_bind`'s process-global
+    // umask would otherwise corrupt a concurrent test's `TempDir::new()` (see common::BIND_LOCK).
+    // Dropped before the first `.await` below, so the future stays Send.
+    let bind_lock = common::bind_guard();
     let dir = TempDir::new().unwrap();
     let socket_path = dir.path().join("test.sock");
 
@@ -114,6 +120,7 @@ async fn start_server() -> (TestServer, tokio::task::JoinHandle<()>) {
         token_override: Some(token.clone()),
     };
     let server = SocketServer::new(cfg, deps).expect("SocketServer::new must succeed");
+    drop(bind_lock); // bind done — release before any `.await`
     let handle = tokio::runtime::Handle::current();
     let join = tokio::spawn(async move {
         server.serve(handle, futures::future::pending::<()>()).await;

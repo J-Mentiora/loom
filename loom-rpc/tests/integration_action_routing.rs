@@ -32,6 +32,8 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::net::UnixStream;
 
+mod common;
+
 // ─── Web schema definitions (all 11 web.* methods) ───────────────────────────
 //
 // Source: loom-cli/src/postinstall_runner/interfaces.rs (canonical schema spec).
@@ -452,6 +454,9 @@ struct ActionTestServer {
 }
 
 async fn start_action_server() -> (ActionTestServer, tokio::task::JoinHandle<()>) {
+    // Hold the bind lock across TempDir creation through the bind (see common::BIND_LOCK);
+    // dropped before the first `.await` so the future stays Send.
+    let bind_lock = common::bind_guard();
     let dir = TempDir::new().unwrap();
     let socket_path = dir.path().join("action_test.sock");
     let token = Token::generate();
@@ -495,6 +500,7 @@ async fn start_action_server() -> (ActionTestServer, tokio::task::JoinHandle<()>
         token_override: Some(token.clone()),
     };
     let server = SocketServer::new(cfg, deps).expect("SocketServer::new must succeed");
+    drop(bind_lock); // bind done — release before any `.await`
     let handle = tokio::runtime::Handle::current();
     let join = tokio::spawn(async move {
         server.serve(handle, futures::future::pending::<()>()).await;
