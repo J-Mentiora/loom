@@ -493,6 +493,7 @@ mod session_cap_envelope {
                 budget: None,
                 no_blocklist: false,
                 no_determinism: false,
+                record_screencast: false,
                 clock_anchor: None,
             })
             .await

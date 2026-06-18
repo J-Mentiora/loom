@@ -14,12 +14,18 @@ use loom_core::budget_enforcer::{
 use loom_core::error::LoomErrorCode;
 use loom_core::manifest_writer::{LocalManifestWriter, ManifestWriter, SessionId};
 use loom_core::observability::Observability;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
+use tempfile::TempDir;
 
 fn obs() -> Arc<Observability> {
-    Observability::new(PathBuf::from("/tmp/loom-test-be/loom.log"), false)
+    // The budget enforcer is fully in-memory; Observability's `log_path` is never
+    // written to disk by these tests (it's only ever stored). Hand it a throwaway
+    // per-call TempDir path instead of a shared `/tmp` literal so nothing can
+    // collide across runs — the dir need not outlive the call precisely because
+    // nothing is written there.
+    let tmp = TempDir::new().unwrap();
+    Observability::new(tmp.path().join("loom.log"), false)
 }
 
 fn enforcer() -> LocalBudgetEnforcer {
@@ -355,10 +361,10 @@ fn unregister_unknown_session_is_noop() {
 
 #[test]
 fn budget_04_1_budget_overrides_stored_in_manifest_header() {
-    let tmp = "/tmp/loom-test-budget-04-1";
-    let _ = std::fs::remove_dir_all(tmp);
-    let obs = Observability::new(PathBuf::from(format!("{tmp}/loom.log")), false);
-    let mw = LocalManifestWriter::new(PathBuf::from(tmp), obs);
+    let tmp = TempDir::new().unwrap();
+    let root = tmp.path();
+    let obs = Observability::new(root.join("loom.log"), false);
+    let mw = LocalManifestWriter::new(root.to_path_buf(), obs);
 
     let id = sid("BUDGET04");
     let limits = BudgetLimits {
@@ -371,7 +377,7 @@ fn budget_04_1_budget_overrides_stored_in_manifest_header() {
     mw.open_manifest(id.clone(), Some(limits)).unwrap();
 
     // Read the WAL back and verify the Header entry has the budget fields.
-    let wal_path = PathBuf::from(format!("{tmp}/{}/manifest.wal", id.0));
+    let wal_path = root.join(&id.0).join("manifest.wal");
     let content = std::fs::read_to_string(&wal_path).unwrap();
     let first_line = content.lines().next().unwrap();
     let entry: serde_json::Value = serde_json::from_str(first_line).unwrap();

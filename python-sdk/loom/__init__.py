@@ -297,6 +297,61 @@ class Session:
         )
         return Receipt._from_dict(r)
 
+    def start_recording(
+        self,
+        *,
+        max_duration_ms: int | None = None,
+        max_bytes: int | None = None,
+        frame_rate: int | None = None,
+        deadline_ms: int = 5000,
+    ) -> Receipt:
+        """Start recording a video (screencast) of the page. Bracket a sequence
+        of actions between ``start_recording()`` and ``stop_recording()``; the
+        latter returns the ``.webm`` content hash. Caps (all optional, safe
+        defaults) auto-stop the recording: ``max_duration_ms`` (300000),
+        ``max_bytes`` (268435456), ``frame_rate`` (10).
+
+        NOTE: a recording captures whatever is on screen — including any
+        passwords or PII rendered during the window (same posture as
+        ``screenshot()``)."""
+        payload: dict = {}
+        if max_duration_ms is not None:
+            payload["max_duration_ms"] = max_duration_ms
+        if max_bytes is not None:
+            payload["max_bytes"] = max_bytes
+        if frame_rate is not None:
+            payload["frame_rate"] = frame_rate
+        r = self._transport.call(
+            "action.web.start_recording",
+            _build_action_params(self.session_id, "start_recording", payload, deadline_ms),
+        )
+        return Receipt._from_dict(r)
+
+    def stop_recording(self, *, deadline_ms: int = 120000) -> Receipt:
+        """Stop the active recording, encode it to ``.webm``, and return a
+        Receipt whose ``screencast_after_hash`` points at the video in CAS.
+        The default deadline is generous because the encode runs synchronously.
+        A best-effort encode failure returns an error receipt (the session is
+        unaffected)."""
+        r = self._transport.call(
+            "action.web.stop_recording",
+            _build_action_params(self.session_id, "stop_recording", {}, deadline_ms),
+        )
+        return Receipt._from_dict(r)
+
+    def save_recording(self, receipt: Receipt, path: str) -> None:
+        """Fetch the recorded ``.webm`` referenced by a ``stop_recording()``
+        receipt and write it to ``path``. Raises if the receipt carries no
+        ``screencast_after_hash`` (e.g. the encode failed)."""
+        if not receipt.screencast_after_hash:
+            raise ValueError("receipt has no screencast_after_hash (recording failed?)")
+        content = self._transport.call(
+            "content.get", {"artifact_ref": receipt.screencast_after_hash}
+        )
+        data_hex = content["data_hex"] if isinstance(content, dict) else content
+        with open(path, "wb") as f:
+            f.write(bytes.fromhex(data_hex))
+
     def snapshot(self, *, deadline_ms: int = 5000) -> Receipt:
         r = self._transport.call(
             "action.web.snapshot",

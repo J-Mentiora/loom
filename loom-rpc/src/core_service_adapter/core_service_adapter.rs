@@ -117,6 +117,7 @@ pub trait CoreFacadeBridge: Send + Sync {
         no_blocklist: bool,
         no_determinism: bool,
         clock_anchor: Option<u64>,
+        record_screencast: bool,
     ) -> Result<(String, u64), LoomError>;
 
     /// Close an active session.
@@ -353,6 +354,13 @@ pub struct CreateSessionParams {
     /// behavior unchanged). No effect under `--no-determinism`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clock_anchor: Option<u64>,
+    /// video-capture: operator's `session create --record-screencast` opt-in.
+    /// Default `false`. Maps to `SessionCreateOpts.record_screencast`; when set,
+    /// the host records a whole-session screencast (create→close) and writes the
+    /// resulting `.webm` hash to the per-session `recordings.jsonl` sidecar
+    /// (surfaced by `session.info`). Pre-feature clients omit the field → `false`.
+    #[serde(default)]
+    pub record_screencast: bool,
 }
 
 fn default_profile() -> String {

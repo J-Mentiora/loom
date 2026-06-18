@@ -93,6 +93,7 @@ fn create_opts_replay_of_field_is_optional_session_id() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     };
     assert!(opts.replay_of.is_none());
@@ -121,6 +122,7 @@ fn session_profile_populated_from_opts() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     };
     let id = sm.create(opts).expect("session created");
@@ -154,6 +156,7 @@ fn non_safe_profile_skips_downloads_dir() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "standard".to_string(),
     };
     let id = sm.create(opts).expect("session created");
@@ -182,6 +185,7 @@ fn session_create_opts_profile_serde_round_trips() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     };
     let json = serde_json::to_string(&opts).expect("serialize");
@@ -337,6 +341,7 @@ fn dispatch_slot_fences_while_held_and_reopens_on_release() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "default".to_string(),
     };
     let id = sm.create(opts).expect("session created");
