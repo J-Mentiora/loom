@@ -611,3 +611,307 @@ async fn hello_ack_is_not_queued_behind_slow_dispatch() {
     );
     assert_eq!(resp["result"]["hello"], serde_json::json!("ok"));
 }
+
+// ─── per-session in-order serialization guard ────────────────────────────────
+//
+// Two pipelined SAME-session surface verbs must execute in SUBMISSION order
+// (the per-session ordered worker), while DIFFERENT-session verbs on one
+// connection still dispatch concurrently. Modeled on the MCP ordered-lane
+// behavior; the mock router uses real `web.*` method names so the
+// connection handler's `session_ordered_key` classifies them onto the FIFO
+// lane (every `web.*` is in `known_router_methods()`).
+
+use std::collections::HashSet;
+use std::sync::Mutex;
+
+/// One observed dispatch window: which session+method ran, and when it
+/// entered/exited the router. Overlapping windows on different sessions
+/// prove concurrency; non-overlap on one session proves serialization.
+#[derive(Clone)]
+struct DispatchWindow {
+    session: String,
+    method: String,
+    enter: Instant,
+    exit: Instant,
+}
+
+#[derive(Default)]
+struct OrderingState {
+    /// Sessions whose `web.navigate` has fully completed.
+    navigated: HashSet<String>,
+    /// Every dispatch's window, in completion order.
+    windows: Vec<DispatchWindow>,
+    /// (session, method) at dispatch ENTER, in entry order — the
+    /// observable proxy for WAL/receipt append order.
+    enter_log: Vec<(String, String)>,
+}
+
+/// Router with real `web.*` verbs: `web.navigate` is slow (async sleep,
+/// then marks its session navigated); `web.evaluate` is fast and reports
+/// whether its session had already navigated at dispatch-enter time. Both
+/// record their enter order + window so a test can assert per-session
+/// ordering and cross-session overlap.
+struct OrderingRouter {
+    state: Arc<Mutex<OrderingState>>,
+    nav_delay: Duration,
+}
+
+fn session_of(params: &serde_json::Value) -> String {
+    params
+        .get("session")
+        .or_else(|| params.get("session_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+#[async_trait::async_trait]
+impl RequestRouterApi for OrderingRouter {
+    async fn dispatch(&self, method: &str, params: serde_json::Value) -> Vec<u8> {
+        let sid = session_of(&params);
+        let enter = Instant::now();
+        {
+            let mut st = self.state.lock().unwrap();
+            st.enter_log.push((sid.clone(), method.to_string()));
+        }
+        match method {
+            "web.navigate" => {
+                tokio::time::sleep(self.nav_delay).await;
+                let exit = Instant::now();
+                let mut st = self.state.lock().unwrap();
+                st.navigated.insert(sid.clone());
+                st.windows.push(DispatchWindow {
+                    session: sid.clone(),
+                    method: "web.navigate".into(),
+                    enter,
+                    exit,
+                });
+                serde_json::to_vec(&serde_json::json!({ "navigated": true, "session": sid }))
+                    .unwrap()
+            }
+            "web.evaluate" => {
+                // Snapshot whether navigate already finished for this session.
+                let navigated_first = {
+                    let st = self.state.lock().unwrap();
+                    st.navigated.contains(&sid)
+                };
+                let exit = Instant::now();
+                {
+                    let mut st = self.state.lock().unwrap();
+                    st.windows.push(DispatchWindow {
+                        session: sid.clone(),
+                        method: "web.evaluate".into(),
+                        enter,
+                        exit,
+                    });
+                }
+                serde_json::to_vec(&serde_json::json!({
+                    "navigated_first": navigated_first,
+                    "session": sid,
+                }))
+                .unwrap()
+            }
+            other => serde_json::to_vec(&serde_json::json!({
+                "__loom_rpc_error": true,
+                "code": "method_not_found",
+                "message": format!("method not found: {other}"),
+            }))
+            .unwrap(),
+        }
+    }
+
+    fn methods(&self) -> Vec<String> {
+        vec!["web.navigate".into(), "web.evaluate".into()]
+    }
+}
+
+fn web_request(id: i64, method: &str, session: &str) -> serde_json::Value {
+    request(
+        id.into(),
+        method,
+        serde_json::json!({ "session": session, "url": "https://example.com", "expression": "1" }),
+    )
+}
+
+/// SAME-session ordering, regression-pinned over many iterations: a
+/// `web.evaluate` pipelined immediately behind a slow `web.navigate` on the
+/// SAME session must (every run) observe the post-navigate state and never
+/// overtake it — and never get a spurious `too_many_requests`. Without the
+/// per-session FIFO worker, the later evaluate's own spawned task would race
+/// ahead of the slow navigate and read pre-navigate state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn same_session_pipelined_actions_execute_in_submission_order() {
+    let state = Arc::new(Mutex::new(OrderingState::default()));
+    let router = Arc::new(OrderingRouter {
+        state: Arc::clone(&state),
+        nav_delay: Duration::from_millis(60),
+    });
+    let (srv, _bg) = start_server_with_router(router).await;
+    let mut framed = connect_and_hello(&srv).await;
+
+    const ITERS: i64 = 25;
+    for iter in 0..ITERS {
+        let session = format!("s-{iter}");
+        let nav_id = iter * 2 + 1;
+        let eval_id = iter * 2 + 2;
+
+        // Pipeline BOTH frames without awaiting the (slow) navigate response.
+        send_json(&mut framed, &web_request(nav_id, "web.navigate", &session)).await;
+        send_json(&mut framed, &web_request(eval_id, "web.evaluate", &session)).await;
+
+        // Collect both responses (correlate by id; the slow navigate's may
+        // arrive after the evaluate's on the wire — execution order is what
+        // we pin, not delivery order).
+        let mut by_id = std::collections::HashMap::new();
+        for _ in 0..2 {
+            let resp = recv_json(&mut framed).await;
+            let id = resp.get("id").and_then(|v| v.as_i64()).unwrap();
+            by_id.insert(id, resp);
+        }
+
+        let eval = &by_id[&eval_id];
+        assert_ne!(
+            error_code(eval),
+            "too_many_requests",
+            "iter {iter}: pipelined same-session action must queue, not be rejected; got: {eval}"
+        );
+        assert_eq!(
+            eval["result"]["navigated_first"],
+            serde_json::json!(true),
+            "iter {iter}: evaluate must observe the navigate that preceded it; got: {eval}"
+        );
+        let nav = &by_id[&nav_id];
+        assert_eq!(
+            nav["result"]["navigated"],
+            serde_json::json!(true),
+            "iter {iter}: navigate must complete; got: {nav}"
+        );
+
+        // The router's enter order for THIS session must be [navigate, evaluate]
+        // — the WAL/receipt-append-order proxy.
+        let order: Vec<String> = state
+            .lock()
+            .unwrap()
+            .enter_log
+            .iter()
+            .filter(|(s, _)| s == &session)
+            .map(|(_, m)| m.clone())
+            .collect();
+        assert_eq!(
+            order,
+            vec!["web.navigate".to_string(), "web.evaluate".to_string()],
+            "iter {iter}: same-session dispatch entered out of submission order: {order:?}"
+        );
+    }
+}
+
+/// Two DIFFERENT-session surface verbs pipelined on ONE connection still
+/// run concurrently: distinct sessions get distinct ordered workers, so a
+/// slow `web.navigate` on session A does not delay one on session B. Proven
+/// by overlapping dispatch windows (serialization would force B to start
+/// only after A finished).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn different_session_actions_on_one_connection_stay_concurrent() {
+    let state = Arc::new(Mutex::new(OrderingState::default()));
+    let router = Arc::new(OrderingRouter {
+        state: Arc::clone(&state),
+        nav_delay: Duration::from_millis(400),
+    });
+    let (srv, _bg) = start_server_with_router(router).await;
+    let mut framed = connect_and_hello(&srv).await;
+
+    send_json(&mut framed, &web_request(1, "web.navigate", "sess-A")).await;
+    send_json(&mut framed, &web_request(2, "web.navigate", "sess-B")).await;
+
+    // Drain both responses.
+    for _ in 0..2 {
+        let _ = recv_json(&mut framed).await;
+    }
+
+    let windows = state.lock().unwrap().windows.clone();
+    let a = windows
+        .iter()
+        .find(|w| w.session == "sess-A" && w.method == "web.navigate")
+        .expect("session A navigate window");
+    let b = windows
+        .iter()
+        .find(|w| w.session == "sess-B" && w.method == "web.navigate")
+        .expect("session B navigate window");
+
+    // Overlap test: A.enter < B.exit && B.enter < A.exit. With both delays
+    // at 400 ms and concurrent dispatch the windows overlap heavily; under
+    // (buggy) cross-session serialization B would start only after A's exit.
+    assert!(
+        a.enter < b.exit && b.enter < a.exit,
+        "cross-session navigates must overlap (concurrent); \
+         A=[{:?},{:?}] B=[{:?},{:?}]",
+        a.enter,
+        a.exit,
+        b.enter,
+        b.exit,
+    );
+}
+
+/// The ORDERED lane must NOT block the read loop: a same-session pipeline
+/// deeper than the worker queue still leaves `request.cancel` / `daemon.hello`
+/// answerable on the fast lane (a blocking enqueue would freeze the read loop
+/// behind a slow head-of-line dispatch). Flood one session with slow
+/// navigates, then pipeline a `daemon.hello`; the ack must come back well
+/// before the head navigate could finish, and the overflow past the queue
+/// depth must answer `too_many_requests` rather than hang.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordered_lane_flood_does_not_block_fast_lane() {
+    let state = Arc::new(Mutex::new(OrderingState::default()));
+    let router = Arc::new(OrderingRouter {
+        state: Arc::clone(&state),
+        // Long enough that, under a blocking enqueue, the fast-lane ack would
+        // be stuck for seconds; the assertion bound (700 ms) sits well under it.
+        nav_delay: Duration::from_millis(1500),
+    });
+    let (srv, _bg) = start_server_with_router(router).await;
+    let mut framed = connect_and_hello(&srv).await;
+
+    // Flood far past the queue depth (default 8) + the in-flight slot.
+    const FLOOD: i64 = 20;
+    for i in 1..=FLOOD {
+        send_json(&mut framed, &web_request(i, "web.navigate", "flood")).await;
+    }
+    // The fast-lane probe, pipelined LAST behind the whole flood.
+    let hello_id: i64 = 9999;
+    send_json(
+        &mut framed,
+        &request(hello_id.into(), "daemon.hello", serde_json::json!({})),
+    )
+    .await;
+
+    // Read responses until the hello ack appears, measuring how long it took.
+    // With the non-blocking ordered enqueue, the read loop processes the whole
+    // flood (queuing some, rejecting the overflow) and the hello inline — all
+    // before the 1.5 s head navigate completes.
+    let started = Instant::now();
+    let mut saw_too_many = false;
+    let mut hello_latency = None;
+    for _ in 0..(FLOOD + 1) {
+        let resp = tokio::time::timeout(Duration::from_millis(700), recv_json(&mut framed))
+            .await
+            .expect("fast-lane ack must arrive promptly; read loop is blocked");
+        if error_code(&resp) == "too_many_requests" {
+            saw_too_many = true;
+        }
+        if resp.get("id").and_then(|v| v.as_i64()) == Some(hello_id) {
+            assert_eq!(resp["result"]["hello"], serde_json::json!("ok"));
+            hello_latency = Some(started.elapsed());
+            break;
+        }
+    }
+
+    let latency = hello_latency.expect("daemon.hello must be answered");
+    assert!(
+        latency < Duration::from_millis(700),
+        "daemon.hello fast lane must not queue behind the ordered flood; took {latency:?}"
+    );
+    assert!(
+        saw_too_many,
+        "flood past the queue depth must reject overflow with too_many_requests, not buffer/hang"
+    );
+}
