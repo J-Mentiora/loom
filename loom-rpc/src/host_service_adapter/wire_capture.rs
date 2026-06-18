@@ -101,6 +101,7 @@ mod tests {
             status_code: Some(200),
             dom_snapshot_hash: Some("dom".into()),
             screenshot_after_hash: Some("ss".into()),
+            screencast_after_hash: None,
             console_count: Some(3),
             network_count: Some(7),
             console_lines: vec![ShimConsoleLine {

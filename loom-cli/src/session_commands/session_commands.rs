@@ -105,6 +105,15 @@ pub struct CreateArgs {
     #[arg(long = "no-determinism", default_value_t = false)]
     #[serde(default)]
     pub no_determinism: bool,
+    /// video-capture: record a whole-session video (screencast). Recording
+    /// auto-starts on the first navigate and is finalized at session close —
+    /// the `.webm` hash + metadata land in the session's `recordings.jsonl`
+    /// sidecar. Equivalent to bracketing the whole session with
+    /// `web.start_recording`/`web.stop_recording`. NOTE: a recording captures
+    /// whatever is on screen, including any passwords/PII rendered during it.
+    #[arg(long = "record-screencast", default_value_t = false)]
+    #[serde(default)]
+    pub record_screencast: bool,
 }
 
 /// Parse a --budget flag string into BudgetLimits.
@@ -414,6 +423,12 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
     // default deterministic session keeps the pre-feature params shape.
     if args.no_determinism {
         params.insert("no_determinism".to_string(), serde_json::Value::Bool(true));
+    }
+    if args.record_screencast {
+        params.insert(
+            "record_screencast".to_string(),
+            serde_json::Value::Bool(true),
+        );
     }
     let resp = rpc
         .call("session.create", serde_json::Value::Object(params))

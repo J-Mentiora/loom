@@ -219,6 +219,30 @@ pub enum ShimRequest {
         session_id: SessionId,
         target_id: TargetId,
     },
+    /// video-capture: start a CDP `Page.startScreencast` recording on the
+    /// target. The shim begins buffering JPEG frames (acking each via
+    /// `Page.screencastFrameAck`) until `StopRecording`, a cap is hit, or the
+    /// session ends. At most one recording is active per target. Returns a
+    /// `ShimResponse::Ok` with an empty payload (start is fire-and-confirm).
+    StartRecording {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+        /// Auto-stop after this many ms of wall-clock recording.
+        max_duration_ms: u64,
+        /// Auto-stop once buffered frame bytes exceed this.
+        max_bytes: u64,
+        /// Target frames-per-second (maps to CDP `everyNthFrame`).
+        frame_rate: u32,
+    },
+    /// video-capture: stop the active recording, encode buffered frames to a
+    /// `.webm` (via the bundled ffmpeg), and return a CBOR
+    /// [`crate::navigate_outcome::ScreencastOutcome`] in `ShimResponse::Ok`.
+    StopRecording {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+    },
     /// Cooperative shutdown. Drains in-flight, then exits.
     Shutdown { request_id: u64 },
     /// Liveness + introspection probe. The shim responds with a

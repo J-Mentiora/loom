@@ -597,6 +597,74 @@ are stripped during normalisation, so they do not perturb the hash.",
         example: &["loom", "action", "web.snapshot", "--session", "<SESSION>"],
     },
     ActionMeta {
+        name: "web.start_recording",
+        summary: "Start recording a video (screencast) of the page.",
+        description: "\
+Starts a CDP `Page.startScreencast` recording on the session's active page \
+target. Frames are collected and acked until `web.stop_recording` is called \
+(or a cap is hit), then encoded to a `.webm` (VP8/VP9) via a bundled ffmpeg. \
+At most one recording is active per session; calling this while a recording \
+is already running fails with `kind: \"js_throw\"`.\n\n\
+Resource caps (all optional, safe defaults): `max_duration_ms` (default \
+300000), `max_bytes` (default 268435456), `frame_rate` (default 10). The \
+recording auto-stops when any cap is reached. Frames spill to a temp file so \
+a long recording does not hold the whole video in memory.\n\n\
+PRIVACY: a recording captures whatever is on screen, INCLUDING any passwords, \
+PII, or third-party content rendered during the window — same posture as \
+`web.screenshot`. The `.webm` is stored in the local content-addressed store; \
+its bytes are excluded from the replay hash chain (only the content hash is \
+recorded), so recording never affects replay-equality.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "max_duration_ms",
+                ty: ParamType::U64,
+                doc: "Optional auto-stop after this many ms (default 300000 = 5 min).",
+                required: false,
+            },
+            ParamMeta {
+                name: "max_bytes",
+                ty: ParamType::U64,
+                doc: "Optional auto-stop once the buffered frames exceed this many bytes (default 268435456 = 256 MiB).",
+                required: false,
+            },
+            ParamMeta {
+                name: "frame_rate",
+                ty: ParamType::U64,
+                doc: "Optional ENCODE/playback frames-per-second for the output .webm (default 10, clamped 1..=60). This is the muxed output rate; the browser still emits a frame per visual change (it does not decimate capture).",
+                required: false,
+            },
+        ],
+        returns: "Receipt confirming the recording started (`code: web_action_completed`). The video hash is returned by `web.stop_recording`.",
+        example: &["loom", "action", "web.start_recording", "--session", "<SESSION>"],
+    },
+    ActionMeta {
+        name: "web.stop_recording",
+        summary: "Stop the active video recording and return its content hash.",
+        description: "\
+Stops the recording started by `web.start_recording`, encodes the collected \
+frames to a `.webm`, stores it in the content-addressed store, and returns the \
+content hash. Fails with `kind: \"js_throw\"` if no recording is active, or if \
+the recording captured zero frames.\n\n\
+If the bundled ffmpeg encoder is unavailable (download failed / offline / the \
+`video` build feature is off) the action returns an error receipt with an \
+actionable message, but the session itself is unaffected — recording is \
+best-effort and never aborts the session.",
+        params: &[ParamMeta {
+            name: "session_id",
+            ty: ParamType::String,
+            doc: "Session created via `loom session create`. 26-char ULID format.",
+            required: true,
+        }],
+        returns: "Receipt with `screencast_after_hash: <sha256>` pointing to the `.webm` in CAS — fetch via `loom blob get <hash>`. A best-effort encode failure (ffmpeg unavailable / zero frames) returns an error receipt (`kind: \"recording_failed\"`) without aborting the session.",
+        example: &["loom", "action", "web.stop_recording", "--session", "<SESSION>"],
+    },
+    ActionMeta {
         name: "web.type",
         summary: "Focus an input and type text into it.",
         description: "\

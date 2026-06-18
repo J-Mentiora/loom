@@ -49,6 +49,7 @@ fn create_args_field_names_match_schema() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         clock_anchor: Some(1_700_000_000_000),
     })
     .unwrap();

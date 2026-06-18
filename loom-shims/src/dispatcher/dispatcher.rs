@@ -365,9 +365,60 @@ async fn handle_request(
                 network_log_outcome_to_cbor(&outcome),
             )
         }
+        ShimRequest::StartRecording {
+            request_id,
+            session_id,
+            target_id,
+            max_duration_ms,
+            max_bytes,
+            frame_rate,
+        } => {
+            // `sanitized` clamps a 0/absent cap to the safe DEFAULT so the public
+            // API can't disable the safety caps (ship-council CRIT).
+            let caps = crate::screencast_recorder::Caps::sanitized(
+                max_duration_ms,
+                max_bytes,
+                frame_rate as u64,
+            );
+            match action_executor.start_recording(target_id, caps).await {
+                Ok(()) => make_ok_response(request_id, Some(session_id), CborValue::Null),
+                Err(detail) => make_error_response(
+                    request_id,
+                    Some(session_id),
+                    ShimErrorCode::CdpProtocolError,
+                    detail,
+                ),
+            }
+        }
+        ShimRequest::StopRecording {
+            request_id,
+            session_id,
+            target_id,
+        } => {
+            // Always returns an outcome (errors embedded). The host inspects
+            // `error`/`stop_reason` and emits an error receipt if needed.
+            let outcome = action_executor.stop_recording(target_id).await;
+            make_ok_response(
+                request_id,
+                Some(session_id),
+                screencast_outcome_to_cbor(&outcome),
+            )
+        }
         ShimRequest::Shutdown { .. } => unreachable!("Shutdown handled in run loop"),
         ShimRequest::Health { .. } => unreachable!("Health handled in run loop"),
     }
+}
+
+/// Serialise a `ScreencastOutcome` to CBOR for `ShimResponse::Ok.payload`
+/// (mirrors `network_log_outcome_to_cbor`).
+fn screencast_outcome_to_cbor(
+    outcome: &loom_shared::navigate_outcome::ScreencastOutcome,
+) -> CborValue {
+    let mut bytes = Vec::new();
+    if ciborium::ser::into_writer(outcome, &mut bytes).is_err() {
+        return CborValue::Null;
+    }
+    ciborium::de::from_reader(&bytes[..]).unwrap_or(CborValue::Null)
 }
 
 /// Serialise a `NetworkLogOutcome` to a structured `CborValue` for the
@@ -410,6 +461,16 @@ fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
             ..
         }
         | ShimRequest::WaitFor {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::StartRecording {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::StopRecording {
             request_id,
             session_id,
             ..
@@ -527,7 +588,9 @@ pub fn route_target(req: &ShimRequest) -> RouteTarget {
         // lifecycle ops.
         ShimRequest::CdpSend { .. }
         | ShimRequest::GetNetworkLog { .. }
-        | ShimRequest::WaitFor { .. } => RouteTarget::ActionExecutor,
+        | ShimRequest::WaitFor { .. }
+        | ShimRequest::StartRecording { .. }
+        | ShimRequest::StopRecording { .. } => RouteTarget::ActionExecutor,
         ShimRequest::Shutdown { .. } => RouteTarget::Shutdown,
         ShimRequest::Health { .. } => RouteTarget::Health,
     }

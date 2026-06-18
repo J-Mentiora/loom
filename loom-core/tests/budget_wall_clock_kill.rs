@@ -96,6 +96,7 @@ fn opts_with_limits(limits: BudgetLimits) -> SessionCreateOpts {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     }
 }
@@ -324,6 +325,7 @@ async fn replay_sessions_skip_budget_timer() {
         capture_policy: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         profile: "safe".to_string(),
     };
     let id = env.sm.create(opts).expect("create replay");
