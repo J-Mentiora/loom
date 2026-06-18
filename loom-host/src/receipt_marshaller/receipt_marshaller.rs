@@ -135,6 +135,16 @@ pub struct ReceiptBuilder {
     pub clear_cookies_result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delete_cookies_result: Option<String>,
+    // ---- interaction fingerprint tier (capture-policy=fingerprint) ----
+    /// sha256-hex of the normalized post-action DOM for a DOM-mutating selector
+    /// interaction (click/type/select/hover), captured via the host
+    /// `capture_dom_after_hash` fn. Serializes as `dom_after_hash` on the DEFAULT
+    /// (interaction) canonical path → IN the manifest hash chain. `skip_serializing_if`
+    /// keeps non-fingerprint receipts byte-identical to pre-feature (NFR-DET-01).
+    /// Populated ONLY under the fingerprint tier (host-side accept-gate in
+    /// `decode_typed_receipt`), so a misbehaving guest cannot leak it elsewhere.
+    #[serde(rename = "dom_after_hash", skip_serializing_if = "Option::is_none")]
+    pub interaction_dom_after_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1306,6 +1316,98 @@ mod queue_order_tests {
             order,
             (1..=N).collect::<Vec<u64>>(),
             "same-session receipt appends must apply in queue order"
+        );
+    }
+}
+
+// === interaction `dom_after_hash` (capture-policy=fingerprint) — canonical-bytes
+// contract (the determinism-critical core; written RED before the field exists). ===
+#[cfg(test)]
+mod interaction_dom_after_hash_tests {
+    use super::*;
+
+    /// A bare interaction-tier builder (no navigate/evaluate/cookie fields) —
+    /// routes through the DEFAULT `serde_jcs::to_string(builder)` canonical path.
+    fn interaction_builder() -> ReceiptBuilder {
+        ReceiptBuilder {
+            action_id: 7,
+            started_at_ms: 100,
+            finished_at_ms: 110,
+            status: ReceiptStatus::Ok,
+            action_hash: "ah".to_string(),
+            outcome_hash: "oh".to_string(),
+            emitted_at_ms: 110,
+            ..Default::default()
+        }
+    }
+
+    /// Negative determinism (NFR-DET-01): a non-fingerprint interaction receipt
+    /// (`interaction_dom_after_hash = None`) must NOT carry `dom_after_hash` in its
+    /// canonical bytes — the field is `skip_serializing_if = "Option::is_none"`, so
+    /// default/minimal/full sessions serialize byte-identically to the pre-feature
+    /// shape and the manifest hash chain is unperturbed.
+    #[test]
+    fn none_interaction_dom_after_hash_absent_from_canonical_bytes() {
+        let b = interaction_builder();
+        assert!(b.interaction_dom_after_hash.is_none());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(
+            !s.contains("dom_after_hash"),
+            "default-tier interaction receipt must NOT carry dom_after_hash"
+        );
+    }
+
+    /// Fingerprint tier: `Some(hash)` lands in the DEFAULT canonical path as
+    /// `"dom_after_hash"` (→ in the manifest hash chain), and does NOT route the
+    /// receipt through the navigate assembly path (no `url`/navigate-only fields).
+    #[test]
+    fn some_interaction_dom_after_hash_serializes_in_default_path() {
+        let mut b = interaction_builder();
+        let h = "a".repeat(64);
+        b.interaction_dom_after_hash = Some(h.clone());
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        assert!(
+            s.contains(&format!("\"dom_after_hash\":\"{h}\"")),
+            "fingerprint interaction receipt must carry dom_after_hash in canonical bytes; got: {s}"
+        );
+        assert!(
+            !s.contains("\"url\""),
+            "interaction receipt must stay on the default path (no navigate url field)"
+        );
+    }
+
+    /// NFR-DET-01 byte-exact baseline: a non-fingerprint interaction receipt's
+    /// canonical bytes match the EXACT pre-feature interaction shape (the new field
+    /// is skip-on-None, so it contributes zero bytes). Pinning the full string
+    /// catches ANY unintended shape change, not just a leaked `dom_after_hash`.
+    #[test]
+    fn default_tier_interaction_canonical_bytes_match_pre_feature_shape() {
+        let b = interaction_builder();
+        let bytes = ReceiptMarshaller::assemble_canonical_bytes(&b).expect("ok");
+        let s = String::from_utf8(bytes).unwrap();
+        // Exact pre-feature interaction canonical shape (serde_jcs, lexicographic).
+        // Note `error_code`/`error_details` serialize as null (no skip) — that is
+        // the pre-existing shape. The new `dom_after_hash` is absent (skip-on-None).
+        assert_eq!(
+            s,
+            r#"{"action_hash":"ah","action_id":7,"emitted_at_ms":110,"error_code":null,"error_details":null,"finished_at_ms":110,"host_call_count":0,"outcome_hash":"oh","preserve_response_sizes":false,"side_effects_count":0,"started_at_ms":100,"status":"ok"}"#
+        );
+    }
+
+    /// Content-bearing: distinct post-action DOM hashes → distinct canonical bytes
+    /// (the property the per-verb-constant `outcome_hash` cannot provide).
+    #[test]
+    fn distinct_dom_after_hashes_yield_distinct_canonical_bytes() {
+        let mut a = interaction_builder();
+        a.interaction_dom_after_hash = Some("a".repeat(64));
+        let mut b = interaction_builder();
+        b.interaction_dom_after_hash = Some("b".repeat(64));
+        assert_ne!(
+            ReceiptMarshaller::assemble_canonical_bytes(&a).unwrap(),
+            ReceiptMarshaller::assemble_canonical_bytes(&b).unwrap(),
+            "different post-action DOM must produce different canonical receipt bytes"
         );
     }
 }

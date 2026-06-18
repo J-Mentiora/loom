@@ -220,6 +220,7 @@ impl WasmHostBridge for CannedHostBridge {
             title: None,
             status_code: None,
             dom_snapshot_hash: None,
+            dom_after_hash: None,
             screenshot_after_hash: None,
             console_count: None,
             network_count: None,

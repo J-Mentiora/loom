@@ -21,6 +21,14 @@ interface types {
         status-code: option<u32>,
         dom-snapshot-hash: option<string>,
         screenshot-after-hash: option<string>,
+        // Interaction-tier (capture-policy=fingerprint) post-action DOM
+        // fingerprint: sha256 of the normalized DOM.getDocument response captured
+        // AFTER a DOM-mutating selector verb (click/type/select/hover). Content-
+        // bearing and IN the manifest hash chain (presence-gated on the tier),
+        // unlike the per-verb-constant `outcome-hash`. Absent under
+        // default/minimal/full. The host is authoritative: it only accepts this
+        // field into the canonical receipt under the fingerprint tier.
+        dom-after-hash: option<string>,
         console-count: option<u64>,
         network-count: option<u64>,
         // JSON-serialized Vec<LoomNetworkEvent>.
@@ -262,6 +270,17 @@ interface host {
     // VaultScopeViolation (grant credential_type != Cookie),
     // VaultOriginViolation (session_id mismatch — D5 / FND-0008).
     vault-substitute-cookies: func(grant-id: string, session-id: string) -> result<list<u8>, host-error>;
+
+    // Capture-dom-after-hash (capture-policy=fingerprint): post-action DOM
+    // fingerprint for DOM-mutating selector interactions. Returns Some(sha256-hex
+    // of the normalized DOM.getDocument response) ONLY when the session's
+    // capture-policy is `fingerprint`; None otherwise (so the extra DOM.getDocument
+    // round-trip is opt-in). The host issues DOM.getDocument via the shim, which
+    // already normalizes the response through `normalize_dom_cbor` (frameId-stripped
+    // → deterministic + content-bearing), and hashes it — the SAME computation
+    // `web.snapshot` uses. Captures the synchronous post-action DOM (no async settle
+    // wait). Record-only: returns None in replay (the shim is not driven in replay).
+    capture-dom-after-hash: func() -> result<option<string>, host-error>;
 
     // Logging + receipt emission
     log-emit: func(level: log-level, msg: string,

@@ -79,6 +79,12 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         // toggle lands here without touching the wire `Receipt` struct.
         (S::Wire, P::Full, _) => true,
 
+        // Wire + Fingerprint: Default field-keeping (keep everything that's set).
+        // The interaction `dom_after_hash` is presence-gated at the host (only
+        // produced under this tier), so it simply rides through here; no per-field
+        // strip arm is needed (a non-fingerprint session never carries it).
+        (S::Wire, P::Fingerprint, _) => true,
+
         // Wire + Minimal (brief): keep only `url`, `status_code`,
         // `error.detail`. Strip everything else. Identity fields
         // (action_id/session_id/status/timing_ticks) are unconditional
@@ -122,6 +128,14 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         // before-refs. The caller is responsible for populating
         // `*BeforeBlobRef` on the struct before invoking the enforcer.
         (S::Manifest, P::Full, _) => true,
+
+        // Manifest + Fingerprint: identical to Default (tier-assigned fields,
+        // no Full-only before-refs). The interaction `dom_after_hash` rides the
+        // interaction receipt's default canonical path (not a ReceiptPayload
+        // field), so it is not gated here.
+        (S::Manifest, P::Fingerprint, F::DomBeforeBlobRef) => false,
+        (S::Manifest, P::Fingerprint, F::ScreenshotBeforeBlobRef) => false,
+        (S::Manifest, P::Fingerprint, _) => true,
 
         // Manifest + Minimal: hash-only. Strip blob
         // refs; downgrade to hash-only navigate fields; empty
@@ -174,6 +188,7 @@ mod tests {
             CaptureProfile::Default,
             CaptureProfile::Full,
             CaptureProfile::Minimal,
+            CaptureProfile::Fingerprint,
         ];
         let fields = [
             CaptureField::Url,

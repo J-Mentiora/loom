@@ -201,6 +201,13 @@ pub struct Receipt {
     pub status_code: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dom_snapshot_hash: Option<String>,
+    /// Interaction-tier (`capture-policy=fingerprint`) post-action DOM
+    /// fingerprint: sha256 of the normalized post-action DOM for DOM-mutating
+    /// selector verbs (click/type/select/hover). Distinct from the navigate
+    /// `dom_snapshot_hash`; content-bearing (unlike the per-verb-constant
+    /// `outcome_hash`). Absent under default/minimal/full.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dom_after_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screenshot_after_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -100,6 +100,7 @@ mod tests {
             title: Some("Example".into()),
             status_code: Some(200),
             dom_snapshot_hash: Some("dom".into()),
+            dom_after_hash: None,
             screenshot_after_hash: Some("ss".into()),
             console_count: Some(3),
             network_count: Some(7),

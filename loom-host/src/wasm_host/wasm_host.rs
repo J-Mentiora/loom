@@ -261,6 +261,7 @@ impl WasmHost {
             no_determinism: session.no_determinism,
             profile: session.profile.clone(),
             downloads_dir: session.downloads_dir.clone(),
+            capture_dom_after: session.capture_dom_after,
         };
 
         // 4. Run surface invocation

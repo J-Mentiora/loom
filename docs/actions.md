@@ -68,7 +68,7 @@ Animations and transitions are forced to 0s under loom's deterministic profile, 
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the target element. Standard CSS Level 3 syntax. |
 
-**Returns:** Receipt with `status: "ok"` and `side_effects` populated when the click triggered DOM mutations. Selector miss → `kind: "js_throw"`.
+**Returns:** Receipt with `status: "ok"` and `side_effects` populated when the click triggered DOM mutations. Selector miss → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (the evaluate returns `undefined`, so it is CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain. It captures the synchronous post-action DOM, so insert an explicit `web.wait_for` before reading it when the effect is async (timer/fetch-driven).
 
 **Example**
 
@@ -125,7 +125,7 @@ Security: the expression is executed verbatim in the page. Treat it as untrusted
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `expression` | `string` | required | JavaScript expression. Returned value is JSON-canonicalised; >64 KB → content blob ref. |
 
-**Returns:** Receipt with `return_value_json` — a JSON-string-encoded value (e.g. `"\"hello\""` for a string `"hello"`, `"42"` for the number 42). Decode with one extra `JSON.parse`. Returns ≥64 KB are stored in CAS and `return_value_json` carries a `{"content_ref":"<sha256>"}` wrapper instead of inline bytes. `kind: "js_throw"` on uncaught exception.
+**Returns:** Receipt with `return_value_json` — a JSON-string-encoded value (e.g. `"\"hello\""` for a string `"hello"`, `"42"` for the number 42). Decode with one extra `JSON.parse`. Returns ≥64 KB are stored in CAS and `return_value_json` carries a `{"content_ref":"<sha256>"}` wrapper instead of inline bytes. `kind: "js_throw"` on uncaught exception. The evaluate `outcome_hash` is `sha256("E:" ‖ canonical-JSON return value)` (truncated returns use the domain-separated `E:T:` blob-ref hash) — content-bearing on the evaluated value.
 
 **Example**
 
@@ -175,7 +175,7 @@ Failure mode: selector miss surfaces as `kind: "js_throw"`. The hover does not w
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the element to hover. |
 
-**Returns:** Receipt with `status: "ok"`. Selector miss → `kind: "js_throw"`.
+**Returns:** Receipt with `status: "ok"`. Selector miss → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM (content-bearing; in the manifest hash chain). Note a hover that only changes CSS/layout — not the DOM tree — yields a `dom_after_hash` equal to the pre-hover DOM.
 
 **Example**
 
@@ -209,7 +209,7 @@ Readiness: the DOM + screenshot are captured once the page reaches the `until` s
 | `until` | `string` | optional | Readiness state to wait for before capture: `load`, `networkidle`, or `settled` (default). |
 | `timeout_ms` | `u64` | optional | Maximum time to wait for the readiness state. Optional; defaults to the daemon's settle timeout. |
 
-**Returns:** Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`, `until`, `settle_outcome` (`reached`|`timeout`|`dom_unstable`). Failure modes: `kind: "http_status"|"dns_failure"|"network_failure"|"url_blocked"`.
+**Returns:** Receipt with `url` (final URL after redirects), `status_code`, `redirected: bool`, `until`, `settle_outcome` (`reached`|`timeout`|`dom_unstable`). Failure modes: `kind: "http_status"|"dns_failure"|"network_failure"|"url_blocked"`. The navigate `outcome_hash` is `sha256(dom_snapshot_hash ‖ screenshot_after_hash)` — content-bearing (unlike the interaction verbs' constant `outcome_hash`); the screenshot hash rides observationally and is excluded from the replay hash chain.
 
 **Example**
 
@@ -311,7 +311,7 @@ Loom does not validate that `value` matches one of the `<option>` values; the ho
 | `selector` | `string` | required | CSS query selector for the `<select>` element. |
 | `value` | `string` | required | Value to assign. Should match one of the `<option>` `value` attributes. |
 
-**Returns:** Receipt with `status: "ok"`. Selector miss / non-select target → `kind: "js_throw"`.
+**Returns:** Receipt with `status: "ok"`. Selector miss / non-select target → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
 
 **Example**
 
@@ -416,7 +416,7 @@ Failure mode: selector miss → `kind: "js_throw"`. Non-input targets also surfa
 | `selector` | `string` | required | CSS query selector for the input element. |
 | `text` | `string` | required | Text to set as the element's value. Sent in one batch (not keystroke-by-keystroke). |
 
-**Returns:** Receipt with `status: "ok"`. Selector miss / non-input target → `kind: "js_throw"`.
+**Returns:** Receipt with `status: "ok"`. Selector miss / non-input target → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
 
 **Example**
 

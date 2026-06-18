@@ -22,11 +22,17 @@ use serde::{Deserialize, Serialize};
 /// - `Default` — tier-assigned fields only (hash for click, blob for navigate, etc.)
 /// - `Full` — adds `dom_before_blob_ref` + `screenshot_before_blob_ref` to every action
 /// - `Minimal` — hash-only; no blob refs; no network event bodies; no console lines
+/// - `Fingerprint` — Default field-keeping PLUS a content-bearing `dom_after_hash` on
+///   DOM-mutating selector interactions (click/type/select/hover): the host issues a
+///   post-action `DOM.getDocument`, normalizes it, and hashes it into the manifest hash
+///   chain. Orthogonal to `Full` (no before-blobs/screenshots); the extra DOM round-trip
+///   is the opt-in cost. NOT browser/visitor fingerprinting — a DOM-STATE fingerprint.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureProfile {
     Default,
     Full,
     Minimal,
+    Fingerprint,
 }
 
 /// Parse the wire form of `capture_policy` into a
@@ -38,6 +44,7 @@ pub fn capture_profile_from_str(s: &str) -> Option<CaptureProfile> {
         "minimal" => Some(CaptureProfile::Minimal),
         "default" => Some(CaptureProfile::Default),
         "full" => Some(CaptureProfile::Full),
+        "fingerprint" => Some(CaptureProfile::Fingerprint),
         _ => None,
     }
 }
