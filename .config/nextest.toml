@@ -13,13 +13,16 @@ slow-timeout = { period = "120s" }
 # that passes on retry is reported as flaky, not failed.
 retries = 2
 
-# Wall-clock perf/throughput tests assert against an absolute time budget (e.g. "structural
-# replay of 600 actions in <5s", "vault audit p95 <100ms"). Under sustained full parallelism
-# the machine is saturated and these overshoot — retries don't help because the saturation
-# persists. Give them all CPU threads so nextest schedules them to run ISOLATED (the old
-# `--test-threads=1` behavior, but only for the tests that actually need it).
+# Tests whose assertions depend on having the WHOLE machine, isolated via threads-required so
+# nextest schedules them to run alone (the old `--test-threads=1` behavior, but only for the
+# tests that actually need it). Retries don't help these because the saturation is sustained.
+# Two kinds:
+#   - wall-clock perf/throughput budgets (e.g. "structural replay of 600 actions in <5s",
+#     "vault audit p95 <100ms");
+#   - the `screencast_*` fake-chromium e2e tests, which assert on how many frames the recording
+#     subprocess delivers in a fixed window — CPU-starve that subprocess and the count is wrong.
 [[profile.default.overrides]]
-filter = "binary(audit_timing) | binary(integration_perf_regression) | binary(multi_session_stall_repro) | test(test_replay_throughput_structural_exceeds_5x)"
+filter = "binary(audit_timing) | binary(integration_perf_regression) | binary(multi_session_stall_repro) | test(test_replay_throughput_structural_exceeds_5x) | test(~screencast)"
 threads-required = "num-cpus"
 
 [profile.ci]
@@ -36,5 +39,5 @@ default-filter = "not test(~one_hundred_runs_with_same_seed) and not test(~two_s
 # Same wall-clock-perf isolation as the default profile (profile-specific overrides do not
 # inherit the default profile's, so it is repeated here).
 [[profile.ci.overrides]]
-filter = "binary(audit_timing) | binary(integration_perf_regression) | binary(multi_session_stall_repro) | test(test_replay_throughput_structural_exceeds_5x)"
+filter = "binary(audit_timing) | binary(integration_perf_regression) | binary(multi_session_stall_repro) | test(test_replay_throughput_structural_exceeds_5x) | test(~screencast)"
 threads-required = "num-cpus"
