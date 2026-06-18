@@ -185,6 +185,156 @@ fn test_wasm_discovered_without_loom_wasm_dir() {
 }
 
 // ---------------------------------------------------------------------------
+// Composite stamp: idempotent re-run skips when BOTH dimensions match
+// ---------------------------------------------------------------------------
+// A fresh compile writes the two-line sidecar (source SHA + engine-compat hash).
+// Re-running compile_step against the same binary must Skip — both dimensions of
+// the composite stamp still match.
+#[test]
+fn compile_step_skips_when_composite_stamp_current() {
+    let surfaces = TempDir::new().unwrap();
+
+    let prev = std::env::var("LOOM_WASM_DIR").ok();
+    std::env::remove_var("LOOM_WASM_DIR");
+
+    let first = compile_step(surfaces.path()).expect("first compile_step");
+    let second = compile_step(surfaces.path()).expect("second compile_step");
+
+    match prev {
+        Some(v) => std::env::set_var("LOOM_WASM_DIR", v),
+        None => std::env::remove_var("LOOM_WASM_DIR"),
+    }
+
+    assert!(
+        first.iter().any(|o| matches!(o, StepOutcome::Compiled(_))),
+        "fresh install must Compile, got: {first:?}"
+    );
+    assert!(
+        second.iter().all(|o| matches!(o, StepOutcome::Skipped)),
+        "idempotent re-run with a current composite stamp must Skip, got: {second:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Engine-compat strand: stale compat line forces a Refresh (the SILENT strand)
+// ---------------------------------------------------------------------------
+// This is the latent bug the brief targets: the OLD source-SHA-only heuristic
+// would Skip an artifact whose engine-compat hash had drifted (wasmtime/arch/
+// opt-level change), leaving a stale .cwasm the daemon traps on. With the fix,
+// a stale line-2 compat hash (source SHA still correct) makes is_up_to_date
+// return false → atomic recompile, reported as Refreshed, and the sidecar is
+// re-stamped with the live compat hash.
+#[test]
+fn compile_step_refreshes_on_stale_engine_compat() {
+    let surfaces = TempDir::new().unwrap();
+
+    let prev = std::env::var("LOOM_WASM_DIR").ok();
+    std::env::remove_var("LOOM_WASM_DIR");
+
+    compile_step(surfaces.path()).expect("fresh compile");
+    let sidecar = surfaces.path().join("loom_surface_web.sha256");
+    let contents = std::fs::read_to_string(&sidecar).unwrap();
+    let source_sha = contents.lines().next().unwrap().to_string();
+    // Keep the source SHA correct; poison only the engine-compat line.
+    std::fs::write(&sidecar, format!("{source_sha}\nwh-stale-engine-wt0.0.0\n")).unwrap();
+
+    let outcomes = compile_step(surfaces.path()).expect("re-run after compat poison");
+
+    match prev {
+        Some(v) => std::env::set_var("LOOM_WASM_DIR", v),
+        None => std::env::remove_var("LOOM_WASM_DIR"),
+    }
+
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| matches!(o, StepOutcome::Refreshed(_))),
+        "a stale engine-compat stamp must Refresh (NOT Skip — the old bug), got: {outcomes:?}"
+    );
+    let after = std::fs::read_to_string(&sidecar).unwrap();
+    assert!(
+        !after.contains("wh-stale-engine"),
+        "sidecar must be re-stamped with the live compat hash, got: {after:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Source-SHA strand: a wrong line-1 SHA forces a Refresh
+// ---------------------------------------------------------------------------
+#[test]
+fn compile_step_refreshes_on_wrong_source_sha() {
+    let surfaces = TempDir::new().unwrap();
+
+    let prev = std::env::var("LOOM_WASM_DIR").ok();
+    std::env::remove_var("LOOM_WASM_DIR");
+
+    compile_step(surfaces.path()).expect("fresh compile");
+    let sidecar = surfaces.path().join("loom_surface_web.sha256");
+    let contents = std::fs::read_to_string(&sidecar).unwrap();
+    let compat = contents.lines().nth(1).unwrap_or("wh-x").to_string();
+    // Poison the source SHA; keep the compat line correct.
+    std::fs::write(
+        &sidecar,
+        format!("0000000000000000000000000000000000000000000000000000000000000000\n{compat}\n"),
+    )
+    .unwrap();
+
+    let outcomes = compile_step(surfaces.path()).expect("re-run after source-SHA poison");
+
+    match prev {
+        Some(v) => std::env::set_var("LOOM_WASM_DIR", v),
+        None => std::env::remove_var("LOOM_WASM_DIR"),
+    }
+
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| matches!(o, StepOutcome::Refreshed(_))),
+        "a wrong source SHA must Refresh, got: {outcomes:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Backward compat: a legacy single-line sidecar (no compat) forces a Refresh
+// ---------------------------------------------------------------------------
+// Pre-fix installs wrote a single-line sidecar (source SHA only). The new
+// is_up_to_date treats a missing compat line as stale → recompile, upgrading the
+// stamp to the two-line composite format.
+#[test]
+fn compile_step_refreshes_legacy_single_line_sidecar() {
+    let surfaces = TempDir::new().unwrap();
+
+    let prev = std::env::var("LOOM_WASM_DIR").ok();
+    std::env::remove_var("LOOM_WASM_DIR");
+
+    compile_step(surfaces.path()).expect("fresh compile");
+    let sidecar = surfaces.path().join("loom_surface_web.sha256");
+    let contents = std::fs::read_to_string(&sidecar).unwrap();
+    let source_sha = contents.lines().next().unwrap().to_string();
+    // Downgrade to the legacy single-line format.
+    std::fs::write(&sidecar, &source_sha).unwrap();
+
+    let outcomes = compile_step(surfaces.path()).expect("re-run against legacy sidecar");
+
+    match prev {
+        Some(v) => std::env::set_var("LOOM_WASM_DIR", v),
+        None => std::env::remove_var("LOOM_WASM_DIR"),
+    }
+
+    assert!(
+        outcomes
+            .iter()
+            .any(|o| matches!(o, StepOutcome::Refreshed(_))),
+        "a legacy single-line sidecar must Refresh to upgrade the stamp, got: {outcomes:?}"
+    );
+    let after = std::fs::read_to_string(&sidecar).unwrap();
+    assert!(
+        after.lines().count() >= 2,
+        "sidecar must be upgraded to the two-line composite stamp, got: {after:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // compile_module unreachable from action dispatch
 // ---------------------------------------------------------------------------
 // This is a structural invariant enforced by code review, not by a runtime

@@ -116,16 +116,26 @@ fn test_compile_step_writes_cwasm() {
         "loom_surface_web.sha256 sidecar not found"
     );
 
-    // Assert: sidecar is non-empty hex string.
-    let sha_content = std::fs::read_to_string(&sidecar).expect("read sidecar");
-    assert!(
-        !sha_content.trim().is_empty(),
-        "SHA-256 sidecar must not be empty"
-    );
+    // Assert: sidecar is the two-line COMPOSITE stamp — line 1 a 64-hex source
+    // SHA-256, line 2 the engine-compat hash (`wh-<arch>-<opt_level>-wt<ver>`).
+    let contents = std::fs::read_to_string(&sidecar).expect("read sidecar");
+    let mut lines = contents.lines();
+    let source_sha = lines.next().expect("sidecar must have a source-SHA line");
+    let compat = lines
+        .next()
+        .expect("sidecar must have an engine-compat line");
     assert_eq!(
-        sha_content.trim().len(),
+        source_sha.len(),
         64,
-        "SHA-256 sidecar must be 64 hex chars, got {}",
-        sha_content.trim().len()
+        "source SHA-256 (line 1) must be 64 hex chars, got {}",
+        source_sha.len()
+    );
+    assert!(
+        source_sha.chars().all(|c| c.is_ascii_hexdigit()),
+        "source SHA-256 (line 1) must be hex, got {source_sha:?}"
+    );
+    assert!(
+        compat.starts_with("wh-"),
+        "engine-compat (line 2) must be a `wh-…` identity string, got {compat:?}"
     );
 }

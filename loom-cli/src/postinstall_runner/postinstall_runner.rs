@@ -5,7 +5,9 @@
 //   own idempotence guard:
 //   1. **Compile WASM modules.** Calls
 //      `loom-host::WasmHost::compile_module(source, dest)` for each
-//      surface module. Skip if `.cwasm` source-sha xattr matches.
+//      surface module. Skip only if the `<name>.sha256` sidecar's
+//      COMPOSITE stamp (source SHA + engine-compat hash) still matches;
+//      an engine change with unchanged source bytes recompiles (Refreshed).
 //   2. **Schemas dir.** Creates `~/.config/loom/schemas/v1/` and
 //      emits built-in JSON schemas. Skipped if dir already populated.
 //   3. **Chromium download + sha256 verify.** Skip if binary present
@@ -67,13 +69,22 @@ pub struct PostinstallOptions {
 }
 
 /// Per-step outcome — used for the final stdout receipt. Unit variants
-/// serialise as bare strings (`"skipped"`); `Compiled` carries the
-/// `.cwasm` destination path (`{"compiled": "<path>"}`).
+/// serialise as bare strings (`"skipped"`); the path-carrying variants serialise
+/// as tagged objects: `Compiled` → `{"compiled": "<path>"}`, `Refreshed` →
+/// `{"refreshed": "<path>"}`.
+///
+/// `Compiled` vs `Refreshed` distinguishes a FRESH compile (no prior stamp) from
+/// recompiling a STALE artifact (a prior `.sha256` sidecar existed but its source
+/// SHA or engine-compat hash no longer matched). The split mirrors
+/// `SchemaStepOutcome::Refreshed` and lets the receipt surface a refreshed count
+/// — the signal that the engine-aware idempotence guard caught a stale surface
+/// the old source-SHA-only heuristic would have silently `Skipped`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StepOutcome {
     Skipped,
     Compiled(PathBuf),
+    Refreshed(PathBuf),
     Downloaded,
     Wrote,
 }
@@ -229,9 +240,12 @@ const EMBEDDED_SURFACE_WEB: &[u8] = include_bytes!(env!("LOOM_CLI_EMBEDDED_SURFA
 /// 2. `$CARGO_MANIFEST_DIR/../target/wasm32-wasip2/release/` (dev builds).
 /// 3. Embedded bytes compiled into the binary via `build.rs` (end-user install).
 ///
-/// Each source is AOT-compiled via `loom_host::compiler::Compiler`. A `.sha256`
-/// sidecar guards idempotence: if the sidecar matches the source
-/// hash the surface is skipped.
+/// Each source is AOT-compiled via `loom_host::compiler::Compiler`. A two-line
+/// `<name>.sha256` sidecar (source SHA + engine-compat hash, see
+/// `loom_host::surface_stamp`) guards idempotence: a surface is skipped only when
+/// BOTH dimensions still match. An engine change with unchanged source bytes (a
+/// wasmtime/arch/opt-level bump, or a legacy single-line sidecar from a pre-fix
+/// install) recompiles and re-stamps — reported as `Refreshed`.
 ///
 /// Structural guard: `compile_module` is NOT reachable from the action dispatch
 /// path. It is only called here, from `Command::Postinstall`. The action →
@@ -265,6 +279,12 @@ pub fn compile_step(surfaces_dir: &std::path::Path) -> Result<Vec<StepOutcome>, 
 
     let runtime = WasmRuntime::new(WasmRuntimeConfig::default())
         .map_err(|e| CliError::Internal(e.message))?;
+    // The engine-compat dimension of the install stamp — written to the sidecar
+    // and re-checked by `is_up_to_date`, the daemon, and `loom doctor`. Computed
+    // once; clone the runtime Arc for the compiler.
+    let compat_hash = runtime
+        .precompile_compatibility_hash()
+        .map_err(|e| CliError::Internal(e.message))?;
     let compiler = Compiler::new(runtime);
 
     let mut outcomes = Vec::new();
@@ -272,19 +292,31 @@ pub fn compile_step(surfaces_dir: &std::path::Path) -> Result<Vec<StepOutcome>, 
         let dest = surfaces_dir.join(format!("{}.cwasm", name));
         let sidecar = surfaces_dir.join(format!("{}.sha256", name));
 
-        if is_up_to_date(&wasm_path, &sidecar)? {
+        if is_up_to_date(&wasm_path, &sidecar, &compat_hash)? {
             outcomes.push(StepOutcome::Skipped);
             continue;
         }
+
+        // A prior sidecar means we are RE-compiling a stale artifact (source SHA
+        // or engine-compat changed, or a legacy single-line stamp); no sidecar
+        // means a fresh install. The distinction drives the receipt's refreshed
+        // count.
+        let was_stale = sidecar.exists();
 
         compiler
             .compile_module(&wasm_path, &dest)
             .map_err(|e| CliError::Internal(e.message))?;
 
         let sha = sha256_file(&wasm_path)?;
-        std::fs::write(&sidecar, sha.as_bytes()).map_err(|e| CliError::Internal(e.to_string()))?;
+        let stamp = loom_host::surface_stamp::format_surface_sidecar(&sha, &compat_hash);
+        std::fs::write(&sidecar, stamp.as_bytes())
+            .map_err(|e| CliError::Internal(e.to_string()))?;
 
-        outcomes.push(StepOutcome::Compiled(dest));
+        outcomes.push(if was_stale {
+            StepOutcome::Refreshed(dest)
+        } else {
+            StepOutcome::Compiled(dest)
+        });
     }
 
     // Clean up the embedded temp dir (best-effort; OS will clean eventually).
@@ -354,16 +386,27 @@ fn discover_wasm_sources() -> Result<Vec<(String, std::path::PathBuf)>, CliError
 }
 
 #[cfg(feature = "postinstall")]
-/// Returns `true` if the `.sha256` sidecar exists and matches the current
-/// SHA-256 of `wasm_path` — the compile_step idempotence guard.
-fn is_up_to_date(wasm_path: &std::path::Path, sidecar: &std::path::Path) -> Result<bool, CliError> {
+/// The compile_step idempotence guard. Returns `true` only when the sidecar's
+/// COMPOSITE stamp is still current: line 1 matches the current source SHA-256
+/// AND line 2 matches `compat_hash` (the live engine-compat hash). Returns
+/// `false` (→ recompile) when the sidecar is absent, the source SHA differs, the
+/// engine-compat hash differs, OR the sidecar is a legacy single-line stamp with
+/// no compat line — the engine-aware fix for the old source-SHA-only heuristic
+/// that silently kept a stale `.cwasm` across an engine change.
+fn is_up_to_date(
+    wasm_path: &std::path::Path,
+    sidecar: &std::path::Path,
+    compat_hash: &str,
+) -> Result<bool, CliError> {
     if !sidecar.exists() {
         return Ok(false);
     }
-    let recorded =
+    let contents =
         std::fs::read_to_string(sidecar).map_err(|e| CliError::Internal(e.to_string()))?;
+    let (recorded_sha, recorded_compat) =
+        loom_host::surface_stamp::parse_surface_sidecar(&contents);
     let current = sha256_file(wasm_path)?;
-    Ok(current == recorded.trim())
+    Ok(recorded_sha == Some(current.as_str()) && recorded_compat == Some(compat_hash))
 }
 
 #[cfg(feature = "postinstall")]

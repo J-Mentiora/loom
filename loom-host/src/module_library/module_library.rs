@@ -10,9 +10,14 @@
 //   `get(name)` takes the read lock and returns `Arc<Component>` clone.
 //   The write lock is taken only by `StartupManager` recovery when a
 //   corrupted artifact must be re-compiled and reloaded.
-// - **Cwasm artifact path includes engine hash.** Built by
-//   `Compiler` from `WasmRuntime::precompile_compatibility_hash()` so a
-//   wasmtime upgrade naturally invalidates artifacts.
+// - **Composite install stamp verified at load.** The `<name>.sha256`
+//   sidecar carries the SOURCE wasm SHA (line 1) and the engine-compat
+//   hash (line 2, `WasmRuntime::precompile_compatibility_hash`). `load_one`
+//   rejects an artifact whose stored compat hash differs from the live
+//   engine's with a typed "engine-incompatible — run `loom postinstall`"
+//   error BEFORE `deserialize_file` (clearer + cheaper than the raw
+//   deserialize failure). The cwasm artifact PATH is a bare `<name>.cwasm`
+//   (the compat dimension lives in the sidecar, not the filename).
 // - **On-disk storage layout:**
 //     macOS: `~/Library/Application Support/loom/surfaces/<name>.cwasm`
 //     Linux: `$XDG_DATA_HOME/loom/surfaces/<name>.cwasm`
@@ -105,11 +110,22 @@ impl ModuleLibrary {
     /// supplying the expected SHA-256 directly instead of reading the
     /// compile-time constant.
     ///
-    /// Logic:
-    /// - If `expected_sha` is empty → skip integrity check (dev builds where
-    ///   the wasm artifact hasn't been compiled yet, per build.rs).
-    /// - Otherwise → read `path` stem + `.sha256` sidecar. If the sidecar
-    ///   exists and its content doesn't match `expected_sha` → `StoreIntegrityFailed`.
+    /// Sidecar convention (`<name>.sha256` alongside `<name>.cwasm`, written by
+    /// `loom postinstall`): line 1 = SOURCE wasm SHA-256, line 2 = engine-compat
+    /// hash. See [`crate::surface_stamp`].
+    ///
+    /// Logic (both checks fail with `StoreIntegrityFailed` BEFORE the costlier
+    /// `deserialize_file`, with a SPECIFIC remediation):
+    /// - **Source SHA:** if `expected_sha` is non-empty and the sidecar's line 1
+    ///   differs → mismatch (a wrong/locally-rebuilt source surface). An empty
+    ///   `expected_sha` (dev build without the compiled wasm) skips this check.
+    /// - **Engine compat:** if the sidecar carries a compat line (line 2) that
+    ///   differs from the live engine's `precompile_compatibility_hash` → the
+    ///   artifact was compiled by an incompatible engine (wasmtime/arch/opt-level
+    ///   bump). A LEGACY single-line sidecar (no compat line) skips this check
+    ///   and falls through to `deserialize_file` — the real engine-format
+    ///   backstop — so an old install of a still-compatible artifact is not
+    ///   falsely rejected.
     pub fn load_one_with_expected_sha(
         &self,
         name: &SurfaceName,
@@ -118,21 +134,43 @@ impl ModuleLibrary {
     ) -> Result<(), LoomError> {
         use loom_core::error::LoomErrorCode;
 
-        if !expected_sha.is_empty() {
-            // Sidecar convention: <name>.sha256 alongside the .cwasm artifact.
-            // Built by compile_step; named to match the cwasm artifact.
-            let sidecar = path.with_extension("sha256");
-            if sidecar.exists() {
-                let actual = std::fs::read_to_string(&sidecar)
-                    .map_err(|e| LoomError::new(LoomErrorCode::Io, e.to_string()))?;
-                if actual.trim() != expected_sha {
+        // Sidecar convention: <name>.sha256 alongside the .cwasm artifact.
+        // Built by compile_step; named to match the cwasm artifact.
+        let sidecar = path.with_extension("sha256");
+        if sidecar.exists() {
+            let contents = std::fs::read_to_string(&sidecar)
+                .map_err(|e| LoomError::new(LoomErrorCode::Io, e.to_string()))?;
+            let (sidecar_sha, sidecar_compat) =
+                crate::surface_stamp::parse_surface_sidecar(&contents);
+
+            // Source-SHA strand.
+            if !expected_sha.is_empty() {
+                if let Some(actual) = sidecar_sha {
+                    if actual != expected_sha {
+                        return Err(LoomError::new(
+                            LoomErrorCode::StoreIntegrityFailed,
+                            format!(
+                                "surface '{}' SHA-256 mismatch: sidecar has '{}', expected '{}' \
+                                 — stale surface artifact, run `loom postinstall`",
+                                name.0, actual, expected_sha,
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            // Engine-compat strand. Only enforced when the sidecar carries a
+            // compat line (legacy single-line sidecars fall through to the
+            // deserialize backstop below).
+            if let Some(stored_compat) = sidecar_compat {
+                let live_compat = self.runtime.precompile_compatibility_hash()?;
+                if stored_compat != live_compat {
                     return Err(LoomError::new(
                         LoomErrorCode::StoreIntegrityFailed,
                         format!(
-                            "surface '{}' SHA-256 mismatch: sidecar has '{}', expected '{}'",
-                            name.0,
-                            actual.trim(),
-                            expected_sha,
+                            "surface '{}' engine-incompatible: artifact compiled for '{}', \
+                             this runtime is '{}' — run `loom postinstall` to recompile",
+                            name.0, stored_compat, live_compat,
                         ),
                     ));
                 }

@@ -17,6 +17,17 @@ fn main() {
         .parent()
         .expect("loom-host manifest has no parent dir");
 
+    // Fold the RESOLVED wasmtime crate version into a build-time env so the
+    // engine-compat hash (`WasmRuntime::precompile_compatibility_hash`) catches a
+    // pure-wasmtime bump (source + opt-level unchanged) — a stale `.cwasm` that
+    // would otherwise only fail at the late `deserialize_file`. Read from the
+    // workspace `Cargo.lock` (the resolved, host-stable version string — NOT
+    // compiled bytes, so the hash stays identical across macOS/Linux). Fail-soft
+    // to "unknown" so a missing/odd lockfile never breaks the build.
+    let wasmtime_version = wasmtime_version_from_lock(&workspace_root.join("Cargo.lock"))
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=LOOM_WASMTIME_VERSION={wasmtime_version}");
+
     let wasm_path = std::env::var("LOOM_SURFACE_WEB_WASM_PATH")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| {
@@ -72,4 +83,30 @@ fn sha256_hex(bytes: &[u8]) -> String {
     // 0.10 returned `GenericArray<u8, _>` which did. Going through
     // `hex::encode` works for both representations.
     hex::encode(hasher.finalize())
+}
+
+/// Extract the resolved `wasmtime` version from a Cargo.lock. Returns the
+/// `version = "X"` value of the first `[[package]]` block whose
+/// `name = "wasmtime"`. `None` if the lockfile is unreadable or has no such
+/// package (caller falls back to "unknown" — never panics).
+fn wasmtime_version_from_lock(lock_path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(lock_path).ok()?;
+    let mut in_wasmtime = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line == "[[package]]" {
+            in_wasmtime = false;
+            continue;
+        }
+        if line == r#"name = "wasmtime""# {
+            in_wasmtime = true;
+            continue;
+        }
+        if in_wasmtime {
+            if let Some(rest) = line.strip_prefix("version = ") {
+                return Some(rest.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    None
 }

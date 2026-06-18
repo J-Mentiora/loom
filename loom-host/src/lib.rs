@@ -12,7 +12,7 @@ pub mod error {
     pub use loom_shared::error_format::{LoomError, LoomErrorCode};
 }
 
-// ---- Module declarations (13) ----
+// ---- Module declarations (14) ----
 pub mod compiler;
 pub mod error_mapper;
 pub mod host_function_registry;
@@ -23,6 +23,7 @@ pub mod network_offload;
 pub mod receipt_marshaller;
 pub mod session_executor;
 pub mod shim_manager;
+pub mod surface_stamp;
 pub mod trap_handler;
 pub mod wasm_host;
 pub mod wasm_runtime;
