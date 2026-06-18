@@ -14,6 +14,8 @@ mod common;
 
 #[test]
 fn bind_error_on_missing_parent_directory() {
+    // Serialize the process-global umask window in try_bind (see common::BIND_LOCK).
+    let _bind = common::bind_guard();
     let config = SocketServerConfig {
         socket_path: PathBuf::from("/nonexistent/deeply/nested/loom.sock"),
         token_override: None,
@@ -41,6 +43,8 @@ fn bind_error_on_missing_parent_directory() {
 
 #[test]
 fn bind_error_on_read_only_directory() {
+    // Serialize the process-global umask window in try_bind (see common::BIND_LOCK).
+    let _bind = common::bind_guard();
     // Create a temp dir and remove write permission.
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();

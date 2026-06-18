@@ -697,6 +697,14 @@ mod tests {
         assert_eq!(wire.as_wire(), "request_timeout");
     }
 
+    /// Serializes tests that mutate process-global env (`std::env::set_var`/`remove_var`).
+    /// Env is per-process, so under parallel test execution (cargo's default, or
+    /// `cargo test` without `--test-threads=1`) two such tests clobber each other. Every
+    /// env-mutating test in this module acquires this lock for the duration of its
+    /// mutate→read→restore window. (nextest runs each test in its own process and is
+    /// immune regardless; this keeps plain `cargo test` solid too.)
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     // ─── Vault label validation (D37) ──────────
     // Direct coverage for the canonical rule shared by vault_set_secret /
     // vault_delete_secret via validate_label_or_rpc_err.
@@ -1663,7 +1671,8 @@ mod tests {
     // GC) and the ShimManager entries (forever). Both lifecycle exits must
     // route through `spawn_shim_teardown`.
 
-    /// Scratch dir under the test TMPDIR (tests run --test-threads=1).
+    /// Scratch dir under the test TMPDIR, keyed by test name + pid so it stays
+    /// unique under parallel execution (and across concurrent test processes).
     fn test_scratch_dir(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("loom-daemon-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1768,15 +1777,29 @@ mod tests {
     /// typed `session_cap_exceeded` rejection with `{active, cap, hint}`
     /// context (never the opaque internal catch-all); closing one session
     /// frees a slot and create succeeds again.
+    // `max_concurrent_sessions()` caches `LOOM_MAX_CONCURRENT_SESSIONS` in a
+    // process-wide OnceLock. That makes this test irreducibly process-global:
+    // a sibling session test that initializes the cache first would defeat the
+    // pin, and this test's pin would cap every sibling. A per-test ENV_LOCK
+    // can't fix a *cache* (only a fresh process can), so this test runs ONLY
+    // under nextest's process-per-test isolation (`--run-ignored all` in CI).
+    // Default `cargo test` skips it (ignored) — keeping the threaded run green
+    // without this test polluting the shared cache.
+    #[ignore = "process-global env cache (LOOM_MAX_CONCURRENT_SESSIONS OnceLock) — run under nextest --run-ignored, not threaded cargo test"]
     #[tokio::test]
     async fn create_session_raw_cap_hit_is_typed_and_recovers_after_close() {
-        // Pin the cap low. `max_concurrent_sessions` caches in a OnceLock,
-        // so an earlier test in this process may already have latched the
-        // default — read back whichever value won and saturate THAT, which
-        // keeps the test deterministic either way (tests run
-        // --test-threads=1, so process-env mutation is safe).
+        // Pin the cap low. Under nextest this is a fresh process, so the OnceLock
+        // latches exactly 2; assert that loudly so an accidental un-isolated run
+        // (e.g. `cargo test -- --include-ignored` at default parallelism) FAILS
+        // visibly instead of silently saturating the wrong cap.
         std::env::set_var("LOOM_MAX_CONCURRENT_SESSIONS", "2");
         let cap = max_concurrent_sessions();
+        assert_eq!(
+            cap, 2,
+            "this test requires process isolation: the LOOM_MAX_CONCURRENT_SESSIONS \
+             OnceLock latched {cap}, not 2 — run it via `cargo nextest run --run-ignored all`, \
+             not threaded `cargo test --include-ignored`"
+        );
         let tmp = test_scratch_dir("cap-typed-error");
         let bridge = make_bridge(&tmp);
 
@@ -1895,12 +1918,15 @@ mod tests {
     // ─── parse_args: per-setting precedence (CLI > env > defaults) ──────────
     // --data-root supplies the DEFAULT <root>/daemon.log, but must never
     // clobber an explicitly-set LOOM_LOG_PATH (monitoring tails the env-set
-    // path). Tests run --test-threads=1, so process-env mutation is safe.
+    // path).
 
     /// Run `f` with the loom env vars parse_args reads pinned to a known
     /// state (LOOM_LOG_PATH optionally set, the rest cleared), restoring
-    /// the previous values afterwards.
+    /// the previous values afterwards. Holds `ENV_LOCK` across the whole
+    /// mutate→read→restore window so concurrent env-mutating tests (cargo's
+    /// default parallelism) can't observe each other's transient env state.
     fn with_parse_args_env<T>(log_path: Option<&str>, f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         const KEYS: &[&str] = &[
             "LOOM_SOCKET_PATH",
             "LOOM_DATA_ROOT",

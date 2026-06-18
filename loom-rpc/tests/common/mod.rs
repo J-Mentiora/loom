@@ -12,6 +12,23 @@ use loom_rpc::{
 use serde_json::json;
 use std::sync::Arc;
 
+/// Serializes `SocketServer::new` across concurrent tests in one binary.
+///
+/// `try_bind` (production) sets a restrictive process umask around `bind(2)` via an RAII
+/// `UmaskGuard`. The umask is PROCESS-GLOBAL, so two `SocketServer::new` calls racing in
+/// parallel can interleave their set/restore and leak the restrictive umask — at which point
+/// a concurrent `TempDir::new()` creates a directory with no owner-search bit and the next
+/// bind inside it fails `EACCES` (`BindError::PermissionDenied`). In production the daemon
+/// binds exactly one socket at startup (single-threaded), so this never bites there; it is a
+/// test-only artifact of binding many servers at once. Hold this lock across `SocketServer::new`.
+/// (nextest runs each test in its own process and is immune; this keeps plain `cargo test` solid.)
+pub static BIND_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the bind serialization lock; poison-tolerant (a panicking test must not wedge the rest).
+pub fn bind_guard() -> std::sync::MutexGuard<'static, ()> {
+    BIND_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Minimal no-op router for tests that don't need real dispatch.
 pub struct NoopRouter;
 

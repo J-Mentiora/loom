@@ -39,6 +39,9 @@ async fn write_frame(framed: &mut FramedClient, data: &[u8]) {
 
 #[tokio::test]
 async fn connection_closed_when_no_hello_sent() {
+    // Serialize the process-global umask window in try_bind across tempdir+bind; dropped
+    // before the first `.await` so the future stays Send (see common::BIND_LOCK).
+    let bind_lock = common::bind_guard();
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("loom.sock");
     let config = SocketServerConfig {
@@ -47,6 +50,7 @@ async fn connection_closed_when_no_hello_sent() {
     };
     let deps = Arc::new(common::test_handler_deps());
     let server = SocketServer::new(config, Arc::clone(&deps)).unwrap();
+    drop(bind_lock);
 
     let handle = tokio::runtime::Handle::current();
     let server_task =
@@ -79,6 +83,9 @@ async fn connection_closed_when_no_hello_sent() {
 
 #[tokio::test]
 async fn connection_closed_when_wrong_token_sent() {
+    // Serialize the process-global umask window in try_bind across tempdir+bind; dropped
+    // before the first `.await` so the future stays Send (see common::BIND_LOCK).
+    let bind_lock = common::bind_guard();
     let dir = tempdir().unwrap();
     let socket_path = dir.path().join("loom.sock");
     let config = SocketServerConfig {
@@ -87,6 +94,7 @@ async fn connection_closed_when_wrong_token_sent() {
     };
     let deps = Arc::new(common::test_handler_deps());
     let server = SocketServer::new(config, Arc::clone(&deps)).unwrap();
+    drop(bind_lock);
 
     let handle = tokio::runtime::Handle::current();
     let server_task =

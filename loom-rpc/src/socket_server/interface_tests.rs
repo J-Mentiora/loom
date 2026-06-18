@@ -10,6 +10,15 @@ use crate::connection_handler::connection_handler::ConnectionHandlerDeps;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Serializes tests that touch PROCESS-GLOBAL state via `try_bind`. Two such states:
+/// the process umask (`try_bind` flips it inside a guard around bind(2), and the
+/// permissive-umask test reads it back); and tracing's global per-callsite interest cache
+/// (a `try_bind` stale-reclaim WARN hit first by a no-subscriber test gets cached
+/// "disabled", suppressing it for the log-capture test). Both are per-process, so under
+/// parallel execution (cargo's default) these tests race. nextest runs each in its own
+/// process and is immune; this keeps plain `cargo test` solid.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn socket_mode_is_0600_for_ac_proto_01_1() {
     assert_eq!(SOCKET_MODE, 0o600);
@@ -75,6 +84,7 @@ fn default_socket_path_resolves_per_platform() {
 /// restores the caller's umask.
 #[test]
 fn try_bind_creates_socket_0600_before_chmod_under_permissive_umask() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     use std::os::unix::fs::PermissionsExt;
 
     let dir = tempfile::tempdir().unwrap();
@@ -132,6 +142,7 @@ fn non_macos_socket_path_never_falls_back_to_shared_tmp() {
 /// shutdown, so the daemon no longer leaks `loom.sock` on disk.
 #[test]
 fn socket_file_guard_unlinks_bound_socket_on_drop() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("loom.sock");
 
@@ -156,6 +167,7 @@ fn socket_file_guard_unlinks_bound_socket_on_drop() {
 /// the exact inode it bound.
 #[test]
 fn socket_file_guard_skips_unlink_when_path_rebound_by_successor() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("loom.sock");
 
@@ -185,6 +197,7 @@ fn socket_file_guard_skips_unlink_when_path_rebound_by_successor() {
 /// gets ECONNREFUSED, unlinks, and rebinds successfully.
 #[test]
 fn try_bind_reclaims_stale_socket_from_dead_daemon() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     use std::os::unix::net::UnixListener as StdUnixListener;
 
     let dir = tempfile::tempdir().unwrap();
@@ -208,6 +221,7 @@ fn try_bind_reclaims_stale_socket_from_dead_daemon() {
 /// previously-silent reclaim is now visible to operators.
 #[test]
 fn try_bind_logs_warn_when_reclaiming_stale_socket() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     use std::os::unix::net::UnixListener as StdUnixListener;
     use std::sync::{Arc, Mutex};
     use tracing::field::{Field, Visit};

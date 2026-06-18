@@ -315,6 +315,11 @@ struct VaultTestServer {
 }
 
 async fn start_vault_server() -> (VaultTestServer, tokio::task::JoinHandle<()>) {
+    // Hold the bind lock across the WHOLE synchronous setup — TempDir creation through the
+    // bind — so `try_bind`'s process-global umask can't corrupt a concurrent test's
+    // `TempDir::new()` (see common::BIND_LOCK). Released (`drop`) right after the bind, before
+    // the first `.await`, so this future stays Send for the multi-thread runtime.
+    let bind_lock = common::bind_guard();
     let dir = TempDir::new().unwrap();
     let socket_path = dir.path().join("vault_test.sock");
     let token = Token::generate();
@@ -355,6 +360,8 @@ async fn start_vault_server() -> (VaultTestServer, tokio::task::JoinHandle<()>) 
         token_override: Some(token.clone()),
     };
     let server = SocketServer::new(cfg, deps).expect("SocketServer::new must succeed");
+    // Bind done — release the umask lock before the first `.await` below (keeps the future Send).
+    drop(bind_lock);
     let handle = tokio::runtime::Handle::current();
     let join = tokio::spawn(async move {
         server.serve(handle, futures::future::pending::<()>()).await;

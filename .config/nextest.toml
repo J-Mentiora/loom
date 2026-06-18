@@ -1,0 +1,43 @@
+# cargo-nextest configuration. nextest runs each test in its OWN process, which is what
+# makes the loom suite parallel-safe: process isolation neutralizes process-global state
+# (env vars cached in a OnceLock, env::set_var races, umask, tracing callsite interest) that
+# the old `--test-threads=1` mandate papered over. See CONTRIBUTING.md "Running tests".
+
+[profile.default]
+# Surface every failure in one run instead of stopping at the first.
+fail-fast = false
+# The fake-chromium e2e round-trips can run long under load; don't flag them as "slow".
+slow-timeout = { period = "120s" }
+# A handful of subprocess/timing e2e tests can hiccup under transient contention. A retry
+# re-runs ONLY that test in its own process (was: re-run the whole 30-min CI job). A test
+# that passes on retry is reported as flaky, not failed.
+retries = 2
+
+# Tests whose assertions depend on having the WHOLE machine, isolated via threads-required so
+# nextest schedules them to run alone (the old `--test-threads=1` behavior, but only for the
+# tests that actually need it). Retries don't help these because the saturation is sustained.
+# Two kinds:
+#   - wall-clock perf/throughput budgets (e.g. "structural replay of 600 actions in <5s",
+#     "vault audit p95 <100ms");
+#   - the `screencast_*` fake-chromium e2e tests, which assert on how many frames the recording
+#     subprocess delivers in a fixed window — CPU-starve that subprocess and the count is wrong.
+[[profile.default.overrides]]
+filter = "binary(audit_timing) | binary(integration_perf_regression) | binary(multi_session_stall_repro) | test(test_replay_throughput_structural_exceeds_5x) | test(~screencast)"
+threads-required = "num-cpus"
+
+[profile.ci]
+fail-fast = false
+slow-timeout = { period = "120s" }
+retries = 2
+# The CI leg runs ignored tests too (`--run-ignored all`, the nextest equivalent of the old
+# `cargo test --include-ignored`). These two are unimplemented V8 seed-determinism stubs that
+# `panic!` on purpose (deferred to chromium subprocess wiring), so exclude them by name —
+# this replaces the retired `--skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42`.
+# `~` is a substring (contains) match, mirroring `cargo test --skip`'s substring semantics.
+default-filter = "not test(~one_hundred_runs_with_same_seed) and not test(~two_sessions_seed_42)"
+
+# Same wall-clock-perf isolation as the default profile (profile-specific overrides do not
+# inherit the default profile's, so it is repeated here).
+[[profile.ci.overrides]]
+filter = "binary(audit_timing) | binary(integration_perf_regression) | binary(multi_session_stall_repro) | test(test_replay_throughput_structural_exceeds_5x) | test(~screencast)"
+threads-required = "num-cpus"

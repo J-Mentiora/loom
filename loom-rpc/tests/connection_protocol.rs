@@ -77,25 +77,33 @@ async fn start_server() -> (TestServer, tokio::task::JoinHandle<()>) {
 async fn start_server_with_router(
     router: Arc<dyn RequestRouterApi>,
 ) -> (TestServer, tokio::task::JoinHandle<()>) {
-    let dir = TempDir::new().unwrap();
-    let socket_path = dir.path().join("test.sock");
+    // Hold the bind lock across the WHOLE synchronous setup — TempDir creation AND the bind.
+    // `try_bind`'s process-global umask would otherwise corrupt a concurrent test's
+    // `TempDir::new()` (see common::BIND_LOCK). The guard is a sync mutex dropped at the end
+    // of this block, BEFORE the first `.await` below, so the future stays Send.
+    let (dir, socket_path, token, server) = {
+        let _bind = common::bind_guard();
+        let dir = TempDir::new().unwrap();
+        let socket_path = dir.path().join("test.sock");
 
-    let token = Token::generate();
-    let token_arc = Arc::new(token.clone());
-    let provider: Arc<dyn loom_rpc::schema_provider::schema_provider::SchemaProviderApi> =
-        Arc::new(common::EmptySchemaProvider);
+        let token = Token::generate();
+        let token_arc = Arc::new(token.clone());
+        let provider: Arc<dyn loom_rpc::schema_provider::schema_provider::SchemaProviderApi> =
+            Arc::new(common::EmptySchemaProvider);
 
-    let deps = Arc::new(ConnectionHandlerDeps {
-        auth: AuthMiddleware::new(token_arc),
-        validator: SchemaValidator::new(provider),
-        router,
-        observability: RpcObservability::new(),
-    });
-    let cfg = SocketServerConfig {
-        socket_path: socket_path.clone(),
-        token_override: Some(token.clone()),
+        let deps = Arc::new(ConnectionHandlerDeps {
+            auth: AuthMiddleware::new(token_arc),
+            validator: SchemaValidator::new(provider),
+            router,
+            observability: RpcObservability::new(),
+        });
+        let cfg = SocketServerConfig {
+            socket_path: socket_path.clone(),
+            token_override: Some(token.clone()),
+        };
+        let server = SocketServer::new(cfg, deps).expect("SocketServer::new must succeed");
+        (dir, socket_path, token, server)
     };
-    let server = SocketServer::new(cfg, deps).expect("SocketServer::new must succeed");
     let handle = tokio::runtime::Handle::current();
     let join = tokio::spawn(async move {
         server.serve(handle, futures::future::pending::<()>()).await;

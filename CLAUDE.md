@@ -16,12 +16,27 @@ store. Rust workspace; SDKs in `python-sdk/` and `typescript-sdk/`.
 ## Build & test
 
 - Build: `cargo build --workspace`.
-- Test: `cargo test --workspace -- --test-threads=1` (single-thread is load-bearing —
-  tests share `/tmp` fixtures).
-- Per-crate: `cargo test -p loom-mcp` (etc.).
+- Test (canonical): `cargo nextest run --workspace`. nextest runs each test in its OWN
+  process; that isolation is what makes the suite parallel-safe, so it runs at full
+  parallelism (CI uses it — it was the slowest job). Install: `cargo install cargo-nextest`
+  (or `taiki-e/install-action@v2` in CI). Doctests: nextest can't run them, so run
+  `cargo test --doc --workspace` separately.
+- `cargo test --workspace` also works at default parallelism — **do NOT add `--test-threads=1`**
+  (the old mandate is retired; the fixture/env isolation below replaced it). A couple of
+  process-global tests (e.g. the `LOOM_MAX_CONCURRENT_SESSIONS` cap test) are `#[ignore]`d for
+  plain `cargo test` and run only under nextest (`--run-ignored all`) — full coverage lives in CI.
+- **Writing parallel-safe tests (load-bearing — keep new tests this way):**
+  - Per-test filesystem state goes in a `tempfile::tempdir()` (never a fixed `/tmp/...` path
+    that two tests write).
+  - Anything that mutates PROCESS-GLOBAL state — `std::env::set_var`/`remove_var`, `umask`,
+    a global tracing subscriber — must serialize on a module `static ENV_LOCK: Mutex<()>`
+    (grep the repo for `ENV_LOCK` / `BIND_LOCK` for the pattern). Value-uniqueness does NOT
+    make env races safe under threads.
+- Per-crate: `cargo nextest run -p loom-mcp` (or `cargo test -p loom-mcp`).
 - Real-browser e2e is `#[ignore]`d and uses a fake-chromium harness:
   `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium`, then
-  `cargo test -p loom-host --test integration_shim_e2e -- --ignored`.
+  `cargo nextest run -p loom-host --run-ignored all -E 'test(/integration_shim_e2e/)'`
+  (or `cargo test -p loom-host --test integration_shim_e2e -- --ignored`).
 - Lint/format gates: `cargo clippy --workspace --all-targets`, `cargo fmt --check`.
 
 ## Generated artifacts (CI gates these — regenerate when their source changes)

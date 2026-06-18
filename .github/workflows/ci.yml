@@ -6,10 +6,17 @@ name: CI
 # out why before raising the number.
 #
 #   job                       measured      budget   notes
-#   cargo test (ubuntu)       28-30 min     ≤ 35     serial --test-threads=1
-#                                                    dominates; cache only
-#                                                    helps the compile half
-#   cargo test (macos)        30-42 min     ≤ 45     main pushes + ci:macos
+#   cargo test (ubuntu)       35-43 min     ≤ 45     cargo-nextest, parallel
+#                                                    (process-per-test). Test
+#                                                    EXECUTION is now ~40s (was
+#                                                    a serial --test-threads=1
+#                                                    run); the job is dominated
+#                                                    by the RELEASE compile of
+#                                                    the test binaries (~35 min,
+#                                                    not cached by rust-cache) —
+#                                                    that is the remaining long
+#                                                    pole, a separate follow-up.
+#   cargo test (macos)        35-45 min     ≤ 50     main pushes + ci:macos
 #                                                    label only
 #   build (ubuntu/macos)       4-7 min      ≤ 10
 #   smoke (ubuntu)             4-9 min      ≤ 12     rebuild + daemon RPC
@@ -262,21 +269,31 @@ jobs:
         # `current_exe().parent()/"fake-chromium"`. `--release` puts it next
         # to the test binaries' parent dir.
         run: cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --release
-      - name: Run tests (with --include-ignored)
-        # `--test-threads=1` is load-bearing — see CONTRIBUTING.md.
-        # `--features 'loom-shims/fake-chromium-bin'`: required for the
-        # `loom-shims` test crates (e.g. `binary_smoke`) to compile —
-        # without it the test files are entirely cfg-gated out and run
-        # 0 tests.
-        # `--include-ignored`: runs the 23 fake-chromium ignored tests on
-        # stable cells (forms the e2e signal for).
-        # The two ignored tests in `loom-host/tests/v8_seed_determinism.rs`
-        # are Phase 6+ stubs that `panic!()` until real Chromium subprocess
-        # wiring lands. libtest's `--skip` matches function names (not the
-        # test-binary file name), so we filter on the unique substrings
-        # of each function name. Drop both filters when those tests are
-        # implemented.
-        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' -- --test-threads=1 --include-ignored --skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42
+      - name: Install cargo-nextest
+        # Pinned by major tag to match this repo's action-pinning convention
+        # (actions/checkout@v6, Swatinem/rust-cache@v2, …).
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+      - name: Run tests (nextest, parallel + --run-ignored)
+        # nextest runs each test in its OWN process. That process isolation is
+        # what makes the suite parallel-safe (it neutralizes process-global
+        # state — env vars, OnceLock caches, umask, tracing callsite interest),
+        # so we no longer need `--test-threads=1` (retired; see CONTRIBUTING.md).
+        # Running tests in parallel is the whole point: this was the slowest CI
+        # leg by far.
+        # `--features 'loom-shims/fake-chromium-bin'`: required for the loom-shims
+        # test crates (e.g. binary_smoke) to compile at all.
+        # `--run-ignored all`: the nextest equivalent of libtest's
+        # `--include-ignored` — runs the fake-chromium ignored tests (the e2e signal).
+        # `--profile ci`: its `default-filter` (in .config/nextest.toml) excludes the
+        # two `loom-host/tests/v8_seed_determinism.rs` Phase-6 stubs that `panic!()`,
+        # replacing the old `--skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42`.
+        run: cargo nextest run --workspace --release --features 'loom-shims/fake-chromium-bin' --profile ci --run-ignored all
+      - name: Run doctests (nextest does not run them)
+        # `cargo nextest run` cannot execute doctests; run them separately so
+        # the `///` doc examples stay covered.
+        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' --doc
 
   build:
     name: cargo build --release (${{ matrix.os }} / ${{ matrix.toolchain }})

@@ -468,9 +468,14 @@ mod tests {
         let udd = scratch_udd("live-verified-");
         let needle = format!("user-data-dir={}", udd.display());
         // Extra argv after `-c CMD` becomes $0/$1 of the shell — visible in its command
-        // line, so pid_cmdline_contains matches without launching a real chromium.
+        // line, so the cmdline verification matches without launching a real chromium.
+        // The body MUST be a compound command (`; :`): a *single* simple command lets the
+        // shell exec-optimize itself into `sleep`, which drops $0/$1 (and the needle) from
+        // the argv. With one command the test only passed by winning a race against that
+        // exec — flaky under parallel scheduling. The compound form keeps the shell process
+        // alive carrying the needle, so verification is timing-independent.
         let mut child = Command::new("sh")
-            .args(["-c", "sleep 30", "sh", &needle])
+            .args(["-c", "sleep 30; :", "sh", &needle])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .process_group(0)
@@ -478,6 +483,23 @@ mod tests {
             .expect("spawn sh sleep");
         let pid = child.id() as i32;
         std::fs::write(udd.join(proc::PIDFILE_NAME), pid.to_string()).unwrap();
+
+        // Wait until the shell's argv (carrying the needle) is observable to the verifier.
+        // Under parallel execution the child can still be starting up when kill_orphan reads
+        // the cmdline; polling (bounded) instead of assuming instant readiness removes the
+        // last spawn-timing race.
+        let mut ready = false;
+        for _ in 0..200 {
+            if proc::group_cmdline_contains(pid, &needle) {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            ready,
+            "child cmdline never became observable within 2s — environment too contended to test the reaper"
+        );
 
         let outcome = kill_orphan(udd.clone(), Duration::from_millis(1000)).await;
         assert_eq!(outcome, OrphanKill::Terminated);

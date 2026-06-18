@@ -30,14 +30,46 @@ doubt: `cargo clean -p loom-host -p loom-surface-web`.
 
 ## Testing
 
+The canonical runner is **cargo-nextest**, which runs each test in its own
+process. That process isolation is what makes the suite parallel-safe (it
+neutralizes process-global state — env vars, `OnceLock` caches, `umask`,
+tracing callsite interest), so the suite runs at full parallelism. This is
+what CI runs, and it was the slowest CI job before the switch.
+
 ```bash
-cargo test --workspace -- --test-threads=1
+# install once (or use taiki-e/install-action@v2 in CI)
+cargo install cargo-nextest --locked
+
+# run the suite (parallel, process-isolated)
+cargo nextest run --workspace
+
+# full CI parity: include the fake-chromium e2e (ignored) tests, minus the two
+# unimplemented v8 stubs (the `ci` profile's default-filter excludes them)
+cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --release
+cargo nextest run --workspace --release --features 'loom-shims/fake-chromium-bin' \
+  --profile ci --run-ignored all
+
+# nextest does NOT run doctests — run them separately
+cargo test --doc --workspace
 ```
 
-`--test-threads=1` is load-bearing: a handful of tests use static `/tmp/`
-paths and clobber each other under parallel execution. We accept this
-trade-off because the alternative (per-test tempdirs) bloats the test
-fixtures meaningfully and we'd rather keep the test bodies readable.
+Plain `cargo test --workspace` also passes at default parallelism — **do not
+add `--test-threads=1`** (the old mandate is retired). The one exception: a
+couple of irreducibly process-global tests (e.g. the
+`LOOM_MAX_CONCURRENT_SESSIONS` cap test, which caches the value in a global
+`OnceLock`) are `#[ignore]`d so plain `cargo test` skips them; they run under
+nextest's process isolation (`--run-ignored all`) in CI, so coverage is retained.
+
+**Writing new tests — keep them parallel-safe:**
+
+- Per-test filesystem state goes in a `tempfile::tempdir()`, never a fixed
+  `/tmp/...` path two tests could write.
+- Anything that mutates process-global state (`std::env::set_var`/`remove_var`,
+  `umask`, a global tracing subscriber) must serialize on a module-level
+  `static ENV_LOCK: Mutex<()>` held across the mutate→read→restore window. Grep
+  the repo for `ENV_LOCK` / `BIND_LOCK` for the established pattern. Under
+  nextest these are safe regardless (separate processes); the lock is what keeps
+  plain `cargo test` solid.
 
 ### Running Linux keychain integration tests (v0.9.4)
 
