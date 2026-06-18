@@ -125,6 +125,7 @@ impl McpDispatcher {
                 options: session_options.clone(),
             })),
             baseline_options: session_options,
+            recreated_count: std::sync::atomic::AtomicU64::new(0),
         })
     }
 
@@ -201,6 +202,13 @@ impl McpDispatcher {
         let mut guard = self.implicit_session.lock().await;
         if guard.session.as_ref().is_some_and(|s| s.id == stale_id) {
             guard.session = None;
+            // Count the gone-path recreation exactly once: only the call that
+            // actually drops the live session bumps the counter (a concurrent
+            // call that already healed leaves `session` mismatched and skips
+            // this arm). `loom.session.reset` / `close` use `.take()` and
+            // never reach here, so operator resets are excluded by design.
+            self.recreated_count
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -402,8 +410,13 @@ impl McpDispatcher {
             Tool {
                 name: TOOL_SESSION_INFO.into(),
                 description: "Describe the current implicit session: {session_id, seed, \
-                              clock_anchor, profile, budget, created_at_ms}. Creates the \
-                              session lazily if none exists yet."
+                              clock_anchor, profile, budget, created_at_ms, \
+                              recreated_count}. recreated_count is the number of times \
+                              this MCP process has transparently recreated the implicit \
+                              session via eviction self-heal (0 on a fresh process; \
+                              excludes loom.session.reset) — pair it with created_at_ms to \
+                              detect a recreation. Creates the session lazily if none \
+                              exists yet."
                     .into(),
                 input_schema: obj(serde_json::json!({}), serde_json::json!([])),
             },
@@ -666,6 +679,9 @@ impl McpDispatcher {
                 .unwrap_or(IMPLICIT_SESSION_PROFILE),
             "budget": session.options.budget,
             "created_at_ms": session.created_at_ms,
+            "recreated_count": self
+                .recreated_count
+                .load(std::sync::atomic::Ordering::Relaxed),
         }))
     }
 

@@ -866,7 +866,54 @@ async fn session_info_reports_id_options_and_created_at() {
             "profile": "standard",
             "budget": null,
             "created_at_ms": 1_700_000_000_001_u64,
+            "recreated_count": 0,
         })
+    );
+}
+
+#[tokio::test]
+async fn recreated_count_increments_on_eviction_self_heal() {
+    // A determinism-pinning client must be able to DETECT a transparent
+    // self-heal recreation rather than trust it: `recreated_count` is 0 on a
+    // fresh process (the lazy first create is not a recreation) and advances
+    // by one per eviction-triggered recreate. (Operator `loom.session.reset`
+    // is excluded — it never routes through `invalidate_implicit_session`.)
+    let dead = HashMap::from([(
+        "fixture-session-1".to_string(),
+        LoomErrorCode::SessionNotFound,
+    )]);
+    let (dispatcher, _caller) = primed_dispatcher(SessionOptions::default(), dead).await;
+
+    // (1) Fresh dispatcher: lazy create of fixture-session-1, count still 0.
+    let before = result_json(
+        &dispatcher
+            .tools_call(call(TOOL_SESSION_INFO, json!({})))
+            .await,
+    );
+    assert_eq!(before["recreated_count"], json!(0));
+    assert_eq!(before["session_id"], json!("fixture-session-1"));
+
+    // (2) The current session is dead → a web.* call triggers self-heal.
+    assert!(
+        !dispatcher.tools_call(navigate_params()).await.is_error,
+        "self-heal must make the navigate succeed"
+    );
+
+    // (3) session.info now reflects the recreation: count==1, a fresh id,
+    // and a newer created_at_ms.
+    let after = result_json(
+        &dispatcher
+            .tools_call(call(TOOL_SESSION_INFO, json!({})))
+            .await,
+    );
+    assert_eq!(after["recreated_count"], json!(1), "one eviction self-heal");
+    assert_ne!(
+        after["session_id"], before["session_id"],
+        "self-heal must swap in a fresh session id"
+    );
+    assert!(
+        after["created_at_ms"].as_u64().unwrap() > before["created_at_ms"].as_u64().unwrap(),
+        "the recreated session must report a newer created_at_ms"
     );
 }
 

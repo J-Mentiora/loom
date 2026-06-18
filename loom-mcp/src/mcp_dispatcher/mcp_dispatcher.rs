@@ -212,4 +212,14 @@ pub struct McpDispatcher {
     /// merges its explicit arguments over THIS baseline (never over a
     /// previous reset's overrides) so every reset is hermetic.
     pub(crate) baseline_options: SessionOptions,
+    /// Number of times the implicit session was transparently recreated by
+    /// eviction self-heal — incremented in `invalidate_implicit_session`,
+    /// the single gone-path drop site. Does NOT count the first lazy create
+    /// or an operator `loom.session.reset` (which never routes through that
+    /// drop site). Process-local observability surfaced by
+    /// `loom.session.info` so determinism-pinning clients can DETECT a
+    /// transparent recreation rather than trust it; it is never part of the
+    /// manifest/hash chain, and resets to 0 on MCP-process restart (it is
+    /// NOT a durable daemon-side session epoch).
+    pub(crate) recreated_count: std::sync::atomic::AtomicU64,
 }
