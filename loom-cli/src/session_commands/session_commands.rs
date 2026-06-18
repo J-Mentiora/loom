@@ -25,8 +25,8 @@ use crate::rpc_client::RpcClient;
 use crate::CliError;
 
 /// `--capture-policy` CLI value. Wire form is the
-/// lowercased variant ("minimal" / "default" / "full"). Clap rejects
-/// unknown values with `ErrorKind::InvalidValue` (exit 2).
+/// lowercased variant ("minimal" / "default" / "full" / "fingerprint").
+/// Clap rejects unknown values with `ErrorKind::InvalidValue` (exit 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[clap(rename_all = "lowercase")]
@@ -34,6 +34,10 @@ pub enum CapturePolicyArg {
     Minimal,
     Default,
     Full,
+    /// Default capture PLUS a content-bearing `dom_after_hash` on DOM-mutating
+    /// selector interactions (click/type/select/hover). Adds one post-action
+    /// `DOM.getDocument` round-trip per such interaction (opt-in cost).
+    Fingerprint,
 }
 
 impl CapturePolicyArg {
@@ -43,6 +47,7 @@ impl CapturePolicyArg {
             CapturePolicyArg::Minimal => "minimal",
             CapturePolicyArg::Default => "default",
             CapturePolicyArg::Full => "full",
+            CapturePolicyArg::Fingerprint => "fingerprint",
         }
     }
 }

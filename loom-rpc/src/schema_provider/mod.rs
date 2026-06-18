@@ -49,22 +49,14 @@ impl SchemaProvider {
                     reason: format!("embedded schema is invalid JSON: {e}"),
                 })?;
             let embedded_path = std::path::Path::new("<embedded>");
-            let req = doc["request"].clone();
-            let resp = doc["response"].clone();
-            let compiled_req = compile_or_fail("request", method, embedded_path, req.clone())?;
-            let compiled_resp = compile_or_fail("response", method, embedded_path, resp.clone())?;
-            request_schemas.insert(method.to_string(), Arc::new(compiled_req));
-            response_schemas.insert(method.to_string(), Arc::new(compiled_resp));
-            let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(method)
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect();
-            method_schemas.push(MethodSchema {
-                method: method.to_string(),
-                request: req,
-                response: resp,
-                aliases,
-            });
+            register_method_schema(
+                method,
+                &doc,
+                embedded_path,
+                &mut request_schemas,
+                &mut response_schemas,
+                &mut method_schemas,
+            )?;
         }
 
         // Disk overlay: extras compile fail-closed; builtin mismatches are
@@ -110,22 +102,14 @@ impl SchemaProvider {
                         reason: e.to_string(),
                     }
                 })?;
-                let req = doc["request"].clone();
-                let resp = doc["response"].clone();
-                let compiled_req = compile_or_fail("request", &method, &path, req.clone())?;
-                let compiled_resp = compile_or_fail("response", &method, &path, resp.clone())?;
-                request_schemas.insert(method.clone(), Arc::new(compiled_req));
-                response_schemas.insert(method.clone(), Arc::new(compiled_resp));
-                let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(&method)
-                    .into_iter()
-                    .map(|s| s.to_string())
-                    .collect();
-                method_schemas.push(MethodSchema {
-                    method,
-                    request: req,
-                    response: resp,
-                    aliases,
-                });
+                register_method_schema(
+                    &method,
+                    &doc,
+                    &path,
+                    &mut request_schemas,
+                    &mut response_schemas,
+                    &mut method_schemas,
+                )?;
             }
         }
 
@@ -210,29 +194,19 @@ impl SchemaProvider {
                     .to_string(),
             };
 
-            let req = doc["request"].clone();
-            let resp = doc["response"].clone();
-
             // Compile once, here, at load/SIGHUP-reload time. A schema
             // that does not compile fails the whole load (fail CLOSED):
             // a corrupted postinstall file must surface as a typed
             // startup error, not silently disable validation for its
             // method on the request hot path.
-            let compiled_req = compile_or_fail("request", &method, &path, req.clone())?;
-            let compiled_resp = compile_or_fail("response", &method, &path, resp.clone())?;
-
-            request_schemas.insert(method.clone(), Arc::new(compiled_req));
-            response_schemas.insert(method.clone(), Arc::new(compiled_resp));
-            let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(&method)
-                .into_iter()
-                .map(|s| s.to_string())
-                .collect();
-            method_schemas.push(MethodSchema {
-                method: method.clone(),
-                request: req,
-                response: resp,
-                aliases,
-            });
+            register_method_schema(
+                &method,
+                &doc,
+                &path,
+                &mut request_schemas,
+                &mut response_schemas,
+                &mut method_schemas,
+            )?;
         }
 
         method_schemas.sort_by(|a, b| a.method.cmp(&b.method));
@@ -282,6 +256,39 @@ fn compile_or_fail(
             reason: format!("{side} schema failed to compile: {reason}"),
         }
     })
+}
+
+/// Compile + register one method's request/response schemas into the
+/// in-progress registry maps — the shared tail of all three load paths
+/// (embedded baseline, disk overlay, `load_at_startup`). Each caller owns
+/// method derivation, hashing, and stale-mirror handling; this helper is
+/// deliberately divergence-free so it cannot perturb `hasher_input`
+/// (NFR-DET-01: the `source_wit_sha256` byte stream is caller-controlled).
+fn register_method_schema(
+    method: &str,
+    doc: &serde_json::Value,
+    path: &std::path::Path,
+    request_schemas: &mut HashMap<String, Arc<CompiledJsonSchema>>,
+    response_schemas: &mut HashMap<String, Arc<CompiledJsonSchema>>,
+    method_schemas: &mut Vec<MethodSchema>,
+) -> Result<(), SchemaLoadError> {
+    let req = doc["request"].clone();
+    let resp = doc["response"].clone();
+    let compiled_req = compile_or_fail("request", method, path, req.clone())?;
+    let compiled_resp = compile_or_fail("response", method, path, resp.clone())?;
+    request_schemas.insert(method.to_string(), Arc::new(compiled_req));
+    response_schemas.insert(method.to_string(), Arc::new(compiled_resp));
+    let aliases: Vec<String> = loom_shared::action_aliases::aliases_of(method)
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
+    method_schemas.push(MethodSchema {
+        method: method.to_string(),
+        request: req,
+        response: resp,
+        aliases,
+    });
+    Ok(())
 }
 
 impl SchemaProviderApi for SchemaProvider {

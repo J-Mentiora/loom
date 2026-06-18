@@ -162,7 +162,9 @@ fn session_id_flows_through_handle_into_outcome() {
 // rather than during a smoke run.
 
 use crate::receipt_marshaller::ReceiptBuilder;
-use crate::session_executor::session_executor::{build_action_val, decode_typed_receipt};
+use crate::session_executor::session_executor::{
+    apply_dom_after_hash_accept_gate, build_action_val, decode_typed_receipt,
+};
 use wasmtime::component::Val;
 
 #[test]
@@ -187,6 +189,93 @@ fn decode_typed_receipt_extracts_three_fields_from_ok_record() {
     assert_eq!(b.emitted_at_ms, 1_700_000_000_000);
     assert!(b.error_code.is_none());
     let _ = LoomErrorCode::Internal; // touch the import for the next tests
+}
+
+#[test]
+fn decode_typed_receipt_populates_interaction_dom_after_hash() {
+    // The fingerprint `dom-after-hash` WIT field decodes into the interaction-tier
+    // builder field — NOT a navigate field, so the receipt stays on the default
+    // canonical path (no mis-routing through assemble_navigate_canonical_bytes).
+    // The host-side accept-gate in `run` separately clears it for non-fingerprint
+    // sessions; decode itself is unconditional.
+    let h = "a".repeat(64);
+    let receipt = Val::Record(vec![
+        ("action-hash".to_string(), Val::String("ah".into())),
+        ("outcome-hash".to_string(), Val::String("oh".into())),
+        ("emitted-at-ms".to_string(), Val::U64(1)),
+        (
+            "dom-after-hash".to_string(),
+            Val::Option(Some(Box::new(Val::String(h.clone())))),
+        ),
+    ]);
+    let val = Val::Result(Ok(Some(Box::new(receipt))));
+    let mut b = ReceiptBuilder::default();
+    decode_typed_receipt(&val, &mut b).expect("ok decode");
+    assert_eq!(b.interaction_dom_after_hash.as_deref(), Some(h.as_str()));
+    assert!(
+        b.navigate_dom_snapshot_hash.is_none(),
+        "dom-after-hash must NOT populate the navigate dom field"
+    );
+}
+
+#[test]
+fn decode_typed_receipt_absent_dom_after_hash_leaves_field_none() {
+    let receipt = Val::Record(vec![
+        ("action-hash".to_string(), Val::String("ah".into())),
+        ("outcome-hash".to_string(), Val::String("oh".into())),
+        ("emitted-at-ms".to_string(), Val::U64(1)),
+    ]);
+    let val = Val::Result(Ok(Some(Box::new(receipt))));
+    let mut b = ReceiptBuilder::default();
+    decode_typed_receipt(&val, &mut b).expect("ok decode");
+    assert!(b.interaction_dom_after_hash.is_none());
+}
+
+#[test]
+fn accept_gate_clears_dom_after_hash_when_tier_off() {
+    // Determinism + trust (D10): even a well-formed value is dropped when the
+    // session did not opt into the fingerprint tier → non-fingerprint canonical
+    // bytes stay byte-identical to pre-feature.
+    let mut b = ReceiptBuilder {
+        interaction_dom_after_hash: Some("a".repeat(64)),
+        ..Default::default()
+    };
+    apply_dom_after_hash_accept_gate(&mut b, false);
+    assert!(b.interaction_dom_after_hash.is_none());
+}
+
+#[test]
+fn accept_gate_keeps_well_formed_hash_under_tier() {
+    let h = "a".repeat(64);
+    let mut b = ReceiptBuilder {
+        interaction_dom_after_hash: Some(h.clone()),
+        ..Default::default()
+    };
+    apply_dom_after_hash_accept_gate(&mut b, true);
+    assert_eq!(b.interaction_dom_after_hash.as_deref(), Some(h.as_str()));
+}
+
+#[test]
+fn accept_gate_rejects_malformed_hash_even_under_tier() {
+    // A misbehaving guest cannot stamp a non-sha256 value into the hash chain.
+    for bad in [
+        "not-a-hash",
+        "",
+        &"a".repeat(63),                      // too short
+        &"a".repeat(65),                      // too long
+        &"A".repeat(64),                      // uppercase (host emits lowercase)
+        &("g".to_string() + &"a".repeat(63)), // non-hex char
+    ] {
+        let mut b = ReceiptBuilder {
+            interaction_dom_after_hash: Some(bad.to_string()),
+            ..Default::default()
+        };
+        apply_dom_after_hash_accept_gate(&mut b, true);
+        assert!(
+            b.interaction_dom_after_hash.is_none(),
+            "malformed dom_after_hash {bad:?} must be rejected"
+        );
+    }
 }
 
 #[test]

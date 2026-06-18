@@ -82,6 +82,9 @@ fn navigate_verb(a: Action) -> Result<Receipt, HostError> {
         title: Some(result.title),
         status_code: Some(result.status_code),
         dom_snapshot_hash: Some(result.dom_snapshot_hash),
+        // navigate has its own dom_snapshot_hash; the interaction-tier fingerprint
+        // field is never set on a navigate receipt.
+        dom_after_hash: None,
         screenshot_after_hash: Some(result.screenshot_after_hash),
         console_count: Some(result.console_count),
         network_count: Some(result.network_count),
@@ -152,6 +155,7 @@ fn evaluate_verb(a: Action) -> Result<Receipt, HostError> {
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         console_count: None,
         network_count: None,
@@ -215,6 +219,7 @@ fn set_input_files_verb(a: Action) -> Result<Receipt, HostError> {
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         console_count: None,
         network_count: None,
@@ -275,6 +280,7 @@ fn wait_for_verb(a: Action) -> Result<Receipt, HostError> {
         title: None,
         status_code: None,
         dom_snapshot_hash: None,
+        dom_after_hash: None,
         screenshot_after_hash: None,
         console_count: None,
         network_count: None,
@@ -348,6 +354,29 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
         ));
     }
 
+    // capture-policy=fingerprint: post-action DOM fingerprint for DOM-mutating
+    // selector interactions. The HOST decides whether to capture (returns None
+    // unless the session opted into the fingerprint tier), so the extra
+    // DOM.getDocument round-trip is opt-in and the guest stays tier-agnostic.
+    // Best-effort (D6): a host error omits the field + warns; it never fails the
+    // verb. screenshot/snapshot have their own DOM/screenshot fields and are
+    // excluded; scroll/wait do not route a DOM-mutating selector here.
+    let dom_after_hash = if matches!(verb, "click" | "type_text" | "select" | "hover") {
+        match host::capture_dom_after_hash() {
+            Ok(h) => h,
+            Err(e) => {
+                host::log_emit(
+                    host::LogLevel::Warn,
+                    &format!("web.{verb}: dom_after_hash capture failed; omitting: {e:?}"),
+                    &[],
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let now = host::clock_now();
     let response_hash = hex_sha256(&response);
     // For `screenshot`, persist the decoded PNG host-side via the typed
@@ -391,6 +420,7 @@ fn dispatch(verb: &str, a: Action) -> Result<Receipt, HostError> {
         title: None,
         status_code: None,
         dom_snapshot_hash,
+        dom_after_hash,
         screenshot_after_hash,
         console_count: None,
         network_count: None,
