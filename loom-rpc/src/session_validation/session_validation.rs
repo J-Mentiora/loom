@@ -42,7 +42,7 @@ pub fn validate_create_session_params(p: &CreateSessionParams) -> Result<(), Jso
     if let Some(cp) = p.capture_policy.as_deref() {
         // server-side rejection for non-CLI callers (mcp,
         // sdk). CLI uses `clap::ValueEnum` and never sends bogus values.
-        const ALLOWED: &[&str] = &["minimal", "default", "full"];
+        const ALLOWED: &[&str] = &["minimal", "default", "full", "fingerprint"];
         if !ALLOWED.contains(&cp) {
             return Err(ErrorTranslator::from_invalid_capture_policy(cp, ALLOWED));
         }

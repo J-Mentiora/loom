@@ -134,6 +134,7 @@ fn make_session(h: &Harness, abort_signal: Arc<Notify>) -> SessionHandle {
         no_determinism: false,
         profile: "safe".into(),
         downloads_dir: None,
+        capture_dom_after: false,
         determinism: Arc::new(loom_core::determinism_harness::DeterminismHarness::new(
             42,
             h.core.manifest_writer(),
@@ -169,6 +170,7 @@ fn make_host_state(h: &Harness) -> crate::host_function_table::HostState {
         no_determinism: false,
         profile: "safe".into(),
         downloads_dir: None,
+        capture_dom_after: false,
     }
 }
 
@@ -276,4 +278,52 @@ async fn fuel_per_invocation_knob_traps_busy_loop_out_of_fuel() {
             }
         ),
     }
+}
+
+// === capture-policy=fingerprint host fn (capture_dom_after_hash) gating ===
+// The host fn is the opt-in cost gate + best-effort capture. These exercise the
+// branches that need NO live shim round-trip (tier-off / replay early-returns)
+// and the best-effort failure path (tier-on but the shim isn't registered →
+// `send` errors fast → Ok(None), never failing the interaction).
+use crate::wit_type_marshaller::loom_surface_bindings::loom::surface::host::Host as _LoomHost;
+
+#[tokio::test]
+async fn capture_dom_after_hash_returns_none_when_tier_off() {
+    let h = make_harness(WasmRuntimeConfig::default());
+    let mut hs = make_host_state(&h); // make_host_state sets capture_dom_after = false
+    assert!(!hs.capture_dom_after);
+    let out = hs.capture_dom_after_hash().await.expect("host fn ok");
+    assert!(
+        out.is_none(),
+        "non-fingerprint tier must not capture (no round-trip)"
+    );
+}
+
+#[tokio::test]
+async fn capture_dom_after_hash_returns_none_in_replay() {
+    let h = make_harness(WasmRuntimeConfig::default());
+    let mut hs = make_host_state(&h);
+    hs.capture_dom_after = true;
+    hs.mode = Mode::Replay;
+    let out = hs.capture_dom_after_hash().await.expect("host fn ok");
+    assert!(out.is_none(), "replay never drives the shim → None");
+}
+
+#[tokio::test]
+async fn capture_dom_after_hash_best_effort_none_on_send_failure() {
+    // Tier ON + Live, but no "chromium:<session>" shim registered → shim_manager
+    // .send errors immediately. Best-effort (D6): the host fn swallows it and
+    // returns Ok(None) rather than failing the interaction.
+    let h = make_harness(WasmRuntimeConfig::default());
+    let mut hs = make_host_state(&h);
+    hs.capture_dom_after = true;
+    assert_eq!(hs.mode, Mode::Live);
+    let out = hs
+        .capture_dom_after_hash()
+        .await
+        .expect("best-effort: capture failure must NOT error the interaction");
+    assert!(
+        out.is_none(),
+        "send failure → dom_after_hash omitted (best-effort)"
+    );
 }

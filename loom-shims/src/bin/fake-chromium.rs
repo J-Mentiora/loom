@@ -178,6 +178,13 @@ async fn handle_connection(
     // outstanding must not drain (no flush, no virtualTimeBudgetExpired)
     // until the fetch gate answers.
     let mut vt_budget_pending_on_pause = false;
+    // Interaction-fingerprint (capture-policy=fingerprint) e2e hook: a
+    // `__loom_test_dom_mutate__` Runtime.evaluate (modeling a DOM-mutating click)
+    // flips this per-connection flag so a SUBSEQUENT DOM.getDocument returns
+    // content-differing DOM. Lets the e2e prove `dom_after_hash` is content-bearing
+    // (differs from a no-op) yet deterministic across same-seed sessions (the
+    // ephemeral frameIds still vary per call and must be normalized away).
+    let mut dom_after_mutated = false;
 
     while let Some(msg) = read.next().await {
         let msg = match msg {
@@ -342,6 +349,30 @@ async fn handle_connection(
         } else {
             canned_response(&method, &params)
         };
+        // Interaction-fingerprint (capture-policy=fingerprint) e2e hook: a
+        // `__loom_test_dom_mutate__` Runtime.evaluate (modeling a DOM-mutating
+        // click) flips the per-connection flag; a SUBSEQUENT DOM.getDocument then
+        // returns content-differing DOM (a content text node, NOT an ephemeral id,
+        // so normalization keeps it → the dom_after_hash changes vs a no-op).
+        if let Some(expr) = &expression {
+            if expr.contains("__loom_test_dom_mutate__") {
+                dom_after_mutated = true;
+            }
+        }
+        if method == "DOM.getDocument" && dom_after_mutated {
+            if let Some(children) = result
+                .pointer_mut("/root/children")
+                .and_then(|c| c.as_array_mut())
+            {
+                children.push(json!({
+                    "nodeId": 9001,
+                    "backendNodeId": 9001,
+                    "nodeName": "#text",
+                    "nodeType": 3,
+                    "nodeValue": "loom-dom-after-mutated"
+                }));
+            }
+        }
         if method == "Page.navigate" {
             if let FakeUrlPattern::Error(ref code) = nav_url_pattern {
                 result["errorText"] = json!(code);

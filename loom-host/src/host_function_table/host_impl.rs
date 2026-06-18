@@ -394,6 +394,80 @@ impl Host for HostState {
         }
     }
 
+    // capture-policy=fingerprint: post-action DOM fingerprint for DOM-mutating
+    // selector interactions. Returns Some(sha256-hex of the normalized
+    // DOM.getDocument response) ONLY under the fingerprint tier; None otherwise.
+    // The shim already normalizes DOM.getDocument (frameId-stripped) via
+    // `normalize_dom_cbor`, so the hash is content-bearing + cross-run-stable —
+    // the SAME bytes `web.snapshot` hashes. Best-effort (D6): an encode/send error
+    // omits the field + warns; it never fails the interaction. Record-only:
+    // returns None in replay (the shim is not driven there).
+    fn capture_dom_after_hash(
+        &mut self,
+    ) -> impl ::core::future::Future<Output = Result<Option<String>, HostError>> + Send {
+        use crate::shim_manager::ShimId;
+        use loom_shared::shim_protocol::{ciborium_to_vec, CdpMessage};
+
+        // Gate up-front (off the async block): replay never drives the shim, and a
+        // non-fingerprint session must pay NO extra DOM.getDocument round-trip.
+        let gated_off = self.mode == Mode::Replay || !self.capture_dom_after;
+        let session_id = self.session_id.0.clone();
+        let shim_manager = self.shim_manager.clone();
+
+        async move {
+            if gated_off {
+                return Ok(None);
+            }
+            // Same effective shim id as `shim_call` ("chromium:<session>"); the
+            // interaction's own shim_call already lazy-registered + spawned it.
+            let effective_id = ShimId(format!("chromium:{session_id}"));
+            // depth:-1, pierce:true — identical envelope to navigate STEP 5 /
+            // web.snapshot, so the shim's cdp_send normalize seam fires.
+            let dom_msg = CdpMessage {
+                method: "DOM.getDocument".to_string(),
+                params: ciborium::value::Value::Map(vec![
+                    (
+                        ciborium::value::Value::Text("depth".to_string()),
+                        ciborium::value::Value::Integer((-1i64).into()),
+                    ),
+                    (
+                        ciborium::value::Value::Text("pierce".to_string()),
+                        ciborium::value::Value::Bool(true),
+                    ),
+                ]),
+            };
+            let bytes = match ciborium_to_vec(&dom_msg) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "capture_dom_after_hash: encode DOM.getDocument failed; omitting dom_after_hash"
+                    );
+                    return Ok(None);
+                }
+            };
+            // Best-effort: a send failure (shim wedged / timeout / not registered)
+            // omits the fingerprint rather than failing the interaction.
+            match shim_manager.send(effective_id, bytes).await {
+                Ok(resp) => {
+                    // Reuse the canonical sha256 helper (same one navigate/snapshot
+                    // hashing rides). `resp` is the shim-normalized DOM.getDocument
+                    // response (frameId stripped) → content-stable across runs.
+                    Ok(Some(loom_core::content_store::sha256_hex(&resp)))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        error = %e,
+                        "capture_dom_after_hash: DOM.getDocument send failed; omitting dom_after_hash (best-effort)"
+                    );
+                    Ok(None)
+                }
+            }
+        }
+    }
+
     // --- Logging and receipts (side-effect free from host perspective) ---
 
     fn log_emit(
