@@ -136,6 +136,7 @@ impl CoreFacadeBridge for RecordingCoreBridge {
         _: bool,
         _: bool,
         _: Option<u64>,
+        _: bool,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
         Err(LoomErrorCode::InternalError.into())
@@ -291,6 +292,7 @@ impl WasmHostBridge for NoopHostBridge {
             dom_snapshot_hash: None,
             dom_after_hash: None,
             screenshot_after_hash: None,
+            screencast_after_hash: None,
             console_count: None,
             network_count: None,
             console_lines: vec![],

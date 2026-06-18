@@ -20,6 +20,14 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 ciborium = { workspace = true }
 sha2 = "0.10"
+base64 = { workspace = true }
+# video-capture: JPEG screencast frames → .webm. ffmpeg-sidecar downloads a
+# per-platform ffmpeg at RUNTIME (cached, ~100MB) — so this adds NO C/ffmpeg
+# build dependency and keeps cross-compilation clean. Recording is best-effort;
+# if the download/encode fails the action errors but the session is unaffected.
+ffmpeg-sidecar = "2"
+# video-capture: temp dir for staging JPEG frames before the ffmpeg encode.
+tempfile = { workspace = true }
 async-trait = { workspace = true }
 dashmap = { workspace = true }
 parking_lot = { workspace = true }

@@ -16,6 +16,7 @@ impl CoreServiceAdapterApi for CoreServiceAdapter {
             params.no_blocklist,
             params.no_determinism,
             params.clock_anchor,
+            params.record_screencast,
         )?;
         Ok(SessionInfo {
             session_id,

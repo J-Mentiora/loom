@@ -522,6 +522,7 @@ impl CoreFacadeBridge for CoreBridge {
         no_blocklist: bool,
         no_determinism: bool,
         clock_anchor: Option<u64>,
+        record_screencast: bool,
     ) -> Result<(String, u64), LoomError> {
         use loom_core::budget_enforcer::BudgetLimits;
         use loom_core::error::LoomErrorCode;
@@ -612,6 +613,7 @@ impl CoreFacadeBridge for CoreBridge {
             capture_policy: capture_policy.map(|s| s.to_string()),
             no_blocklist,
             no_determinism,
+            record_screencast,
             profile: profile.to_string(),
         };
         if let Some(anchor) = clock_anchor {
@@ -1333,6 +1335,61 @@ impl WasmHostBridge for WasmBridge {
             return Ok(build_network_log_receipt(action_id, session_id_str, data));
         }
 
+        // video-capture: web.start_recording / web.stop_recording are
+        // host/shim-side streaming actions (CDP Page.startScreencast + an ffmpeg
+        // encode) — they do NOT run the WASM guest, navigate, or touch the
+        // replay hash chain. Intercept here, exactly like web.network_log. The
+        // recorded .webm bytes live in CAS OUTSIDE the chain (only the content
+        // hash is returned), so recording never affects replay-equality.
+        if let Action::WebStartRecording {
+            max_duration_ms,
+            max_bytes,
+            frame_rate,
+            ..
+        } = &action
+        {
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let action_id = session.allocate_action_id();
+            // Resolve optional caps to the safe defaults (plan D5).
+            let dur = max_duration_ms.unwrap_or(300_000);
+            let bytes = max_bytes.unwrap_or(268_435_456);
+            let fps = frame_rate.map(|f| f.clamp(1, 60) as u32).unwrap_or(10);
+            match handle.block_on(host.start_recording(&sid, dur, bytes, fps)) {
+                Ok(()) => return Ok(build_recording_started_receipt(action_id, session_id_str)),
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "recording_start_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+        if let Action::WebStopRecording { .. } = &action {
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let action_id = session.allocate_action_id();
+            match handle.block_on(host.stop_recording(&sid)) {
+                Ok(result) => {
+                    return Ok(build_stop_recording_receipt(
+                        action_id,
+                        session_id_str,
+                        result,
+                    ))
+                }
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "recording_stop_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+
         let session_handle = SessionHandle {
             session_id: session.id.clone(),
             handle: handle.clone(),
@@ -1467,6 +1524,31 @@ impl WasmHostBridge for WasmBridge {
                 LoomErrorCode::SurfaceTrap
             })?;
 
+        // video-capture: whole-session auto-start. After a successful navigate
+        // (a live page now exists) begin recording if the session opted in via
+        // `--record-screencast`. Idempotent — the recorder rejects an
+        // already-active start, so later navigates are harmless no-ops and the
+        // recording spans the whole session until `shutdown_session` finalizes
+        // it (→ recordings.jsonl sidecar). Best-effort: a start failure is
+        // logged at debug and never affects the navigate receipt.
+        if session.record_screencast
+            && matches!(&action, Action::WebNavigate { .. })
+            && matches!(&outcome, ActionOutcome::Success { .. })
+        {
+            if let Err(e) =
+                handle.block_on(
+                    self.host
+                        .start_recording(session_id_str, 300_000, 268_435_456, 10),
+                )
+            {
+                tracing::debug!(
+                    session_id = %session_id_str,
+                    error = %e,
+                    "whole-session screencast auto-start skipped (likely already recording)"
+                );
+            }
+        }
+
         match outcome {
             ActionOutcome::Success { builder, .. } => {
                 let mut receipt = build_navigate_wire_receipt(
@@ -1559,6 +1641,7 @@ fn profile_restricted_evaluate_receipt(
         dom_snapshot_hash: None,
         dom_after_hash: None,
         screenshot_after_hash: None,
+        screencast_after_hash: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -1617,6 +1700,7 @@ fn upload_error_receipt(action_id: u64, session_id: &str, kind: &str, message: S
         dom_snapshot_hash: None,
         dom_after_hash: None,
         screenshot_after_hash: None,
+        screencast_after_hash: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -1665,6 +1749,7 @@ fn build_network_log_receipt(
         dom_snapshot_hash: None,
         dom_after_hash: None,
         screenshot_after_hash: None,
+        screencast_after_hash: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -1672,6 +1757,132 @@ fn build_network_log_receipt(
         network_entries: data.network_entries,
         network_entries_blob_ref: data.network_entries_blob_ref,
         network_entries_truncated: Some(data.network_entries_truncated),
+        settle_until: None,
+        settle_outcome: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+        scroll_result: None,
+    }
+}
+
+/// video-capture: success receipt for `web.start_recording` (the recording
+/// began; the video hash arrives on the `web.stop_recording` receipt).
+fn build_recording_started_receipt(action_id: u64, session_id: &str) -> Receipt {
+    use loom_rpc::host_service_adapter::host_service_adapter::ReceiptStatus;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Receipt {
+        action_id,
+        session_id: session_id.to_string(),
+        status: ReceiptStatus::Success,
+        timing_ticks: 0,
+        side_effects: vec![],
+        error: None,
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: Some(now),
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        dom_after_hash: None,
+        screenshot_after_hash: None,
+        screencast_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: vec![],
+        network_summary: None,
+        network_entries: vec![],
+        network_entries_blob_ref: None,
+        network_entries_truncated: None,
+        settle_until: None,
+        settle_outcome: None,
+        return_value_json: None,
+        return_value_blob_ref: None,
+        set_cookies_result: None,
+        get_cookies_result: None,
+        clear_cookies_result: None,
+        delete_cookies_result: None,
+        scroll_result: None,
+    }
+}
+
+/// video-capture: `web.stop_recording` receipt. On success carries
+/// `screencast_after_hash` (the `.webm` CAS hash). A best-effort encode failure
+/// (encoder unavailable / zero frames) → an error receipt whose detail carries
+/// the `stop_reason` + `error` so the agent gets an actionable message; the
+/// session itself was never aborted.
+fn build_stop_recording_receipt(
+    action_id: u64,
+    session_id: &str,
+    result: loom_host::wasm_host::wasm_host::ScreencastResult,
+) -> Receipt {
+    match result.screencast_after_hash {
+        Some(hash) => {
+            let mut r = build_recording_started_receipt(action_id, session_id);
+            r.screencast_after_hash = Some(hash);
+            r
+        }
+        None => recording_error_receipt(
+            action_id,
+            session_id,
+            "recording_failed",
+            result
+                .error
+                .unwrap_or_else(|| format!("recording produced no video ({})", result.stop_reason)),
+        ),
+    }
+}
+
+/// video-capture: error receipt for a recording start/stop failure. Best-effort
+/// — recording never aborts the session, so this is an `Error`-status receipt,
+/// not a session kill.
+fn recording_error_receipt(
+    action_id: u64,
+    session_id: &str,
+    kind: &str,
+    message: String,
+) -> Receipt {
+    use loom_rpc::host_service_adapter::host_service_adapter::{ReceiptError, ReceiptStatus};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    Receipt {
+        action_id,
+        session_id: session_id.to_string(),
+        status: ReceiptStatus::Error,
+        timing_ticks: 0,
+        side_effects: vec![],
+        error: Some(ReceiptError {
+            kind: kind.to_string(),
+            detail: Some(serde_json::json!({ "message": message })),
+        }),
+        action_hash: None,
+        outcome_hash: None,
+        emitted_at_ms: Some(now),
+        url: None,
+        final_url: None,
+        title: None,
+        status_code: None,
+        dom_snapshot_hash: None,
+        dom_after_hash: None,
+        screenshot_after_hash: None,
+        screencast_after_hash: None,
+        console_count: None,
+        network_count: None,
+        console_lines: vec![],
+        network_summary: None,
+        network_entries: vec![],
+        network_entries_blob_ref: None,
+        network_entries_truncated: None,
         settle_until: None,
         settle_outcome: None,
         return_value_json: None,
@@ -1718,6 +1929,7 @@ fn cookie_validation_error_receipt(
         dom_snapshot_hash: None,
         dom_after_hash: None,
         screenshot_after_hash: None,
+        screencast_after_hash: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -1873,6 +2085,10 @@ fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         Action::WebSetInputFiles { .. } => return None,
         // Intercepted before build_chromium_args (host/shim read, no CDP).
         Action::WebNetworkLog { .. } => return None,
+        // video-capture: recording is a streaming flow (start → frames → stop),
+        // not a single CDP command, so it has no direct-CDP args envelope here —
+        // handled by the surface `start-recording`/`stop-recording` verbs.
+        Action::WebStartRecording { .. } | Action::WebStopRecording { .. } => return None,
 
         Action::WebType { selector, text, .. } => {
             // Direct `el.value = text` bypasses React/Vue/Angular value
@@ -2276,6 +2492,7 @@ fn build_navigate_wire_receipt(
         // it on the builder otherwise). Surfaces the manifest field on the wire.
         dom_after_hash: builder.interaction_dom_after_hash.clone(),
         screenshot_after_hash: builder.navigate_screenshot_after_hash.clone(),
+        screencast_after_hash: None,
         console_count: builder.navigate_console_count,
         network_count: builder.navigate_network_count,
         console_lines,
@@ -2375,6 +2592,9 @@ fn action_session_id(action: &Action) -> &str {
         | Action::WebScroll { session_id, .. }
         | Action::WebWait { session_id, .. }
         | Action::WebSnapshot { session_id } => session_id,
+        Action::WebStartRecording { session_id, .. } | Action::WebStopRecording { session_id } => {
+            session_id
+        }
         Action::WebWaitFor { session_id, .. } => session_id,
         Action::WebSetInputFiles { session_id, .. } => session_id,
         // v0.9.6 web-cookie-injection.
@@ -2411,6 +2631,8 @@ fn action_verb(action: &Action) -> &str {
         Action::WebWait { .. } => "wait",
         Action::WebWaitFor { .. } => "wait-for",
         Action::WebSnapshot { .. } => "snapshot",
+        Action::WebStartRecording { .. } => "start-recording",
+        Action::WebStopRecording { .. } => "stop-recording",
         Action::WebSetInputFiles { .. } => "set-input-files",
         // v0.9.6 web-cookie-injection.
         Action::WebSetCookies { .. } => "set-cookies",
@@ -4147,7 +4369,9 @@ mod tests {
 
     fn create_session_via(bridge: &CoreBridge) -> String {
         let (sid, _) = bridge
-            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .create_session_raw(
+                "safe", "isolated", None, None, None, false, false, None, false,
+            )
             .expect("create_session_raw");
         sid
     }
@@ -4210,7 +4434,9 @@ mod tests {
         }
 
         let err = bridge
-            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .create_session_raw(
+                "safe", "isolated", None, None, None, false, false, None, false,
+            )
             .expect_err("create beyond the cap must be rejected");
         assert_eq!(
             err.code,
@@ -4237,7 +4463,9 @@ mod tests {
             .close_session_raw(&sids[0])
             .expect("close must succeed");
         let _ = bridge
-            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .create_session_raw(
+                "safe", "isolated", None, None, None, false, false, None, false,
+            )
             .expect("create after freeing a slot must succeed");
 
         let _ = std::fs::remove_dir_all(&tmp);

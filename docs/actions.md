@@ -23,6 +23,8 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.set_cookies`](#web-set_cookies) — Inject cookies into the browser's network stack via CDP `Network.setCookies`.
 - [`web.set_input_files`](#web-set_input_files) — Upload local files into an <input type=file> by CSS selector.
 - [`web.snapshot`](#web-snapshot) — Capture a full DOM snapshot of the active page.
+- [`web.start_recording`](#web-start_recording) — Start recording a video (screencast) of the page.
+- [`web.stop_recording`](#web-stop_recording) — Stop the active video recording and return its content hash.
 - [`web.type`](#web-type) — Focus an input and type text into it.
 - [`web.wait`](#web-wait) — Wait until a CSS selector resolves (or until timeout).
 - [`web.wait_for`](#web-wait_for) — Wait until the current page reaches a readiness state (settle-capture).
@@ -394,6 +396,59 @@ Snapshots include the deterministic profile's effects — frozen time, seeded ra
 
 ```sh
 loom action web.snapshot --session <SESSION>
+```
+
+---
+
+### <a id="web-start_recording"></a>`web.start_recording`
+
+**Start recording a video (screencast) of the page.**
+
+Starts a CDP `Page.startScreencast` recording on the session's active page target. Frames are collected and acked until `web.stop_recording` is called (or a cap is hit), then encoded to a `.webm` (VP8/VP9) via a bundled ffmpeg. At most one recording is active per session; calling this while a recording is already running fails with `kind: "js_throw"`.
+
+Resource caps (all optional, safe defaults): `max_duration_ms` (default 300000), `max_bytes` (default 268435456), `frame_rate` (default 10). The recording auto-stops when any cap is reached. Frames spill to a temp file so a long recording does not hold the whole video in memory.
+
+PRIVACY: a recording captures whatever is on screen, INCLUDING any passwords, PII, or third-party content rendered during the window — same posture as `web.screenshot`. The `.webm` is stored in the local content-addressed store; its bytes are excluded from the replay hash chain (only the content hash is recorded), so recording never affects replay-equality.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `max_duration_ms` | `u64` | optional | Optional auto-stop after this many ms (default 300000 = 5 min). |
+| `max_bytes` | `u64` | optional | Optional auto-stop once the buffered frames exceed this many bytes (default 268435456 = 256 MiB). |
+| `frame_rate` | `u64` | optional | Optional ENCODE/playback frames-per-second for the output .webm (default 10, clamped 1..=60). This is the muxed output rate; the browser still emits a frame per visual change (it does not decimate capture). |
+
+**Returns:** Receipt confirming the recording started (`code: web_action_completed`). The video hash is returned by `web.stop_recording`.
+
+**Example**
+
+```sh
+loom action web.start_recording --session <SESSION>
+```
+
+---
+
+### <a id="web-stop_recording"></a>`web.stop_recording`
+
+**Stop the active video recording and return its content hash.**
+
+Stops the recording started by `web.start_recording`, encodes the collected frames to a `.webm`, stores it in the content-addressed store, and returns the content hash. Fails with `kind: "js_throw"` if no recording is active, or if the recording captured zero frames.
+
+If the bundled ffmpeg encoder is unavailable (download failed / offline / the `video` build feature is off) the action returns an error receipt with an actionable message, but the session itself is unaffected — recording is best-effort and never aborts the session.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+
+**Returns:** Receipt with `screencast_after_hash: <sha256>` pointing to the `.webm` in CAS — fetch via `loom blob get <hash>`. A best-effort encode failure (ffmpeg unavailable / zero frames) returns an error receipt (`kind: "recording_failed"`) without aborting the session.
+
+**Example**
+
+```sh
+loom action web.stop_recording --session <SESSION>
 ```
 
 ---

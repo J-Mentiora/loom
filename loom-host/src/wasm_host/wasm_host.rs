@@ -37,7 +37,7 @@ use crate::trap_handler::TrapHandler;
 use crate::wasm_runtime::{WasmRuntime, WasmRuntimeConfig};
 use crate::wit_type_marshaller::Mode;
 use loom_core::core_api_facade::CoreApiFacade;
-use loom_core::error::LoomError;
+use loom_core::error::{LoomError, LoomErrorCode};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -208,7 +208,50 @@ impl WasmHost {
     /// each child + waits with SIGTERM/SIGKILL fallback. Idempotent —
     /// safe to call after the session has already been closed.
     pub async fn shutdown_session(&self, session_id: &str) {
+        // video-capture: finalize any still-active recording (a whole-session
+        // recording, or a bracketed one the agent left open) BEFORE tearing down
+        // the shim — the encode needs the live subprocess. Best-effort: any
+        // failure is logged and never blocks shutdown. When a `.webm` is
+        // produced, its hash + metadata are appended to the session's
+        // `recordings.jsonl` sidecar so it's retrievable after close.
+        if let Ok(result) = self.stop_recording(session_id).await {
+            if let Some(hash) = &result.screencast_after_hash {
+                self.write_recording_sidecar(session_id, hash, &result);
+            }
+        }
         self.shim.shutdown_session(session_id).await;
+    }
+
+    /// video-capture: append a finalized recording's hash + metadata to the
+    /// per-session `recordings.jsonl` sidecar (under the sessions root, NOT in
+    /// the manifest WAL — the non-deterministic `.webm` hash must never enter the
+    /// hash chain). Best-effort; a write failure is logged, never propagated.
+    fn write_recording_sidecar(&self, session_id: &str, hash: &str, result: &ScreencastResult) {
+        use std::io::Write as _;
+        let dir = self.core.sessions_root.join(session_id);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(session_id = %session_id, error = %e, "recordings sidecar: mkdir failed");
+            return;
+        }
+        let path = dir.join("recordings.jsonl");
+        let line = serde_json::json!({
+            "screencast_after_hash": hash,
+            "frame_count": result.frame_count,
+            "duration_ms": result.duration_ms,
+            "stop_reason": result.stop_reason,
+        });
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                let _ = writeln!(f, "{line}");
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "recordings sidecar: open failed")
+            }
+        }
     }
 
     /// **SLA:** receipt-overhead p95 ≤ 50 ms above underlying CDP/shim
@@ -359,6 +402,99 @@ impl WasmHost {
             network_entries_truncated,
         })
     }
+
+    /// video-capture: start a `web.start_recording` screencast on the session's
+    /// active page target. Errors if no page exists yet (navigate first). Does
+    /// NOT spawn Chromium — a recording only makes sense once a page is live.
+    pub async fn start_recording(
+        &self,
+        session_id: &str,
+        max_duration_ms: u64,
+        max_bytes: u64,
+        frame_rate: u32,
+    ) -> Result<(), LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.start_recording",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_start_recording(
+                effective_id,
+                shim_session_id,
+                0,
+                max_duration_ms,
+                max_bytes,
+                frame_rate,
+            )
+            .await
+    }
+
+    /// video-capture: stop the active recording, write the encoded `.webm` to
+    /// the content store, and return the content hash + metadata. The `.webm`
+    /// bytes are non-deterministic and live OUTSIDE the manifest hash chain
+    /// (only this hash is recorded), so recording never affects replay-equality.
+    pub async fn stop_recording(&self, session_id: &str) -> Result<ScreencastResult, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active recording (no page target)",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        let outcome = self
+            .shim
+            .send_stop_recording(effective_id, shim_session_id, 0)
+            .await?;
+
+        // Write the encoded webm to CAS (host-side, like screenshot bytes). On a
+        // best-effort failure (encoder unavailable / zero frames) webm_bytes is
+        // empty → no hash, and `outcome.error` carries the reason for the receipt.
+        let mut error = outcome.error;
+        let screencast_after_hash = if outcome.webm_bytes.is_empty() {
+            None
+        } else {
+            match self.core.content_store.put(&outcome.webm_bytes) {
+                Ok(cref) => Some(cref.sha256),
+                Err(e) => {
+                    // The encode SUCCEEDED but the store failed — record an
+                    // accurate error so the receipt doesn't claim "no video"
+                    // (ship-council: misleading recording_failed receipt).
+                    tracing::warn!(session_id = %session_id, error = %e, "screencast CAS put failed");
+                    error = Some(format!(
+                        "encoded {} frames but CAS store failed: {e}",
+                        outcome.frame_count
+                    ));
+                    None
+                }
+            }
+        };
+        Ok(ScreencastResult {
+            screencast_after_hash,
+            frame_count: outcome.frame_count,
+            duration_ms: outcome.duration_ms,
+            stop_reason: outcome.stop_reason,
+            error,
+        })
+    }
+}
+
+/// Result of [`WasmHost::stop_recording`]. `screencast_after_hash` is the CAS
+/// SHA-256 of the encoded `.webm` (None on a best-effort encode failure, in
+/// which case `error` is set).
+#[derive(Debug, Default, Clone)]
+pub struct ScreencastResult {
+    pub screencast_after_hash: Option<String>,
+    pub frame_count: u64,
+    pub duration_ms: u64,
+    pub stop_reason: String,
+    pub error: Option<String>,
 }
 
 /// Result of [`WasmHost::network_log`]. Mirrors the wire `Receipt`'s

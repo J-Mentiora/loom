@@ -196,6 +196,8 @@ impl WasmHostBridge for CannedHostBridge {
             | Action::WebScroll { session_id, .. }
             | Action::WebWait { session_id, .. }
             | Action::WebSnapshot { session_id } => session_id.clone(),
+            Action::WebStartRecording { session_id, .. }
+            | Action::WebStopRecording { session_id } => session_id.clone(),
             Action::WebWaitFor { session_id, .. } => session_id.clone(),
             Action::WebSetInputFiles { session_id, .. } => session_id.clone(),
             // v0.9.6 cookie verbs.
@@ -222,6 +224,7 @@ impl WasmHostBridge for CannedHostBridge {
             dom_snapshot_hash: None,
             dom_after_hash: None,
             screenshot_after_hash: None,
+            screencast_after_hash: None,
             console_count: None,
             network_count: None,
             console_lines: vec![],
@@ -326,6 +329,7 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
         _: bool,
         _: bool,
         _: Option<u64>,
+        _: bool,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError.into())

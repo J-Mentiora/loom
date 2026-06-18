@@ -38,9 +38,40 @@ fn read_wal_entries(wal_path: &std::path::Path) -> Result<Vec<ManifestEntry>, Lo
     Ok(entries)
 }
 
-/// Check if a receipt field name refers to a screenshot artifact.
-fn is_screenshot_field(field: &str) -> bool {
-    field.contains("screenshot") || field == "screen_hash"
+/// Map a receipt field name to the artifact blob-kind it carries, if any.
+///
+/// Artifact blobs (screenshots, screencast video) hold non-deterministic bytes
+/// — encoder/timing variation makes them differ run-to-run — so they are
+/// EXCLUDED from the replay hash chain and from field-diff reporting; only their
+/// content hash is recorded. This replaces the old `field.contains("screenshot")
+/// || field == "screen_hash"` check with an explicit field→kind map so new
+/// artifact kinds (e.g. `screencast_*`) are excluded deliberately rather than by
+/// a brittle substring, and the `screen_hash` legacy name is data, not a
+/// hard-coded special case. Keep this in sync with `EXCLUDED_BLOB_KINDS`.
+fn replay_blob_kind(field: &str) -> Option<&'static str> {
+    // EXACT field names (no substring matching) — a `contains()` check is exactly
+    // the brittleness this map set out to kill (a future `screen_metrics` /
+    // `screencast_config` field must NOT be silently excluded from the chain).
+    match field {
+        // Screenshot artifact byte-carriers: legacy `screen_hash`/`screenshot_hash`
+        // + the current `screenshot_after_*` / `screenshot_before_*` family.
+        "screen_hash"
+        | "screenshot_hash"
+        | "screenshot_after_hash"
+        | "screenshot_after_blob_ref"
+        | "screenshot_before_blob_ref" => Some("screenshot"),
+        "screencast_after_hash" | "screencast_after_blob_ref" => Some("screencast"),
+        _ => None,
+    }
+}
+
+/// Blob kinds excluded from the replay hash chain / field diffs (NFR-DET-01).
+const EXCLUDED_BLOB_KINDS: &[&str] = &["screenshot", "screencast"];
+
+/// True when a receipt field carries non-deterministic artifact bytes that are
+/// excluded from the replay chain (see [`replay_blob_kind`]).
+fn is_excluded_artifact_field(field: &str) -> bool {
+    replay_blob_kind(field).is_some_and(|k| EXCLUDED_BLOB_KINDS.contains(&k))
 }
 
 /// Replay refusal 1b — non-clean source. Returns the typed `SessionAborted`
@@ -176,6 +207,7 @@ pub fn collect_content_refs(receipt_bytes: &[u8]) -> Vec<(String, String)> {
     push_named("return_value_blob_ref", "return_value");
     push_named("screenshot_after_blob_ref", "screenshot");
     push_named("screenshot_before_blob_ref", "screenshot");
+    push_named("screencast_after_blob_ref", "screencast");
 
     // Per-request response-body blobs on navigate-tier receipts.
     if let Some(events) = val.get("network_events").and_then(|e| e.as_array()) {
@@ -229,7 +261,7 @@ fn compare_receipt_fields(
     for (key, a_val) in a_obj {
         let b_val = b_obj.get(key).unwrap_or(&serde_json::Value::Null);
         if a_val != b_val {
-            if is_screenshot_field(key) {
+            if is_excluded_artifact_field(key) {
                 screenshot_diffs.push(action_id);
             } else {
                 field_diffs.push(FieldDiff {
@@ -244,7 +276,7 @@ fn compare_receipt_fields(
     // Check fields in B not in A
     for (key, b_val) in b_obj {
         if !a_obj.contains_key(key) {
-            if is_screenshot_field(key) {
+            if is_excluded_artifact_field(key) {
                 screenshot_diffs.push(action_id);
             } else {
                 field_diffs.push(FieldDiff {
@@ -327,7 +359,7 @@ impl LocalReplayEngine {
                 } = entry
                 {
                     for (sha256, kind) in collect_content_refs(receipt_canonical_bytes) {
-                        if kind != "screenshot" {
+                        if !EXCLUDED_BLOB_KINDS.contains(&kind.as_str()) {
                             let cr = ContentRef {
                                 sha256: sha256.clone(),
                                 size_bytes: 0,
@@ -403,7 +435,7 @@ impl ReplayEngine for LocalReplayEngine {
             } = entry
             {
                 for (sha256, kind) in collect_content_refs(receipt_canonical_bytes) {
-                    if kind != "screenshot" {
+                    if !EXCLUDED_BLOB_KINDS.contains(&kind.as_str()) {
                         let cr = ContentRef {
                             sha256: sha256.clone(),
                             size_bytes: 0,
@@ -506,6 +538,7 @@ impl ReplayEngine for LocalReplayEngine {
             // The replay session itself is deterministic by construction (we
             // refused non-deterministic sources above).
             no_determinism: false,
+            record_screencast: false,
             // Replay sessions inherit the source's profile via the manifest;
             // the gate is a daemon-layer concern that doesn't fire on replay
             // (no live shim). Default-safe is fine for the in-memory copy.
@@ -656,5 +689,50 @@ impl ReplayEngine for LocalReplayEngine {
             field_diffs,
             screenshot_diffs,
         })
+    }
+}
+
+#[cfg(test)]
+mod blob_kind_tests {
+    use super::{is_excluded_artifact_field, replay_blob_kind};
+
+    #[test]
+    fn screencast_and_screenshot_fields_are_excluded() {
+        for f in [
+            "screenshot_after_hash",
+            "screenshot_after_blob_ref",
+            "screenshot_before_blob_ref",
+            "screen_hash",
+            "screencast_after_hash",
+            "screencast_after_blob_ref",
+        ] {
+            assert!(is_excluded_artifact_field(f), "{f} must be excluded");
+        }
+        assert_eq!(
+            replay_blob_kind("screencast_after_hash"),
+            Some("screencast")
+        );
+        assert_eq!(
+            replay_blob_kind("screenshot_after_hash"),
+            Some("screenshot")
+        );
+    }
+
+    #[test]
+    fn unrelated_screen_prefixed_fields_are_not_excluded() {
+        // The exact-match map (R7) must NOT catch a future field that merely
+        // shares the `screen*` prefix — that was the substring brittleness.
+        for f in [
+            "screen_metrics",
+            "screencast_config",
+            "screenshot_count",
+            "dom_after_blob_ref",
+            "url",
+        ] {
+            assert!(
+                !is_excluded_artifact_field(f),
+                "{f} must NOT be excluded (no substring matching)"
+            );
+        }
     }
 }

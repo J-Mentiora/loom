@@ -523,6 +523,8 @@ fn set_request_id(req: &mut ShimRequest, id: u64) {
         | ShimRequest::WaitFor { request_id, .. }
         | ShimRequest::PageClose { request_id, .. }
         | ShimRequest::GetNetworkLog { request_id, .. }
+        | ShimRequest::StartRecording { request_id, .. }
+        | ShimRequest::StopRecording { request_id, .. }
         | ShimRequest::Shutdown { request_id }
         | ShimRequest::Health { request_id } => *request_id = id,
     }

@@ -274,6 +274,10 @@ class Receipt:
     status_code: int | None = None
     dom_snapshot_hash: str | None = None
     screenshot_after_hash: str | None = None
+    # video-capture: SHA-256 of the recorded .webm in CAS, set on a
+    # stop_recording() receipt. Fetch the bytes via `loom blob get <hash>` or
+    # `Session.save_recording(path)`.
+    screencast_after_hash: str | None = None
     # ---- evaluate tier fields ----
     # JS expression result, canonical-JSON encoded. None means "not an
     # evaluate action" or "result offloaded to the content store" (in which
@@ -303,6 +307,7 @@ class Receipt:
             status_code=d.get("status_code"),
             dom_snapshot_hash=d.get("dom_snapshot_hash"),
             screenshot_after_hash=d.get("screenshot_after_hash"),
+            screencast_after_hash=d.get("screencast_after_hash"),
             return_value_json=d.get("return_value_json"),
             return_value_blob_ref=d.get("return_value_blob_ref"),
         )

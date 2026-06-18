@@ -20,6 +20,7 @@ fn params(
         budget,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         clock_anchor: None,
     }
 }
@@ -37,6 +38,7 @@ fn params_with_capture_policy(
         budget: None,
         no_blocklist: false,
         no_determinism: false,
+        record_screencast: false,
         clock_anchor: None,
     }
 }

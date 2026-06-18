@@ -102,7 +102,7 @@ impl CoreFacadeBridge for ScriptedReplayBridge {
     }
     fn session_reap(&self, _: bool) -> Result<ReapReport, LoomErrorCode> { Err(LoomErrorCode::InternalError) }
     fn import_playwright_from_bytes(&self, _: &[u8]) -> Result<PlaywrightImportInfo, LoomErrorCode> { Err(LoomErrorCode::InternalError) }
-    fn create_session_raw(&self, _: &str, _: &str, _: Option<&str>, _: Option<u64>, _: Option<serde_json::Value>, _: bool, _: bool, _: Option<u64>) -> Result<(String, u64), loom_shared::error_format::LoomError> { Err(LoomErrorCode::InternalError.into()) }
+    fn create_session_raw(&self, _: &str, _: &str, _: Option<&str>, _: Option<u64>, _: Option<serde_json::Value>, _: bool, _: bool, _: Option<u64>, _: bool) -> Result<(String, u64), loom_shared::error_format::LoomError> { Err(LoomErrorCode::InternalError.into()) }
     fn close_session_raw(&self, _: &str) -> Result<(), LoomErrorCode> { Err(LoomErrorCode::InternalError) }
     fn abort_session_raw(&self, _: &str, _: &str) -> Result<(), LoomErrorCode> { Err(LoomErrorCode::InternalError) }
     fn vault_grant(&self, _: GrantParams) -> Result<GrantInfo, LoomErrorCode> { Err(LoomErrorCode::InternalError) }

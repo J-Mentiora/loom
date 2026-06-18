@@ -34,6 +34,8 @@ fn action_enum_has_typed_variants_no_cdp_shaped_value() {
             Action::WebWait { .. } => {}
             Action::WebWaitFor { .. } => {}
             Action::WebSnapshot { .. } => {}
+            Action::WebStartRecording { .. } => {}
+            Action::WebStopRecording { .. } => {}
             Action::WebSetInputFiles { .. } => {}
             // v0.9.6 cookie verbs.
             Action::WebSetCookies { .. } => {}
@@ -252,6 +254,7 @@ fn receipt_with_set_cookies_result_populated_round_trips() {
         dom_snapshot_hash: None,
         dom_after_hash: None,
         screenshot_after_hash: None,
+        screencast_after_hash: None,
         console_count: None,
         network_count: None,
         console_lines: Vec::<ShimConsoleLine>::new(),
@@ -298,6 +301,7 @@ fn receipt_with_no_cookie_fields_skips_them_in_serialization() {
         dom_snapshot_hash: None,
         dom_after_hash: None,
         screenshot_after_hash: None,
+        screencast_after_hash: None,
         console_count: None,
         network_count: None,
         console_lines: Vec::<ShimConsoleLine>::new(),

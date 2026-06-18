@@ -177,6 +177,12 @@ export interface Receipt {
   domSnapshotHash?: string;
   screenshotAfterHash?: string;
   /**
+   * video-capture: SHA-256 of the recorded `.webm` in CAS, set on a
+   * `stopRecording()` receipt. Fetch via `loom blob get <hash>` or
+   * `Session.saveRecording(receipt, path)`.
+   */
+  screencastAfterHash?: string;
+  /**
    * Evaluate tier: JS expression result, canonical-JSON encoded. `undefined`
    * means "not an evaluate action" or "result offloaded to the content
    * store" (in which case `returnValueBlobRef` carries the SHA-256).
