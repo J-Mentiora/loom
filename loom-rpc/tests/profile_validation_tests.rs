@@ -85,20 +85,14 @@ impl CoreFacadeBridge for NoopCoreBridge {
     }
     fn create_session_raw(
         &self,
-        profile: &str,
-        _: &str,
-        _: Option<&str>,
-        _: Option<u64>,
-        _: Option<serde_json::Value>,
-        _: bool,
-        _: bool,
-        _: Option<u64>,
+        params: CreateSessionParams,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
         // the handler must resolve the SDK
         // `profile: "default"` alias to a canonical profile BEFORE
         // delegating — a non-canonical name reaching the adapter would
         // leak into downstream `profile == "safe"` consumers.
+        let profile = params.profile.as_str();
         assert!(
             loom_core::profile_registry::profile_registry::is_known_profile(profile),
             "non-canonical profile '{profile}' leaked through to the core adapter"

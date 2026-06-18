@@ -90,34 +90,21 @@ pub trait CoreFacadeBridge: Send + Sync {
         trace_bytes: &[u8],
     ) -> Result<PlaywrightImportInfo, AdapterError>;
 
-    /// Create a new session. Returns `(session_id, created_at_ms)`.
-    /// `network_mode` is always `"live"` here — `session_validation`
-    /// rejects everything else upstream — and implementations ignore it:
-    /// page traffic is always fetched live (no page-network
-    /// record/replay engine exists; response bodies are never captured).
-    /// `capture_policy` carries the operator's `--capture-policy` choice
-    /// (`"minimal" | "default" | "full"`); `None` means "use server default".
-    /// `budget` carries the optional per-session BudgetLimits as a
-    /// serde_json::Value (the daemon's CoreBridge deserialises it into
-    /// loom_core::budget_enforcer::BudgetLimits).
+    /// Create a new session from the wire params. Returns `(session_id, created_at_ms)`.
     ///
-    /// Errors as the full `LoomError`, not a bare `AdapterError` code: the
-    /// daemon's `session_cap_exceeded` rejection carries `{active, cap,
-    /// hint}` in `context`, which must survive to the JSON-RPC envelope
-    /// (`data`). Other bridge methods keep the bare-code shape until they
-    /// need structured detail too.
-    #[allow(clippy::too_many_arguments)]
-    fn create_session_raw(
-        &self,
-        profile: &str,
-        network_mode: &str,
-        capture_policy: Option<&str>,
-        seed: Option<u64>,
-        budget: Option<serde_json::Value>,
-        no_blocklist: bool,
-        no_determinism: bool,
-        clock_anchor: Option<u64>,
-    ) -> Result<(String, u64), LoomError>;
+    /// Takes `CreateSessionParams` by value — the same shape every `vault_*` bridge method
+    /// uses — so adding a session option is a new struct field, not another positional arg.
+    /// Per-field semantics live on `CreateSessionParams`'s own field docs. `network_mode` is
+    /// carried on the struct but ignored: it is always `"live"` (`session_validation` rejects
+    /// everything else upstream) and no page-network record/replay engine exists. The daemon's
+    /// `CoreBridge` deserialises `budget` (a `serde_json::Value`) into
+    /// `loom_core::budget_enforcer::BudgetLimits`.
+    ///
+    /// Errors as the full `LoomError`, not a bare `AdapterError` code: the daemon's
+    /// `session_cap_exceeded` rejection carries `{active, cap, hint}` in `context`, which must
+    /// survive to the JSON-RPC envelope (`data`). Other bridge methods keep the bare-code
+    /// shape until they need structured detail too.
+    fn create_session_raw(&self, params: CreateSessionParams) -> Result<(String, u64), LoomError>;
 
     /// Close an active session.
     fn close_session_raw(&self, session_id: &str) -> Result<(), AdapterError>;

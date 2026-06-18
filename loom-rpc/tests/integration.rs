@@ -234,14 +234,7 @@ impl loom_rpc::core_service_adapter::core_service_adapter::CoreFacadeBridge for 
     }
     fn create_session_raw(
         &self,
-        _: &str,
-        _: &str,
-        _: Option<&str>,
-        _: Option<u64>,
-        _: Option<serde_json::Value>,
-        _: bool,
-        _: bool,
-        _: Option<u64>,
+        _: loom_rpc::core_service_adapter::core_service_adapter::CreateSessionParams,
     ) -> Result<(String, u64), loom_rpc::core_service_adapter::core_service_adapter::LoomError>
     {
         Err(loom_rpc::error_translator::error_translator::LoomErrorCode::InternalError.into())

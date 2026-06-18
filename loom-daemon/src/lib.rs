@@ -49,8 +49,8 @@ use loom_core::error::LoomError;
 use loom_rpc::auth_middleware::auth_middleware::{AuthMiddleware, Token};
 use loom_rpc::connection_handler::connection_handler::ConnectionHandlerDeps;
 use loom_rpc::core_service_adapter::core_service_adapter::{
-    AdapterError, CoreFacadeBridge, CoreServiceAdapter, ExportInfo, GrantInfo, GrantParams,
-    PlaywrightImportInfo, VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo,
+    AdapterError, CoreFacadeBridge, CoreServiceAdapter, CreateSessionParams, ExportInfo, GrantInfo,
+    GrantParams, PlaywrightImportInfo, VaultAddInfo, VaultAddParams, VaultDeleteSecretInfo,
     VaultDeleteSecretParams, VaultDiagnoseInfo, VaultListLabelsInfo, VaultListLabelsParams,
     VaultSetSecretInfo, VaultSetSecretParams,
 };
@@ -508,21 +508,14 @@ impl CoreFacadeBridge for CoreBridge {
         })
     }
 
-    fn create_session_raw(
-        &self,
-        profile: &str,
-        // Always `"live"` (session_validation rejects everything else)
-        // and intentionally unused: page traffic is always fetched live.
-        // There is no page-network record/replay engine — don't plumb
-        // this further without building one.
-        _network_mode: &str,
-        capture_policy: Option<&str>,
-        seed: Option<u64>,
-        budget: Option<serde_json::Value>,
-        no_blocklist: bool,
-        no_determinism: bool,
-        clock_anchor: Option<u64>,
-    ) -> Result<(String, u64), LoomError> {
+    fn create_session_raw(&self, params: CreateSessionParams) -> Result<(String, u64), LoomError> {
+        // `params.network_mode` is intentionally unread: always `"live"`
+        // (session_validation rejects everything else) and there is no
+        // page-network record/replay engine — don't plumb it further
+        // without building one. The remaining fields move out of `params`
+        // below; the partial-move order is load-bearing — `params.budget` is
+        // consumed first, then `params.profile` / `params.capture_policy` into
+        // `SessionCreateOpts` (disjoint field moves out of the owned struct).
         use loom_core::budget_enforcer::BudgetLimits;
         use loom_core::error::LoomErrorCode;
         use loom_core::session_manager::SessionCreateOpts;
@@ -584,7 +577,7 @@ impl CoreFacadeBridge for CoreBridge {
             })));
         }
 
-        let limits: Option<BudgetLimits> = match budget {
+        let limits: Option<BudgetLimits> = match params.budget {
             Some(value) => Some(serde_json::from_value(value).map_err(|e| {
                 map_loom_error_full(&LoomError::new(
                     LoomErrorCode::InvalidArgument,
@@ -593,28 +586,25 @@ impl CoreFacadeBridge for CoreBridge {
             })?),
             None => None,
         };
-        //  root cause: PRIOR to this fix, the underscore-prefixed
-        // `_profile` arg was dropped on the floor here — `--profile safe`
-        // validated at the JSON-RPC boundary then never reached the Session.
-        // The evaluate gate (B) and download confinement (C) both branch on
-        // `Session.profile`, so threading it here is the load-bearing fix.
         let opts = SessionCreateOpts {
             agent_id: "rpc-client".to_string(),
             surface: "web".to_string(),
-            seed,
+            seed: params.seed,
             limits,
             replay_of: None,
             // --clock-anchor pins the session clock via the same override the
             // replay path uses: started_at_ms_override → epoch_ms (impl_local.rs)
             // → CDP initialVirtualTime + Header started_at_ms + replay round-trip.
             // None → epoch falls back to wall-clock now_ms() (unchanged behavior).
-            started_at_ms_override: clock_anchor,
-            capture_policy: capture_policy.map(|s| s.to_string()),
-            no_blocklist,
-            no_determinism,
-            profile: profile.to_string(),
+            started_at_ms_override: params.clock_anchor,
+            capture_policy: params.capture_policy,
+            no_blocklist: params.no_blocklist,
+            no_determinism: params.no_determinism,
+            // `--profile` must reach the Session: the evaluate gate (B) and
+            // download confinement (C) both branch on `Session.profile`.
+            profile: params.profile,
         };
-        if let Some(anchor) = clock_anchor {
+        if let Some(anchor) = params.clock_anchor {
             // Greppable signal that a cross-run clock anchor was applied (the
             // session's injected Date.now/performance.now epoch is pinned to this).
             tracing::info!(
@@ -4132,9 +4122,24 @@ mod tests {
         }
     }
 
+    /// Default test session params (profile "safe", all options off) — the struct
+    /// equivalent of the old positional `"safe","isolated",None,None,None,false,false,None`.
+    fn params_safe() -> CreateSessionParams {
+        CreateSessionParams {
+            profile: "safe".to_string(),
+            network_mode: "isolated".to_string(),
+            capture_policy: None,
+            seed: None,
+            budget: None,
+            no_blocklist: false,
+            no_determinism: false,
+            clock_anchor: None,
+        }
+    }
+
     fn create_session_via(bridge: &CoreBridge) -> String {
         let (sid, _) = bridge
-            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .create_session_raw(params_safe())
             .expect("create_session_raw");
         sid
     }
@@ -4197,7 +4202,7 @@ mod tests {
         }
 
         let err = bridge
-            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .create_session_raw(params_safe())
             .expect_err("create beyond the cap must be rejected");
         assert_eq!(
             err.code,
@@ -4224,8 +4229,71 @@ mod tests {
             .close_session_raw(&sids[0])
             .expect("close must succeed");
         let _ = bridge
-            .create_session_raw("safe", "isolated", None, None, None, false, false, None)
+            .create_session_raw(params_safe())
             .expect("create after freeing a slot must succeed");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Refactor guard (cleanup-create-session-params): `create_session_raw` now takes the wire
+    /// `CreateSessionParams` struct by value. This asserts every field still threads onto the
+    /// created `Session` using DISTINCT non-default values, so a field-swap mis-map — which the
+    /// all-defaults call sites elsewhere cannot catch — fails loudly. Two creates cover both
+    /// determinism bools for threading AND the `no_blocklist`↔`no_determinism` swap.
+    #[tokio::test]
+    async fn create_session_raw_threads_param_fields() {
+        use loom_core::manifest_writer::SessionId;
+        use loom_shared::types::Seed;
+
+        let tmp = test_scratch_dir("threads-param-fields");
+        let bridge = make_bridge(&tmp);
+
+        // create A: seed + no_blocklist set, no_determinism clear, explicit profile.
+        let (sid_a, _) = bridge
+            .create_session_raw(CreateSessionParams {
+                profile: "safe".to_string(),
+                network_mode: "live".to_string(),
+                capture_policy: None,
+                seed: Some(99),
+                budget: None,
+                no_blocklist: true,
+                no_determinism: false,
+                clock_anchor: None,
+            })
+            .expect("create A");
+        let sess_a = bridge
+            .core
+            .session_manager
+            .get(SessionId(sid_a))
+            .expect("get session A");
+        assert_eq!(sess_a.seed, Seed(99), "seed must thread through the struct");
+        assert!(sess_a.no_blocklist, "no_blocklist=true must thread");
+        assert!(
+            !sess_a.no_determinism,
+            "no_determinism=false must thread (catches a no_blocklist↔no_determinism swap)"
+        );
+        assert_eq!(sess_a.profile, "safe", "profile must thread");
+
+        // create B: mirror — flips both bools, proving no_determinism threads to `true` too.
+        let (sid_b, _) = bridge
+            .create_session_raw(CreateSessionParams {
+                profile: "safe".to_string(),
+                network_mode: "live".to_string(),
+                capture_policy: None,
+                seed: None,
+                budget: None,
+                no_blocklist: false,
+                no_determinism: true,
+                clock_anchor: None,
+            })
+            .expect("create B");
+        let sess_b = bridge
+            .core
+            .session_manager
+            .get(SessionId(sid_b))
+            .expect("get session B");
+        assert!(!sess_b.no_blocklist, "no_blocklist=false must thread");
+        assert!(sess_b.no_determinism, "no_determinism=true must thread");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

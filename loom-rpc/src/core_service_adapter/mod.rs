@@ -7,16 +7,7 @@ mod interface_tests;
 
 impl CoreServiceAdapterApi for CoreServiceAdapter {
     fn create_session(&self, params: CreateSessionParams) -> Result<SessionInfo, LoomError> {
-        let (session_id, created_at_ms) = self.core.create_session_raw(
-            &params.profile,
-            &params.network_mode,
-            params.capture_policy.as_deref(),
-            params.seed,
-            params.budget.clone(),
-            params.no_blocklist,
-            params.no_determinism,
-            params.clock_anchor,
-        )?;
+        let (session_id, created_at_ms) = self.core.create_session_raw(params)?;
         Ok(SessionInfo {
             session_id,
             status: "active".to_string(),
