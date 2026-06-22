@@ -504,7 +504,8 @@ impl WasmHost {
             ));
         }
         let shim_session_id = self.shim.shim_session_id_for(session_id);
-        self.shim
+        let result = self
+            .shim
             .send_type_keystrokes(
                 effective_id,
                 shim_session_id,
@@ -513,7 +514,18 @@ impl WasmHost {
                 text.to_string(),
                 budget_ms,
             )
-            .await
+            .await;
+        // Redacted observability (F7): log selector + char COUNT + outcome —
+        // NEVER the typed text (could be a password).
+        match &result {
+            Ok(o) => {
+                tracing::debug!(session_id = %session_id, selector = %selector, chars = text.chars().count(), outcome = ?o, "web.type keystrokes dispatched")
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, selector = %selector, error = %e, "web.type keystrokes failed")
+            }
+        }
+        result
     }
 
     /// cdp-trusted-input: `web.press_key`. Optionally focus `selector`, then
@@ -535,7 +547,10 @@ impl WasmHost {
             ));
         }
         let shim_session_id = self.shim.shim_session_id_for(session_id);
-        self.shim
+        let has_selector = selector.is_some();
+        let n_mods = modifiers.len();
+        let result = self
+            .shim
             .send_press_key(crate::shim_manager::SendPressKeyParams {
                 id: effective_id,
                 session_id: shim_session_id,
@@ -545,7 +560,16 @@ impl WasmHost {
                 modifiers,
                 budget_ms,
             })
-            .await
+            .await;
+        // Redacted observability (F7): log structure + outcome — NEVER the key
+        // value (a single-char key could be a typed secret).
+        match &result {
+            Ok(o) => {
+                tracing::debug!(session_id = %session_id, has_selector, modifiers = n_mods, outcome = ?o, "web.press_key dispatched")
+            }
+            Err(e) => tracing::warn!(session_id = %session_id, error = %e, "web.press_key failed"),
+        }
+        result
     }
 
     /// cdp-trusted-input: always-trusted `web.click`. Resolve the element hit
@@ -565,7 +589,8 @@ impl WasmHost {
             ));
         }
         let shim_session_id = self.shim.shim_session_id_for(session_id);
-        self.shim
+        let result = self
+            .shim
             .send_trusted_click(
                 effective_id,
                 shim_session_id,
@@ -573,7 +598,17 @@ impl WasmHost {
                 selector.to_string(),
                 budget_ms,
             )
-            .await
+            .await;
+        // Redacted observability (F7): selector is a CSS selector, not secret.
+        match &result {
+            Ok(o) => {
+                tracing::debug!(session_id = %session_id, selector = %selector, outcome = ?o, "web.click trusted dispatched")
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, selector = %selector, error = %e, "web.click trusted failed")
+            }
+        }
+        result
     }
 }
 
