@@ -1204,6 +1204,45 @@ mod tests {
         );
     }
 
+    /// cdp-trusted-input regression: the host-side input receipt MUST carry an
+    /// `action_hash` (the run_e2e.sh CLI-surface test asserts every interaction
+    /// receipt has one) AND that hash must be SESSION-INDEPENDENT so replay stays
+    /// equal across sessions.
+    #[test]
+    fn build_input_dispatch_receipt_sets_session_independent_action_hash() {
+        use crate::wire_receipts::build_input_dispatch_receipt;
+        use loom_host::shim_manager::InputDispatchOutcome;
+        let a_sess_a = Action::WebClick {
+            session_id: s("sess-A"),
+            selector: s("#ok-button"),
+        };
+        let a_sess_b = Action::WebClick {
+            session_id: s("sess-B"),
+            selector: s("#ok-button"),
+        };
+        let r_a = build_input_dispatch_receipt(1, "sess-A", &a_sess_a, InputDispatchOutcome::Ok);
+        let r_b = build_input_dispatch_receipt(2, "sess-B", &a_sess_b, InputDispatchOutcome::Ok);
+        assert!(
+            r_a.action_hash.is_some(),
+            "host-side click receipt must carry action_hash (e2e CLI-surface contract)"
+        );
+        assert!(
+            r_a.outcome_hash.is_some(),
+            "constant dispatch-marker expected"
+        );
+        assert_eq!(
+            r_a.action_hash, r_b.action_hash,
+            "action_hash must be session-independent (replay-equal across sessions)"
+        );
+        // Different selector → different action_hash.
+        let a_other = Action::WebClick {
+            session_id: s("sess-A"),
+            selector: s("#other"),
+        };
+        let r_other = build_input_dispatch_receipt(3, "sess-A", &a_other, InputDispatchOutcome::Ok);
+        assert_ne!(r_a.action_hash, r_other.action_hash);
+    }
+
     /// type sets value via the framework-aware native setter (so React/Vue/Angular
     /// trackers see the change) AND dispatches input/change events.
     #[test]

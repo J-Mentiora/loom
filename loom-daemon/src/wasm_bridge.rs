@@ -403,6 +403,7 @@ impl WasmHostBridge for WasmBridge {
                     return Ok(build_input_dispatch_receipt(
                         action_id,
                         session_id_str,
+                        &action,
                         outcome,
                     ))
                 }
@@ -434,6 +435,7 @@ impl WasmHostBridge for WasmBridge {
                         return Ok(build_input_dispatch_receipt(
                             action_id,
                             session_id_str,
+                            &action,
                             outcome,
                         ))
                     }
@@ -466,6 +468,7 @@ impl WasmHostBridge for WasmBridge {
                     return Ok(build_input_dispatch_receipt(
                         action_id,
                         session_id_str,
+                        &action,
                         outcome,
                     ))
                 }

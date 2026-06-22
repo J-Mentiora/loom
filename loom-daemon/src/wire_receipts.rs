@@ -472,10 +472,11 @@ pub(crate) fn build_scroll_expression(
 pub(crate) fn build_input_dispatch_receipt(
     action_id: u64,
     session_id: &str,
+    action: &Action,
     outcome: loom_host::shim_manager::InputDispatchOutcome,
 ) -> Receipt {
     use loom_host::shim_manager::InputDispatchOutcome as O;
-    match outcome {
+    let mut r = match outcome {
         O::Ok => {
             // Reuse the all-None success template, then stamp the constant marker.
             let mut r = build_recording_started_receipt(action_id, session_id);
@@ -502,7 +503,45 @@ pub(crate) fn build_input_dispatch_receipt(
             "unknown_key",
             "unknown key name or modifier".to_string(),
         ),
-    }
+    };
+    // Stamp the action_hash so the host-side input verbs carry the same receipt
+    // contract as the guest-dispatched interaction verbs (every interaction
+    // receipt has `action_hash`). Session-independent → replay-equal.
+    r.action_hash = Some(input_action_hash(action));
+    r
+}
+
+/// Deterministic, **session-independent** `action_hash` for the host-side input
+/// verbs (web.click / web.type keystrokes / web.press_key). Hashes the verb +
+/// its input params (NOT `session_id`) so the same script replays to the same
+/// hash across sessions, matching how the guest derives `action_hash` from the
+/// canonical CDP payload (which also excludes the session).
+fn input_action_hash(action: &Action) -> String {
+    let canonical = match action {
+        Action::WebClick { selector, .. } => format!("web.click\u{0}{selector}"),
+        Action::WebType {
+            selector,
+            text,
+            mode,
+            ..
+        } => format!(
+            "web.type\u{0}{}\u{0}{selector}\u{0}{text}",
+            mode.as_deref().unwrap_or("value")
+        ),
+        Action::WebPressKey {
+            key,
+            selector,
+            modifiers,
+            ..
+        } => format!(
+            "web.press_key\u{0}{key}\u{0}{}\u{0}{}",
+            selector.as_deref().unwrap_or(""),
+            modifiers.as_ref().map(|m| m.join(",")).unwrap_or_default()
+        ),
+        // Unreachable for the input verbs; a stable fallback keeps it total.
+        other => format!("{other:?}"),
+    };
+    loom_core::content_store::sha256_hex(canonical.as_bytes())
 }
 
 pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
