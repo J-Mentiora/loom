@@ -409,6 +409,53 @@ noise themselves; loom returns everything.",
         example: &["loom", "action", "web.network_log", "--session", "<SESSION>"],
     },
     ActionMeta {
+        name: "web.press_key",
+        summary: "Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.",
+        description: "\
+Dispatches a REAL keyboard key event (`isTrusted:true`) through Chrome's \
+input pipeline — unlike synthetic events, these pass trust-gating \
+frameworks. `key` is a named key (Enter, Tab, Escape, Backspace, Delete, \
+ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space) or a single \
+printable character. `modifiers` holds any of Control, Alt, Shift, Meta \
+(aliases Ctrl/Cmd/Command/Option accepted) for chords like Ctrl+A.\n\n\
+With `selector`, the element is focused first; without it the event goes \
+to whatever currently has focus. Many forms submit on Enter in a focused \
+field.\n\n\
+Host-side verb (CDP Input.*), like the trusted `web.click` — does not run \
+the WASM guest. Determinism: the action records the logical key + \
+modifiers via a fixed US keymap (identical on every OS) and `outcome_hash` \
+is a constant dispatch-success marker, so replay stays structural.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "key",
+                ty: ParamType::String,
+                doc: "Named key (Enter, Tab, Escape, ArrowDown, …) or a single printable character.",
+                required: true,
+            },
+            ParamMeta {
+                name: "selector",
+                ty: ParamType::String,
+                doc: "Optional CSS selector to focus before pressing; omit to target the currently focused element.",
+                required: false,
+            },
+            ParamMeta {
+                name: "modifiers",
+                ty: ParamType::Array,
+                doc: "Optional modifier keys held during the press: Control, Alt, Shift, Meta (Ctrl/Cmd/Command/Option aliases accepted).",
+                required: false,
+            },
+            DEADLINE_MS_PARAM,
+        ],
+        returns: "Receipt with `status: \"ok\"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: \"unknown_key\"`; a `selector` matching nothing → `kind: \"selector_not_found\"`.",
+        example: &["loom", "action", "web.press_key", "--session", "<SESSION>", "--key", "Enter"],
+    },
+    ActionMeta {
         name: "web.screenshot",
         summary: "Capture a PNG screenshot of the page or a selected element.",
         description: "\
@@ -743,53 +790,6 @@ Failure mode: in `value` mode a selector miss → `kind: \"js_throw\"`; in \
         ],
         returns: "Receipt with `status: \"ok\"`. Selector miss / non-input target → `kind: \"js_throw\"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).",
         example: &["loom", "action", "web.type", "--session", "<SESSION>", "--selector", "#email", "--text", "user@example.com"],
-    },
-    ActionMeta {
-        name: "web.press_key",
-        summary: "Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.",
-        description: "\
-Dispatches a REAL keyboard key event (`isTrusted:true`) through Chrome's \
-input pipeline — unlike synthetic events, these pass trust-gating \
-frameworks. `key` is a named key (Enter, Tab, Escape, Backspace, Delete, \
-ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space) or a single \
-printable character. `modifiers` holds any of Control, Alt, Shift, Meta \
-(aliases Ctrl/Cmd/Command/Option accepted) for chords like Ctrl+A.\n\n\
-With `selector`, the element is focused first; without it the event goes \
-to whatever currently has focus. Many forms submit on Enter in a focused \
-field.\n\n\
-Host-side verb (CDP Input.*), like the trusted `web.click` — does not run \
-the WASM guest. Determinism: the action records the logical key + \
-modifiers via a fixed US keymap (identical on every OS) and `outcome_hash` \
-is a constant dispatch-success marker, so replay stays structural.",
-        params: &[
-            ParamMeta {
-                name: "session_id",
-                ty: ParamType::String,
-                doc: "Session created via `loom session create`. 26-char ULID format.",
-                required: true,
-            },
-            ParamMeta {
-                name: "key",
-                ty: ParamType::String,
-                doc: "Named key (Enter, Tab, Escape, ArrowDown, …) or a single printable character.",
-                required: true,
-            },
-            ParamMeta {
-                name: "selector",
-                ty: ParamType::String,
-                doc: "Optional CSS selector to focus before pressing; omit to target the currently focused element.",
-                required: false,
-            },
-            ParamMeta {
-                name: "modifiers",
-                ty: ParamType::Array,
-                doc: "Optional modifier keys held during the press: Control, Alt, Shift, Meta (Ctrl/Cmd/Command/Option aliases accepted).",
-                required: false,
-            },
-            DEADLINE_MS_PARAM,
-        ],
-        returns: "Receipt with `status: \"ok\"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: \"unknown_key\"`; a `selector` matching nothing → `kind: \"selector_not_found\"`.",
-        example: &["loom", "action", "web.press_key", "--session", "<SESSION>", "--key", "Enter"],
     },
     ActionMeta {
         name: "web.wait",

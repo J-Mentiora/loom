@@ -17,6 +17,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.hover`](#web-hover) — Dispatch a mouseover event at a CSS selector.
 - [`web.navigate`](#web-navigate) — Load a URL, follow redirects, capture DOM and screenshot.
 - [`web.network_log`](#web-network_log) — Read the per-request network entries observed since the last navigate.
+- [`web.press_key`](#web-press_key) — Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.
 - [`web.screenshot`](#web-screenshot) — Capture a PNG screenshot of the page or a selected element.
 - [`web.scroll`](#web-scroll) — Scroll the page (or an element) by a (delta_x, delta_y) offset.
 - [`web.select`](#web-select) — Set the value of a `<select>` element and dispatch `change`.
@@ -26,7 +27,6 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.start_recording`](#web-start_recording) — Start recording a video (screencast) of the page.
 - [`web.stop_recording`](#web-stop_recording) — Stop the active video recording and return its content hash.
 - [`web.type`](#web-type) — Focus an input and type text into it.
-- [`web.press_key`](#web-press_key) — Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.
 - [`web.wait`](#web-wait) — Wait until a CSS selector resolves (or until timeout).
 - [`web.wait_for`](#web-wait_for) — Wait until the current page reaches a readiness state (settle-capture).
 
@@ -250,6 +250,36 @@ This is OBSERVATIONAL metadata sourced from the Chrome DevTools Protocol — nev
 
 ```sh
 loom action web.network_log --session <SESSION>
+```
+
+---
+
+### <a id="web-press_key"></a>`web.press_key`
+
+**Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.**
+
+Dispatches a REAL keyboard key event (`isTrusted:true`) through Chrome's input pipeline — unlike synthetic events, these pass trust-gating frameworks. `key` is a named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space) or a single printable character. `modifiers` holds any of Control, Alt, Shift, Meta (aliases Ctrl/Cmd/Command/Option accepted) for chords like Ctrl+A.
+
+With `selector`, the element is focused first; without it the event goes to whatever currently has focus. Many forms submit on Enter in a focused field.
+
+Host-side verb (CDP Input.*), like the trusted `web.click` — does not run the WASM guest. Determinism: the action records the logical key + modifiers via a fixed US keymap (identical on every OS) and `outcome_hash` is a constant dispatch-success marker, so replay stays structural.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `key` | `string` | required | Named key (Enter, Tab, Escape, ArrowDown, …) or a single printable character. |
+| `selector` | `string` | optional | Optional CSS selector to focus before pressing; omit to target the currently focused element. |
+| `modifiers` | `array` | optional | Optional modifier keys held during the press: Control, Alt, Shift, Meta (Ctrl/Cmd/Command/Option aliases accepted). |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
+
+**Returns:** Receipt with `status: "ok"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: "unknown_key"`; a `selector` matching nothing → `kind: "selector_not_found"`.
+
+**Example**
+
+```sh
+loom action web.press_key --session <SESSION> --key Enter
 ```
 
 ---
@@ -496,36 +526,6 @@ Failure mode: in `value` mode a selector miss → `kind: "js_throw"`; in `keystr
 
 ```sh
 loom action web.type --session <SESSION> --selector #email --text user@example.com
-```
-
----
-
-### <a id="web-press_key"></a>`web.press_key`
-
-**Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.**
-
-Dispatches a REAL keyboard key event (`isTrusted:true`) through Chrome's input pipeline — unlike synthetic events, these pass trust-gating frameworks. `key` is a named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space) or a single printable character. `modifiers` holds any of Control, Alt, Shift, Meta (aliases Ctrl/Cmd/Command/Option accepted) for chords like Ctrl+A.
-
-With `selector`, the element is focused first; without it the event goes to whatever currently has focus. Many forms submit on Enter in a focused field.
-
-Host-side verb (CDP Input.*), like the trusted `web.click` — does not run the WASM guest. Determinism: the action records the logical key + modifiers via a fixed US keymap (identical on every OS) and `outcome_hash` is a constant dispatch-success marker, so replay stays structural.
-
-**Parameters**
-
-| Name | Type | Required | Description |
-|------|------|----------|-------------|
-| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
-| `key` | `string` | required | Named key (Enter, Tab, Escape, ArrowDown, …) or a single printable character. |
-| `selector` | `string` | optional | Optional CSS selector to focus before pressing; omit to target the currently focused element. |
-| `modifiers` | `array` | optional | Optional modifier keys held during the press: Control, Alt, Shift, Meta (Ctrl/Cmd/Command/Option aliases accepted). |
-| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
-
-**Returns:** Receipt with `status: "ok"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: "unknown_key"`; a `selector` matching nothing → `kind: "selector_not_found"`.
-
-**Example**
-
-```sh
-loom action web.press_key --session <SESSION> --key Enter
 ```
 
 ---
