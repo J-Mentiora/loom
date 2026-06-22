@@ -221,9 +221,14 @@ jobs:
           # in the e2e job. Installed here too so the cache restored from the
           # e2e job lets the fake-chromium tests find a runnable browser if
           # they ever switch off the mock. `libasound2t64` (not `libasound2`)
-          # for ubuntu-24.
+          # for ubuntu-24. `ffmpeg`: the screencast encoder (ffmpeg-sidecar)
+          # otherwise downloads ffmpeg at RUNTIME, which flakes when the CDN is
+          # down and used to red the recording e2e tests. A system ffmpeg on PATH
+          # means `resolve_ffmpeg()` skips the download entirely AND lets the
+          # real encode/webm round-trip be exercised deterministically.
           sudo apt-get install -y \
             pkg-config libssl-dev lld \
+            ffmpeg \
             libnss3 libgbm1 libasound2t64 \
             libatk1.0-0 libatk-bridge2.0-0 libcups2 \
             libxcomposite1 libxdamage1 libxss1 \

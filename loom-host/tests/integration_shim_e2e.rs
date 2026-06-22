@@ -804,15 +804,22 @@ async fn screencast_record_round_trip() {
     // protocol path streamed + buffered all 3 frames.
     assert_eq!(outcome.frame_count, 3, "all 3 synthetic frames buffered");
 
+    // stop_reason reports WHY recording stopped and is independent of whether the
+    // encode succeeded: a normal stop with no cap hit is always "explicit", even
+    // when a flaky ffmpeg download makes the encode fail. (This is the assertion
+    // that used to flake — it now holds regardless of encoder availability.)
+    assert_eq!(outcome.stop_reason, "explicit");
+    assert_ne!(outcome.stop_reason, "encoder_unavailable");
+
     if outcome.error.is_none() {
-        assert_eq!(outcome.stop_reason, "explicit");
         assert!(
             outcome.webm_bytes.starts_with(&[0x1A, 0x45, 0xDF, 0xA3]),
             "encoded bytes must start with the EBML/webm magic"
         );
         // Stronger than magic-bytes: the .webm must actually DECODE. Write it
         // out and have ffmpeg demux/decode it to null — a corrupt container or
-        // bad stream would make ffmpeg exit non-zero.
+        // bad stream would make ffmpeg exit non-zero. (CI installs ffmpeg, so
+        // this real-encode branch is genuinely exercised there.)
         let webm_path = user_data_dir.path().join("out.webm");
         std::fs::write(&webm_path, &outcome.webm_bytes).expect("write webm");
         let probe = std::process::Command::new("ffmpeg")
@@ -828,12 +835,15 @@ async fn screencast_record_round_trip() {
             );
         }
     } else {
-        assert_eq!(
-            outcome.stop_reason, "encoder_unavailable",
-            "a best-effort encode failure must report encoder_unavailable, got: {:?}",
+        // Best-effort encode failure (e.g. ffmpeg unavailable): no blob, and the
+        // failure is described in `error` — assert its CONTENT, not just presence.
+        assert!(outcome.webm_bytes.is_empty());
+        let err = outcome.error.as_deref().unwrap_or_default().to_lowercase();
+        assert!(
+            err.contains("ffmpeg") || err.contains("encod"),
+            "encode-failure error should mention ffmpeg/encode, got: {:?}",
             outcome.error
         );
-        assert!(outcome.webm_bytes.is_empty());
     }
 
     mgr.shutdown_session("test-session-rec").await;
@@ -893,8 +903,14 @@ async fn screencast_byte_cap_enforced_e2e() {
     .expect("stop_recording did not return")
     .expect("stop_recording errored");
 
+    // Both assertions are encoder-INDEPENDENT: the byte cap is enforced shim-side
+    // before the encode, so the cap-hit is knowable whether or not ffmpeg is
+    // available. This is why the test no longer flakes when ffmpeg's runtime
+    // download fails — an encode failure surfaces in `error`, never by overwriting
+    // the stop reason.
     assert_eq!(outcome.frame_count, 1, "byte cap admits exactly one frame");
     assert_eq!(outcome.stop_reason, "byte_cap");
+    assert_ne!(outcome.stop_reason, "encoder_unavailable");
 
     mgr.shutdown_session("test-session-reccap").await;
     drop(user_data_dir);

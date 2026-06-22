@@ -153,6 +153,40 @@ async fn byte_cap_drops_over_cap_frames_and_reports_reason() {
     assert_eq!(cdp.command_count("Page.screencastFrameAck"), 2);
 }
 
+/// Regression guard (RED-first) for the encode-failure-masks-cap bug: when a cap
+/// was hit shim-side but the encode LATER fails (e.g. a flaky ffmpeg download),
+/// the outcome MUST still report the TRUE `stop_reason` ("byte_cap"). The encode
+/// failure belongs in `error` + empty `webm_bytes`, never by overwriting the
+/// already-resolved stop reason. Fails before the fix (returns
+/// "encoder_unavailable"); passes after.
+#[tokio::test]
+async fn byte_cap_reason_survives_encoder_failure() {
+    let _env = ENV_LOCK.lock().await;
+    let cdp = TestCdp::default();
+    // Encoder FAILS (mimics ffmpeg unavailable) AND a byte cap is hit.
+    let rec = recorder(cdp.clone(), Err("ffmpeg unavailable".to_string()));
+    let caps = Caps {
+        max_duration_ms: 0,
+        max_bytes: 8,
+        frame_rate: 10,
+    };
+    rec.start(TARGET, caps).await.expect("start ok");
+    cdp.fire_frame(b"0123456", 1); // 7 bytes — admitted
+    cdp.fire_frame(b"0123456", 2); // would exceed 8 — dropped → byte_cap
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    let outcome = rec.stop(TARGET).await;
+    assert_eq!(outcome.frame_count, 1, "second frame dropped at byte cap");
+    assert_eq!(
+        outcome.stop_reason, "byte_cap",
+        "the true stop reason must survive an encode failure"
+    );
+    // Negative guard: the retired "encoder_unavailable" value must never resurface
+    // as a stop_reason (the encode failure belongs in `error`, below).
+    assert_ne!(outcome.stop_reason, "encoder_unavailable");
+    assert_eq!(outcome.error.as_deref(), Some("ffmpeg unavailable"));
+    assert!(outcome.webm_bytes.is_empty());
+}
+
 #[tokio::test]
 async fn stop_without_start_is_a_clean_error() {
     let rec = recorder(TestCdp::default(), Ok(vec![]));
@@ -198,9 +232,40 @@ async fn encoder_failure_is_best_effort() {
     tokio::time::sleep(Duration::from_millis(60)).await;
     let outcome = rec.stop(TARGET).await;
     assert_eq!(outcome.frame_count, 1);
-    assert_eq!(outcome.stop_reason, "encoder_unavailable");
+    // No cap was hit, so the true stop reason is "explicit" — an encode failure
+    // does NOT overwrite it (it surfaces via `error` + empty `webm_bytes`). The
+    // retired "encoder_unavailable" value must never appear as a stop_reason.
+    assert_eq!(outcome.stop_reason, "explicit");
+    assert_ne!(outcome.stop_reason, "encoder_unavailable");
     assert_eq!(outcome.error.as_deref(), Some("ffmpeg unavailable"));
     assert!(outcome.webm_bytes.is_empty());
+}
+
+/// The duration cap auto-stops the screencast and reports `duration_cap` — and that
+/// reason is reported correctly with a WORKING encoder (encoder-independent: the
+/// cap is enforced shim-side in the ack task, before the encode). Concrete margined
+/// timing: a 20ms cap vs a 200ms wait (the ack task polls every 20ms → ~10× margin),
+/// so the cap check fires well before `stop()` is called.
+#[tokio::test]
+async fn duration_cap_auto_stops_and_reports_reason() {
+    let _env = ENV_LOCK.lock().await;
+    let cdp = TestCdp::default();
+    let rec = recorder(cdp.clone(), Ok(b"WEBM-OK".to_vec()));
+    let caps = Caps {
+        max_duration_ms: 20,
+        max_bytes: 0,
+        frame_rate: 10,
+    };
+    rec.start(TARGET, caps).await.expect("start ok");
+    cdp.fire_frame(b"frame", 1);
+    // Wait well past the 20ms cap so the ack task hits the duration check and
+    // auto-stops the screencast before we call stop().
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let outcome = rec.stop(TARGET).await;
+    assert_eq!(outcome.stop_reason, "duration_cap");
+    assert!(outcome.error.is_none());
+    // The recorder auto-issued a stopScreencast when the cap fired.
+    assert!(cdp.command_count("Page.stopScreencast") >= 1);
 }
 
 #[tokio::test]
