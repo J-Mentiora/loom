@@ -6,6 +6,30 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.2] — 2026-06-22 — web.get_cookies Returns Cookies
+
+A patch release that makes **`web.get_cookies` actually surface the cookies it reads**.
+Cookie *persistence* already worked — server `Set-Cookie` cookies (including `HttpOnly`)
+are stored and transmitted on subsequent requests within a session — but `get_cookies`
+forwarded `Network.getCookies` through the opaque guest path, and the WASM guest ships
+without a CBOR decoder, so the decoded cookie array was never put on the receipt (every
+receipt hardcoded `get_cookies_result: None`). Agents driving cookie-dependent logins
+(OAuth/OIDC, CSRF-protected forms) saw "0 cookies" and assumed cookies weren't kept.
+Replay stays structural and value-independent (NFR-DET-01). (#212, #214)
+
+### Fixed
+
+- **`web.get_cookies` now returns the cookie array on the receipt (#214).** The host
+  decodes the `Network.getCookies` response in `shim_call` (the guest can't) and moves it
+  onto `get_cookies_result` with raw values (operator-facing, D7); cookie *values* are
+  redacted from the manifest hash chain via a re-derived `outcome_hash`, so replay stays
+  structural and cross-run value-independent. `HttpOnly` cookies — invisible to
+  `document.cookie` — now surface in full with their CDP fields. Host-side only; no
+  WIT/guest/vendored-wasm change. `set`/`clear`/`delete` cookies are unchanged.
+- **Screencast `stop_reason` survives an encoder failure (#212).** A stop that races a
+  failed ffmpeg encode now reports the truthful stop reason, and the cap-enforcement e2e
+  tests are decoupled from the flaky ffmpeg-sidecar runtime download.
+
 ## [0.12.1] — 2026-06-22 — Trusted CDP Input
 
 A patch release adding a **real-CDP-input path** so loom can drive `isTrusted:true`
