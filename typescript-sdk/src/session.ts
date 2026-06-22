@@ -334,14 +334,46 @@ export class Session {
     return toReceipt(result);
   }
 
+  /**
+   * Type `text` into `selector`.
+   *
+   * `mode: "value"` (default) sets `.value` via `Runtime.evaluate` + synthetic
+   * `input`/`change` events (`isTrusted:false`). `mode: "keystrokes"` focuses
+   * the element and dispatches a real per-character CDP `Input.dispatchKeyEvent`
+   * sequence (`isTrusted:true`) — required by trust-gating frameworks (e.g.
+   * Auth0 New Universal Login) that ignore synthetic events.
+   */
   async typeText(
     selector: string,
     text: string,
-    opts: { deadlineMs?: number } = {},
+    opts: { mode?: "value" | "keystrokes"; deadlineMs?: number } = {},
   ): Promise<Receipt> {
+    const payload: Record<string, unknown> = { selector, text };
+    if (opts.mode !== undefined) payload["mode"] = opts.mode;
     const result = (await this._transport.call(
       "action.web.type_text",
-      buildActionParams(this.sessionId, "type_text", { selector, text }, opts.deadlineMs ?? 5000),
+      buildActionParams(this.sessionId, "type_text", payload, opts.deadlineMs ?? 5000),
+    )) as Record<string, unknown>;
+    return toReceipt(result);
+  }
+
+  /**
+   * Dispatch a real key press (`isTrusted:true`) via CDP
+   * `Input.dispatchKeyEvent`. `key` is a named key (`Enter`, `Tab`, `Escape`,
+   * arrows, …) or a single printable character; `modifiers` may include
+   * `Control`, `Alt`, `Shift`, `Meta`. With `selector` the element is focused
+   * first; otherwise the event targets whatever currently has focus.
+   */
+  async pressKey(
+    key: string,
+    opts: { selector?: string; modifiers?: string[]; deadlineMs?: number } = {},
+  ): Promise<Receipt> {
+    const payload: Record<string, unknown> = { key };
+    if (opts.selector !== undefined) payload["selector"] = opts.selector;
+    if (opts.modifiers !== undefined) payload["modifiers"] = opts.modifiers;
+    const result = (await this._transport.call(
+      "action.web.press_key",
+      buildActionParams(this.sessionId, "press_key", payload, opts.deadlineMs ?? 5000),
     )) as Record<string, unknown>;
     return toReceipt(result);
   }

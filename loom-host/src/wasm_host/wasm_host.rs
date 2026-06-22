@@ -483,6 +483,98 @@ impl WasmHost {
             error,
         })
     }
+
+    /// cdp-trusted-input: `web.type mode:keystrokes`. Focus the element and send
+    /// real per-character `Input.dispatchKeyEvent` frames (`isTrusted:true`).
+    /// Host-side intercept (like recording) — does NOT run the WASM guest. A
+    /// missing shim (no navigate yet) is a clear error, not a silent no-op.
+    pub async fn type_keystrokes(
+        &self,
+        session_id: &str,
+        selector: &str,
+        text: &str,
+        budget_ms: u64,
+    ) -> Result<crate::shim_manager::InputDispatchOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.type",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_type_keystrokes(
+                effective_id,
+                shim_session_id,
+                0,
+                selector.to_string(),
+                text.to_string(),
+                budget_ms,
+            )
+            .await
+    }
+
+    /// cdp-trusted-input: `web.press_key`. Optionally focus `selector`, then
+    /// dispatch a named key (+ modifiers) as real `Input.dispatchKeyEvent`.
+    pub async fn press_key(
+        &self,
+        session_id: &str,
+        key: &str,
+        selector: Option<String>,
+        modifiers: Vec<String>,
+        budget_ms: u64,
+    ) -> Result<crate::shim_manager::InputDispatchOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.press_key",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_press_key(crate::shim_manager::SendPressKeyParams {
+                id: effective_id,
+                session_id: shim_session_id,
+                target_id: 0,
+                key: key.to_string(),
+                selector,
+                modifiers,
+                budget_ms,
+            })
+            .await
+    }
+
+    /// cdp-trusted-input: always-trusted `web.click`. Resolve the element hit
+    /// point and dispatch a trusted `Input.dispatchMouseEvent` sequence.
+    pub async fn trusted_click(
+        &self,
+        session_id: &str,
+        selector: &str,
+        budget_ms: u64,
+    ) -> Result<crate::shim_manager::InputDispatchOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.click",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_trusted_click(
+                effective_id,
+                shim_session_id,
+                0,
+                selector.to_string(),
+                budget_ms,
+            )
+            .await
+    }
 }
 
 /// Result of [`WasmHost::stop_recording`]. `screencast_after_hash` is the CAS

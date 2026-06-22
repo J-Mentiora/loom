@@ -996,13 +996,9 @@ mod tests {
                 },
                 "Page.navigate",
             ),
-            (
-                Action::WebClick {
-                    session_id: session.clone(),
-                    selector: s("a"),
-                },
-                "Runtime.evaluate",
-            ),
+            // cdp-trusted-input: web.click is now host-side (trusted CDP
+            // Input.dispatchMouseEvent) → build_chromium_args returns None, so
+            // it is not part of this "each verb yields a CdpMessage" sweep.
             (
                 Action::WebEvaluate {
                     session_id: session.clone(),
@@ -1011,10 +1007,12 @@ mod tests {
                 "Runtime.evaluate",
             ),
             (
+                // value mode (default) still builds the Runtime.evaluate setter JS.
                 Action::WebType {
                     session_id: session.clone(),
                     selector: s("input"),
                     text: s("hello"),
+                    mode: None,
                 },
                 "Runtime.evaluate",
             ),
@@ -1191,21 +1189,19 @@ mod tests {
         assert_eq!(r.return_value_json.as_deref(), Some("not json{"));
     }
 
-    /// click selects + clicks via Runtime.evaluate.
+    /// cdp-trusted-input: web.click is ALWAYS trusted now — intercepted host-side
+    /// (CDP Input.dispatchMouseEvent at the element hit point), so
+    /// build_chromium_args returns None (no guest Runtime.evaluate click).
     #[test]
-    fn build_chromium_args_click_emits_runtime_evaluate_with_query_selector_click() {
+    fn build_chromium_args_click_is_host_side_returns_none() {
         let action = Action::WebClick {
             session_id: s("sess"),
             selector: s("a"),
         };
-        let msg = decode_cdp(&action).expect("Some");
-        assert_eq!(msg.method, "Runtime.evaluate");
-        let expr = expr_of(&msg);
         assert!(
-            expr.contains("document.querySelector(\"a\")"),
-            "got: {expr}"
+            decode_cdp(&action).is_none(),
+            "web.click is host-side (trusted Input.dispatchMouseEvent) → expected None"
         );
-        assert!(expr.contains(".click()"), "got: {expr}");
     }
 
     /// type sets value via the framework-aware native setter (so React/Vue/Angular
@@ -1217,6 +1213,7 @@ mod tests {
             session_id: s("sess"),
             selector: s("input"),
             text: s("hello"),
+            mode: None,
         };
         let msg = decode_cdp(&action).expect("Some");
         assert_eq!(msg.method, "Runtime.evaluate");
@@ -1326,14 +1323,20 @@ mod tests {
         assert!(err2.detail.is_none());
     }
 
-    /// Security: selector strings containing JS metacharacters must be JSON-escaped.
+    /// Security: selector strings containing JS metacharacters must be
+    /// JSON-escaped wherever they're interpolated into Runtime.evaluate JS.
+    /// cdp-trusted-input: web.click is now host-side (the selector flows as a
+    /// CBOR CDP `DOM.querySelector` param — no JS-injection surface), so this
+    /// pins the remaining JS-interpolating path: web.type in `value` mode.
     #[test]
-    fn build_chromium_args_click_quotes_selector_with_double_quote_in_it() {
+    fn build_chromium_args_value_type_json_escapes_selector_with_double_quote() {
         // selector contains a literal double-quote character: a[id="x']
         let selector = "a[id=\"x']".to_string();
-        let action = Action::WebClick {
+        let action = Action::WebType {
             session_id: s("sess"),
             selector: selector.clone(),
+            text: s("v"),
+            mode: None,
         };
         let msg = decode_cdp(&action).expect("Some");
         let expr = expr_of(&msg);

@@ -89,6 +89,25 @@ pub enum Action {
         session_id: String,
         selector: String,
         text: String,
+        // cdp-trusted-input: "value" (default — set element.value via
+        // Runtime.evaluate + synthetic input/change events, `isTrusted:false`)
+        // or "keystrokes" (focus + real per-char `Input.dispatchKeyEvent`,
+        // `isTrusted:true`). `None` == "value" (back-compat / determinism).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<String>,
+    },
+    // cdp-trusted-input: dispatch a real key event (`isTrusted:true`) via CDP
+    // `Input.dispatchKeyEvent`. `key` is a named key (Enter/Tab/Escape/arrows/…)
+    // or a single printable char; `modifiers` are Control/Alt/Shift/Meta; the
+    // optional `selector` focuses an element first (else ambient focus).
+    // Host-side intercept — does NOT run the WASM guest.
+    WebPressKey {
+        session_id: String,
+        key: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selector: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        modifiers: Option<Vec<String>>,
     },
     WebScreenshot {
         session_id: String,

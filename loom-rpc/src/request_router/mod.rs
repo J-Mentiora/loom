@@ -577,6 +577,8 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.clear_cookies" => &["session_id"],
         "web.delete_cookies" => &["session_id", "name"],
         "web.network_log" => &["session_id"],
+        // cdp-trusted-input: `selector` + `modifiers` are optional.
+        "web.press_key" => &["session_id", "key"],
         _ => return None,
     })
 }
@@ -592,6 +594,7 @@ pub fn known_router_methods() -> &'static [&'static str] {
         "web.hover",
         "web.navigate",
         "web.network_log",
+        "web.press_key",
         "web.screenshot",
         "web.scroll",
         "web.select",
@@ -643,10 +646,55 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
             let text = required_str(&params, "text")?;
+            // cdp-trusted-input: optional dispatch mode ("value" | "keystrokes").
+            let mode = params
+                .get("mode")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
             Ok(Action::WebType {
                 session_id,
                 selector,
                 text,
+                mode,
+            })
+        }
+        // cdp-trusted-input: dispatch a real key event via CDP Input.dispatchKeyEvent.
+        "web.press_key" => {
+            let session_id = session_id_from_params(&params)?;
+            let key = required_str(&params, "key")?;
+            let selector = params
+                .get("selector")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+            let modifiers = match params.get("modifiers") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(v) => {
+                    let arr = v.as_array().ok_or_else(|| JsonRpcError {
+                        code: LoomErrorCode::SchemaViolation,
+                        message: "modifiers must be an array of strings".to_string(),
+                        data: None,
+                    })?;
+                    let mut mods = Vec::with_capacity(arr.len());
+                    for entry in arr {
+                        match entry.as_str() {
+                            Some(s) => mods.push(s.to_string()),
+                            None => {
+                                return Err(JsonRpcError {
+                                    code: LoomErrorCode::SchemaViolation,
+                                    message: "modifiers entries must be strings".to_string(),
+                                    data: None,
+                                })
+                            }
+                        }
+                    }
+                    Some(mods)
+                }
+            };
+            Ok(Action::WebPressKey {
+                session_id,
+                key,
+                selector,
+                modifiers,
             })
         }
         "web.select" => {

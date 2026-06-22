@@ -1,0 +1,312 @@
+// Trusted CDP input dispatch — pure helpers (keymap + `Input.*` message builders).
+//
+// These build the CDP `Input.dispatchKeyEvent` / `Input.dispatchMouseEvent`
+// frames that drive REAL (`isTrusted:true`) browser input, used by the typed
+// senders in `senders.rs` (`send_type_keystrokes` / `send_press_key` /
+// `send_trusted_click`). The key map is a FIXED US-layout table (identical on
+// every OS) so a recorded receipt's logical key never embeds host-derived
+// platform keycodes — replay stays structural and cross-OS-stable.
+//
+// Pure + side-effect-free → unit-tested directly (see `#[cfg(test)]`).
+
+use ciborium::value::{Integer, Value};
+use loom_shared::shim_protocol::CdpMessage;
+
+/// One US-keyboard key definition. `vk` is the Windows virtual key code
+/// (== Puppeteer `keyCode`); `text` is the inserted text for a `keyDown`
+/// (e.g. Enter → "\r"), empty for non-text keys.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct KeyDef {
+    pub key: String,
+    pub code: String,
+    pub vk: i64,
+    pub text: String,
+}
+
+impl KeyDef {
+    fn new(key: &str, code: &str, vk: i64, text: &str) -> Self {
+        Self {
+            key: key.to_string(),
+            code: code.to_string(),
+            vk,
+            text: text.to_string(),
+        }
+    }
+}
+
+/// CDP modifier bitfield: Alt=1, Ctrl=2, Meta/Cmd=4, Shift=8.
+pub(crate) fn modifier_bit(name: &str) -> i64 {
+    match name {
+        "Alt" => 1,
+        "Control" => 2,
+        "Meta" => 4,
+        "Shift" => 8,
+        _ => 0,
+    }
+}
+
+/// Resolve a modifier alias (Ctrl/Cmd/Command/Option) to its canonical KeyDef,
+/// or `None` for an unknown modifier name.
+pub(crate) fn modifier_keydef(name: &str) -> Option<KeyDef> {
+    match name {
+        "Shift" => Some(KeyDef::new("Shift", "ShiftLeft", 16, "")),
+        "Control" | "Ctrl" => Some(KeyDef::new("Control", "ControlLeft", 17, "")),
+        "Alt" | "Option" => Some(KeyDef::new("Alt", "AltLeft", 18, "")),
+        "Meta" | "Cmd" | "Command" => Some(KeyDef::new("Meta", "MetaLeft", 91, "")),
+        _ => None,
+    }
+}
+
+/// Canonical modifier name for the bitfield, given an alias. `None` if unknown.
+fn modifier_canonical(name: &str) -> Option<&'static str> {
+    match name {
+        "Shift" => Some("Shift"),
+        "Control" | "Ctrl" => Some("Control"),
+        "Alt" | "Option" => Some("Alt"),
+        "Meta" | "Cmd" | "Command" => Some("Meta"),
+        _ => None,
+    }
+}
+
+/// Fixed US-layout map for named keys (Enter/Tab/Escape/arrows/…). `None` for an
+/// unknown name (the caller may fall back to a single printable char).
+pub(crate) fn named_keydef(name: &str) -> Option<KeyDef> {
+    let d = match name {
+        "Enter" | "Return" => KeyDef::new("Enter", "Enter", 13, "\r"),
+        "Tab" => KeyDef::new("Tab", "Tab", 9, ""),
+        "Escape" | "Esc" => KeyDef::new("Escape", "Escape", 27, ""),
+        "Backspace" => KeyDef::new("Backspace", "Backspace", 8, ""),
+        "Delete" | "Del" => KeyDef::new("Delete", "Delete", 46, ""),
+        "ArrowUp" => KeyDef::new("ArrowUp", "ArrowUp", 38, ""),
+        "ArrowDown" => KeyDef::new("ArrowDown", "ArrowDown", 40, ""),
+        "ArrowLeft" => KeyDef::new("ArrowLeft", "ArrowLeft", 37, ""),
+        "ArrowRight" => KeyDef::new("ArrowRight", "ArrowRight", 39, ""),
+        "Home" => KeyDef::new("Home", "Home", 36, ""),
+        "End" => KeyDef::new("End", "End", 35, ""),
+        "PageUp" => KeyDef::new("PageUp", "PageUp", 33, ""),
+        "PageDown" => KeyDef::new("PageDown", "PageDown", 34, ""),
+        "Space" => KeyDef::new(" ", "Space", 32, " "),
+        _ => return None,
+    };
+    Some(d)
+}
+
+/// KeyDef for a single printable character (text-insertion path). ASCII letters
+/// → `KeyX`/VK = uppercase ASCII; digits → `DigitN`; other Unicode → text-only
+/// (`code=""`, `vk=0`) — deterministic, though `keydown.keyCode` is 0 there.
+pub(crate) fn char_keydef(c: char) -> KeyDef {
+    let (code, vk) = if c.is_ascii_alphabetic() {
+        let up = c.to_ascii_uppercase();
+        (format!("Key{up}"), up as i64)
+    } else if c.is_ascii_digit() {
+        (format!("Digit{c}"), c as i64)
+    } else {
+        (String::new(), 0)
+    };
+    KeyDef {
+        key: c.to_string(),
+        code,
+        vk,
+        text: c.to_string(),
+    }
+}
+
+/// Build one `Input.dispatchKeyEvent` frame. `text` is included only when
+/// `include_text` is set AND the KeyDef has non-empty text (keyUp omits text).
+fn key_event(ty: &str, kd: &KeyDef, modifiers: i64, include_text: bool) -> CdpMessage {
+    let mut entries = vec![
+        (Value::Text("type".into()), Value::Text(ty.into())),
+        (Value::Text("key".into()), Value::Text(kd.key.clone())),
+        (Value::Text("code".into()), Value::Text(kd.code.clone())),
+        (
+            Value::Text("windowsVirtualKeyCode".into()),
+            Value::Integer(Integer::from(kd.vk)),
+        ),
+        (
+            Value::Text("modifiers".into()),
+            Value::Integer(Integer::from(modifiers)),
+        ),
+    ];
+    if include_text && !kd.text.is_empty() {
+        entries.push((Value::Text("text".into()), Value::Text(kd.text.clone())));
+    }
+    CdpMessage {
+        method: "Input.dispatchKeyEvent".into(),
+        params: Value::Map(entries),
+    }
+}
+
+/// Build one `Input.dispatchMouseEvent` frame at viewport coords (x, y).
+pub(crate) fn mouse_event(ty: &str, x: i64, y: i64, button: &str, click_count: i64) -> CdpMessage {
+    let entries = vec![
+        (Value::Text("type".into()), Value::Text(ty.into())),
+        (Value::Text("x".into()), Value::Integer(Integer::from(x))),
+        (Value::Text("y".into()), Value::Integer(Integer::from(y))),
+        (Value::Text("button".into()), Value::Text(button.into())),
+        (
+            Value::Text("clickCount".into()),
+            Value::Integer(Integer::from(click_count)),
+        ),
+    ];
+    CdpMessage {
+        method: "Input.dispatchMouseEvent".into(),
+        params: Value::Map(entries),
+    }
+}
+
+/// keyDown(+text) → keyUp frames for every char of `text` (no modifiers, no
+/// inter-key delay — deterministic under the virtual clock).
+pub(crate) fn keystroke_events_for_text(text: &str) -> Vec<CdpMessage> {
+    let mut out = Vec::with_capacity(text.chars().count() * 2);
+    for c in text.chars() {
+        let kd = char_keydef(c);
+        out.push(key_event("keyDown", &kd, 0, true));
+        out.push(key_event("keyUp", &kd, 0, false));
+    }
+    out
+}
+
+/// Build the press-key frames for a named key (or single printable char) plus
+/// optional modifier combo. `None` when the key name or a modifier is unknown.
+/// Sequence: modifier keyDowns (building the bitfield) → key keyDown → key keyUp
+/// → modifier keyUps (reverse). Text is inserted only when no non-shift modifier
+/// is held (so Ctrl+A doesn't also type "a").
+pub(crate) fn press_key_events(key: &str, modifiers: &[String]) -> Option<Vec<CdpMessage>> {
+    let kd = named_keydef(key).or_else(|| {
+        let mut chars = key.chars();
+        match (chars.next(), chars.next()) {
+            (Some(c), None) => Some(char_keydef(c)),
+            _ => None,
+        }
+    })?;
+
+    // Resolve every modifier first; an unknown one fails the whole press.
+    let mut mod_defs = Vec::with_capacity(modifiers.len());
+    for m in modifiers {
+        let canon = modifier_canonical(m)?;
+        mod_defs.push((canon, modifier_keydef(m)?));
+    }
+
+    let mut mask = 0i64;
+    let mut out = Vec::with_capacity(mod_defs.len() * 2 + 2);
+    for (canon, md) in &mod_defs {
+        mask |= modifier_bit(canon);
+        out.push(key_event("keyDown", md, mask, false));
+    }
+    let has_nonshift = (mask & !8) != 0;
+    out.push(key_event("keyDown", &kd, mask, !has_nonshift));
+    out.push(key_event("keyUp", &kd, mask, false));
+    for (canon, md) in mod_defs.iter().rev() {
+        mask &= !modifier_bit(canon);
+        out.push(key_event("keyUp", md, mask, false));
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn method_of(m: &CdpMessage) -> &str {
+        &m.method
+    }
+    fn field<'a>(m: &'a CdpMessage, k: &str) -> Option<&'a Value> {
+        if let Value::Map(entries) = &m.params {
+            entries.iter().find_map(|(kk, vv)| match kk {
+                Value::Text(t) if t == k => Some(vv),
+                _ => None,
+            })
+        } else {
+            None
+        }
+    }
+    fn text_of(v: &Value) -> Option<&str> {
+        if let Value::Text(t) = v {
+            Some(t)
+        } else {
+            None
+        }
+    }
+    fn int_of(v: &Value) -> Option<i64> {
+        if let Value::Integer(i) = v {
+            Some((*i).try_into().ok()?)
+        } else {
+            None
+        }
+    }
+
+    #[test]
+    fn enter_named_key_has_carriage_return_text_and_vk_13() {
+        let d = named_keydef("Enter").unwrap();
+        assert_eq!(d.vk, 13);
+        assert_eq!(d.text, "\r");
+        assert_eq!(d.code, "Enter");
+    }
+
+    #[test]
+    fn typing_a_char_emits_keydown_with_text_then_keyup_without() {
+        let evs = keystroke_events_for_text("a");
+        assert_eq!(evs.len(), 2);
+        assert!(evs.iter().all(|e| method_of(e) == "Input.dispatchKeyEvent"));
+        assert_eq!(text_of(field(&evs[0], "type").unwrap()), Some("keyDown"));
+        assert_eq!(text_of(field(&evs[0], "text").unwrap()), Some("a"));
+        assert_eq!(
+            int_of(field(&evs[0], "windowsVirtualKeyCode").unwrap()),
+            Some(65)
+        );
+        assert_eq!(text_of(field(&evs[1], "type").unwrap()), Some("keyUp"));
+        // keyUp carries no text.
+        assert!(field(&evs[1], "text").is_none());
+    }
+
+    #[test]
+    fn typing_multichar_text_emits_two_events_per_char() {
+        let evs = keystroke_events_for_text("ab9");
+        assert_eq!(evs.len(), 6);
+    }
+
+    #[test]
+    fn press_unknown_key_returns_none() {
+        assert!(press_key_events("NoSuchKey", &[]).is_none());
+    }
+
+    #[test]
+    fn press_enter_emits_keydown_keyup() {
+        let evs = press_key_events("Enter", &[]).unwrap();
+        assert_eq!(evs.len(), 2);
+        assert_eq!(text_of(field(&evs[0], "type").unwrap()), Some("keyDown"));
+        assert_eq!(
+            int_of(field(&evs[0], "windowsVirtualKeyCode").unwrap()),
+            Some(13)
+        );
+    }
+
+    #[test]
+    fn ctrl_a_sets_modifier_bitfield_and_suppresses_text() {
+        let evs = press_key_events("a", &["Control".to_string()]).unwrap();
+        // Control down, a down, a up, Control up
+        assert_eq!(evs.len(), 4);
+        // The 'a' keyDown should carry the Ctrl (2) modifier and NO text.
+        let a_down = &evs[1];
+        assert_eq!(int_of(field(a_down, "modifiers").unwrap()), Some(2));
+        assert!(
+            field(a_down, "text").is_none(),
+            "Ctrl+A must not insert text"
+        );
+    }
+
+    #[test]
+    fn unknown_modifier_fails_the_press() {
+        assert!(press_key_events("a", &["Hyper".to_string()]).is_none());
+    }
+
+    #[test]
+    fn mouse_event_carries_coords_button_clickcount() {
+        let m = mouse_event("mousePressed", 12, 34, "left", 1);
+        assert_eq!(method_of(&m), "Input.dispatchMouseEvent");
+        assert_eq!(int_of(field(&m, "x").unwrap()), Some(12));
+        assert_eq!(int_of(field(&m, "y").unwrap()), Some(34));
+        assert_eq!(text_of(field(&m, "button").unwrap()), Some("left"));
+        assert_eq!(int_of(field(&m, "clickCount").unwrap()), Some(1));
+    }
+}

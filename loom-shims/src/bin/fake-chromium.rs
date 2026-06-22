@@ -1382,6 +1382,13 @@ fn canned_response(method: &str, params: &Value) -> Value {
             json!({ "nodeId": node_id })
         }
         "DOM.scrollIntoViewIfNeeded" => json!({}),
+        // cdp-trusted-input: focus + real CDP input dispatch. The fake doesn't
+        // model keyboard/mouse state — it just acks (empty success), which is
+        // enough to assert the host issues the right CDP envelopes and records
+        // the trusted-input receipt.
+        "DOM.focus" => json!({}),
+        "Input.dispatchKeyEvent" => json!({}),
+        "Input.dispatchMouseEvent" => json!({}),
         "DOM.getBoxModel" => {
             let nid = params.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);
             let fixture = dom_fixture();
