@@ -93,6 +93,7 @@ fn live_host_state(fx: &Fixture) -> HostState {
         profile: "safe".into(),
         downloads_dir: None,
         capture_dom_after: false,
+        cookie_capture: std::sync::Arc::new(parking_lot::Mutex::new(None)),
     }
 }
 

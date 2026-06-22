@@ -393,6 +393,28 @@ impl SessionExecutor {
                     // byte-identical to pre-feature AND rejects malformed values even
                     // if a guest misbehaves (NFR-DET-01 + trust boundary).
                     apply_dom_after_hash_accept_gate(&mut builder, capture_dom_after);
+                    // web.get_cookies surfacing: `shim_call` decoded the
+                    // Network.getCookies response host-side (the WASM guest can't)
+                    // and stashed the cookie array. Move it onto the receipt with
+                    // RAW values (operator-facing, D7) AND re-derive a value-free
+                    // `outcome_hash` so cookie values never enter the manifest hash
+                    // chain (NFR-DET-01). Both fields are set together only when the
+                    // redacted hash succeeds, so a (near-impossible) recompute error
+                    // leaves the receipt byte-identical to the pre-fix behaviour.
+                    if let Some(cookies_json) = store.data().cookie_capture.lock().take() {
+                        match crate::receipt_marshaller::cookie_read_outcome_hash(&cookies_json) {
+                            Ok(h) => {
+                                builder.outcome_hash = h;
+                                builder.get_cookies_result = Some(cookies_json);
+                            }
+                            Err(e) => tracing::warn!(
+                                action_id = builder.action_id,
+                                error = %e,
+                                "get_cookies: redacted outcome_hash failed; \
+                                 leaving receipt unchanged"
+                            ),
+                        }
+                    }
                     Ok(ActionOutcome::Success {
                         builder,
                         observed_costs: ObservedCosts::default(),

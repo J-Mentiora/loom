@@ -1497,6 +1497,40 @@ mod tests {
         assert_eq!(r.side_effects[0]["status"], 200);
     }
 
+    /// web.get_cookies surfacing: a builder carrying `get_cookies_result`
+    /// (set host-side from the decoded Network.getCookies response) must land
+    /// on the wire receipt as a parsed JSON array with RAW values (D7).
+    #[test]
+    fn build_navigate_wire_receipt_surfaces_get_cookies_result() {
+        let builder = ReceiptBuilder {
+            action_id: 7,
+            status: HostStatus::Ok,
+            action_hash: "aa".repeat(32),
+            outcome_hash: "cc".repeat(32),
+            emitted_at_ms: 1_714_074_336_000,
+            get_cookies_result: Some(
+                r#"[{"name":"NID","value":"raw-token","domain":".google.com","httpOnly":true}]"#
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        let r = build_navigate_wire_receipt(&builder, "S1", None);
+        let cookies = r.get_cookies_result.expect("get_cookies_result surfaced");
+        assert!(cookies.is_array());
+        assert_eq!(cookies[0]["name"], "NID");
+        // RAW value preserved on the operator-facing wire receipt (D7).
+        assert_eq!(cookies[0]["value"], "raw-token");
+        assert_eq!(cookies[0]["httpOnly"], true);
+    }
+
+    /// Non-cookie verbs leave `get_cookies_result` absent (no regression).
+    #[test]
+    fn build_navigate_wire_receipt_omits_get_cookies_for_non_cookie_verbs() {
+        let builder = navigate_builder_with_all_blobs();
+        let r = build_navigate_wire_receipt(&builder, "S1", None);
+        assert!(r.get_cookies_result.is_none());
+    }
+
     /// --capture-policy minimal strips tier-2 fields
     /// at the wire boundary. This is the test that actually exercises
     /// the `apply_capture_profile_to_wire(...)` invocation in the
