@@ -551,6 +551,16 @@ jobs:
         # shell harness), so PR-time skipping is the biggest single savings.
         os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    # The tests/e2e/*.sh harness scripts default LOOM/MCP to
+    # `$WORKSPACE/target/release/loom[-mcp]` (via `${LOOM_BIN:-…}`). Since this job
+    # now builds with `--profile ci-fast` (binaries land in target/ci-fast/), point
+    # the override hooks there. Set at job level so all three harness steps
+    # (run_e2e / run_load / run_mcp) inherit it on both OSes. NOTE: the script
+    # defaults stay `target/release` on purpose — the scheduled e2e-real-world.yml
+    # still builds `--release` and relies on that default.
+    env:
+      LOOM_BIN: ${{ github.workspace }}/target/ci-fast/loom
+      LOOM_MCP_BIN: ${{ github.workspace }}/target/ci-fast/loom-mcp
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
