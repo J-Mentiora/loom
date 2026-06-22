@@ -146,3 +146,15 @@ codegen-units = 16
 [profile.dist]
 inherits = "release"
 lto = "thin"
+
+# ci-fast: the CI test/build/smoke/e2e compile profile. Same optimization as
+# release (opt-level=3 inherited) so the wall-clock perf-SLA tests still pass
+# (audit p95<100ms, replay<5s, session-list<500ms, …), but WITHOUT fat LTO —
+# the `cargo test (ubuntu)` job spent ~35 min running 373 single-threaded
+# whole-program LTO passes (one per test binary). lto=false + codegen-units=16
+# restores codegen parallelism; same lever the wasm-guest profile uses. NOT for
+# shipped artifacts — release.yml/cargo-dist build from [profile.dist] (lto=thin).
+[profile.ci-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
