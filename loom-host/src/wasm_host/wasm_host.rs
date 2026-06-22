@@ -305,6 +305,7 @@ impl WasmHost {
             profile: session.profile.clone(),
             downloads_dir: session.downloads_dir.clone(),
             capture_dom_after: session.capture_dom_after,
+            cookie_capture: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         };
 
         // 4. Run surface invocation

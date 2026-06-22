@@ -79,6 +79,35 @@ fn loom_to_wit_error(err: loom_shared::error_format::LoomError) -> HostError {
     }
 }
 
+/// True when an opaque `shim_call` CBOR payload is a `Network.getCookies`
+/// request. `web.get_cookies` is the only verb that emits this method, so it
+/// is a precise tag for the cookie-surfacing capture below. A decode miss
+/// returns `false` (the capture simply doesn't run — the receipt is unchanged).
+fn is_get_cookies_request(msg: &[u8]) -> bool {
+    loom_shared::shim_protocol::ciborium_from_slice::<loom_shared::shim_protocol::CdpMessage>(msg)
+        .map(|m| m.method == "Network.getCookies")
+        .unwrap_or(false)
+}
+
+/// Decode the `Network.getCookies` CDP response payload (re-encoded CBOR of the
+/// CDP result `{cookies: [...]}`) into a canonical-JSON cookie ARRAY string.
+/// Returns `None` if the bytes don't decode or carry no `cookies` array, so the
+/// caller can fall through to the prior behaviour (no `get_cookies_result`).
+///
+/// The WASM guest can't do this (it ships without a CBOR decoder by design), so
+/// the host owns the decode and hands the array to `SessionExecutor` for the
+/// receipt. Values are kept RAW here (operator-facing receipts include them per
+/// D7); value redaction for the replay hash chain happens later in
+/// `assemble_cookies_canonical_bytes`.
+fn decode_get_cookies_array(payload_cbor: &[u8]) -> Option<String> {
+    let v: serde_json::Value = ciborium::de::from_reader(payload_cbor).ok()?;
+    let cookies = v.get("cookies")?;
+    if !cookies.is_array() {
+        return None;
+    }
+    serde_json::to_string(cookies).ok()
+}
+
 impl HostState {
     /// Deterministic per-session virtual clock (ms) for receipt timestamps when
     /// determinism is enabled; `None` falls back to the harness clock. A pure
@@ -315,6 +344,12 @@ impl Host for HostState {
         // the async block can move them.
         let profile_for_register = self.profile.clone();
         let downloads_dir_for_register = self.downloads_dir.clone();
+        // web.get_cookies surfacing: tag the request now (cheap, off the async
+        // block) and clone the side-channel handle so the async block can stash
+        // the decoded cookie array once the shim responds. SessionExecutor reads
+        // it after the guest returns.
+        let is_get_cookies = is_get_cookies_request(&msg);
+        let cookie_capture = self.cookie_capture.clone();
 
         let maybe_call: Result<
             (ShimId, Vec<u8>, Arc<crate::shim_manager::ShimManager>),
@@ -386,7 +421,17 @@ impl Host for HostState {
                         }
                     }
                     match shim_manager.send(effective_id, msg).await {
-                        Ok(bytes) => Ok(bytes),
+                        Ok(bytes) => {
+                            // Decode + stash the cookie array for the receipt.
+                            // Best-effort: a decode miss leaves the receipt as
+                            // before (outcome_hash still rides the response bytes).
+                            if is_get_cookies {
+                                if let Some(json) = decode_get_cookies_array(&bytes) {
+                                    *cookie_capture.lock() = Some(json);
+                                }
+                            }
+                            Ok(bytes)
+                        }
                         Err(e) => Err(loom_to_wit_error(e)),
                     }
                 }
@@ -1306,6 +1351,74 @@ async fn do_http_request(req: NetRequest) -> Result<loom_core::vault::NetResp, S
     }
 
     Err("{\"kind\":\"url_blocked\",\"reason\":\"too_many_redirects\"}".to_owned())
+}
+
+#[cfg(test)]
+mod cookie_capture_tests {
+    use super::{decode_get_cookies_array, is_get_cookies_request};
+    use ciborium::value::Value as Cbor;
+    use loom_shared::shim_protocol::{ciborium_to_vec, CdpMessage};
+
+    fn cdp_msg_bytes(method: &str) -> Vec<u8> {
+        ciborium_to_vec(&CdpMessage {
+            method: method.to_string(),
+            params: Cbor::Map(vec![]),
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn tags_get_cookies_requests_and_ignores_others() {
+        assert!(is_get_cookies_request(&cdp_msg_bytes("Network.getCookies")));
+        assert!(!is_get_cookies_request(&cdp_msg_bytes(
+            "Network.setCookies"
+        )));
+        assert!(!is_get_cookies_request(&cdp_msg_bytes("Page.navigate")));
+        // A non-CdpMessage payload must not panic and must read as "not cookies".
+        assert!(!is_get_cookies_request(&[0xff, 0x00, 0x01]));
+    }
+
+    #[test]
+    fn decodes_cookie_array_from_cdp_response_payload() {
+        // Mirror a `Network.getCookies` CDP result `{cookies: [...]}` re-encoded
+        // as CBOR exactly the way `ShimManager::send` hands it to the guest.
+        let payload = Cbor::Map(vec![(
+            Cbor::Text("cookies".into()),
+            Cbor::Array(vec![Cbor::Map(vec![
+                (Cbor::Text("name".into()), Cbor::Text("sid".into())),
+                (Cbor::Text("value".into()), Cbor::Text("secret".into())),
+                (Cbor::Text("domain".into()), Cbor::Text("x.com".into())),
+                (Cbor::Text("httpOnly".into()), Cbor::Bool(true)),
+            ])]),
+        )]);
+        let bytes = ciborium_to_vec(&payload).unwrap();
+        let json = decode_get_cookies_array(&bytes).expect("decodes");
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(parsed.is_array());
+        assert_eq!(parsed[0]["name"], "sid");
+        assert_eq!(parsed[0]["value"], "secret"); // raw here; redaction happens in marshaller
+        assert_eq!(parsed[0]["httpOnly"], true);
+    }
+
+    #[test]
+    fn decode_returns_none_for_missing_or_non_array_cookies() {
+        // No `cookies` key.
+        let no_key = ciborium_to_vec(&Cbor::Map(vec![(
+            Cbor::Text("foo".into()),
+            Cbor::Text("bar".into()),
+        )]))
+        .unwrap();
+        assert!(decode_get_cookies_array(&no_key).is_none());
+        // `cookies` present but not an array.
+        let not_array = ciborium_to_vec(&Cbor::Map(vec![(
+            Cbor::Text("cookies".into()),
+            Cbor::Text("oops".into()),
+        )]))
+        .unwrap();
+        assert!(decode_get_cookies_array(&not_array).is_none());
+        // Garbage bytes.
+        assert!(decode_get_cookies_array(&[0xde, 0xad]).is_none());
+    }
 }
 
 #[cfg(test)]

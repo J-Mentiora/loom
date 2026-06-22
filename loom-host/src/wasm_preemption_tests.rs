@@ -171,6 +171,7 @@ fn make_host_state(h: &Harness) -> crate::host_function_table::HostState {
         profile: "safe".into(),
         downloads_dir: None,
         capture_dom_after: false,
+        cookie_capture: std::sync::Arc::new(parking_lot::Mutex::new(None)),
     }
 }
 

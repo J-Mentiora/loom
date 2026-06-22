@@ -1036,13 +1036,18 @@ pub(crate) fn build_navigate_wire_receipt(
         settle_outcome: builder.navigate_settle_outcome.clone(),
         return_value_json,
         return_value_blob_ref,
-        // v0.9.6 cookie-result wire fields. Populated by Tier 4
-        // (ReceiptMarshaller cookie fields + D13 tuple-identity sort);
-        // for now stay `None` so non-cookie verbs serialise unchanged
-        // and cookie verbs' result data lands on the receipt once the
-        // marshaller exposes it.
+        // v0.9.6 cookie-result wire fields. `get_cookies_result` is populated
+        // from `builder.get_cookies_result` (the host decodes the
+        // Network.getCookies response in `shim_call`; SessionExecutor moves it
+        // onto the builder). Values are RAW here per D7 (operator-facing
+        // receipts include values; the replay hash chain redacts them). The
+        // remaining three verbs (set/clear/delete) still forward opaquely and
+        // stay `None`.
         set_cookies_result: None,
-        get_cookies_result: None,
+        get_cookies_result: builder
+            .get_cookies_result
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         clear_cookies_result: None,
         delete_cookies_result: None,
         scroll_result: None,

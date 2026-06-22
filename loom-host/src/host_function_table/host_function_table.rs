@@ -108,6 +108,15 @@ pub struct HostState {
     /// `dom-after-hash` into the canonical receipt when this is true (host-side
     /// accept-gate: the host is authoritative for the fingerprint field).
     pub capture_dom_after: bool,
+    /// Side-channel for surfacing `web.get_cookies` results. The WASM guest
+    /// forwards `Network.getCookies` opaquely (it ships without a CBOR decoder),
+    /// so the decoded cookie array would otherwise be lost. `shim_call` decodes
+    /// the CDP response host-side and stashes the canonical-JSON cookie array
+    /// here; `SessionExecutor` reads it after the guest returns to populate
+    /// `ReceiptBuilder.get_cookies_result` and re-derive a value-redacted
+    /// `outcome_hash`. `Arc<Mutex<..>>` because `shim_call`'s async block needs a
+    /// clone it can write through while `HostState` is still owned by the Store.
+    pub cookie_capture: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl WasiView for HostState {

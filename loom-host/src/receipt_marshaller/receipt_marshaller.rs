@@ -713,6 +713,32 @@ fn assemble_cookies_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>,
         })
 }
 
+/// Re-derive a value-free `outcome_hash` for a `web.get_cookies` receipt from
+/// its raw cookie-array JSON.
+///
+/// The guest sets `outcome_hash = sha256(raw Network.getCookies response)`, which
+/// includes cookie *values* — those must NOT enter the manifest hash chain
+/// (`assemble_cookies_canonical_bytes` embeds `outcome_hash`, so a value-bearing
+/// hash would leak values into the chain). This mirrors that function's
+/// redaction (D13 tuple-identity sort + `value` → `"[REDACTED]"`) so the hash
+/// depends on cookie names/structure but never on values — keeping replay
+/// structural and the chain cross-run value-independent (NFR-DET-01). The `"C:"`
+/// domain separator mirrors evaluate's `"E:"`.
+pub fn cookie_read_outcome_hash(get_cookies_result_json: &str) -> Result<String, LoomError> {
+    use loom_core::error::LoomErrorCode;
+    let redacted = prepare_cookies_field(Some(get_cookies_result_json))?;
+    let canonical = serde_jcs::to_string(&redacted).map_err(|e| {
+        LoomError::new(
+            LoomErrorCode::Internal,
+            format!("cookie_read_outcome_hash: JCS encode failed: {e}"),
+        )
+    })?;
+    let mut buf = Vec::with_capacity(2 + canonical.len());
+    buf.extend_from_slice(b"C:");
+    buf.extend_from_slice(canonical.as_bytes());
+    Ok(loom_core::content_store::sha256_hex(&buf))
+}
+
 /// Parse a JSON-encoded cookie array, redact `value` fields, sort by
 /// (name, domain, path) tuple. Returns the cookie array as a
 /// `serde_json::Value` ready to embed in the receipt payload (or
@@ -873,6 +899,51 @@ mod cookies_canonical_bytes_tests {
         assert_eq!(
             bytes1, bytes2,
             "canonical bytes must be identical regardless of cookie value (replay-byte-identity)"
+        );
+    }
+
+    #[test]
+    fn cookie_read_outcome_hash_excludes_values() {
+        // The re-derived get_cookies outcome_hash must NOT depend on cookie
+        // values (NFR-DET-01 + acceptance #3): two reads with identical
+        // (name, domain, path) but different values hash identically.
+        let h1 = cookie_read_outcome_hash(
+            r#"[{"name":"sid","domain":"x.com","path":"/","value":"SECRET_A"}]"#,
+        )
+        .expect("ok");
+        let h2 = cookie_read_outcome_hash(
+            r#"[{"name":"sid","domain":"x.com","path":"/","value":"totally_different_B"}]"#,
+        )
+        .expect("ok");
+        assert_eq!(h1, h2, "outcome_hash must be value-independent");
+        // sanity: a real 64-hex sha256.
+        assert_eq!(h1.len(), 64);
+        assert!(h1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn cookie_read_outcome_hash_distinguishes_names_and_is_order_independent() {
+        // Different cookie NAMES → different hash.
+        let a =
+            cookie_read_outcome_hash(r#"[{"name":"sid","domain":"x.com","path":"/","value":"v"}]"#)
+                .expect("ok");
+        let b = cookie_read_outcome_hash(
+            r#"[{"name":"csrf","domain":"x.com","path":"/","value":"v"}]"#,
+        )
+        .expect("ok");
+        assert_ne!(a, b, "distinct cookie names must hash differently");
+        // D13 sort makes the hash independent of input array order.
+        let ord1 = cookie_read_outcome_hash(
+            r#"[{"name":"a","domain":"x.com","path":"/","value":"1"},{"name":"b","domain":"x.com","path":"/","value":"2"}]"#,
+        )
+        .expect("ok");
+        let ord2 = cookie_read_outcome_hash(
+            r#"[{"name":"b","domain":"x.com","path":"/","value":"9"},{"name":"a","domain":"x.com","path":"/","value":"8"}]"#,
+        )
+        .expect("ok");
+        assert_eq!(
+            ord1, ord2,
+            "hash must be input-order independent (D13 sort)"
         );
     }
 
