@@ -185,6 +185,13 @@ async fn handle_connection(
     // (differs from a no-op) yet deterministic across same-seed sessions (the
     // ephemeral frameIds still vary per call and must be normalized away).
     let mut dom_after_mutated = false;
+    // Client-side-redirect modeling (see `SettleScript::renavigate_at`): true
+    // while the loaded page has begun a self-initiated top-level navigation
+    // whose new document is held `readyState:"loading"` until the executor
+    // re-arms the virtual-time budget. `renav_href` is the URL the wedged
+    // in-flight document reports until then.
+    let mut awaiting_rearm = false;
+    let mut renav_href = String::new();
 
     while let Some(msg) = read.next().await {
         let msg = match msg {
@@ -292,6 +299,8 @@ async fn handle_connection(
             settle_idx = 0;
             paused_doc = None;
             vt_budget_pending_on_pause = false;
+            awaiting_rearm = false;
+            renav_href = String::new();
         }
 
         // Runtime.evaluate is driven by an expression-pattern convention
@@ -315,9 +324,40 @@ async fn handle_connection(
             .unwrap_or(false);
         let evaluate_response = if let Some(expr) = &expression {
             if is_settle_probe {
-                let resp = script.probe_response(settle_idx);
-                settle_idx += 1;
-                Some(resp)
+                // Client-side-redirect gate: if the page is scripted to begin a
+                // self-initiated top-level navigation at this tick, queue a NEW
+                // load event held on the next budget arm and pin the probe to
+                // "loading" until the executor re-arms (see `renavigate_at`).
+                if !awaiting_rearm && script.renavigate_at.contains(&settle_idx) {
+                    awaiting_rearm = true;
+                    renav_href = script
+                        .probe
+                        .get(settle_idx)
+                        .map(|(_, h, _)| h.clone())
+                        .unwrap_or_default();
+                    let mut evt = json!({
+                        "method": "Page.loadEventFired",
+                        "params": { "timestamp": 1.0 }
+                    });
+                    if let Some(sid) = &session_id {
+                        evt["sessionId"] = json!(sid);
+                    }
+                    // The new document's load is held until the clock advances,
+                    // exactly like the shell's was. The clock is already paused
+                    // again (it re-pauses after each budget drains).
+                    deferred_load_event = Some(evt.to_string());
+                    vt_clock_paused = true;
+                }
+                if awaiting_rearm {
+                    // Wedged on the blank in-flight document: readyState stays
+                    // "loading" until a re-arm flushes the held load event.
+                    let encoded = json!([false, renav_href, 0]).to_string();
+                    Some(json!({ "result": { "type": "string", "value": encoded } }))
+                } else {
+                    let resp = script.probe_response(settle_idx);
+                    settle_idx += 1;
+                    Some(resp)
+                }
             } else {
                 Some(build_fake_evaluate_response(expr))
             }
@@ -529,6 +569,14 @@ async fn handle_connection(
                 if let Some(load_evt) = deferred_load_event.take() {
                     if write.send(Message::Text(load_evt.into())).await.is_err() {
                         return;
+                    }
+                    // A re-arm that flushed a renavigation's held load event
+                    // un-wedges the new document: clear the loading gate and
+                    // step past the renav tick so the next probe returns the
+                    // scripted post-redirect (complete) observation.
+                    if awaiting_rearm {
+                        awaiting_rearm = false;
+                        settle_idx += 1;
                     }
                 }
                 let mut vt_evt = json!({
@@ -1487,6 +1535,18 @@ struct SettleScript {
     /// Number of never-finishing in-flight requests to pin (the never-settles
     /// network shape). Zero for normal pages.
     perpetual_inflight: usize,
+    /// Probe-tick indices at which the loaded PAGE begins a fresh top-level
+    /// navigation it initiated itself (window.location / <meta refresh> /
+    /// form-POST). Models the client-side-redirect bug: when the cursor
+    /// reaches one of these ticks, the fake queues a NEW `Page.loadEventFired`
+    /// gated on the NEXT virtual-time budget arm (real headless Chromium holds
+    /// the new document's load while the clock is paused) and pins the probe to
+    /// `readyState:"loading"` until the executor re-arms the budget. An
+    /// executor that never re-attaches (the bug) stays wedged on the blank
+    /// in-flight document exactly like it does against real Chromium; one that
+    /// re-arms + re-settles reaches the final page. The href reported while
+    /// loading is taken from `probe[idx]`.
+    renavigate_at: Vec<usize>,
 }
 
 impl SettleScript {
@@ -1509,6 +1569,7 @@ fn default_settle_script() -> SettleScript {
     SettleScript {
         probe: vec![(true, "https://fake.test/".to_string(), 0)],
         perpetual_inflight: 0,
+        renavigate_at: Vec::new(),
     }
 }
 
@@ -1558,9 +1619,19 @@ fn load_settle_script() -> SettleScript {
         .get("perpetual_inflight")
         .and_then(|n| n.as_u64())
         .unwrap_or(0) as usize;
+    let renavigate_at: Vec<usize> = v
+        .get("renavigate_at")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.as_u64().map(|n| n as usize))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     SettleScript {
         probe,
         perpetual_inflight,
+        renavigate_at,
     }
 }
 
