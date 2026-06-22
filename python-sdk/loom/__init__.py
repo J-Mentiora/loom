@@ -240,12 +240,56 @@ class Session:
         )
         return Receipt._from_dict(r)
 
-    def type_text(self, selector: str, text: str, *, deadline_ms: int = 5000) -> Receipt:
+    def type_text(
+        self,
+        selector: str,
+        text: str,
+        *,
+        mode: str | None = None,
+        deadline_ms: int = 5000,
+    ) -> Receipt:
+        """Type ``text`` into ``selector``.
+
+        ``mode="value"`` (default) sets ``.value`` via ``Runtime.evaluate`` +
+        synthetic ``input``/``change`` events (``isTrusted:false``).
+        ``mode="keystrokes"`` focuses the element and dispatches a real
+        per-character CDP ``Input.dispatchKeyEvent`` sequence
+        (``isTrusted:true``) — required by trust-gating frameworks (e.g. Auth0
+        New Universal Login) that ignore synthetic events.
+        """
+        payload: dict = {"selector": selector, "text": text}
+        if mode is not None:
+            payload["mode"] = mode
         r = self._transport.call(
             "action.web.type_text",
-            _build_action_params(
-                self.session_id, "type_text", {"selector": selector, "text": text}, deadline_ms
-            ),
+            _build_action_params(self.session_id, "type_text", payload, deadline_ms),
+        )
+        return Receipt._from_dict(r)
+
+    def press_key(
+        self,
+        key: str,
+        *,
+        selector: str | None = None,
+        modifiers: list[str] | None = None,
+        deadline_ms: int = 5000,
+    ) -> Receipt:
+        """Dispatch a real key press (``isTrusted:true``) via CDP
+        ``Input.dispatchKeyEvent``.
+
+        ``key`` is a named key (``Enter``, ``Tab``, ``Escape``, arrows, …) or a
+        single printable character. ``modifiers`` may include ``Control``,
+        ``Alt``, ``Shift``, ``Meta``. With ``selector`` the element is focused
+        first; otherwise the event goes to whatever currently has focus.
+        """
+        payload: dict = {"key": key}
+        if selector is not None:
+            payload["selector"] = selector
+        if modifiers is not None:
+            payload["modifiers"] = modifiers
+        r = self._transport.call(
+            "action.web.press_key",
+            _build_action_params(self.session_id, "press_key", payload, deadline_ms),
         )
         return Receipt._from_dict(r)
 

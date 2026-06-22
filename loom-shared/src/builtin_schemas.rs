@@ -30,7 +30,13 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
     // `loom_shared::action_aliases::METHOD_ALIASES`.
     (
         "web.type",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"text":{"type":"string"}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"dom_after_hash":{"type":"string","description":"sha256 of the normalized post-action DOM; present only under capture-policy=fingerprint"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"text":{"type":"string"},"mode":{"type":"string","enum":["value","keystrokes"]}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"dom_after_hash":{"type":"string","description":"sha256 of the normalized post-action DOM; present only under capture-policy=fingerprint"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    // cdp-trusted-input: web.press_key — `key` required; `selector` + `modifiers`
+    // optional. Real CDP Input.dispatchKeyEvent (isTrusted:true), host-side.
+    (
+        "web.press_key",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"key":{"type":"string"},"selector":{"type":"string"},"modifiers":{"type":"array","items":{"type":"string"}}},"required":["session","key"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["outcome_hash","emitted_at_ms"]}}"#,
     ),
     (
         "web.select",

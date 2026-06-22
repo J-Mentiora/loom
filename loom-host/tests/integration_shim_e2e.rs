@@ -489,6 +489,125 @@ async fn screenshot_capture_decodes_to_valid_png() {
     drop(user_data_dir);
 }
 
+/// e2e (cdp-trusted-input): the trusted-input senders drive the real shim →
+/// fake-chromium CDP path. Trusted click resolves the box-model center and
+/// dispatches `Input.dispatchMouseEvent`; keystrokes / press_key dispatch real
+/// `Input.dispatchKeyEvent`; a missing selector / unknown key map to typed
+/// application outcomes (not transport errors).
+#[tokio::test]
+#[ignore = "requires fake-chromium binary; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first"]
+async fn trusted_input_dispatch_round_trip() {
+    use loom_host::shim_manager::InputDispatchOutcome as O;
+    let fake_path = fake_chromium_bin();
+    let shim_path = shim_bin();
+    if !std::path::Path::new(&fake_path).exists() {
+        panic!("fake-chromium binary not built at {fake_path}; run `cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium` first");
+    }
+    if !std::path::Path::new(&shim_path).exists() {
+        panic!("loom-shim-chromium binary not built at {shim_path}; run `cargo build -p loom-cli --bin loom-shim-chromium` first");
+    }
+    let user_data_dir = tempfile::tempdir().expect("tempdir");
+    // Fixture: one clickable element with a known box model.
+    let fixture_path = user_data_dir.path().join("fixture.json");
+    std::fs::write(
+        &fixture_path,
+        r##"{"boxes":{"#submit":[10.0,20.0,110.0,60.0]},"viewport":[1280,720]}"##,
+    )
+    .expect("write fixture");
+
+    let mgr = ShimManager::new(HostObservability::new(true));
+    let id = ShimId("chromium:test-session-input".into());
+    mgr.register(
+        id.clone(),
+        ShimConfig {
+            binary_path: shim_path.into(),
+            args: vec![],
+            env: vec![
+                ("LOOM_SHIM_CHROMIUM_PATH".into(), fake_chromium_bin()),
+                (
+                    "LOOM_SHIM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_FIXTURE".into(),
+                    fixture_path.display().to_string(),
+                ),
+            ],
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 10_000,
+            recv_timeout_ms: 30_000,
+        },
+    );
+
+    // Trusted click on the fixtured element → Ok (box-model center resolved +
+    // mouseMoved/Pressed/Released dispatched through the real shim).
+    let click = tokio::time::timeout(
+        Duration::from_secs(30),
+        mgr.send_trusted_click(id.clone(), 0, 0, "#submit".into(), 0),
+    )
+    .await
+    .expect("trusted click did not return in 30s")
+    .expect("trusted click transport error");
+    assert_eq!(
+        click,
+        O::Ok,
+        "trusted click on a boxed element should succeed"
+    );
+
+    // Missing selector → SelectorNotFound (typed application outcome).
+    let miss = mgr
+        .send_trusted_click(id.clone(), 0, 0, "#missing".into(), 0)
+        .await
+        .expect("trusted click transport error");
+    assert_eq!(miss, O::SelectorNotFound);
+
+    // Real per-character keystrokes into the fixtured element → Ok.
+    let typed = mgr
+        .send_type_keystrokes(id.clone(), 0, 0, "#submit".into(), "hi".into(), 0)
+        .await
+        .expect("type_keystrokes transport error");
+    assert_eq!(typed, O::Ok);
+
+    // Ambient press_key (Enter, no selector) → Ok.
+    let enter = mgr
+        .send_press_key(loom_host::shim_manager::SendPressKeyParams {
+            id: id.clone(),
+            session_id: 0,
+            target_id: 0,
+            key: "Enter".into(),
+            selector: None,
+            modifiers: vec![],
+            budget_ms: 0,
+        })
+        .await
+        .expect("press_key transport error");
+    assert_eq!(enter, O::Ok);
+
+    // Unknown key → typed UnknownKey, NOT a transport error.
+    let bad = mgr
+        .send_press_key(loom_host::shim_manager::SendPressKeyParams {
+            id: id.clone(),
+            session_id: 0,
+            target_id: 0,
+            key: "NoSuchKey".into(),
+            selector: None,
+            modifiers: vec![],
+            budget_ms: 0,
+        })
+        .await
+        .expect("press_key transport error");
+    assert_eq!(bad, O::UnknownKey);
+
+    mgr.shutdown_session("test-session-input").await;
+    drop(user_data_dir);
+}
+
 /// Interaction-fingerprint (capture-policy=fingerprint) MECHANISM e2e.
 ///
 /// Reproduces exactly what the host `capture_dom_after_hash` fn does — issue

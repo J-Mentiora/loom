@@ -409,6 +409,53 @@ noise themselves; loom returns everything.",
         example: &["loom", "action", "web.network_log", "--session", "<SESSION>"],
     },
     ActionMeta {
+        name: "web.press_key",
+        summary: "Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.",
+        description: "\
+Dispatches a REAL keyboard key event (`isTrusted:true`) through Chrome's \
+input pipeline — unlike synthetic events, these pass trust-gating \
+frameworks. `key` is a named key (Enter, Tab, Escape, Backspace, Delete, \
+ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space) or a single \
+printable character. `modifiers` holds any of Control, Alt, Shift, Meta \
+(aliases Ctrl/Cmd/Command/Option accepted) for chords like Ctrl+A.\n\n\
+With `selector`, the element is focused first; without it the event goes \
+to whatever currently has focus. Many forms submit on Enter in a focused \
+field.\n\n\
+Host-side verb (CDP Input.*), like the trusted `web.click` — does not run \
+the WASM guest. Determinism: the action records the logical key + \
+modifiers via a fixed US keymap (identical on every OS) and `outcome_hash` \
+is a constant dispatch-success marker, so replay stays structural.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "key",
+                ty: ParamType::String,
+                doc: "Named key (Enter, Tab, Escape, ArrowDown, …) or a single printable character.",
+                required: true,
+            },
+            ParamMeta {
+                name: "selector",
+                ty: ParamType::String,
+                doc: "Optional CSS selector to focus before pressing; omit to target the currently focused element.",
+                required: false,
+            },
+            ParamMeta {
+                name: "modifiers",
+                ty: ParamType::Array,
+                doc: "Optional modifier keys held during the press: Control, Alt, Shift, Meta (Ctrl/Cmd/Command/Option aliases accepted).",
+                required: false,
+            },
+            DEADLINE_MS_PARAM,
+        ],
+        returns: "Receipt with `status: \"ok\"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: \"unknown_key\"`; a `selector` matching nothing → `kind: \"selector_not_found\"`.",
+        example: &["loom", "action", "web.press_key", "--session", "<SESSION>", "--key", "Enter"],
+    },
+    ActionMeta {
         name: "web.screenshot",
         summary: "Capture a PNG screenshot of the page or a selected element.",
         description: "\
@@ -705,13 +752,15 @@ best-effort and never aborts the session.",
 Resolves the selector, focuses the element, sets its `.value` to \
 `text`, and dispatches `input` and `change` events so framework-bound \
 listeners observe the update.\n\n\
-The text is sent in one batch — loom does not simulate per-keystroke \
-input events for fidelity / determinism reasons. Tests that need \
-keystroke-level dispatch (e.g. type-ahead UIs that react to each \
-character) should issue multiple `web.type` calls with single-char \
-appended text.\n\n\
-Failure mode: selector miss → `kind: \"js_throw\"`. Non-input targets \
-also surface as `js_throw` from the underlying setter.",
+By default (`mode: \"value\"`) the text is sent in one batch and the \
+synthetic `input`/`change` events are `isTrusted:false`. With \
+`mode: \"keystrokes\"`, loom focuses the element and dispatches a REAL \
+per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`) — \
+required by trust-gating frameworks (e.g. Auth0 New Universal Login) that \
+ignore synthetic events. Keystrokes change record-time fidelity only; \
+replay stays structural.\n\n\
+Failure mode: in `value` mode a selector miss → `kind: \"js_throw\"`; in \
+`keystrokes` mode a selector miss → `kind: \"selector_not_found\"`.",
         params: &[
             ParamMeta {
                 name: "session_id",
@@ -728,8 +777,14 @@ also surface as `js_throw` from the underlying setter.",
             ParamMeta {
                 name: "text",
                 ty: ParamType::String,
-                doc: "Text to set as the element's value. Sent in one batch (not keystroke-by-keystroke).",
+                doc: "Text to type into the element.",
                 required: true,
+            },
+            ParamMeta {
+                name: "mode",
+                ty: ParamType::String,
+                doc: "Dispatch mode: \"value\" (default — set .value via Runtime.evaluate + synthetic events) or \"keystrokes\" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true).",
+                required: false,
             },
             DEADLINE_MS_PARAM,
         ],

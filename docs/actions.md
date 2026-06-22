@@ -17,6 +17,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.hover`](#web-hover) — Dispatch a mouseover event at a CSS selector.
 - [`web.navigate`](#web-navigate) — Load a URL, follow redirects, capture DOM and screenshot.
 - [`web.network_log`](#web-network_log) — Read the per-request network entries observed since the last navigate.
+- [`web.press_key`](#web-press_key) — Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.
 - [`web.screenshot`](#web-screenshot) — Capture a PNG screenshot of the page or a selected element.
 - [`web.scroll`](#web-scroll) — Scroll the page (or an element) by a (delta_x, delta_y) offset.
 - [`web.select`](#web-select) — Set the value of a `<select>` element and dispatch `change`.
@@ -253,6 +254,36 @@ loom action web.network_log --session <SESSION>
 
 ---
 
+### <a id="web-press_key"></a>`web.press_key`
+
+**Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.**
+
+Dispatches a REAL keyboard key event (`isTrusted:true`) through Chrome's input pipeline — unlike synthetic events, these pass trust-gating frameworks. `key` is a named key (Enter, Tab, Escape, Backspace, Delete, ArrowUp/Down/Left/Right, Home, End, PageUp, PageDown, Space) or a single printable character. `modifiers` holds any of Control, Alt, Shift, Meta (aliases Ctrl/Cmd/Command/Option accepted) for chords like Ctrl+A.
+
+With `selector`, the element is focused first; without it the event goes to whatever currently has focus. Many forms submit on Enter in a focused field.
+
+Host-side verb (CDP Input.*), like the trusted `web.click` — does not run the WASM guest. Determinism: the action records the logical key + modifiers via a fixed US keymap (identical on every OS) and `outcome_hash` is a constant dispatch-success marker, so replay stays structural.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `key` | `string` | required | Named key (Enter, Tab, Escape, ArrowDown, …) or a single printable character. |
+| `selector` | `string` | optional | Optional CSS selector to focus before pressing; omit to target the currently focused element. |
+| `modifiers` | `array` | optional | Optional modifier keys held during the press: Control, Alt, Shift, Meta (Ctrl/Cmd/Command/Option aliases accepted). |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
+
+**Returns:** Receipt with `status: "ok"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: "unknown_key"`; a `selector` matching nothing → `kind: "selector_not_found"`.
+
+**Example**
+
+```sh
+loom action web.press_key --session <SESSION> --key Enter
+```
+
+---
+
 ### <a id="web-screenshot"></a>`web.screenshot`
 
 **Capture a PNG screenshot of the page or a selected element.**
@@ -475,9 +506,9 @@ loom action web.stop_recording --session <SESSION>
 
 Resolves the selector, focuses the element, sets its `.value` to `text`, and dispatches `input` and `change` events so framework-bound listeners observe the update.
 
-The text is sent in one batch — loom does not simulate per-keystroke input events for fidelity / determinism reasons. Tests that need keystroke-level dispatch (e.g. type-ahead UIs that react to each character) should issue multiple `web.type` calls with single-char appended text.
+By default (`mode: "value"`) the text is sent in one batch and the synthetic `input`/`change` events are `isTrusted:false`. With `mode: "keystrokes"`, loom focuses the element and dispatches a REAL per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`) — required by trust-gating frameworks (e.g. Auth0 New Universal Login) that ignore synthetic events. Keystrokes change record-time fidelity only; replay stays structural.
 
-Failure mode: selector miss → `kind: "js_throw"`. Non-input targets also surface as `js_throw` from the underlying setter.
+Failure mode: in `value` mode a selector miss → `kind: "js_throw"`; in `keystrokes` mode a selector miss → `kind: "selector_not_found"`.
 
 **Parameters**
 
@@ -485,7 +516,8 @@ Failure mode: selector miss → `kind: "js_throw"`. Non-input targets also surfa
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the input element. |
-| `text` | `string` | required | Text to set as the element's value. Sent in one batch (not keystroke-by-keystroke). |
+| `text` | `string` | required | Text to type into the element. |
+| `mode` | `string` | optional | Dispatch mode: "value" (default — set .value via Runtime.evaluate + synthetic events) or "keystrokes" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true). |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"`. Selector miss / non-input target → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).

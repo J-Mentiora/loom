@@ -387,6 +387,102 @@ impl WasmHostBridge for WasmBridge {
             }
         }
 
+        // cdp-trusted-input: web.click is ALWAYS trusted — host-side CDP
+        // `Input.dispatchMouseEvent` at the element hit point (like recording, no
+        // guest). web.type `mode:keystrokes` and web.press_key are likewise
+        // host-side `Input.dispatchKeyEvent` flows. Real input side effects
+        // happen at record time only; the receipt's `outcome_hash` is a constant
+        // marker so replay stays structural (NFR-DET-01).
+        if let Action::WebClick { selector, .. } = &action {
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let sel = selector.clone();
+            let action_id = session.allocate_action_id();
+            match handle.block_on(host.trusted_click(&sid, &sel, 0)) {
+                Ok(outcome) => {
+                    return Ok(build_input_dispatch_receipt(
+                        action_id,
+                        session_id_str,
+                        &action,
+                        outcome,
+                    ))
+                }
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "click_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+        if let Action::WebType {
+            selector,
+            text,
+            mode,
+            ..
+        } = &action
+        {
+            if mode.as_deref() == Some("keystrokes") {
+                let host = Arc::clone(&self.host);
+                let sid = session_id_str.to_string();
+                let sel = selector.clone();
+                let txt = text.clone();
+                let action_id = session.allocate_action_id();
+                match handle.block_on(host.type_keystrokes(&sid, &sel, &txt, 0)) {
+                    Ok(outcome) => {
+                        return Ok(build_input_dispatch_receipt(
+                            action_id,
+                            session_id_str,
+                            &action,
+                            outcome,
+                        ))
+                    }
+                    Err(e) => {
+                        return Ok(recording_error_receipt(
+                            action_id,
+                            session_id_str,
+                            "type_failed",
+                            e.to_string(),
+                        ))
+                    }
+                }
+            }
+        }
+        if let Action::WebPressKey {
+            key,
+            selector,
+            modifiers,
+            ..
+        } = &action
+        {
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let k = key.clone();
+            let sel = selector.clone();
+            let mods = modifiers.clone().unwrap_or_default();
+            let action_id = session.allocate_action_id();
+            match handle.block_on(host.press_key(&sid, &k, sel, mods, 0)) {
+                Ok(outcome) => {
+                    return Ok(build_input_dispatch_receipt(
+                        action_id,
+                        session_id_str,
+                        &action,
+                        outcome,
+                    ))
+                }
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "press_key_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+
         let session_handle = SessionHandle {
             session_id: session.id.clone(),
             handle: handle.clone(),

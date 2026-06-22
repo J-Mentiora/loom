@@ -209,6 +209,7 @@ impl WasmHostBridge for CannedHostBridge {
             | Action::WebClearCookies { session_id }
             | Action::WebDeleteCookies { session_id, .. }
             | Action::WebNetworkLog { session_id } => session_id.clone(),
+            Action::WebPressKey { session_id, .. } => session_id.clone(),
         };
         Ok(Receipt {
             action_id: 42,

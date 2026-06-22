@@ -1,5 +1,6 @@
 //! `shim_manager` — see crate root.
 mod helpers;
+mod input_dispatch;
 pub mod process;
 mod senders;
 pub mod shim_manager;

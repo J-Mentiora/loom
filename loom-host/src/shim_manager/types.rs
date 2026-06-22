@@ -138,6 +138,21 @@ pub enum SetInputFilesOutcome {
     NotAFileInput,
 }
 
+/// Outcome of a trusted-input CDP sequence (`send_type_keystrokes` /
+/// `send_press_key` / `send_trusted_click`). Application outcomes the host maps
+/// to typed receipt `kind` strings, distinct from transport `Err(LoomError)`:
+/// - `SelectorNotFound` — a selector was given but matched no node.
+/// - `NotHittable` — the element resolved but has no box model (display:none /
+///   detached / zero-size), so a trusted click point can't be computed.
+/// - `UnknownKey` — `web.press_key` got an unknown key name or modifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputDispatchOutcome {
+    Ok,
+    SelectorNotFound,
+    NotHittable,
+    UnknownKey,
+}
+
 /// Parsed result of a `Runtime.evaluate` CDP call. Exactly one of `result`
 /// / `exception` is `Some` per CDP semantics.
 #[derive(Debug, Clone, PartialEq)]
@@ -233,4 +248,19 @@ pub struct SendSetInputFilesParams {
     pub seed: Seed,
     pub epoch_ms: EpochMs,
     pub determinism_enabled: bool,
+}
+
+/// Params for [`ShimManager::send_press_key`] (cdp-trusted-input). Bundled so
+/// the signature clears clippy's `too_many_arguments` threshold, matching the
+/// other multi-arg senders. `selector` is optional (focus-then-press; omit for
+/// ambient focus); `modifiers` are Control/Alt/Shift/Meta.
+#[derive(Debug, Clone)]
+pub struct SendPressKeyParams {
+    pub id: ShimId,
+    pub session_id: u64,
+    pub target_id: u64,
+    pub key: String,
+    pub selector: Option<String>,
+    pub modifiers: Vec<String>,
+    pub budget_ms: u64,
 }

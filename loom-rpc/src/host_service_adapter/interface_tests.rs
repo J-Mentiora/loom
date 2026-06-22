@@ -43,6 +43,7 @@ fn action_enum_has_typed_variants_no_cdp_shaped_value() {
             Action::WebClearCookies { .. } => {}
             Action::WebDeleteCookies { .. } => {}
             Action::WebNetworkLog { .. } => {}
+            Action::WebPressKey { .. } => {}
         }
     }
     let _ = _audit_variants;

@@ -11,15 +11,16 @@
 // lifecycle / breaker methods stay in `shim_manager.rs`.
 
 use super::helpers::{cbor_get, cbor_u64, map_shim_code, parse_evaluate_payload, shim_error_class};
+use super::input_dispatch::{keystroke_events_for_text, mouse_event, press_key_events};
 use super::process::send_and_await;
 use super::shim_manager::ShimManager;
 use super::types::{
-    EvaluateOutcome, FailureClass, SendEvaluateParams, SendNavigateParams, SendSetInputFilesParams,
-    SendWaitForParams, SetInputFilesOutcome, ShimId,
+    EvaluateOutcome, FailureClass, InputDispatchOutcome, SendEvaluateParams, SendNavigateParams,
+    SendPressKeyParams, SendSetInputFilesParams, SendWaitForParams, SetInputFilesOutcome, ShimId,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome, ScreencastOutcome};
-use loom_shared::shim_protocol::{CdpMessage, ShimRequest, ShimResponse};
+use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
 use std::time::Duration;
 
 impl ShimManager {
@@ -789,4 +790,422 @@ impl ShimManager {
             }
         }
     }
+
+    // ─── Trusted CDP input dispatch (cdp-trusted-input) ──────────────────────
+    //
+    // `web.type mode:keystrokes`, `web.press_key`, and the always-trusted
+    // `web.click` drive REAL (`isTrusted:true`) browser input via CDP `Input.*`.
+    // Each orchestrates a multi-step CDP sequence host-side from raw `CdpSend`
+    // round-trips — the same shape as `send_set_input_files`, so the shim and
+    // wire protocol are untouched.
+
+    /// One CDP round-trip. `Ok(Ok(payload))` = CDP success; `Ok(Err((code,
+    /// detail)))` = the shim reported a CDP-protocol error (an APPLICATION
+    /// outcome the caller interprets, e.g. `getBoxModel` on a hidden node);
+    /// `Err(LoomError)` = transport failure. Breaker bookkeeping is done by the
+    /// caller at its decision points.
+    async fn cdp_send_one(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        message: CdpMessage,
+        budget_ms: u64,
+    ) -> Result<Result<ciborium::value::Value, (ShimErrorCode, String)>, LoomError> {
+        let config = self.configs.get(id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(id, &config).await?;
+        let recv_ms = budget_ms.max(config.recv_timeout_ms);
+        match send_and_await(
+            &process,
+            ShimRequest::CdpSend {
+                request_id: 0,
+                session_id,
+                target_id,
+                message,
+            },
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(recv_ms),
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { payload, .. }) => Ok(Ok(payload)),
+            Ok(ShimResponse::Error { code, detail, .. }) => Ok(Err((code, detail))),
+            Ok(other) => Err(LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {}: unexpected CDP response: {other:?}", id.0),
+            )),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Resolve `selector` to a node and focus it. `Ok(true)` focused; `Ok(false)`
+    /// selector matched nothing; `Err` on transport failure. Focus itself is
+    /// best-effort (a non-focusable node still receives dispatched key events).
+    async fn resolve_and_focus(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: &str,
+        budget_ms: u64,
+    ) -> Result<bool, LoomError> {
+        use ciborium::value::{Integer, Value};
+        let doc = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.getDocument".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("depth".into()),
+                        Value::Integer(Integer::from(0)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let root = cbor_get(&doc, "root")
+            .and_then(|r| cbor_get(r, "nodeId"))
+            .and_then(cbor_u64)
+            .ok_or_else(|| {
+                LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: getDocument: no root.nodeId", id.0),
+                )
+            })?;
+        let qs = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.querySelector".into(),
+                    params: Value::Map(vec![
+                        (
+                            Value::Text("nodeId".into()),
+                            Value::Integer(Integer::from(root)),
+                        ),
+                        (Value::Text("selector".into()), Value::Text(selector.into())),
+                    ]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
+        if node == 0 {
+            return Ok(false);
+        }
+        // Best-effort focus — ignore a CDP error (non-focusable element).
+        let _ = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.focus".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("nodeId".into()),
+                        Value::Integer(Integer::from(node)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?;
+        Ok(true)
+    }
+
+    /// Dispatch a prebuilt sequence of `Input.*` frames; any CDP/transport error
+    /// aborts (no partial "ok"). Used by the keystroke + press-key paths.
+    async fn dispatch_input_events(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        events: Vec<CdpMessage>,
+        budget_ms: u64,
+    ) -> Result<(), LoomError> {
+        for ev in events {
+            self.cdp_send_one(id, session_id, target_id, ev, budget_ms)
+                .await?
+                .map_err(|(code, detail)| {
+                    LoomError::new(
+                        map_shim_code(code),
+                        format!("shim {}: input dispatch: {detail}", id.0),
+                    )
+                })?;
+        }
+        Ok(())
+    }
+
+    /// `web.type mode:keystrokes` — focus `selector`, then send a real per-char
+    /// `Input.dispatchKeyEvent` (keyDown+text → keyUp) sequence.
+    pub async fn send_type_keystrokes(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: String,
+        text: String,
+        budget_ms: u64,
+    ) -> Result<InputDispatchOutcome, LoomError> {
+        self.check_breaker(&id)?;
+        if !self
+            .resolve_and_focus(&id, session_id, target_id, &selector, budget_ms)
+            .await
+            .inspect_err(|_| self.record_failure(&id, FailureClass::Transport))?
+        {
+            self.record_success(&id);
+            return Ok(InputDispatchOutcome::SelectorNotFound);
+        }
+        match self
+            .dispatch_input_events(
+                &id,
+                session_id,
+                target_id,
+                keystroke_events_for_text(&text),
+                budget_ms,
+            )
+            .await
+        {
+            Ok(()) => {
+                self.record_success(&id);
+                Ok(InputDispatchOutcome::Ok)
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Application);
+                Err(e)
+            }
+        }
+    }
+
+    /// `web.press_key` — optionally focus `selector`, then dispatch a named key
+    /// (+ modifier combo) as real `Input.dispatchKeyEvent` frames. An unknown
+    /// key / modifier is the typed `UnknownKey` outcome (not a transport error).
+    pub async fn send_press_key(
+        &self,
+        params: SendPressKeyParams,
+    ) -> Result<InputDispatchOutcome, LoomError> {
+        let SendPressKeyParams {
+            id,
+            session_id,
+            target_id,
+            key,
+            selector,
+            modifiers,
+            budget_ms,
+        } = params;
+        self.check_breaker(&id)?;
+        if let Some(sel) = &selector {
+            if !self
+                .resolve_and_focus(&id, session_id, target_id, sel, budget_ms)
+                .await
+                .inspect_err(|_| self.record_failure(&id, FailureClass::Transport))?
+            {
+                self.record_success(&id);
+                return Ok(InputDispatchOutcome::SelectorNotFound);
+            }
+        }
+        let events = match press_key_events(&key, &modifiers) {
+            Some(e) => e,
+            None => {
+                self.record_success(&id);
+                return Ok(InputDispatchOutcome::UnknownKey);
+            }
+        };
+        match self
+            .dispatch_input_events(&id, session_id, target_id, events, budget_ms)
+            .await
+        {
+            Ok(()) => {
+                self.record_success(&id);
+                Ok(InputDispatchOutcome::Ok)
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Application);
+                Err(e)
+            }
+        }
+    }
+
+    /// Always-trusted `web.click` — resolve the element's hit point (box-model
+    /// center, scrolling into view first) and dispatch a trusted
+    /// `Input.dispatchMouseEvent` mouseMoved→mousePressed→mouseReleased. No
+    /// `el.click()` fallback. `SelectorNotFound` / `NotHittable` are typed
+    /// outcomes; transport failures surface as `Err`.
+    pub async fn send_trusted_click(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: String,
+        budget_ms: u64,
+    ) -> Result<InputDispatchOutcome, LoomError> {
+        use ciborium::value::{Integer, Value};
+        self.check_breaker(&id)?;
+
+        // Resolve the node id (DOM.getDocument → DOM.querySelector).
+        let doc = self
+            .cdp_send_one(
+                &id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.getDocument".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("depth".into()),
+                        Value::Integer(Integer::from(0)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await
+            .inspect_err(|_| self.record_failure(&id, FailureClass::Transport))?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let root = cbor_get(&doc, "root")
+            .and_then(|r| cbor_get(r, "nodeId"))
+            .and_then(cbor_u64)
+            .ok_or_else(|| {
+                LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: getDocument: no root.nodeId", id.0),
+                )
+            })?;
+        let qs = self
+            .cdp_send_one(
+                &id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.querySelector".into(),
+                    params: Value::Map(vec![
+                        (
+                            Value::Text("nodeId".into()),
+                            Value::Integer(Integer::from(root)),
+                        ),
+                        (Value::Text("selector".into()), Value::Text(selector)),
+                    ]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
+        if node == 0 {
+            self.record_success(&id);
+            return Ok(InputDispatchOutcome::SelectorNotFound);
+        }
+
+        // Scroll into view (best-effort) before resolving coordinates.
+        let _ = self
+            .cdp_send_one(
+                &id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.scrollIntoViewIfNeeded".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("nodeId".into()),
+                        Value::Integer(Integer::from(node)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?;
+
+        // Box model → content-quad center. A CDP error here means the element
+        // has no box model (display:none / detached) → NotHittable.
+        let box_payload = match self
+            .cdp_send_one(
+                &id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.getBoxModel".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("nodeId".into()),
+                        Value::Integer(Integer::from(node)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?
+        {
+            Ok(p) => p,
+            Err(_) => {
+                self.record_success(&id);
+                return Ok(InputDispatchOutcome::NotHittable);
+            }
+        };
+        let (cx, cy) = match content_quad_center(&box_payload) {
+            Some(c) => c,
+            None => {
+                self.record_success(&id);
+                return Ok(InputDispatchOutcome::NotHittable);
+            }
+        };
+
+        // Trusted click: mouseMoved → mousePressed → mouseReleased at (cx, cy).
+        let events = vec![
+            mouse_event("mouseMoved", cx, cy, "none", 0),
+            mouse_event("mousePressed", cx, cy, "left", 1),
+            mouse_event("mouseReleased", cx, cy, "left", 1),
+        ];
+        match self
+            .dispatch_input_events(&id, session_id, target_id, events, budget_ms)
+            .await
+        {
+            Ok(()) => {
+                self.record_success(&id);
+                Ok(InputDispatchOutcome::Ok)
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Application);
+                Err(e)
+            }
+        }
+    }
+}
+
+/// Center of a CDP `DOM.getBoxModel` content quad. `content` is
+/// `[x1,y1,x2,y2,x3,y3,x4,y4]`; center = midpoint of opposite corners
+/// (1 and 3). `None` when the payload lacks a usable quad.
+fn content_quad_center(payload: &ciborium::value::Value) -> Option<(i64, i64)> {
+    use ciborium::value::Value;
+    let num = |v: &Value| -> Option<f64> {
+        match v {
+            Value::Float(f) => Some(*f),
+            Value::Integer(i) => i64::try_from(*i).ok().map(|n| n as f64),
+            _ => None,
+        }
+    };
+    let content = cbor_get(payload, "model").and_then(|m| cbor_get(m, "content"))?;
+    if let Value::Array(pts) = content {
+        if pts.len() >= 6 {
+            let x1 = num(&pts[0])?;
+            let y1 = num(&pts[1])?;
+            let x3 = num(&pts[4])?;
+            let y3 = num(&pts[5])?;
+            return Some((
+                ((x1 + x3) / 2.0).round() as i64,
+                ((y1 + y3) / 2.0).round() as i64,
+            ));
+        }
+    }
+    None
 }

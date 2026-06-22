@@ -463,6 +463,87 @@ pub(crate) fn build_scroll_expression(
     )
 }
 
+/// cdp-trusted-input: receipt for a trusted-input verb (`web.type
+/// mode:keystrokes`, `web.press_key`, trusted `web.click`). `Ok` → Success with
+/// a CONSTANT `outcome_hash` dispatch-success marker (NOT page-state-bearing, so
+/// the manifest hash chain stays replay-equal, exactly like the existing
+/// interaction verbs). Application outcomes map to typed error `kind`s. The
+/// real `Input.*` side effects happen at record time only; replay is structural.
+pub(crate) fn build_input_dispatch_receipt(
+    action_id: u64,
+    session_id: &str,
+    action: &Action,
+    outcome: loom_host::shim_manager::InputDispatchOutcome,
+) -> Receipt {
+    use loom_host::shim_manager::InputDispatchOutcome as O;
+    let mut r = match outcome {
+        O::Ok => {
+            // Reuse the all-None success template, then stamp the constant marker.
+            let mut r = build_recording_started_receipt(action_id, session_id);
+            r.outcome_hash = Some(loom_core::content_store::sha256_hex(
+                b"loom:trusted-input:dispatch-ok",
+            ));
+            r
+        }
+        O::SelectorNotFound => recording_error_receipt(
+            action_id,
+            session_id,
+            "selector_not_found",
+            "selector matched no element".to_string(),
+        ),
+        O::NotHittable => recording_error_receipt(
+            action_id,
+            session_id,
+            "not_hittable",
+            "element has no box model (display:none / detached / zero-size)".to_string(),
+        ),
+        O::UnknownKey => recording_error_receipt(
+            action_id,
+            session_id,
+            "unknown_key",
+            "unknown key name or modifier".to_string(),
+        ),
+    };
+    // Stamp the action_hash so the host-side input verbs carry the same receipt
+    // contract as the guest-dispatched interaction verbs (every interaction
+    // receipt has `action_hash`). Session-independent → replay-equal.
+    r.action_hash = Some(input_action_hash(action));
+    r
+}
+
+/// Deterministic, **session-independent** `action_hash` for the host-side input
+/// verbs (web.click / web.type keystrokes / web.press_key). Hashes the verb +
+/// its input params (NOT `session_id`) so the same script replays to the same
+/// hash across sessions, matching how the guest derives `action_hash` from the
+/// canonical CDP payload (which also excludes the session).
+fn input_action_hash(action: &Action) -> String {
+    let canonical = match action {
+        Action::WebClick { selector, .. } => format!("web.click\u{0}{selector}"),
+        Action::WebType {
+            selector,
+            text,
+            mode,
+            ..
+        } => format!(
+            "web.type\u{0}{}\u{0}{selector}\u{0}{text}",
+            mode.as_deref().unwrap_or("value")
+        ),
+        Action::WebPressKey {
+            key,
+            selector,
+            modifiers,
+            ..
+        } => format!(
+            "web.press_key\u{0}{key}\u{0}{}\u{0}{}",
+            selector.as_deref().unwrap_or(""),
+            modifiers.as_ref().map(|m| m.join(",")).unwrap_or_default()
+        ),
+        // Unreachable for the input verbs; a stable fallback keeps it total.
+        other => format!("{other:?}"),
+    };
+    loom_core::content_store::sha256_hex(canonical.as_bytes())
+}
+
 pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
     use ciborium::value::Value;
 
@@ -506,10 +587,11 @@ pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
             ),
         ]),
 
-        Action::WebClick { selector, .. } => {
-            let sel = serde_json::to_string(selector).ok()?;
-            runtime_evaluate(format!("document.querySelector({sel}).click()"))
-        }
+        // cdp-trusted-input: web.click is ALWAYS trusted now — intercepted
+        // host-side (CDP Input.dispatchMouseEvent at the element hit point),
+        // like recording. No guest Runtime.evaluate args. Handled in wasm_bridge
+        // before build_chromium_args is reached; this arm satisfies the match.
+        Action::WebClick { .. } => return None,
 
         Action::WebEvaluate { expression, .. } => runtime_evaluate(expression.clone()),
 
@@ -524,8 +606,22 @@ pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         // not a single CDP command, so it has no direct-CDP args envelope here —
         // handled by the surface `start-recording`/`stop-recording` verbs.
         Action::WebStartRecording { .. } | Action::WebStopRecording { .. } => return None,
+        // cdp-trusted-input: web.press_key is a host-side CDP Input.* verb (no
+        // guest); intercepted in wasm_bridge before build_chromium_args.
+        Action::WebPressKey { .. } => return None,
 
-        Action::WebType { selector, text, .. } => {
+        Action::WebType {
+            selector,
+            text,
+            mode,
+            ..
+        } => {
+            // cdp-trusted-input: `mode:"keystrokes"` is intercepted host-side
+            // (real per-char Input.dispatchKeyEvent); only the default `value`
+            // mode builds the Runtime.evaluate args here.
+            if mode.as_deref() == Some("keystrokes") {
+                return None;
+            }
             // Direct `el.value = text` bypasses React/Vue/Angular value
             // trackers — the DOM `.value` is set but framework state still
             // thinks the field is empty, so a follow-up form submit fails
@@ -1038,6 +1134,7 @@ pub(crate) fn action_session_id(action: &Action) -> &str {
         | Action::WebClearCookies { session_id }
         | Action::WebDeleteCookies { session_id, .. } => session_id,
         Action::WebNetworkLog { session_id } => session_id,
+        Action::WebPressKey { session_id, .. } => session_id,
     }
 }
 
@@ -1075,5 +1172,7 @@ pub(crate) fn action_verb(action: &Action) -> &str {
         Action::WebClearCookies { .. } => "clear-cookies",
         Action::WebDeleteCookies { .. } => "delete-cookies",
         Action::WebNetworkLog { .. } => "network-log",
+        // cdp-trusted-input: host-side verb (no WIT export); label for telemetry.
+        Action::WebPressKey { .. } => "press-key",
     }
 }
