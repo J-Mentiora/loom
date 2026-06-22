@@ -6,6 +6,41 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-06-22 — Trusted CDP Input
+
+A patch release adding a **real-CDP-input path** so loom can drive `isTrusted:true`
+browser input that passes trust-gating frameworks (notably Auth0 New Universal Login,
+which ignore synthetic events). Plus a settle-driver fix for client-initiated
+navigations and a Rust CI compile-time speedup. All changes preserve the replay-equal
+hash chain (NFR-DET-01) — real input changes record-time fidelity only; replay stays
+structural. (#206–#208)
+
+### Added
+
+- **Real CDP input dispatch (#207).** `web.type` gains `mode: "value"` (default — the
+  existing native-setter path) `| "keystrokes"` (focus the element and send a real
+  per-character `Input.dispatchKeyEvent` sequence). New **`web.press_key`** verb — named
+  keys (Enter/Tab/Escape/arrows/…) plus modifier combos (Control/Alt/Shift/Meta) and an
+  optional `selector` to focus-then-press. These dispatch through Chrome's real input
+  pipeline, so the events are `isTrusted:true` and pass frameworks that gate on trust.
+  Routed host-side (no WIT/guest/vendored-wasm change); determinism preserved via a fixed
+  US keymap + a constant `outcome_hash` dispatch marker.
+
+### Changed
+
+- **`web.click` is now always trusted (#207) — BREAKING.** It resolves the element's hit
+  point and dispatches a trusted `Input.dispatchMouseEvent` (mouseMoved → pressed →
+  released) instead of a synthetic `el.click()`. Scripts that clicked covered / zero-size
+  / `display:none` elements (which `el.click()` could reach) now receive a clear
+  `status:error` ("element not hittable: no box model").
+- **Faster Rust CI (#208)** — a `ci-fast` compile profile (no fat LTO) + the `lld` linker
+  cut whole-PR Rust CI time. (Internal; no runtime effect.)
+
+### Fixed
+
+- **Settle: re-attach to client-initiated top-level navigations (#206)** — SPA redirects
+  and form-POST navigations now settle and capture correctly.
+
 ## [0.12.0] — 2026-06-19 — Video Capture + Per-Action Deadlines
 
 A feature-and-hardening minor. The headline is **browser video/screen capture** — record
