@@ -5,23 +5,29 @@ name: CI
 # If a job drifts past its budget, treat it as a perf regression and find
 # out why before raising the number.
 #
-#   job                       measured      budget   notes
-#   cargo test (ubuntu)       35-43 min     ≤ 45     cargo-nextest, parallel
-#                                                    (process-per-test). Test
-#                                                    EXECUTION is now ~40s (was
-#                                                    a serial --test-threads=1
-#                                                    run); the job is dominated
-#                                                    by the RELEASE compile of
-#                                                    the test binaries (~35 min,
-#                                                    not cached by rust-cache) —
-#                                                    that is the remaining long
-#                                                    pole, a separate follow-up.
-#   cargo test (macos)        35-45 min     ≤ 50     main pushes + ci:macos
-#                                                    label only
-#   build (ubuntu/macos)       4-7 min      ≤ 10
-#   smoke (ubuntu)             4-9 min      ≤ 12     rebuild + daemon RPC
-#   e2e pinned-chromium       10-11 min     ≤ 15     chromium download is
-#                                                    cached; miss adds ~2 min
+# 2026-06-22: the Rust compile jobs (test/build/smoke/e2e) now build with the
+# `[profile.ci-fast]` profile (Cargo.toml) instead of `release`: same opt-level
+# (3) but `lto=false` + `codegen-units=16`, linked with `lld` on Linux. This
+# kills the fat-LTO compile that dominated the test job (~35 min running 373
+# single-threaded whole-program LTO passes — one per test binary). The
+# `measured` column below is the PRE-ci-fast baseline; the `target` column is
+# the post-change expectation. ⚠️ UPDATE the measured numbers from the first
+# ci-fast CI run (then drop this note's "target" framing). Shipped binaries are
+# unaffected — release.yml builds from [profile.dist] (lto=thin).
+#
+#   job                       measured      target   notes
+#   cargo test (ubuntu)       35-43 min     ≤ 20     ci-fast: no fat LTO + lld.
+#                                                    Test EXECUTION is ~40s; the
+#                                                    job was dominated by the
+#                                                    release compile of 373 test
+#                                                    binaries. opt-level stays 3
+#                                                    so perf-SLA tests stay green.
+#   cargo test (macos)        35-45 min     ≤ 30     main pushes + ci:macos label
+#                                                    only; ci-fast speedup but no
+#                                                    lld (native linker).
+#   build (ubuntu/macos)       4-7 min      ≤ 8      ci-fast + lld (linux)
+#   smoke (ubuntu)             4-9 min      ≤ 10     ci-fast; rebuild + daemon RPC
+#   e2e pinned-chromium       10-11 min     ≤ 14     ci-fast; chromium dl cached
 #   clippy                     1-3 min      ≤ 6
 #   gen-docs                   ~1 min       ≤ 4
 #   vendored-wasm staleness    ~30 s        ≤ 3
@@ -29,9 +35,10 @@ name: CI
 #   pytest / node:test         10-35 s      ≤ 3      each SDK suite
 #   fmt / lint scripts / etc.  4-15 s       ≤ 2
 #
-# Wall-clock for a default Rust-touching PR ≈ the ubuntu test leg (~30 min).
-# SDK-only / docs-only PRs ≈ 1 min (path filters skip the Rust matrix).
-# Beta toolchain runs weekly in rust-beta.yml, not here.
+# Wall-clock for a default Rust-touching PR was ≈ the ubuntu test leg (~30 min);
+# post-ci-fast it should be bounded by the build→e2e chain instead. SDK-only /
+# docs-only PRs ≈ 1 min (path filters skip the Rust matrix). Beta toolchain runs
+# weekly in rust-beta.yml, not here.
 
 on:
   push:
@@ -216,13 +223,26 @@ jobs:
           # they ever switch off the mock. `libasound2t64` (not `libasound2`)
           # for ubuntu-24.
           sudo apt-get install -y \
-            pkg-config libssl-dev \
+            pkg-config libssl-dev lld \
             libnss3 libgbm1 libasound2t64 \
             libatk1.0-0 libatk-bridge2.0-0 libcups2 \
             libxcomposite1 libxdamage1 libxss1 \
             libxkbcommon-x11-0 libx11-xcb1 \
             fonts-liberation xdg-utils \
             libdbus-1-3 dbus-x11 gnome-keyring libsecret-tools
+      # Use lld for linking (linux only). With fat LTO off (the ci-fast profile
+      # below), link time of the 373 test binaries is the next pole — lld cuts it.
+      # A job RUSTFLAGS env REPLACES (does NOT merge) .cargo/config.toml's
+      # build.rustflags, so we re-list -Dwarnings -Wunused or the per-compile
+      # warning gate silently weakens. The grep is the regression canary: a future
+      # edit that drops -Dwarnings from RF fails the job loudly. macOS keeps its
+      # native linker (this step is linux-gated) but still gets the no-LTO speedup.
+      - name: Configure lld linker + preserve warning gate (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          RF="-Dwarnings -Wunused -Clink-arg=-fuse-ld=lld"
+          echo "$RF" | grep -q -- '-Dwarnings' || { echo "::error::RUSTFLAGS lost -Dwarnings"; exit 1; }
+          echo "RUSTFLAGS=$RF" >> "$GITHUB_ENV"
       # W7.1 / A-W7.2: Linux Secret Service test infra. `timeout 60s`
       # bounds the gnome-keyring-daemon start so a runner-image regression
       # (IPC_LOCK lockdown, missing libsecret, etc.) can NEVER hang CI.
@@ -266,9 +286,10 @@ jobs:
           exit 0
       - name: Build fake-chromium binary
         # The 23 `#[ignore]`'d tests in loom-host locate this binary via
-        # `current_exe().parent()/"fake-chromium"`. `--release` puts it next
-        # to the test binaries' parent dir.
-        run: cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --release
+        # `current_exe().parent()/"fake-chromium"`. `--profile ci-fast` puts it
+        # next to the test binaries' parent dir (target/ci-fast/), so it stays a
+        # sibling of the ci-fast-built test binaries below.
+        run: cargo build -p loom-shims --features fake-chromium-bin --bin fake-chromium --profile ci-fast
       - name: Install cargo-nextest
         # Pinned by major tag to match this repo's action-pinning convention
         # (actions/checkout@v6, Swatinem/rust-cache@v2, …).
@@ -289,11 +310,16 @@ jobs:
         # `--profile ci`: its `default-filter` (in .config/nextest.toml) excludes the
         # two `loom-host/tests/v8_seed_determinism.rs` Phase-6 stubs that `panic!()`,
         # replacing the old `--skip one_hundred_runs_with_same_seed --skip two_sessions_seed_42`.
-        run: cargo nextest run --workspace --release --features 'loom-shims/fake-chromium-bin' --profile ci --run-ignored all
+        # `--cargo-profile ci-fast`: build the test binaries with the no-fat-LTO profile
+        # (the ~35-min compile lever). NOTE the two distinct flags — nextest's `--profile`
+        # is its own profile (the filter above); cargo's `--cargo-profile` is the build
+        # profile. opt-level stays 3 (ci-fast inherits release) so perf-SLA tests stay green.
+        run: cargo nextest run --workspace --cargo-profile ci-fast --features 'loom-shims/fake-chromium-bin' --profile ci --run-ignored all
       - name: Run doctests (nextest does not run them)
         # `cargo nextest run` cannot execute doctests; run them separately so
-        # the `///` doc examples stay covered.
-        run: cargo test --workspace --release --features 'loom-shims/fake-chromium-bin' --doc
+        # the `///` doc examples stay covered. Same ci-fast profile (plain `cargo
+        # test` uses `--profile`, not nextest's `--cargo-profile`).
+        run: cargo test --workspace --profile ci-fast --features 'loom-shims/fake-chromium-bin' --doc
 
   build:
     name: cargo build --release (${{ matrix.os }} / ${{ matrix.toolchain }})
@@ -329,13 +355,24 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev
-      - run: cargo build --workspace --release
+          sudo apt-get install -y pkg-config libssl-dev lld
+      # See the test job for the rationale: lld + re-listed warning flags
+      # (a job RUSTFLAGS env replaces .cargo/config.toml's build.rustflags).
+      - name: Configure lld linker + preserve warning gate (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          RF="-Dwarnings -Wunused -Clink-arg=-fuse-ld=lld"
+          echo "$RF" | grep -q -- '-Dwarnings' || { echo "::error::RUSTFLAGS lost -Dwarnings"; exit 1; }
+          echo "RUSTFLAGS=$RF" >> "$GITHUB_ENV"
+      # ci-fast (no fat LTO) — this job only verifies compile+link, not perf, so
+      # it does not need the release profile. Shipped binaries come from
+      # release.yml ([profile.dist], lto=thin) and are unaffected.
+      - run: cargo build --workspace --profile ci-fast
       - name: Verify binaries are present
         run: |
           for bin in loom loom-daemon loom-shim-chromium loom-mcp; do
-            test -f "target/release/$bin" || (echo "missing: $bin"; exit 1)
-            file "target/release/$bin"
+            test -f "target/ci-fast/$bin" || (echo "missing: $bin"; exit 1)
+            file "target/ci-fast/$bin"
           done
 
   smoke:
@@ -365,9 +402,17 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libssl-dev jq
-      - name: Build release binaries
-        run: cargo build --release
+          sudo apt-get install -y pkg-config libssl-dev jq lld
+      # See the test job for the rationale: lld + re-listed warning flags.
+      - name: Configure lld linker + preserve warning gate (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          RF="-Dwarnings -Wunused -Clink-arg=-fuse-ld=lld"
+          echo "$RF" | grep -q -- '-Dwarnings' || { echo "::error::RUSTFLAGS lost -Dwarnings"; exit 1; }
+          echo "RUSTFLAGS=$RF" >> "$GITHUB_ENV"
+      - name: Build binaries (ci-fast)
+        # ci-fast (no fat LTO); smoke exercises functional behavior, not perf.
+        run: cargo build --profile ci-fast
       # Don't `loom postinstall` (would download Chromium ~150 MB) — the
       # `e2e` job below covers the real-Chromium path. Smoke verifies the
       # daemon comes up + the offline RPC surface (session lifecycle,
@@ -376,7 +421,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BIN=./target/release
+          BIN=./target/ci-fast
           $BIN/loom serve > /tmp/loom-daemon.log 2>&1 &
           sleep 5
           # doctor passes for socket+daemon, fails for chromium
@@ -506,6 +551,16 @@ jobs:
         # shell harness), so PR-time skipping is the biggest single savings.
         os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
+    # The tests/e2e/*.sh harness scripts default LOOM/MCP to
+    # `$WORKSPACE/target/release/loom[-mcp]` (via `${LOOM_BIN:-…}`). Since this job
+    # now builds with `--profile ci-fast` (binaries land in target/ci-fast/), point
+    # the override hooks there. Set at job level so all three harness steps
+    # (run_e2e / run_load / run_mcp) inherit it on both OSes. NOTE: the script
+    # defaults stay `target/release` on purpose — the scheduled e2e-real-world.yml
+    # still builds `--release` and relies on that default.
+    env:
+      LOOM_BIN: ${{ github.workspace }}/target/ci-fast/loom
+      LOOM_MCP_BIN: ${{ github.workspace }}/target/ci-fast/loom-mcp
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -524,23 +579,32 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            pkg-config libssl-dev \
+            pkg-config libssl-dev lld \
             libnss3 libgbm1 libasound2t64 \
             libatk1.0-0 libatk-bridge2.0-0 libcups2 \
             libxcomposite1 libxdamage1 libxss1 \
             libxkbcommon-x11-0 libx11-xcb1 \
             fonts-liberation xdg-utils
+      # See the test job for the rationale: lld + re-listed warning flags.
+      # (Also applies to this job's dev-profile verify_url_head compile — harmless.)
+      - name: Configure lld linker + preserve warning gate (linux only)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          RF="-Dwarnings -Wunused -Clink-arg=-fuse-ld=lld"
+          echo "$RF" | grep -q -- '-Dwarnings' || { echo "::error::RUSTFLAGS lost -Dwarnings"; exit 1; }
+          echo "RUSTFLAGS=$RF" >> "$GITHUB_ENV"
       - name: Restore pinned-Chromium cache
         uses: actions/cache@v5
         with:
           path: ~/.config/loom/chromium
           key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('loom-cli/src/chromium_pin.rs') }}
-      - name: Build release binaries
-        run: cargo build --release
+      - name: Build binaries (ci-fast)
+        # ci-fast (no fat LTO); e2e exercises real-Chromium behavior, not perf.
+        run: cargo build --profile ci-fast
       - name: Run loom postinstall (downloads + verifies pinned Chromium)
         # Fail-closed: postinstall exits non-zero on SHA mismatch
         # (SR-CLI-04) or HTTP/zip error. No `continue-on-error` on this job.
-        run: ./target/release/loom postinstall
+        run: ./target/ci-fast/loom postinstall
       - name: Strip macOS quarantine (no-op if absent)
         if: matrix.os == 'macos-latest'
         run: xattr -dr com.apple.quarantine "$HOME/.config/loom/chromium" || true
@@ -606,7 +670,7 @@ jobs:
           # Point it at the e2e fixtures dir so run_e2e.sh Section 11b can upload
           # the committed fixture into a real <input type=file>.
           export LOOM_UPLOAD_ROOT="${GITHUB_WORKSPACE}/tests/e2e/fixtures"
-          ./target/release/loom serve > /tmp/loom-daemon.log 2>&1 &
+          ./target/ci-fast/loom serve > /tmp/loom-daemon.log 2>&1 &
           # Poll until the daemon's RPC channel is reachable, capped at 30s.
           # `loom serve` spawns the daemon as a subprocess and exits, so we
           # can't block on the `serve` invocation itself.
@@ -623,7 +687,7 @@ jobs:
           # is genuinely unreachable, that step fails with a typed error
           # rather than this readiness gate timing out opaquely.
           for i in $(seq 1 30); do
-            doc=$(./target/release/loom doctor 2>/dev/null || true)
+            doc=$(./target/ci-fast/loom doctor 2>/dev/null || true)
             if [ -n "$doc" ] && echo "$doc" | jq -e '.checks[] | select(.name == "daemon_responsive") | .status == "ok"' >/dev/null; then
               echo "daemon RPC reachable after ${i}s"
               echo "doctor output: $doc"
