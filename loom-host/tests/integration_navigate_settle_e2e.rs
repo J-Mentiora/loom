@@ -155,6 +155,198 @@ async fn navigate_settled(
     .expect("send_navigate returned an error")
 }
 
+/// Drive one `settled` wait_for against the scripted fake page (idempotent
+/// spawn — no prior navigate needed).
+async fn wait_for_settled(
+    mgr: &std::sync::Arc<ShimManager>,
+    id: &ShimId,
+    outer_timeout: Duration,
+) -> loom_shared::navigate_outcome::WaitOutcome {
+    tokio::time::timeout(
+        outer_timeout,
+        mgr.send_wait_for(loom_host::shim_manager::SendWaitForParams {
+            id: id.clone(),
+            action_id: "test-wait".to_string(),
+            session_id: 0,
+            target_id: 0,
+            until: "settled".to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            determinism_enabled: true,
+        }),
+    )
+    .await
+    .expect("send_wait_for timed out (a never-settles case must return a TYPED receipt, not hang)")
+    .expect("send_wait_for returned an error")
+}
+
+// ── (client-nav-reattach) navigate re-attaches after a client-side top-level ──
+// navigation (window.location / <meta refresh> / form-POST). The loaded shell
+// completes, then begins a self-initiated navigation whose new document is held
+// `readyState:"loading"` until loom RE-ARMS the virtual-time budget. Today loom
+// arms the budget once-per-navigate and never re-arms, so it wedges on the blank
+// in-flight document and the settle gate reports `timeout`. After the fix it must
+// detect the renavigation, re-arm, and settle on the FINAL document (`reached`).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn navigate_reattaches_after_client_redirect() {
+    assert_binaries_built();
+    // idx0: shell loading. idx1: shell complete (a wedged loom would capture
+    // THIS blank shell). idx2: the page client-redirects to the IdP — a NEW
+    // top-level document whose load is GATED on a second budget arm
+    // (`renavigate_at:[2]`); it stays "loading" until loom re-arms. idx3+: IdP
+    // complete + quiet → settles, but ONLY if loom re-attached.
+    let script = r#"{
+        "settle_probe": [
+            [false, "http://fake.test/shell", 0],
+            [true,  "http://fake.test/shell", 2],
+            [false, "http://fake.test/idp",   0],
+            [true,  "http://fake.test/idp",   0],
+            [true,  "http://fake.test/idp",   0]
+        ],
+        "renavigate_at": [2]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script("reattach-nav", script);
+
+    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(30)).await;
+
+    // RED today: loom never re-arms the second document's budget, so the probe
+    // stays "loading" and the gate returns `timeout` on the blank IdP shell.
+    // GREEN after the fix: loom re-attaches + re-settles on the final page.
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "loom must re-attach to the client-redirected document and settle on it, \
+         not wedge on the blank in-flight shell (got settle_outcome={}, settle_ms={})",
+        outcome.settle_outcome, outcome.settle_ms
+    );
+    assert_eq!(outcome.settle_until, "settled");
+
+    mgr.shutdown_session("reattach-nav").await;
+}
+
+// ── (client-nav-reattach) wait_for resolves on the renavigated document ───────
+// Acceptance #2: after a form-POST submit leaves the page on a blank in-flight
+// document, a `web.wait_for` must re-attach + resolve on the new (password-step)
+// document — NOT hang on the detached one. wait_for never arms virtual time
+// today, so only a fresh navigate recovers; the fix gives wait_for the same
+// bounded re-arm path.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_resolves_on_renavigated_document() {
+    assert_binaries_built();
+    // idx0: the page is mid-navigation (post form-POST), held "loading" until a
+    // budget re-arm (`renavigate_at:[0]`). idx1+: password step complete + quiet.
+    let script = r#"{
+        "settle_probe": [
+            [false, "http://fake.test/password", 0],
+            [true,  "http://fake.test/password", 0],
+            [true,  "http://fake.test/password", 0]
+        ],
+        "renavigate_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script("reattach-wait", script);
+
+    let outcome = wait_for_settled(&mgr, &id, Duration::from_secs(30)).await;
+
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "wait_for must re-attach + re-arm so it resolves on the new document, \
+         not hang on the wedged in-flight one (got settle_outcome={}, settle_ms={})",
+        outcome.settle_outcome, outcome.settle_ms
+    );
+    assert_eq!(outcome.settle_until, "settled");
+
+    mgr.shutdown_session("reattach-wait").await;
+}
+
+// ── (client-nav-reattach) replay-equality across the re-attach path ───────────
+// FND-0019: re-attaching changes WHICH document is captured (final, not blank
+// shell), but the whole shell→redirect→final sequence runs under the paused
+// virtual clock, so two same-seed records must produce byte-identical settle
+// outcomes + DOM hash. `renavigated` is shim-internal and never enters the hash.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn reattach_redirect_replays_equal() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [
+            [false, "http://fake.test/shell", 0],
+            [true,  "http://fake.test/shell", 2],
+            [false, "http://fake.test/idp",   0],
+            [true,  "http://fake.test/idp",   0],
+            [true,  "http://fake.test/idp",   0]
+        ],
+        "renavigate_at": [2]
+    }"#;
+
+    let (mgr1, id1, _udd1) = make_manager_with_script("reattach-det-1", script);
+    let a = navigate_settled(&mgr1, &id1, Duration::from_secs(30)).await;
+    mgr1.shutdown_session("reattach-det-1").await;
+
+    let (mgr2, id2, _udd2) = make_manager_with_script("reattach-det-2", script);
+    let b = navigate_settled(&mgr2, &id2, Duration::from_secs(30)).await;
+    mgr2.shutdown_session("reattach-det-2").await;
+
+    assert_eq!(a.settle_outcome, "reached");
+    assert_eq!(
+        a.settle_outcome, b.settle_outcome,
+        "settle_outcome must replay-equal"
+    );
+    assert_eq!(
+        a.settle_until, b.settle_until,
+        "settle_until must replay-equal"
+    );
+    assert_eq!(
+        a.dom_after_sha256, b.dom_after_sha256,
+        "same-seed re-attach must capture a byte-identical final DOM (NFR-DET-01)"
+    );
+}
+
+// ── (client-nav-reattach) redirect chain is bounded by MAX_REATTACH_HOPS ───────
+// FND-0016: a page that bounces between login states forever must NOT hang — the
+// re-attach loop caps the followed chain (10) and returns the typed `timeout`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn reattach_redirect_chain_is_bounded() {
+    assert_binaries_built();
+    // 12 redirect hops (> the cap of 10): each hop completes then immediately
+    // renavigates. probe idx 2,4,..,24 are the renavigation points; the odd
+    // indices between them report the just-loaded (complete) interstitial.
+    let mut probe = String::from(
+        "[false, \"http://fake.test/shell\", 0],\n            [true, \"http://fake.test/shell\", 2]",
+    );
+    let mut renav = Vec::new();
+    for k in 1..=12 {
+        let renav_idx = 2 * k; // even indices: a new redirect begins (loading)
+        renav.push(renav_idx.to_string());
+        probe.push_str(&format!(
+            ",\n            [false, \"http://fake.test/loop{k}\", 0]"
+        ));
+        probe.push_str(&format!(
+            ",\n            [true, \"http://fake.test/loop{k}\", 0]"
+        ));
+    }
+    let script = format!(
+        "{{\n            \"settle_probe\": [\n            {probe}\n            ],\n            \"renavigate_at\": [{}]\n        }}",
+        renav.join(", ")
+    );
+    let (mgr, id, _udd) = make_manager_with_script("reattach-bounded", &script);
+
+    // Outer timeout well above the per-action budget: the loop must self-bound on
+    // the hop cap, NOT by hanging until this outer guard.
+    let outcome = navigate_settled(&mgr, &id, Duration::from_secs(60)).await;
+
+    assert_eq!(
+        outcome.settle_outcome, "timeout",
+        "an unbounded redirect loop must return the typed timeout (bounded by \
+         MAX_REATTACH_HOPS), got settle_outcome={}",
+        outcome.settle_outcome
+    );
+
+    mgr.shutdown_session("reattach-bounded").await;
+}
+
 // ── (a) Client-side redirect SPA: settle waits past the blank shell ──────────
 #[tokio::test(flavor = "multi_thread")]
 #[ignore = "requires fake-chromium binary; see file header for build commands"]

@@ -105,7 +105,8 @@ async fn static_quiescent_page_reaches_settled_at_driver_level() {
         1,
         SettleMode::Settled,
         config,
-        true, // load fired
+        true,  // load fired
+        false, // already_loaded — no client renavigation in this test
         Duration::from_secs(30),
     )
     .await;
@@ -151,6 +152,7 @@ async fn slow_probes_are_wall_clock_bounded_with_typed_timeout() {
         SettleMode::Settled,
         config,
         true,
+        false,                      // already_loaded — no client renavigation in this test
         Duration::from_millis(500), // the caller's whole budget
     )
     .await;
@@ -175,5 +177,76 @@ async fn slow_probes_are_wall_clock_bounded_with_typed_timeout() {
         "the wall-clock guard, not the tick ceiling, must have ended the wait \
          (got {} ticks)",
         result.ticks
+    );
+}
+
+/// client-nav-reattach: an `already_loaded` page (the `wait_for` contract — the
+/// caller asserts the document is complete) that the probe reports as `loading`
+/// means the page began a top-level navigation it initiated itself. The driver
+/// must return early with `renavigated=true` so the caller re-attaches —
+/// pinned here at the driver level (no fake-chromium binary needed).
+#[tokio::test]
+async fn already_loaded_page_observed_loading_reports_renavigated() {
+    let cdp: Arc<dyn CdpConnection> = Arc::new(ScriptedCdp {
+        probe_delay: Duration::ZERO,
+        ready: false, // the new in-flight document is still loading
+    });
+    let config = SettleConfig {
+        idle_threshold: 2,
+        quiet_ticks: 3,
+        tick_ceiling: 300,
+    };
+    let result = wait_for_settle(
+        &cdp,
+        1,
+        SettleMode::Settled,
+        config,
+        true, // load fired
+        true, // already_loaded — wait_for asserts the page was complete
+        Duration::from_secs(5),
+    )
+    .await;
+
+    assert!(
+        result.renavigated,
+        "an already-loaded page observed `loading` must report renavigated so the \
+         caller re-attaches (got outcome={:?}, renavigated={})",
+        result.outcome, result.renavigated
+    );
+}
+
+/// client-nav-reattach negative: an `already_loaded` page that stays `complete`
+/// (the common `wait_for` case) must settle normally and NEVER spuriously
+/// report `renavigated` — the re-arm path is the exception, not the rule (D9).
+#[tokio::test]
+async fn already_loaded_complete_page_does_not_report_renavigated() {
+    let cdp: Arc<dyn CdpConnection> = Arc::new(ScriptedCdp {
+        probe_delay: Duration::ZERO,
+        ready: true,
+    });
+    let config = SettleConfig {
+        idle_threshold: 2,
+        quiet_ticks: 3,
+        tick_ceiling: 300,
+    };
+    let result = wait_for_settle(
+        &cdp,
+        1,
+        SettleMode::Settled,
+        config,
+        true,
+        true, // already_loaded
+        Duration::from_secs(5),
+    )
+    .await;
+
+    assert!(
+        !result.renavigated,
+        "a complete already-loaded page must NOT report renavigated"
+    );
+    assert_eq!(
+        result.outcome,
+        SettleOutcome::Reached,
+        "a quiescent already-loaded page must settle as Reached"
     );
 }
