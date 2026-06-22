@@ -311,6 +311,13 @@ impl ChromiumActionExecutor {
     /// re-arm command failure logs and returns `(false, false)` so the caller
     /// falls through to a bounded settle → typed `timeout` rather than spinning.
     async fn rearm_for_reattach(&self, target_id: TargetId, timeout: Duration) -> (bool, bool) {
+        // The three sequential awaits below (arm command, load wait, budget-drain
+        // wait) SHARE a single deadline so one hop can never consume up to 3×
+        // `timeout`. `timeout` is the caller's REMAINING action budget, so this
+        // keeps the whole re-attach bounded by the action deadline (D10).
+        let deadline = tokio::time::Instant::now() + timeout;
+        let remaining = || deadline.saturating_duration_since(tokio::time::Instant::now());
+
         let (load_rx, _load_reg) = self.subscribe_cdp_event_once("Page.loadEventFired");
         let (vt_expired_rx, _vt_reg) = self.subscribe_cdp_event_once(
             crate::determinism_injector::determinism_injector::VIRTUAL_TIME_BUDGET_EXPIRED_EVENT,
@@ -322,14 +329,20 @@ impl ChromiumActionExecutor {
                 crate::determinism_injector::determinism_injector::build_virtual_time_budget_params(
                 ),
         };
-        if let Err(e) = self.cdp.command(target_id, vt_budget, Some(timeout)).await {
+        if let Err(e) = self
+            .cdp
+            .command(target_id, vt_budget, Some(remaining()))
+            .await
+        {
             tracing::warn!(target_id, error = %e, "reattach: virtual-time budget re-arm failed");
             return (false, false);
         }
-        let load_fired = tokio::time::timeout(timeout, load_rx).await.is_ok();
+        let load_fired = tokio::time::timeout(remaining(), load_rx).await.is_ok();
         // Drain the budget so the re-settle + DOM capture on the new document are
         // virtual-time settled, exactly like STEP 4c does for the first nav.
-        let budget_drained = tokio::time::timeout(timeout, vt_expired_rx).await.is_ok();
+        let budget_drained = tokio::time::timeout(remaining(), vt_expired_rx)
+            .await
+            .is_ok();
         (load_fired, budget_drained)
     }
 }
@@ -772,6 +785,18 @@ impl ActionExecutor for ChromiumActionExecutor {
             )
             .await;
         }
+        if settle.renavigated {
+            // Hit the hop cap or ran out of deadline mid-chain — capture lands on
+            // the current (possibly in-flight) document and the receipt records the
+            // bounded `timeout` outcome (D4). Surfaced so a redirect-loop page is
+            // distinguishable from a slow one in logs.
+            tracing::warn!(
+                target_id,
+                hops,
+                max_hops = MAX_REATTACH_HOPS,
+                "navigate: re-attach chain exhausted hop cap / deadline; capturing current document"
+            );
+        }
 
         // STEP 5: DOM.getDocument → raw CBOR bytes + SHA-256.
         let dom_msg = CdpMessage {
@@ -1091,6 +1116,14 @@ impl ActionExecutor for ChromiumActionExecutor {
                 remaining,
             )
             .await;
+        }
+        if settle.renavigated {
+            tracing::warn!(
+                target_id,
+                hops,
+                max_hops = MAX_REATTACH_HOPS,
+                "wait_for: re-attach chain exhausted hop cap / deadline; resolving on current document"
+            );
         }
         if vt_active && needs_resume {
             self.resume_virtual_time(target_id, timeout).await;

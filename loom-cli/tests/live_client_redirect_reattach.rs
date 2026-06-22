@@ -43,7 +43,7 @@ const FINAL_HTML: &str = "<!doctype html><html><head><title>Welcome</title></hea
 /// A local HTTP server that routes the three client-side top-level redirect
 /// shapes to a shared `/final` page. Loops until the test drops it (the daemon
 /// makes several requests per navigate: shell, redirect target, favicon).
-fn fixture_html(path: &str) -> Option<String> {
+fn fixture_html(path: &str, xfinal: &str) -> Option<String> {
     let body = match path {
         // (1) window.location assignment — the canonical SPA→IdP redirect.
         "/loc" => "<!doctype html><html><head><title>shell</title></head><body>\
@@ -59,6 +59,13 @@ fn fixture_html(path: &str) -> Option<String> {
              <form id=\"f\" method=\"post\" action=\"/final\"></form>\
              <script>document.getElementById('f').submit();</script></body></html>"
             .to_string(),
+        // (4) CROSS-ORIGIN window.location — redirects to a DIFFERENT origin
+        // (the real SPA→Auth0 shape, which destroys the execution context).
+        // `xfinal` is the other server's absolute /final URL.
+        "/xloc" => format!(
+            "<!doctype html><html><head><title>shell</title></head><body>\
+             <script>window.location.href='{xfinal}';</script></body></html>"
+        ),
         "/final" => FINAL_HTML.to_string(),
         _ => return None,
     };
@@ -69,7 +76,10 @@ struct FixtureServer {
     addr: std::net::SocketAddr,
 }
 
-fn spawn_fixture_server() -> FixtureServer {
+/// Spawn a fixture server. `xfinal` is the absolute `/final` URL the `/xloc`
+/// fixture redirects to (used to model a cross-origin redirect to a second
+/// server); pass `""` for a server that only ever redirects same-origin.
+fn spawn_fixture_server(xfinal: String) -> FixtureServer {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
     let addr = listener.local_addr().expect("local_addr");
     std::thread::spawn(move || {
@@ -85,7 +95,7 @@ fn spawn_fixture_server() -> FixtureServer {
                 .nth(1)
                 .map(|p| p.split('?').next().unwrap_or(p).to_string())
                 .unwrap_or_default();
-            let resp = match fixture_html(&path) {
+            let resp = match fixture_html(&path, &xfinal) {
                 Some(body) => format!(
                     "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n{}",
                     body.len(),
@@ -127,7 +137,12 @@ fn client_redirect_reattach_against_local_fixtures() {
         }
     };
 
-    let server = spawn_fixture_server();
+    // Origin B serves the cross-origin landing page; origin A serves the shells
+    // (and a /xloc that redirects to B/final — a genuine cross-origin top-level
+    // navigation, which swaps the renderer's execution context like SPA→Auth0).
+    let origin_b = spawn_fixture_server(String::new());
+    let xfinal = format!("http://{}/final", origin_b.addr);
+    let server = spawn_fixture_server(xfinal);
     let base = format!("http://{}", server.addr);
 
     let mut harness = DaemonTestHarness::new()
@@ -150,6 +165,7 @@ fn client_redirect_reattach_against_local_fixtures() {
         ("window.location", "/loc"),
         ("meta-refresh", "/meta"),
         ("form-POST", "/form"),
+        ("cross-origin window.location", "/xloc"),
     ] {
         let url = format!("{base}{path}");
         let receipt = navigate(&harness, &sid, &url, "settled");
