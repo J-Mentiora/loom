@@ -369,13 +369,26 @@ impl ScreencastRecorder {
                 stop_reason: reason,
                 error: None,
             },
-            Err(e) => ScreencastOutcome {
-                webm_bytes: Vec::new(),
-                frame_count,
-                duration_ms,
-                stop_reason: "encoder_unavailable".to_string(),
-                error: Some(e),
-            },
+            Err(e) => {
+                // A best-effort encode failure (e.g. flaky ffmpeg download) must NOT
+                // overwrite the true stop reason — `stop_reason` answers "why did
+                // recording stop" (cap/duration/explicit), independent of whether the
+                // encode later succeeded. The failure is surfaced via `error` + empty
+                // `webm_bytes` (the daemon emits an error receipt from those).
+                tracing::warn!(
+                    target_id,
+                    error = %e,
+                    stop_reason = %reason,
+                    "screencast encode failed; preserving true stop_reason, surfacing failure in `error`"
+                );
+                ScreencastOutcome {
+                    webm_bytes: Vec::new(),
+                    frame_count,
+                    duration_ms,
+                    stop_reason: reason,
+                    error: Some(e),
+                }
+            }
         }
     }
 }

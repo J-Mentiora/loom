@@ -103,10 +103,13 @@ pub struct ScreencastOutcome {
     #[serde(default)]
     pub duration_ms: u64,
     /// Why the recording stopped: `explicit` | `duration_cap` | `byte_cap` |
-    /// `session_close` | `no_frames` | `encoder_unavailable` | `error`.
+    /// `session_close` | `no_frames` | `error`. This reports the *reason recording
+    /// stopped* and is independent of whether the encode succeeded — an encode
+    /// failure does NOT overwrite it; it is surfaced via `error` + empty
+    /// `webm_bytes` instead.
     #[serde(default)]
     pub stop_reason: String,
-    /// Set on a best-effort failure (encoder missing / encode error / no frames).
+    /// Set on a best-effort failure (encode error / encoder unavailable / no frames).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
