@@ -13,7 +13,7 @@ browser input that passes trust-gating frameworks (notably Auth0 New Universal L
 which ignore synthetic events). Plus a settle-driver fix for client-initiated
 navigations and a Rust CI compile-time speedup. All changes preserve the replay-equal
 hash chain (NFR-DET-01) — real input changes record-time fidelity only; replay stays
-structural. (#206–#208)
+structural. (#206–#210)
 
 ### Added
 
@@ -35,6 +35,7 @@ structural. (#206–#208)
   `status:error` ("element not hittable: no box model").
 - **Faster Rust CI (#208)** — a `ci-fast` compile profile (no fat LTO) + the `lld` linker
   cut whole-PR Rust CI time. (Internal; no runtime effect.)
+- **Internal: shared `settle_with_reattach` helper (#210)** — factored out of `page_navigate` + `wait_for`; no behavior change.
 
 ### Fixed
 
