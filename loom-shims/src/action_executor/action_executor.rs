@@ -76,6 +76,44 @@ const RESUME_CDP_TIMEOUT: Duration = Duration::from_secs(2);
 /// (SPA shell → IdP → consent → app) with headroom.
 const MAX_REATTACH_HOPS: u32 = 10;
 
+/// Which command is driving the shared client-nav re-attach loop. Selects the
+/// log verb and the exhausted-chain tail so `page_navigate` and `wait_for`
+/// stay distinguishable in traces (the messages are otherwise identical).
+#[derive(Clone, Copy)]
+enum ReattachKind {
+    Navigate,
+    WaitFor,
+}
+
+impl ReattachKind {
+    fn verb(self) -> &'static str {
+        match self {
+            ReattachKind::Navigate => "navigate",
+            ReattachKind::WaitFor => "wait_for",
+        }
+    }
+
+    /// The clause appended to the hop-cap/deadline-exhausted warning — navigate
+    /// captures the current document, wait_for resolves on it.
+    fn exhausted_tail(self) -> &'static str {
+        match self {
+            ReattachKind::Navigate => "capturing current document",
+            ReattachKind::WaitFor => "resolving on current document",
+        }
+    }
+}
+
+/// Result of driving the bounded client-nav re-attach chain shared by
+/// `page_navigate` and `wait_for`. `settle` is the final settle verdict to
+/// capture/report on; `last_drained` is `Some(budget_drained)` from the final
+/// determinism-clock re-arm hop, or `None` when no vt-arm hop ran (no
+/// renavigation, or virtual time disabled) — letting each caller apply its own
+/// post-loop virtual-time bookkeeping without the helper knowing about it.
+struct ReattachOutcome {
+    settle: crate::readiness_monitor::SettleResult,
+    last_drained: Option<bool>,
+}
+
 /// Parse a `LOOM_SHIM_CDP_TIMEOUT_MS` value into a navigate budget. A missing,
 /// non-numeric, or non-positive value falls back to [`DEFAULT_NAVIGATE_BUDGET`]
 /// (a `0`/garbage knob must not disable the budget — that would re-introduce
@@ -344,6 +382,85 @@ impl ChromiumActionExecutor {
             .await
             .is_ok();
         (load_fired, budget_drained)
+    }
+
+    /// Drive the bounded STEP-4d / D9 client-nav re-attach chain shared by
+    /// `page_navigate` and `wait_for`: while the page keeps self-initiating
+    /// top-level navigations (`settle.renavigated`), re-arm the virtual-time
+    /// budget (under the determinism clock pin) and re-settle on each new
+    /// document, hop-capped by [`MAX_REATTACH_HOPS`] and all bounded by the SAME
+    /// remaining action deadline (`reattach_start` + `timeout`). Determinism-safe
+    /// (NFR-DET-01): `renavigated`/`hops` are shim-internal and never enter the
+    /// manifest hash; this only moves code, changing no CDP ordering. Returns the
+    /// final settle verdict plus the last re-arm hop's `budget_drained` (see
+    /// [`ReattachOutcome`]).
+    async fn settle_with_reattach(
+        &self,
+        target_id: TargetId,
+        settle_mode: crate::readiness_monitor::SettleMode,
+        timeout: Duration,
+        reattach_start: tokio::time::Instant,
+        mut settle: crate::readiness_monitor::SettleResult,
+        kind: ReattachKind,
+    ) -> ReattachOutcome {
+        let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
+        let mut hops: u32 = 0;
+        let mut last_drained: Option<bool> = None;
+        while settle.renavigated && hops < MAX_REATTACH_HOPS {
+            let remaining = timeout.saturating_sub(reattach_start.elapsed());
+            if remaining.is_zero() {
+                break;
+            }
+            hops += 1;
+            tracing::debug!(
+                target_id,
+                hops,
+                "{}: re-attaching to client-initiated top-level navigation",
+                kind.verb()
+            );
+            let new_load = if vt_active {
+                let (lf, drained) = self.rearm_for_reattach(target_id, remaining).await;
+                last_drained = Some(drained);
+                lf
+            } else {
+                // No determinism clock pin: the new document loads on its own
+                // wall-clock; no budget to re-arm.
+                true
+            };
+            let remaining = timeout.saturating_sub(reattach_start.elapsed());
+            if remaining.is_zero() {
+                break;
+            }
+            settle = crate::readiness_monitor::wait_for_settle(
+                &self.cdp,
+                target_id,
+                settle_mode,
+                crate::readiness_monitor::settle_driver::config_for_timeout(remaining),
+                new_load,
+                // the re-attached document was just (re-)loaded above.
+                false,
+                remaining,
+            )
+            .await;
+        }
+        if settle.renavigated {
+            // Hit the hop cap or ran out of deadline mid-chain — capture/resolve
+            // lands on the current (possibly in-flight) document and the receipt
+            // records the bounded `timeout` outcome (D4). Surfaced so a
+            // redirect-loop page is distinguishable from a slow one in logs.
+            tracing::warn!(
+                target_id,
+                hops,
+                max_hops = MAX_REATTACH_HOPS,
+                "{}: re-attach chain exhausted hop cap / deadline; {}",
+                kind.verb(),
+                kind.exhausted_tail()
+            );
+        }
+        ReattachOutcome {
+            settle,
+            last_drained,
+        }
     }
 }
 
@@ -748,54 +865,21 @@ impl ActionExecutor for ChromiumActionExecutor {
         // virtual clock. Re-arm its budget and re-settle on it, following a
         // bounded redirect chain under the SAME action deadline (D4). DOM capture
         // below then lands on the FINAL settled document, not the blank shell.
-        let mut hops: u32 = 0;
-        while settle.renavigated && hops < MAX_REATTACH_HOPS {
-            let remaining = timeout.saturating_sub(reattach_start.elapsed());
-            if remaining.is_zero() {
-                break;
-            }
-            hops += 1;
-            tracing::debug!(
-                target_id,
-                hops,
-                "navigate: re-attaching to client-initiated top-level navigation"
-            );
-            let new_load = if vt_active {
-                let (lf, drained) = self.rearm_for_reattach(target_id, remaining).await;
-                budget_drained = drained;
-                lf
-            } else {
-                // No determinism clock pin: the new document loads on its own
-                // wall-clock; no budget to re-arm.
-                true
-            };
-            let remaining = timeout.saturating_sub(reattach_start.elapsed());
-            if remaining.is_zero() {
-                break;
-            }
-            settle = crate::readiness_monitor::wait_for_settle(
-                &self.cdp,
+        let outcome = self
+            .settle_with_reattach(
                 target_id,
                 settle_mode,
-                crate::readiness_monitor::settle_driver::config_for_timeout(remaining),
-                new_load,
-                // the re-attached document was just (re-)loaded above.
-                false,
-                remaining,
+                timeout,
+                reattach_start,
+                settle,
+                ReattachKind::Navigate,
             )
             .await;
-        }
-        if settle.renavigated {
-            // Hit the hop cap or ran out of deadline mid-chain — capture lands on
-            // the current (possibly in-flight) document and the receipt records the
-            // bounded `timeout` outcome (D4). Surfaced so a redirect-loop page is
-            // distinguishable from a slow one in logs.
-            tracing::warn!(
-                target_id,
-                hops,
-                max_hops = MAX_REATTACH_HOPS,
-                "navigate: re-attach chain exhausted hop cap / deadline; capturing current document"
-            );
+        settle = outcome.settle;
+        // Carry the final re-arm hop's drained state back to the renderer-resume
+        // guards below (only changes when a vt-arm hop actually ran).
+        if let Some(drained) = outcome.last_drained {
+            budget_drained = drained;
         }
 
         // STEP 5: DOM.getDocument → raw CBOR bytes + SHA-256.
@@ -1080,51 +1164,20 @@ impl ActionExecutor for ChromiumActionExecutor {
         // navigation (`renavigated`), giving wait_for the same bounded re-attach
         // as navigate so it resolves on the new document instead of hanging.
         let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
-        let mut hops: u32 = 0;
-        let mut needs_resume = false;
-        while settle.renavigated && hops < MAX_REATTACH_HOPS {
-            let remaining = timeout.saturating_sub(reattach_start.elapsed());
-            if remaining.is_zero() {
-                break;
-            }
-            hops += 1;
-            tracing::debug!(
-                target_id,
-                hops,
-                "wait_for: re-attaching to client-initiated top-level navigation"
-            );
-            let new_load = if vt_active {
-                let (lf, drained) = self.rearm_for_reattach(target_id, remaining).await;
-                // A budget left undrained (re-arm failure / drain timeout) would
-                // wedge the next command on a paused clock — resume on exit.
-                needs_resume = !drained;
-                lf
-            } else {
-                true
-            };
-            let remaining = timeout.saturating_sub(reattach_start.elapsed());
-            if remaining.is_zero() {
-                break;
-            }
-            settle = crate::readiness_monitor::wait_for_settle(
-                &self.cdp,
+        let outcome = self
+            .settle_with_reattach(
                 target_id,
                 settle_mode,
-                crate::readiness_monitor::settle_driver::config_for_timeout(remaining),
-                new_load,
-                false,
-                remaining,
+                timeout,
+                reattach_start,
+                settle,
+                ReattachKind::WaitFor,
             )
             .await;
-        }
-        if settle.renavigated {
-            tracing::warn!(
-                target_id,
-                hops,
-                max_hops = MAX_REATTACH_HOPS,
-                "wait_for: re-attach chain exhausted hop cap / deadline; resolving on current document"
-            );
-        }
+        settle = outcome.settle;
+        // A budget left undrained (re-arm failure / drain timeout) on the final
+        // hop would wedge the next command on a paused clock — resume on exit.
+        let needs_resume = matches!(outcome.last_drained, Some(false));
         if vt_active && needs_resume {
             self.resume_virtual_time(target_id, timeout).await;
         }
