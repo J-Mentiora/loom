@@ -224,6 +224,20 @@ if [[ "$UPSESSION" =~ ^[a-z0-9]{26}$ ]]; then
     fail "set-input-files-filelist-reflects-upload" "len=$LEN name=$NAME (is the daemon started with LOOM_UPLOAD_ROOT=$FIXTURES_DIR? see $RESULTS/upload.json)"
   fi
 
+  # Locator-grammar happy path: a `css=`-prefixed selector (the documented form
+  # web.click/web.type accept) must resolve + attach exactly like a bare one.
+  # Regression guard: set_input_files used to pass the selector RAW to
+  # DOM.querySelector, so `css=#upload` never resolved and surface_trapped even
+  # for a valid file under LOOM_UPLOAD_ROOT.
+  CSSUP=$(upload "$UPSESSION" 'css=#upload' "[\"$UPLOAD_FILE\"]")
+  echo "$CSSUP" >"$RESULTS/upload-css.json"
+  CSSLEN=$(ev "$UPSESSION" 'document.querySelector("#upload").files.length' | jq -r '.return_value_json // empty' | jq -r 'select(. != null)')
+  if [ "$CSSLEN" = "1" ] && ! echo "$CSSUP" | grep -qiE 'surface_trap|action dispatch failed'; then
+    ok "set-input-files-css-locator-grammar-attaches"
+  else
+    fail "set-input-files-css-locator-grammar-attaches" "len=$CSSLEN (see $RESULTS/upload-css.json) — css= selector must resolve like web.click/web.type"
+  fi
+
   # Negative: a path outside the allow-list root → typed security error.
   BLK=$(upload "$UPSESSION" '#upload' '["/etc/passwd"]')
   echo "$BLK" >"$RESULTS/upload-blocked.json"

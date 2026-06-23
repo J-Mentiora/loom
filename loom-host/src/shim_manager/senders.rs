@@ -674,85 +674,31 @@ impl ShimManager {
             }
         };
 
-        // Step 1: DOM.getDocument(depth=0) → root nodeId.
-        let root_resp = cdp(
-            "DOM.getDocument",
-            Value::Map(vec![(
-                Value::Text("depth".into()),
-                Value::Integer(Integer::from(0)),
-            )]),
-        )
-        .await;
-        let root_node_id = match root_resp {
-            Ok(ShimResponse::Ok { payload, .. }) => cbor_get(&payload, "root")
-                .and_then(|r| cbor_get(r, "nodeId"))
-                .and_then(cbor_u64)
-                .ok_or_else(|| {
-                    LoomError::new(
-                        LoomErrorCode::ShimFailure,
-                        format!("shim {}: getDocument: no root.nodeId", id.0),
-                    )
-                })?,
-            Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id, shim_error_class(&code));
-                return Err(LoomError::new(
-                    map_shim_code(code),
-                    format!("shim {}: {}", id.0, detail),
-                ));
-            }
-            Ok(other) => {
-                self.record_failure(&id, FailureClass::Transport);
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {}: getDocument unexpected: {other:?}", id.0),
-                ));
+        // Resolve the (possibly grammar-prefixed: `css=` / `text=` / `role=` /
+        // `frame=`) locator to a node id via the SAME frame-aware resolver
+        // web.click / web.type use — descending same-process iframes for
+        // cross-origin reach. The prior code passed the selector STRAIGHT to
+        // `DOM.querySelector`, so any locator-grammar form (the documented
+        // selector syntax) or a non-match resolved to nothing and surfaced as a
+        // `surface_trap` (`ShimFailure → SurfaceTrap` at the rpc layer) rather
+        // than attaching the file or returning a typed `selector_not_found`.
+        // #223 added the grammar to click/type but missed this verb (it predates
+        // it). `Ok(None)` here = genuine no-match (incl. a `text=`/`role=` miss or
+        // an out-of-process frame) → typed application outcome, not a trap.
+        let node_id = match self
+            .resolve_locator_node(&id, session_id, target_id, &selector, recv_ms)
+            .await
+        {
+            Ok(Some(n)) => n,
+            Ok(None) => {
+                self.record_success(&id);
+                return Ok(SetInputFilesOutcome::SelectorNotFound);
             }
             Err(e) => {
                 self.record_failure(&id, FailureClass::Transport);
                 return Err(e);
             }
         };
-
-        // Step 2: DOM.querySelector(root, selector) → nodeId (0 == not found).
-        let qs_resp = cdp(
-            "DOM.querySelector",
-            Value::Map(vec![
-                (
-                    Value::Text("nodeId".into()),
-                    Value::Integer(Integer::from(root_node_id)),
-                ),
-                (Value::Text("selector".into()), Value::Text(selector)),
-            ]),
-        )
-        .await;
-        let node_id = match qs_resp {
-            Ok(ShimResponse::Ok { payload, .. }) => {
-                cbor_get(&payload, "nodeId").and_then(cbor_u64).unwrap_or(0)
-            }
-            Ok(ShimResponse::Error { code, detail, .. }) => {
-                self.record_failure(&id, shim_error_class(&code));
-                return Err(LoomError::new(
-                    map_shim_code(code),
-                    format!("shim {}: {}", id.0, detail),
-                ));
-            }
-            Ok(other) => {
-                self.record_failure(&id, FailureClass::Transport);
-                return Err(LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {}: querySelector unexpected: {other:?}", id.0),
-                ));
-            }
-            Err(e) => {
-                self.record_failure(&id, FailureClass::Transport);
-                return Err(e);
-            }
-        };
-        if node_id == 0 {
-            // No match — typed application outcome (not a transport failure).
-            self.record_success(&id);
-            return Ok(SetInputFilesOutcome::SelectorNotFound);
-        }
 
         // Step 3: DOM.setFileInputFiles(nodeId, files). A CDP error on a
         // RESOLVED node means it isn't a file input (or it rejected the files).

@@ -105,8 +105,8 @@ const DEADLINE_MS_PARAM: ParamMeta = ParamMeta {
 };
 
 /// Shared `selector` doc for the host-side interaction verbs (web.click,
-/// web.type) that resolve the locator grammar. Plain CSS stays the default and
-/// is byte-identical to before.
+/// web.type, web.set_input_files) that resolve the locator grammar. Plain CSS
+/// stays the default and is byte-identical to before.
 const LOCATOR_DOC: &str = "Locator for the target element. Plain CSS (Level 3) by default; \
      or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` \
      (case-insensitive substring, first visible match), `role=<role>[name=\"<accessible name>\"]` \
@@ -623,13 +623,19 @@ entry when the grant path resolves (D5 / FND-0050).",
     },
     ActionMeta {
         name: "web.set_input_files",
-        summary: "Upload local files into an <input type=file> by CSS selector.",
+        summary: "Upload local files into an <input type=file> by CSS (or a css=/frame= locator).",
         description: "\
 Sets one or more local files on a file input element via CDP \
 `DOM.setFileInputFiles`, the only reliable way to drive uploads (typing \
 into a file input is ignored by browsers and `input.files` is read-only \
-to page script). Resolves the selector to a node, then sets the files; \
-the browser fires native `input`/`change` events so reactive pages update.\n\n\
+to page script). Resolves the selector through the SAME locator grammar as \
+web.click/web.type (the `selector` doc below) — so a `css=`-prefixed selector \
+works, and `frame=<css> >> css=<inner>` can target a file input inside a \
+SAME-PROCESS (incl. same-site cross-origin) iframe. A bare `text=`/`role=` is \
+accepted but rarely matches a file input (they are usually visually hidden, so \
+have no visible text / accessible name); prefer `css=`/`frame=`. Then sets the \
+files and the browser fires native `input`/`change` events so reactive pages \
+update.\n\n\
 SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. \
 If `LOOM_UPLOAD_ROOT` is unset the verb fails closed (`kind: \
 \"upload_root_not_configured\"`). Paths are canonicalized (symlink-escape \
@@ -648,7 +654,7 @@ input target → `not_a_file_input`. Single-file inputs take `paths[0]`.",
             ParamMeta {
                 name: "selector",
                 ty: ParamType::String,
-                doc: "CSS query selector for the target <input type=file>. Standard CSS Level 3 syntax.",
+                doc: LOCATOR_DOC,
                 required: true,
             },
             ParamMeta {
