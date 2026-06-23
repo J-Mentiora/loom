@@ -31,7 +31,7 @@ jobs:
     name: cargo test (ubuntu-latest / beta)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@beta
         with:
           targets: wasm32-wasip2
@@ -60,7 +60,7 @@ jobs:
     name: cargo build --release (ubuntu-latest / beta)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@beta
         with:
           targets: wasm32-wasip2

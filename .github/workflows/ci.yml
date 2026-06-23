@@ -170,7 +170,7 @@ jobs:
     env:
       RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -182,7 +182,7 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -207,7 +207,7 @@ jobs:
     name: no-platform-imports
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - run: python3 scripts/lint_no_platform_imports.py
       # W7.5: verification test plants a known violation and asserts the
       # lint catches it. Stops the v0.9.3-class regression where the lint
@@ -239,7 +239,7 @@ jobs:
         toolchain: [stable]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
@@ -382,7 +382,7 @@ jobs:
         toolchain: [stable]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
@@ -433,7 +433,7 @@ jobs:
         os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["macos-latest", "ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
@@ -506,7 +506,7 @@ jobs:
       needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # `cache-on-failure`: this job fails *after* a successful build when
       # docs/ are stale — without it the fix-up push recompiles from cold.
@@ -549,7 +549,7 @@ jobs:
     # README prose against the single source-of-truth version so README version
     # strings can't silently lag a release. No toolchain/build needed.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Self-test the version checker
         run: scripts/check-readme-version.test.sh
       - name: README version strings match Cargo.toml
@@ -572,7 +572,7 @@ jobs:
     # so a regression in its path resolution can't ship an rm -rf that wipes
     # the wrong directory. No toolchain/build needed.
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Self-test the uninstaller
         run: scripts/uninstall.test.sh
 
@@ -609,7 +609,7 @@ jobs:
       LOOM_BIN: ${{ github.workspace }}/target/ci-fast/loom
       LOOM_MCP_BIN: ${{ github.workspace }}/target/ci-fast/loom-mcp
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
@@ -802,7 +802,7 @@ jobs:
     env:
       RUSTC_WRAPPER: ""
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
@@ -822,7 +822,7 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.python_sdk == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -847,7 +847,7 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.typescript_sdk == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
         with:
           # `node --test 'tests/**/*.ts'` relies on node-native glob
@@ -879,7 +879,7 @@ jobs:
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip2
