@@ -104,18 +104,14 @@ fn cross_origin_iframe_click_lands_via_frame_locator() {
     };
 
     // Origin B (widget) first — the parent needs B's URL to build the iframe src.
-    let widget = spawn_static_server(|path| {
-        (path == "/widget").then(|| WIDGET_HTML.to_string())
-    });
+    let widget = spawn_static_server(|path| (path == "/widget").then(|| WIDGET_HTML.to_string()));
     let parent_html = format!(
         "<!doctype html><html><head><title>parent</title></head><body>\
          <h1 id=\"parent\">parent</h1>\
          <iframe id=\"w\" src=\"http://{widget}/widget\" style=\"width:320px;height:200px;border:0\"></iframe>\
          </body></html>"
     );
-    let parent = spawn_static_server(move |path| {
-        (path == "/").then(|| parent_html.clone())
-    });
+    let parent = spawn_static_server(move |path| (path == "/").then(|| parent_html.clone()));
     let parent_url = format!("http://{parent}/");
 
     let mut harness = DaemonTestHarness::new()
@@ -248,7 +244,11 @@ fn top_frame_text_and_role_locators_click_a_testid_less_button() {
         by_text["status"], "success",
         "text=Continue must resolve + click the testid-less button; got {by_text}"
     );
-    let after_text = eval_text(&harness, &sid, "document.getElementById('count').textContent");
+    let after_text = eval_text(
+        &harness,
+        &sid,
+        "document.getElementById('count').textContent",
+    );
     assert!(
         json_contains(&after_text, "1001"),
         "the text= click must have fired the button handler (count→1001); got {after_text}"
@@ -260,7 +260,11 @@ fn top_frame_text_and_role_locators_click_a_testid_less_button() {
         by_role["status"], "success",
         "role=button[name=\"Continue\"] must resolve + click the button; got {by_role}"
     );
-    let after_role = eval_text(&harness, &sid, "document.getElementById('count').textContent");
+    let after_role = eval_text(
+        &harness,
+        &sid,
+        "document.getElementById('count').textContent",
+    );
     assert!(
         json_contains(&after_role, "1002"),
         "the role= click must have fired the handler again (count→1002); got {after_role}"
@@ -305,7 +309,11 @@ fn run_loom(harness: &DaemonTestHarness, args: &[&str]) -> CliOutput {
 
 fn create_session(harness: &DaemonTestHarness) -> String {
     let out = run_loom(harness, &["session", "create", "--profile", "standard"]);
-    assert_eq!(out.status, 0, "session create failed: stderr={}", out.stderr);
+    assert_eq!(
+        out.status, 0,
+        "session create failed: stderr={}",
+        out.stderr
+    );
     let v: serde_json::Value = serde_json::from_str(&out.stdout)
         .unwrap_or_else(|e| panic!("session create not JSON: {e}; raw={:?}", out.stdout));
     v["session_id"].as_str().unwrap().to_string()
@@ -315,7 +323,14 @@ fn navigate(harness: &DaemonTestHarness, sid: &str, url: &str, until: &str) -> s
     let out = run_loom(
         harness,
         &[
-            "action", "web.navigate", "--session", sid, "--url", url, "--until", until,
+            "action",
+            "web.navigate",
+            "--session",
+            sid,
+            "--url",
+            url,
+            "--until",
+            until,
         ],
     );
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
@@ -329,7 +344,14 @@ fn navigate(harness: &DaemonTestHarness, sid: &str, url: &str, until: &str) -> s
 fn click(harness: &DaemonTestHarness, sid: &str, selector: &str) -> serde_json::Value {
     let out = run_loom(
         harness,
-        &["action", "web.click", "--session", sid, "--selector", selector],
+        &[
+            "action",
+            "web.click",
+            "--session",
+            sid,
+            "--selector",
+            selector,
+        ],
     );
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
         panic!(
@@ -342,7 +364,14 @@ fn click(harness: &DaemonTestHarness, sid: &str, selector: &str) -> serde_json::
 fn eval_text(harness: &DaemonTestHarness, sid: &str, expr: &str) -> serde_json::Value {
     let out = run_loom(
         harness,
-        &["action", "web.evaluate", "--session", sid, "--expression", expr],
+        &[
+            "action",
+            "web.evaluate",
+            "--session",
+            sid,
+            "--expression",
+            expr,
+        ],
     );
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
         panic!(
@@ -361,7 +390,14 @@ fn type_text(
     let out = run_loom(
         harness,
         &[
-            "action", "web.type", "--session", sid, "--selector", selector, "--text", text,
+            "action",
+            "web.type",
+            "--session",
+            sid,
+            "--selector",
+            selector,
+            "--text",
+            text,
         ],
     );
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
@@ -383,7 +419,12 @@ fn provision_web_world(home: &Path) {
     std::fs::create_dir_all(&schemas_dir).unwrap();
     loom_cli::postinstall_runner::schema_step(&schemas_dir).unwrap();
     let permissive = r#"{"request":{"type":"object","additionalProperties":true},"response":{"type":"object","additionalProperties":true}}"#;
-    for m in ["session.create", "session.close", "session.list", "session.validate"] {
+    for m in [
+        "session.create",
+        "session.close",
+        "session.list",
+        "session.validate",
+    ] {
         std::fs::write(schemas_dir.join(format!("{m}.json")), permissive).unwrap();
     }
 }
@@ -396,7 +437,8 @@ fn cwasm_path() -> &'static Path {
             wasm.exists(),
             "build: cargo build --target wasm32-wasip2 -p loom-surface-web --release"
         );
-        let cwasm = workspace_root().join("target/loom-frame-targeting-cwasm/loom_surface_web.cwasm");
+        let cwasm =
+            workspace_root().join("target/loom-frame-targeting-cwasm/loom_surface_web.cwasm");
         std::fs::create_dir_all(cwasm.parent().unwrap()).unwrap();
         if !cwasm.exists() {
             use loom_host::compiler::Compiler;

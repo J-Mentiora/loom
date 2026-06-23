@@ -1541,7 +1541,10 @@ mod locator_resolver_tests {
     fn text_resolver_embeds_needle_safely() {
         // A needle with a quote must not break out of the JS string literal.
         let js = text_resolver_js(r#"a"b"#);
-        assert!(js.contains(r#""a\"b""#), "needle must be JSON-escaped: {js}");
+        assert!(
+            js.contains(r#""a\"b""#),
+            "needle must be JSON-escaped: {js}"
+        );
         assert!(js.starts_with("(function(){") && js.ends_with("})()"));
     }
 
@@ -1549,6 +1552,9 @@ mod locator_resolver_tests {
     fn role_resolver_includes_accname_helpers() {
         let js = role_resolver_js("button", Some("Continue"));
         assert!(js.contains("function accName"));
-        assert!(js.contains("\"continue\""), "name lowercased + embedded: {js}");
+        assert!(
+            js.contains("\"continue\""),
+            "name lowercased + embedded: {js}"
+        );
     }
 }
