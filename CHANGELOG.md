@@ -6,6 +6,29 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.3] — 2026-06-23 — web.type Drives React Controlled Inputs (Playwright fill)
+
+A patch release that makes the **default `web.type` log into real React apps**. Auth0's
+New Universal Login (identifier-first) uses **react-hook-form**, and neither prior dispatch
+path was browser-equivalent: the old default `value` mode set `.value` + synthetic
+`input`/`change` events (`isTrusted:false`) — it reaches the framework's value-tracker but
+the submit treats it as *not genuinely entered* (no POST, silent no-op); `mode:"keystrokes"`
+(added in 0.12.1) is genuine but its value never lands in react-hook-form state ("Please
+enter an email address"). A real browser / Playwright `fill()` is **both**. Replay stays
+structural and value-independent (NFR-DET-01). (#216)
+
+### Changed
+
+- **`web.type`'s default mode is now `fill`, driven by CDP `Input.insertText` (#216).** Bare
+  `web.type` focuses the element, selects its existing content, and commits the text via a
+  single `Input.insertText` — the mechanism Playwright `fill()` uses. It produces one genuine
+  (`isTrusted:true`) `beforeinput`/`input` event through Chromium's editing pipeline, so
+  React/react-hook-form `onChange` fires AND the value is treated as user-entered; the
+  identifier/login flow advances. `text:""` clears the field. The legacy native-setter path
+  is preserved as the explicit `mode:"value"` escape hatch; `mode:"keystrokes"` is unchanged;
+  an unrecognized mode behaves as `value`. Host-side only (mirrors the keystrokes intercept) —
+  no WIT/guest/vendored-wasm change; the manifest hash chain stays replay-equal.
+
 ## [0.12.2] — 2026-06-22 — web.get_cookies Returns Cookies
 
 A patch release that makes **`web.get_cookies` actually surface the cookies it reads**.
