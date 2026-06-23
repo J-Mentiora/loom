@@ -165,6 +165,10 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # `cargo fmt` doesn't compile, and this job doesn't install sccache — disable
+    # the global RUSTC_WRAPPER so any cargo rustc-probe never looks for sccache.
+    env:
+      RUSTC_WRAPPER: ""
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -791,6 +795,12 @@ jobs:
     # all inside the rust filter group.
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # cargo-deny-action runs `cargo metadata`, which probes `rustc -vV` THROUGH
+    # the global RUSTC_WRAPPER. This job doesn't compile (it analyzes the dep
+    # graph) and so doesn't install sccache — disable the wrapper here (cargo
+    # treats an empty RUSTC_WRAPPER as "no wrapper").
+    env:
+      RUSTC_WRAPPER: ""
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
