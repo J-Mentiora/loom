@@ -6,6 +6,18 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.1] — 2026-06-23 — `set_input_files` Locator Grammar
+
+A patch release that brings `web.set_input_files` in line with `web.click`/`web.type`: the
+upload verb now parses the **locator grammar** (`css=` / `frame=` / …) on its `--selector`
+instead of passing the raw string to `DOM.querySelector`. Before this, a `css=`-prefixed
+selector — the documented way to write one — never resolved, so a valid file under a valid
+`LOOM_UPLOAD_ROOT` surfaced (under `--json`) as the opaque `surface_trap: action dispatch
+failed`. Now `css=` works, `frame=<css> >> css=<inner>` can upload into a same-process (incl.
+same-site cross-origin) iframe, and a genuine no-match returns the typed `selector_not_found`.
+Host-side only — no WIT, vendored-wasm, or hash-chain change; replay stays byte-equal
+(NFR-DET-01). (#225)
+
 ### Fixed
 
 - **`web.set_input_files` now accepts the locator grammar (`css=` / `frame=`).** The verb passed
