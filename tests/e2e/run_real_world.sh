@@ -28,6 +28,13 @@ ev()    { $LOOM action web.evaluate   --session "$1" --expression "$2" 2>&1; }
 type_() { $LOOM action web.type       --session "$1" --selector "$2" --text "$3" 2>&1; }
 click() { $LOOM action web.click      --session "$1" --selector "$2" 2>&1; }
 wait_() { $LOOM action web.wait       --session "$1" --selector "$2" --timeout_ms "${3:-10000}" 2>&1; }
+# Gate on page-level readiness. Required after an interaction that triggers a
+# TOP-LEVEL navigation (e.g. a form-POST submit): loom drives Chromium under a
+# deterministic virtual-time clock that is frozen once a navigate drains its
+# budget, and web.wait_for re-arms a budget so the post-click navigation
+# advances (see #219 / #auth0-ulp). web.wait only selector-polls the *current*
+# document and never drives that navigation.
+settle() { $LOOM action web.wait_for  --session "$1" --until "${2:-settled}" --timeout_ms "${3:-10000}" 2>&1; }
 
 result() { echo "$1" | jq -r '.return_value_json // empty' 2>/dev/null | jq -r 'select(. != null)' 2>/dev/null; }
 got_hash() { echo "$1" | jq -e '.action_hash' >/dev/null 2>&1; }
@@ -41,10 +48,15 @@ if got_hash "$NAV"; then
   type_ "$S" '#user-name' 'standard_user' >/dev/null
   type_ "$S" '#password'  'secret_sauce'  >/dev/null
   click "$S" '#login-button' >/dev/null
+  # Saucedemo is a multi-page app: every step here (#login-button, .shopping_cart_link,
+  # #checkout, #continue, #finish) is a TOP-LEVEL navigation to a fresh .html page, so
+  # each navigating click is followed by settle to advance it under virtual time before
+  # the next selector wait/read (same reason as the the-internet submit above).
+  settle "$S" settled 10000 >/dev/null
   W=$(wait_ "$S" '.inventory_list' 10000)
   if got_hash "$W"; then
     ok "saucedemo-login-succeeded (inventory list visible)"
-    # Add first item to cart
+    # Add first item to cart (same-page mutation, no navigation)
     click "$S" '.btn_inventory' >/dev/null
     CART=$(ev "$S" 'document.querySelector(".shopping_cart_badge")?.textContent || "0"')
     if [ "$(result "$CART")" = "1" ]; then
@@ -54,15 +66,19 @@ if got_hash "$NAV"; then
     fi
     # Go to cart and checkout
     click "$S" '.shopping_cart_link' >/dev/null
+    settle "$S" settled 8000 >/dev/null
     wait_ "$S" '#checkout' 5000 >/dev/null
     click "$S" '#checkout' >/dev/null
+    settle "$S" settled 8000 >/dev/null
     wait_ "$S" '#first-name' 5000 >/dev/null
     type_ "$S" '#first-name' 'Test'        >/dev/null
     type_ "$S" '#last-name'  'User'        >/dev/null
     type_ "$S" '#postal-code' '94107'      >/dev/null
     click "$S" '#continue'                 >/dev/null
+    settle "$S" settled 8000 >/dev/null
     wait_ "$S" '#finish' 5000 >/dev/null
     click "$S" '#finish'                   >/dev/null
+    settle "$S" settled 8000 >/dev/null
     DONE=$(ev "$S" 'document.querySelector(".complete-header")?.textContent || ""')
     if echo "$(result "$DONE")" | grep -qi "thank you"; then
       ok "saucedemo-checkout-completed"
@@ -86,8 +102,9 @@ if got_hash "$NAV"; then
   type_ "$S" '#username' 'tomsmith' >/dev/null
   type_ "$S" '#password' 'SuperSecretPassword!' >/dev/null
   click "$S" 'button[type="submit"]' >/dev/null
-  # Wait for the post-redirect page; flash is rendered synchronously after navigation
-  wait_ "$S" '#flash' 5000 >/dev/null
+  # Submit is a top-level form POST -> /secure navigation; settle to advance it
+  # (virtual-time budget) before reading the post-redirect flash banner.
+  settle "$S" settled 8000 >/dev/null
   FLASH=$(ev "$S" 'document.querySelector("#flash")?.textContent || ""')
   if echo "$(result "$FLASH")" | grep -qi "logged into"; then
     ok "the-internet-login"
