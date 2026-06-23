@@ -141,7 +141,13 @@ distinguish \"no such element\" from \"element raised during click \
 handler\" by inspecting the `kind` field of the host error.\n\n\
 Animations and transitions are forced to 0s under loom's deterministic \
 profile, so click handlers complete synchronously. The receipt's \
-`side_effects` records any DOM mutations triggered by the handler.",
+`side_effects` records any DOM mutations triggered by the handler.\n\n\
+When the click triggers a TOP-LEVEL navigation (a form-submit button, an \
+`<a href>` link) or an async re-render, follow it with `web.wait_for` — \
+NOT `web.wait`. loom drives Chromium under a virtual-time clock that is \
+frozen once a navigate drains its budget; `web.wait_for` re-arms a budget \
+so the post-click navigation advances and settles, whereas `web.wait` only \
+polls the CURRENT document for a selector and never drives the navigation.",
         params: &[
             ParamMeta {
                 name: "session_id",
@@ -809,7 +815,12 @@ returns as soon as the predicate is true on any poll iteration.\n\n\
 Typed error: `kind: \"wait_predicate_false\"` if the selector never \
 resolves before the timeout. Use this to fail loud rather than \
 chaining a brittle `web.click` against an element that is not yet \
-present.",
+present.\n\n\
+`web.wait` polls the CURRENT document and arms no virtual-time budget, so \
+it does NOT drive a navigation. After an interaction that triggers a \
+top-level navigation (form submit, link click), use `web.wait_for` to \
+advance and settle the new page first — then `web.wait` for a selector on \
+it if you need to gate on a specific element.",
         params: &[
             ParamMeta {
                 name: "session_id",
