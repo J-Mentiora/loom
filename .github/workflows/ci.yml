@@ -16,12 +16,20 @@ name: CI
 # unaffected — release.yml builds from [profile.dist] (lto=thin).
 #
 #   job                       measured      target   notes
-#   cargo test (ubuntu)       35-43 min     ≤ 20     ci-fast: no fat LTO + lld.
-#                                                    Test EXECUTION is ~40s; the
-#                                                    job was dominated by the
-#                                                    release compile of 373 test
-#                                                    binaries. opt-level stays 3
-#                                                    so perf-SLA tests stay green.
+#   cargo test (ubuntu)       warm ~6.5m    ≤ 14     COMPILE-bound. MEASURED
+#                             cold ~18m              2026-06-23: the whole
+#                                                    `--run-ignored all` suite
+#                                                    EXECUTES in ~47s (nextest
+#                                                    Summary); the 335s→1076s
+#                                                    "Run tests" swing is
+#                                                    test-binary compile/link.
+#                                                    sccache (content-keyed)
+#                                                    fills the COLD gap that
+#                                                    wipes rust-cache's target.
+#                                                    opt-level stays 3 so
+#                                                    perf-SLA tests stay green.
+#                                                    ⚠️ UPDATE measured after a
+#                                                    warm-sccache run.
 #   cargo test (macos)        35-45 min     ≤ 30     main pushes + ci:macos label
 #                                                    only; ci-fast speedup but no
 #                                                    lld (native linker).
@@ -68,6 +76,29 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  # ── Compile-cache levers (2026-06-23) ─────────────────────────────────────
+  # The Rust `test` job is COMPILE-bound, not execution-bound: the whole
+  # `--run-ignored all` suite EXECUTES in ~47s (nextest Summary line); the
+  # 335s→1076s swing in the "Run tests" step is test-binary compile/link. The
+  # painful runs are the COLD ones — a Cargo.lock change or a foundational-crate
+  # edit invalidates Swatinem/rust-cache's whole target dir → full recompile.
+  #
+  # sccache is a CONTENT-keyed compilation cache (GitHub Actions cache backend):
+  # it caches per-crate rustc outputs by input hash, so it still HITS across the
+  # cache-key changes that wipe rust-cache's target — exactly the cold/heavy
+  # runs. rust-cache stays (registry + same-lock target fast-path); sccache is
+  # the fallback that fills the cold gap. RUSTC_WRAPPER is set globally but only
+  # consulted when rustc actually runs — the compiling jobs all install sccache
+  # (the step added before every rust-cache below); fmt/deny don't compile so
+  # the wrapper is never invoked there.
+  #
+  # CARGO_INCREMENTAL=0 is REQUIRED by sccache (incremental artifacts aren't
+  # cacheable) and is a good CI default anyway (incremental is useless on fresh
+  # runners and bloats the rust-cache target dir). Shipped binaries unaffected
+  # (release.yml builds from [profile.dist]).
+  CARGO_INCREMENTAL: 0
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   # ── PR path filtering ───────────────────────────────────────────────────
@@ -134,6 +165,10 @@ jobs:
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # `cargo fmt` doesn't compile, and this job doesn't install sccache — disable
+    # the global RUSTC_WRAPPER so any cargo rustc-probe never looks for sccache.
+    env:
+      RUSTC_WRAPPER: ""
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -152,6 +187,7 @@ jobs:
         with:
           components: clippy
           targets: wasm32-wasip2
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           # Keep the warm cache even when clippy finds something — the
@@ -182,6 +218,8 @@ jobs:
     name: cargo test (${{ matrix.os }} / ${{ matrix.toolchain }})
     needs: changes
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
+    # Hung-compile backstop (the header budgets are advisory; there was none).
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -209,6 +247,7 @@ jobs:
       # scoped per job id — verified in run 27328345698 (key
       # v0-rust-test-Linux-x64-<rustc>-<lock>). `cache-on-failure` is the
       # repair: a red test run used to discard the entire warm compile.
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -352,6 +391,7 @@ jobs:
       # maintaining a near-identical copy — fewer multi-GB cache entries
       # under the repo's 10 GB cap means less eviction thrash for everyone.
       # Toolchain hash + Cargo.lock stay in the key automatically.
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-deps
@@ -399,6 +439,7 @@ jobs:
           targets: wasm32-wasip2
       # Same shared key as `build` (which this job `needs`) — restores the
       # exact dep cache `build` just saved instead of keeping a duplicate.
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: release-deps
@@ -469,6 +510,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # `cache-on-failure`: this job fails *after* a successful build when
       # docs/ are stale — without it the fix-up push recompiles from cold.
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -576,6 +618,7 @@ jobs:
       # exact-hit restore of a shared key would never save those. e2e is the
       # flakiest job in the file — `cache-on-failure` keeps the warm cache
       # across red runs so retries don't recompile from cold.
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
@@ -752,6 +795,12 @@ jobs:
     # all inside the rust filter group.
     if: github.event_name != 'pull_request' || needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    # cargo-deny-action runs `cargo metadata`, which probes `rustc -vV` THROUGH
+    # the global RUSTC_WRAPPER. This job doesn't compile (it analyzes the dep
+    # graph) and so doesn't install sccache — disable the wrapper here (cargo
+    # treats an empty RUSTC_WRAPPER as "no wrapper").
+    env:
+      RUSTC_WRAPPER: ""
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -836,6 +885,7 @@ jobs:
           targets: wasm32-wasip2
       # `cache-on-failure`: staleness failures happen *after* a successful
       # wasm build — keep the cache so the regen-and-recommit run is warm.
+      - uses: mozilla-actions/sccache-action@v0.0.10
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
