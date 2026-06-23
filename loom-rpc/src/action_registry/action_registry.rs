@@ -104,6 +104,16 @@ const DEADLINE_MS_PARAM: ParamMeta = ParamMeta {
     required: false,
 };
 
+/// Shared `selector` doc for the host-side interaction verbs (web.click,
+/// web.type) that resolve the locator grammar. Plain CSS stays the default and
+/// is byte-identical to before.
+const LOCATOR_DOC: &str = "Locator for the target element. Plain CSS (Level 3) by default; \
+     or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` \
+     (case-insensitive substring, first visible match), `role=<role>[name=\"<accessible name>\"]` \
+     (ARIA role + a W3C accessible-name subset), and `frame=<css>` to descend into an iframe. \
+     `frame=` is REQUIRED to cross an origin boundary — a bare locator never reaches into a \
+     cross-origin frame (e.g. `frame=iframe[src*=\"widget\"] >> css=#send`).";
+
 pub const ACTIONS: &[ActionMeta] = &[
     ActionMeta {
         name: "web.clear_cookies",
@@ -132,7 +142,7 @@ you need a name-level record before clearing.",
     },
     ActionMeta {
         name: "web.click",
-        summary: "Click an element by CSS selector.",
+        summary: "Click an element by CSS selector or a text=/role=/frame= locator.",
         description: "\
 Resolves a CSS query selector against the active page and dispatches \
 a synthetic click on the matched element. Surfaces selector misses as \
@@ -158,7 +168,7 @@ polls the CURRENT document for a selector and never drives the navigation.",
             ParamMeta {
                 name: "selector",
                 ty: ParamType::String,
-                doc: "CSS query selector for the target element. Standard CSS Level 3 syntax.",
+                doc: LOCATOR_DOC,
                 required: true,
             },
             DEADLINE_MS_PARAM,
@@ -753,7 +763,7 @@ best-effort and never aborts the session.",
     },
     ActionMeta {
         name: "web.type",
-        summary: "Focus an input and type text into it.",
+        summary: "Focus an input (by CSS or a text=/role=/frame= locator) and type text into it.",
         description: "\
 Resolves the selector, focuses the element, and enters `text`.\n\n\
 By default (`mode: \"fill\"`) loom selects the field's existing content and \
@@ -782,7 +792,7 @@ Failure mode: in `fill`/`keystrokes` a selector miss → \
             ParamMeta {
                 name: "selector",
                 ty: ParamType::String,
-                doc: "CSS query selector for the input element.",
+                doc: LOCATOR_DOC,
                 required: true,
             },
             ParamMeta {

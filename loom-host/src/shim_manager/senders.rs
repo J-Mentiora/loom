@@ -21,6 +21,7 @@ use super::types::{
     SendPressKeyParams, SendSetInputFilesParams, SendWaitForParams, SetInputFilesOutcome, ShimId,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
+use loom_shared::locator::{parse_locator, Segment};
 use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome, ScreencastOutcome};
 use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
 use std::time::Duration;
@@ -857,59 +858,19 @@ impl ShimManager {
         budget_ms: u64,
     ) -> Result<bool, LoomError> {
         use ciborium::value::{Integer, Value};
-        let doc = self
-            .cdp_send_one(
-                id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.getDocument".into(),
-                    params: Value::Map(vec![(
-                        Value::Text("depth".into()),
-                        Value::Integer(Integer::from(0)),
-                    )]),
-                },
-                budget_ms,
-            )
+        // Frame-aware resolution (descends same-process cross-origin iframes);
+        // for a bare/plain CSS selector this is the same getDocument →
+        // querySelector path as before.
+        let node = match self
+            .resolve_locator_node(id, session_id, target_id, selector, budget_ms)
             .await?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let root = cbor_get(&doc, "root")
-            .and_then(|r| cbor_get(r, "nodeId"))
-            .and_then(cbor_u64)
-            .ok_or_else(|| {
-                LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {}: getDocument: no root.nodeId", id.0),
-                )
-            })?;
-        let qs = self
-            .cdp_send_one(
-                id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.querySelector".into(),
-                    params: Value::Map(vec![
-                        (
-                            Value::Text("nodeId".into()),
-                            Value::Integer(Integer::from(root)),
-                        ),
-                        (Value::Text("selector".into()), Value::Text(selector.into())),
-                    ]),
-                },
-                budget_ms,
-            )
-            .await?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
-        if node == 0 {
-            return Ok(false);
-        }
+        {
+            Some(n) => n,
+            None => return Ok(false),
+        };
         // Best-effort focus — ignore a CDP error (non-focusable element).
+        // `Input.insertText`/`dispatchKeyEvent` then target the focused element,
+        // which is correct even when it lives inside a cross-origin frame.
         let _ = self
             .cdp_send_one(
                 id,
@@ -1088,6 +1049,257 @@ impl ShimManager {
 
     /// Always-trusted `web.click` — resolve the element's hit point (box-model
     /// center, scrolling into view first) and dispatch a trusted
+    /// `DOM.querySelector(root, css)` → `Some(nodeId)` (a 0 nodeId ⇒ `None`).
+    async fn dom_query_selector(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        root: u64,
+        css: &str,
+        budget_ms: u64,
+    ) -> Result<Option<u64>, LoomError> {
+        use ciborium::value::{Integer, Value};
+        let qs = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.querySelector".into(),
+                    params: Value::Map(vec![
+                        (
+                            Value::Text("nodeId".into()),
+                            Value::Integer(Integer::from(root)),
+                        ),
+                        (Value::Text("selector".into()), Value::Text(css.to_string())),
+                    ]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
+        Ok(if node == 0 { None } else { Some(node) })
+    }
+
+    /// Resolve a (possibly `frame=`-prefixed) locator to a DOM `nodeId` in the
+    /// page session, descending through same-process iframes (incl. same-site
+    /// cross-origin) via `DOM.describeNode{pierce:true}` → `contentDocument`.
+    /// CDP is not bound by the same-origin policy, so a cross-origin (but
+    /// in-process) frame's content is reachable this way — the
+    /// `iframe.contentDocument === null` blocker is a page-JS limitation, not a
+    /// CDP one.
+    ///
+    /// Returns `Ok(Some(nodeId))` on a match; `Ok(None)` when nothing matched, the
+    /// frame is out-of-process (no in-process `contentDocument`), or the leaf is a
+    /// `text=`/`role=` form (resolved by the evaluate-tier resolver, not this DOM
+    /// path). `Err` only on transport failure.
+    pub(super) async fn resolve_locator_node(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: &str,
+        budget_ms: u64,
+    ) -> Result<Option<u64>, LoomError> {
+        use ciborium::value::{Integer, Value};
+
+        let segments = match parse_locator(selector) {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
+        };
+
+        // A single `text=`/`role=` locator resolves in the top frame's default
+        // execution context via a marker-attribute resolver (the common
+        // testid-less case, e.g. a shadcn button). Composed (`… >> text=`) and
+        // in-(cross-origin-)frame text/role are a follow-up — they need the
+        // frame's executionContextId.
+        if let [seg @ (Segment::Text(_) | Segment::Role(_))] = segments.as_slice() {
+            return self
+                .resolve_marked_node(id, session_id, target_id, seg, budget_ms)
+                .await;
+        }
+
+        let doc = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.getDocument".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("depth".into()),
+                        Value::Integer(Integer::from(0)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let mut root = cbor_get(&doc, "root")
+            .and_then(|r| cbor_get(r, "nodeId"))
+            .and_then(cbor_u64)
+            .ok_or_else(|| {
+                LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: getDocument: no root.nodeId", id.0),
+                )
+            })?;
+
+        let last = segments.len() - 1;
+        for (i, seg) in segments.iter().enumerate() {
+            let is_last = i == last;
+            match seg {
+                Segment::Frame(css) => {
+                    let iframe = match self
+                        .dom_query_selector(id, session_id, target_id, root, css, budget_ms)
+                        .await?
+                    {
+                        Some(n) => n,
+                        None => return Ok(None),
+                    };
+                    let described = self
+                        .cdp_send_one(
+                            id,
+                            session_id,
+                            target_id,
+                            CdpMessage {
+                                method: "DOM.describeNode".into(),
+                                params: Value::Map(vec![
+                                    (
+                                        Value::Text("nodeId".into()),
+                                        Value::Integer(Integer::from(iframe)),
+                                    ),
+                                    (
+                                        Value::Text("depth".into()),
+                                        Value::Integer(Integer::from(-1i64)),
+                                    ),
+                                    (Value::Text("pierce".into()), Value::Bool(true)),
+                                ]),
+                            },
+                            budget_ms,
+                        )
+                        .await?
+                        .map_err(|(code, detail)| {
+                            LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+                        })?;
+                    match cbor_get(&described, "node")
+                        .and_then(|n| cbor_get(n, "contentDocument"))
+                        .and_then(|cd| cbor_get(cd, "nodeId"))
+                        .and_then(cbor_u64)
+                    {
+                        Some(n) if n != 0 => root = n,
+                        // No in-process contentDocument ⇒ out-of-process (OOPIF)
+                        // frame; not handled on this DOM path.
+                        _ => return Ok(None),
+                    }
+                }
+                Segment::Css(css) => {
+                    match self
+                        .dom_query_selector(id, session_id, target_id, root, css, budget_ms)
+                        .await?
+                    {
+                        Some(n) if is_last => return Ok(Some(n)),
+                        Some(n) => root = n, // intermediate css scope
+                        None => return Ok(None),
+                    }
+                }
+                // text=/role= are resolved by the evaluate-tier resolver, not
+                // this DOM path.
+                Segment::Text(_) | Segment::Role(_) => return Ok(None),
+            }
+        }
+        // Ended on a `frame=` segment with no leaf target.
+        Ok(None)
+    }
+
+    /// Resolve a single `text=`/`role=` segment in the top frame's default
+    /// execution context: run a marker-attribute resolver (W3C-AccName subset
+    /// for `role=`; visible-text match for `text=`), then `querySelector` the
+    /// marked node and strip the marker. Returns the matched `nodeId` or `None`.
+    async fn resolve_marked_node(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        seg: &Segment,
+        budget_ms: u64,
+    ) -> Result<Option<u64>, LoomError> {
+        use ciborium::value::{Integer, Value};
+        let js = match marker_resolver_js(seg) {
+            Some(js) => js,
+            None => return Ok(None),
+        };
+        let eval = |expr: String| CdpMessage {
+            method: "Runtime.evaluate".into(),
+            params: Value::Map(vec![
+                (Value::Text("expression".into()), Value::Text(expr)),
+                (Value::Text("returnByValue".into()), Value::Bool(true)),
+            ]),
+        };
+        let resp = self
+            .cdp_send_one(id, session_id, target_id, eval(js), budget_ms)
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let found = cbor_get(&resp, "result")
+            .and_then(|r| cbor_get(r, "value"))
+            .map(|v| matches!(v, Value::Bool(true)))
+            .unwrap_or(false);
+        if !found {
+            return Ok(None);
+        }
+        let doc = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.getDocument".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("depth".into()),
+                        Value::Integer(Integer::from(0)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let root = cbor_get(&doc, "root")
+            .and_then(|r| cbor_get(r, "nodeId"))
+            .and_then(cbor_u64)
+            .ok_or_else(|| {
+                LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: getDocument: no root.nodeId", id.0),
+                )
+            })?;
+        let node = self
+            .dom_query_selector(id, session_id, target_id, root, MARKER_SELECTOR, budget_ms)
+            .await?;
+        // Best-effort: strip the marker so it does not linger in the DOM.
+        let _ = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                eval(format!(
+                    "document.querySelectorAll('{MARKER_SELECTOR}').forEach(function(e){{e.removeAttribute('{MARKER_ATTR}');}})"
+                )),
+                budget_ms,
+            )
+            .await;
+        Ok(node)
+    }
+
     /// `Input.dispatchMouseEvent` mouseMoved→mousePressed→mouseReleased. No
     /// `el.click()` fallback. `SelectorNotFound` / `NotHittable` are typed
     /// outcomes; transport failures surface as `Err`.
@@ -1102,61 +1314,19 @@ impl ShimManager {
         use ciborium::value::{Integer, Value};
         self.check_breaker(&id)?;
 
-        // Resolve the node id (DOM.getDocument → DOM.querySelector).
-        let doc = self
-            .cdp_send_one(
-                &id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.getDocument".into(),
-                    params: Value::Map(vec![(
-                        Value::Text("depth".into()),
-                        Value::Integer(Integer::from(0)),
-                    )]),
-                },
-                budget_ms,
-            )
+        // Resolve the (possibly `frame=`-prefixed) locator to a node id,
+        // descending into same-process iframes for cross-origin reach.
+        let node = match self
+            .resolve_locator_node(&id, session_id, target_id, &selector, budget_ms)
             .await
             .inspect_err(|_| self.record_failure(&id, FailureClass::Transport))?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let root = cbor_get(&doc, "root")
-            .and_then(|r| cbor_get(r, "nodeId"))
-            .and_then(cbor_u64)
-            .ok_or_else(|| {
-                LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {}: getDocument: no root.nodeId", id.0),
-                )
-            })?;
-        let qs = self
-            .cdp_send_one(
-                &id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.querySelector".into(),
-                    params: Value::Map(vec![
-                        (
-                            Value::Text("nodeId".into()),
-                            Value::Integer(Integer::from(root)),
-                        ),
-                        (Value::Text("selector".into()), Value::Text(selector)),
-                    ]),
-                },
-                budget_ms,
-            )
-            .await?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
-        if node == 0 {
-            self.record_success(&id);
-            return Ok(InputDispatchOutcome::SelectorNotFound);
-        }
+        {
+            Some(n) => n,
+            None => {
+                self.record_success(&id);
+                return Ok(InputDispatchOutcome::SelectorNotFound);
+            }
+        };
 
         // Scroll into view (best-effort) before resolving coordinates.
         let _ = self
@@ -1255,4 +1425,136 @@ fn content_quad_center(payload: &ciborium::value::Value) -> Option<(i64, i64)> {
         }
     }
     None
+}
+
+// ─── text=/role= marker resolver (P2, top frame) ─────────────────────────────
+//
+// We mark the matched element with a transient attribute and `querySelector` it
+// (rather than returning coords) so the existing nodeId-based click/focus paths
+// are reused unchanged. The marker is stripped after resolution. Resolution
+// happens at record time only; replay is structural, so the marker never enters
+// the hash chain.
+
+const MARKER_ATTR: &str = "data-loom-loc";
+const MARKER_SELECTOR: &str = "[data-loom-loc]";
+
+/// Shared JS: clear any stale marker, plus `vis()` (visible: non-zero box and no
+/// display:none/visibility:hidden) and `norm()` (collapse whitespace + trim).
+const JS_PRELUDE: &str = "var M='data-loom-loc';document.querySelectorAll('['+M+']').forEach(function(e){e.removeAttribute(M);});function vis(e){var r=e.getBoundingClientRect();if(r.width===0&&r.height===0)return false;var s=getComputedStyle(e);return s.display!=='none'&&s.visibility!=='hidden';}function norm(t){return (t||'').replace(/\\s+/g,' ').trim();}";
+
+/// W3C-AccName subset: implicit role mapping + accessible-name computation
+/// (aria-label → aria-labelledby → associated label/placeholder → text → title).
+const ROLE_HELPERS: &str = "function roleOf(e){var r=e.getAttribute('role');if(r)return r.trim().toLowerCase();var tag=e.tagName.toLowerCase();if(tag==='button')return 'button';if(tag==='a'&&e.hasAttribute('href'))return 'link';if(tag==='select')return 'combobox';if(tag==='textarea')return 'textbox';if(/^h[1-6]$/.test(tag))return 'heading';if(tag==='input'){var ty=(e.getAttribute('type')||'text').toLowerCase();if(['text','email','password','search','tel','url',''].indexOf(ty)!==-1)return 'textbox';if(ty==='checkbox')return 'checkbox';if(ty==='radio')return 'radio';if(ty==='button'||ty==='submit'||ty==='reset')return 'button';}return '';}function accName(e){var al=e.getAttribute('aria-label');if(al&&al.trim())return norm(al);var lb=e.getAttribute('aria-labelledby');if(lb){var txt=lb.split(/\\s+/).map(function(id){var t=document.getElementById(id);return t?t.textContent:'';}).join(' ');if(norm(txt))return norm(txt);}var tag=e.tagName.toLowerCase();if(tag==='input'||tag==='textarea'||tag==='select'){if(e.id){try{var lbl=document.querySelector('label[for=\"'+(window.CSS&&CSS.escape?CSS.escape(e.id):e.id)+'\"]');if(lbl&&norm(lbl.textContent))return norm(lbl.textContent);}catch(_e){}}var pl=e.getAttribute('placeholder');if(pl&&pl.trim())return pl.trim();}var tc=norm(e.textContent);if(tc)return tc;var ti=e.getAttribute('title');if(ti&&ti.trim())return ti.trim();return '';}";
+
+fn wrap(body: &str) -> String {
+    let mut s = String::from("(function(){");
+    s.push_str(body);
+    s.push_str("})()");
+    s
+}
+
+/// JS resolver expression for a `text=`/`role=` segment, or `None` for others.
+fn marker_resolver_js(seg: &Segment) -> Option<String> {
+    match seg {
+        Segment::Text(needle) => Some(text_resolver_js(needle)),
+        Segment::Role(spec) => {
+            let (role, name) = parse_role_spec(spec);
+            Some(role_resolver_js(&role, name.as_deref()))
+        }
+        Segment::Css(_) | Segment::Frame(_) => None,
+    }
+}
+
+/// First *visible* element whose normalized text contains `needle` (case-
+/// insensitive), preferring the smallest such element (most specific match).
+fn text_resolver_js(needle: &str) -> String {
+    let n = serde_json::to_string(needle).unwrap_or_else(|_| "\"\"".into());
+    let mut body = String::from(JS_PRELUDE);
+    body.push_str("var needle=norm(");
+    body.push_str(&n);
+    body.push_str(").toLowerCase();if(!needle)return false;");
+    body.push_str("var best=null,bestLen=1e9,all=document.querySelectorAll('body *');for(var i=0;i<all.length;i++){var e=all[i];if(!vis(e))continue;var t=norm(e.textContent).toLowerCase();if(t.indexOf(needle)!==-1&&t.length<bestLen){best=e;bestLen=t.length;}}if(best){best.setAttribute(M,'1');return true;}return false;");
+    wrap(&body)
+}
+
+/// First *visible* element whose computed ARIA role equals `role` and (when
+/// `name` is given) whose accessible name contains it (case-insensitive).
+fn role_resolver_js(role: &str, name: Option<&str>) -> String {
+    let role_j = serde_json::to_string(&role.to_lowercase()).unwrap_or_else(|_| "\"\"".into());
+    let name_j = match name {
+        Some(n) => serde_json::to_string(&n.to_lowercase()).unwrap_or_else(|_| "\"\"".into()),
+        None => "null".into(),
+    };
+    let mut body = String::from(JS_PRELUDE);
+    body.push_str(ROLE_HELPERS);
+    body.push_str("var wantRole=");
+    body.push_str(&role_j);
+    body.push_str(";var wantName=");
+    body.push_str(&name_j);
+    body.push_str(";var best=null,bestLen=1e9,all=document.querySelectorAll('body *');for(var i=0;i<all.length;i++){var e=all[i];if(!vis(e))continue;if(roleOf(e)!==wantRole)continue;var an=norm(accName(e)).toLowerCase();if(wantName!==null&&an.indexOf(wantName)===-1)continue;if(an.length<bestLen){best=e;bestLen=an.length;}}if(best){best.setAttribute(M,'1');return true;}return false;");
+    wrap(&body)
+}
+
+/// Split `role=` value `NAME[name="X"]` into `("name"…, Some("X"))`. Tolerates
+/// single/double quotes and an unquoted value terminated by `]`/space.
+fn parse_role_spec(spec: &str) -> (String, Option<String>) {
+    match spec.find('[') {
+        Some(br) => {
+            let role = spec[..br].trim().to_string();
+            let rest = &spec[br..];
+            let name = rest.find("name=").map(|i| &rest[i + 5..]).map(|s| {
+                let s = s.trim_start();
+                let (quote, s) = match s.chars().next() {
+                    Some(q @ ('"' | '\'')) => (Some(q), &s[1..]),
+                    _ => (None, s),
+                };
+                let end = match quote {
+                    Some(q) => s.find(q).unwrap_or(s.len()),
+                    None => s.find([']', ' ']).unwrap_or(s.len()),
+                };
+                s[..end].to_string()
+            });
+            (role, name)
+        }
+        None => (spec.trim().to_string(), None),
+    }
+}
+
+#[cfg(test)]
+mod locator_resolver_tests {
+    use super::*;
+
+    #[test]
+    fn parse_role_spec_extracts_role_and_quoted_name() {
+        assert_eq!(
+            parse_role_spec(r#"button[name="Send"]"#),
+            ("button".into(), Some("Send".into()))
+        );
+        assert_eq!(parse_role_spec("button"), ("button".into(), None));
+        assert_eq!(
+            parse_role_spec("textbox[name='Email']"),
+            ("textbox".into(), Some("Email".into()))
+        );
+    }
+
+    #[test]
+    fn text_resolver_embeds_needle_safely() {
+        // A needle with a quote must not break out of the JS string literal.
+        let js = text_resolver_js(r#"a"b"#);
+        assert!(
+            js.contains(r#""a\"b""#),
+            "needle must be JSON-escaped: {js}"
+        );
+        assert!(js.starts_with("(function(){") && js.ends_with("})()"));
+    }
+
+    #[test]
+    fn role_resolver_includes_accname_helpers() {
+        let js = role_resolver_js("button", Some("Continue"));
+        assert!(js.contains("function accName"));
+        assert!(
+            js.contains("\"continue\""),
+            "name lowercased + embedded: {js}"
+        );
+    }
 }
