@@ -6,16 +6,16 @@
 //! JS — the exact blocker the user hit), same host ⇒ same SITE ⇒ same renderer
 //! process (in-process frame, reachable via `DOM.describeNode → contentDocument`).
 //!
-//! The widget's `#b1` click handler SYNCHRONOUSLY renames `#b2` → `#b2done`. So:
-//!   - bare `css=#b1`                 → selector_not_found (scope fence: a bare
-//!                                       locator never reaches into the iframe)
-//!   - `frame=#w >> css=#b1`          → success (cross-origin element resolved +
-//!                                       trusted click dispatched at its box)
-//!   - `frame=#w >> css=#b2done`      → success ⇒ PROVES the #b1 click actually
-//!                                       LANDED and ran its handler, mutating the
-//!                                       cross-origin DOM (synchronous — no
-//!                                       virtual-time re-arm needed)
-//!   - `frame=#w >> css=#b2`          → selector_not_found (it was renamed)
+//! The widget's `#b1` click handler SYNCHRONOUSLY renames `#b2` → `#b2done`, so:
+//!
+//! - bare `css=#b1` → selector_not_found (scope fence: a bare locator never
+//!   reaches into the iframe).
+//! - `frame=#w >> css=#b1` → success (cross-origin element resolved + trusted
+//!   click dispatched at its box).
+//! - `frame=#w >> css=#b2done` → success, which PROVES the `#b1` click actually
+//!   landed and ran its handler, mutating the cross-origin DOM (synchronous — no
+//!   virtual-time re-arm needed).
+//! - `frame=#w >> css=#b2` → selector_not_found (it was renamed).
 //!
 //! ## Double-gated — never runs in normal CI
 //! - `#[ignore]`; even under `--ignored` early-returns unless `LOOM_LIVE_E2E=1`.
@@ -196,6 +196,86 @@ fn cross_origin_iframe_click_lands_via_frame_locator() {
     let _ = run_loom(&harness, &["session", "close", &sid]);
 }
 
+/// Top-frame `text=`/`role=` locators (P2) — the testid-less shadcn-button case
+/// the user hit (Continue button with no id/testid). A single visible button
+/// labelled "Continue" whose SYNCHRONOUS click handler bumps a counter; clicking
+/// it by visible text and by ARIA role+name must both land (counter advances),
+/// read back via top-frame web.evaluate.
+const TOPFRAME_HTML: &str = "<!doctype html><html><head><title>app</title></head><body>\
+     <button class=\"group/btn inline-flex\">Continue</button>\
+     <span id=\"count\">1000</span>\
+     <script>\
+       document.querySelector('button').addEventListener('click', function(){\
+         var c=document.getElementById('count');\
+         c.textContent = String((parseInt(c.textContent,10)||0)+1);\
+       });\
+     </script></body></html>";
+
+#[test]
+#[ignore = "real Chromium (no network); gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn top_frame_text_and_role_locators_click_a_testid_less_button() {
+    if std::env::var("LOOM_LIVE_E2E").as_deref() != Ok("1") {
+        eprintln!("skip: set LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH to run");
+        return;
+    }
+    let chromium = match std::env::var("LOOM_CHROMIUM_PATH") {
+        Ok(p) if Path::new(&p).exists() => p,
+        _ => {
+            eprintln!("skip: LOOM_CHROMIUM_PATH unset/missing");
+            return;
+        }
+    };
+    let app = spawn_static_server(|path| (path == "/").then(|| TOPFRAME_HTML.to_string()));
+    let app_url = format!("http://{app}/");
+
+    let mut harness = DaemonTestHarness::new()
+        .env("LOOM_CHROMIUM_PATH", &chromium)
+        .env(
+            "LOOM_CHROMIUM_EXTRA_FLAGS",
+            "--no-sandbox --disable-dev-shm-usage --use-mock-keychain --password-store=basic",
+        )
+        .with_ready_timeout(std::time::Duration::from_secs(30));
+    provision_web_world(harness.home());
+    harness.start();
+    let sid = create_session(&harness);
+
+    let nav = navigate(&harness, &sid, &app_url, "settled");
+    assert_eq!(nav["status"], "success", "navigate must succeed; got {nav}");
+
+    // text=Continue — no CSS selector, just the visible label.
+    let by_text = click(&harness, &sid, "text=Continue");
+    assert_eq!(
+        by_text["status"], "success",
+        "text=Continue must resolve + click the testid-less button; got {by_text}"
+    );
+    let after_text = eval_text(&harness, &sid, "document.getElementById('count').textContent");
+    assert!(
+        json_contains(&after_text, "1001"),
+        "the text= click must have fired the button handler (count→1001); got {after_text}"
+    );
+
+    // role=button[name="Continue"] — ARIA role + accessible name.
+    let by_role = click(&harness, &sid, r#"role=button[name="Continue"]"#);
+    assert_eq!(
+        by_role["status"], "success",
+        "role=button[name=\"Continue\"] must resolve + click the button; got {by_role}"
+    );
+    let after_role = eval_text(&harness, &sid, "document.getElementById('count').textContent");
+    assert!(
+        json_contains(&after_role, "1002"),
+        "the role= click must have fired the handler again (count→1002); got {after_role}"
+    );
+
+    eprintln!("top-frame text=/role= locators: both clicked the testid-less button");
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+}
+
+fn json_contains(v: &serde_json::Value, needle: &str) -> bool {
+    serde_json::to_string(v)
+        .map(|s| s.contains(needle))
+        .unwrap_or(false)
+}
+
 fn is_selector_not_found(receipt: &serde_json::Value) -> bool {
     receipt["status"] != "success"
         && serde_json::to_string(receipt)
@@ -254,6 +334,19 @@ fn click(harness: &DaemonTestHarness, sid: &str, selector: &str) -> serde_json::
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
         panic!(
             "click({selector}) stdout not JSON: {e}; status={} stderr={:?}",
+            out.status, out.stderr
+        )
+    })
+}
+
+fn eval_text(harness: &DaemonTestHarness, sid: &str, expr: &str) -> serde_json::Value {
+    let out = run_loom(
+        harness,
+        &["action", "web.evaluate", "--session", sid, "--expression", expr],
+    );
+    serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "evaluate stdout not JSON: {e}; status={} stderr={:?}",
             out.status, out.stderr
         )
     })
