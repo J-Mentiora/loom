@@ -6,6 +6,46 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-23 — Interact Inside Cross-Origin Iframes + text=/role= Locators
+
+A minor release that lets the interaction verbs reach **inside a cross-origin iframe** and
+address controls by **visible text / ARIA role** — the two limitations that blocked driving a
+real app whose "test the bot" surface is an embedded widget. loom could already *read* a
+cross-origin iframe (`web.snapshot --pierce`), but `web.click`/`web.type` were top-frame-only:
+the parent's `iframe.contentDocument` is `null` cross-origin, so a composer/Send selector
+resolved to nothing. This adds a small **locator grammar** on the existing `--selector` string
+and makes click/type descend into a same-process (incl. same-site cross-origin) frame. Verified
+against **real Chrome** via a hermetic two-port `127.0.0.1` fixture. Replay stays structural and
+byte-equal (NFR-DET-01) — the grammar is parsed for resolution only; the raw selector still
+feeds the manifest hash, so plain CSS selectors are unchanged and there is no WIT, vendored-wasm,
+or hash-chain migration. (#223)
+
+### Added
+
+- **Locator grammar on `web.click` / `web.type` (#223).** The `--selector` accepts composable
+  segments joined by ` >> `: `css=<selector>` (the default for a bare selector), `text=<visible
+  text>` (case-insensitive substring, first visible match), `role=<role>[name="<accessible
+  name>"]` (ARIA role + a W3C accessible-name subset: aria-label → aria-labelledby → associated
+  label/placeholder → text → title), and `frame=<css>` to descend into an iframe.
+- **Cross-origin iframe interaction (#223).** `frame=<css> >> css=<inner>` resolves and
+  trusted-clicks / types into an element inside a same-process (incl. same-site cross-origin)
+  iframe — descending via `DOM.describeNode{pierce} → contentDocument`; `getBoxModel` returns
+  top-level viewport coordinates, so the dispatch lands unchanged.
+- **Cross-origin scope fence (#223).** A bare locator (no `frame=` segment) resolves only in the
+  top frame + same-origin subframes; crossing an origin boundary **requires** an explicit
+  `frame=` segment, so a bare `text=`/`role=` can never dispatch trusted input into an arbitrary
+  third-party iframe.
+
+### Changed
+
+- `loom action web.click`/`web.type --help` now document the locator grammar; `docs/` regenerated.
+- Docs: clarified that `web.wait` cannot drive a navigation — use `web.wait_for` (#222).
+
+Follow-ups (tracked, not in this release): re-arming the virtual-time budget for non-navigation
+click-triggered async (the click analogue of #219's `web.wait_for` fix); `text=`/`role=` *inside*
+a frame; and true cross-site out-of-process iframes (the Mentiora widget is same-site, so it is
+already covered by the in-process path).
+
 ## [0.12.4] — 2026-06-23 — web.wait_for Drives the Submit to Completion (Auth0 New ULP)
 
 A patch release that makes a click-triggered form **submit actually navigate**. On Auth0's
