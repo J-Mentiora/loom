@@ -6,6 +6,36 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.4] — 2026-06-23 — web.wait_for Drives the Submit to Completion (Auth0 New ULP)
+
+A patch release that makes a click-triggered form **submit actually navigate**. On Auth0's
+New Universal Login (identifier-first), `web.type` email → `web.click` Continue →
+`web.wait_for` left the page on `/u/login/identifier` — no POST, no navigation,
+`location.href` unchanged (the last blocker after #216 landed the input fill). loom drives
+Chromium under a **deterministic virtual-time clock** that is *frozen* after a
+navigate/settle drains its budget; interaction verbs (`web.click`/`web.press_key`) are raw
+`Input.*` CDP passthroughs that arm no budget, and `web.wait_for` re-armed one only AFTER a
+navigation had already begun. So a click-triggered async `onSubmit` chain (react-hook-form:
+async validate → `navigator.credentials` probe → `fetch(POST)`) stalled at its first
+`setTimeout`/macrotask `await` and never issued the request. Verified live against a real
+Auth0 New ULP tenant: the identifier step now advances to `/u/login/password` and the
+password step issues its `POST /u/login/password`. Replay stays structural and
+value-independent (NFR-DET-01). (#219)
+
+### Fixed
+
+- **`web.wait_for` now arms a bounded virtual-time budget at the start of its settle
+  (#219).** Under the determinism clock pin the virtual clock is frozen once the prior
+  navigate's budget drained, so a preceding `web.click`/`web.press_key` that scheduled async
+  work behind a timer never advanced — the page never began the navigation `wait_for` was
+  meant to observe, and the old common path settled the still-`complete` document
+  immediately. `wait_for` now arms the same `pauseIfNetworkFetchesPending` budget `navigate`
+  uses (mirroring its STEP 4c) before settling, draining pending timers so the submit chain
+  reaches its `fetch` and any resulting top-level navigation begins; the existing
+  settle/reattach then resolves it on the new document. Shim-side only (loom-shims
+  `action_executor`) — no WIT/guest/vendored-wasm change. The virtual-time control commands
+  are shim-internal and excluded from the manifest hash, so the chain stays replay-equal.
+
 ## [0.12.3] — 2026-06-23 — web.type Drives React Controlled Inputs (Playwright fill)
 
 A patch release that makes the **default `web.type` log into real React apps**. Auth0's
