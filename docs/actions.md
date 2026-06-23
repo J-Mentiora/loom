@@ -22,7 +22,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.scroll`](#web-scroll) — Scroll the page (or an element) by a (delta_x, delta_y) offset.
 - [`web.select`](#web-select) — Set the value of a `<select>` element and dispatch `change`.
 - [`web.set_cookies`](#web-set_cookies) — Inject cookies into the browser's network stack via CDP `Network.setCookies`.
-- [`web.set_input_files`](#web-set_input_files) — Upload local files into an <input type=file> by CSS selector.
+- [`web.set_input_files`](#web-set_input_files) — Upload local files into an <input type=file> by CSS (or a css=/frame= locator).
 - [`web.snapshot`](#web-snapshot) — Capture a full DOM snapshot of the active page.
 - [`web.start_recording`](#web-start_recording) — Start recording a video (screencast) of the page.
 - [`web.stop_recording`](#web-stop_recording) — Stop the active video recording and return its content hash.
@@ -397,9 +397,9 @@ loom action web.set_cookies --session <SESSION> --source '{"source":"inline","co
 
 ### <a id="web-set_input_files"></a>`web.set_input_files`
 
-**Upload local files into an <input type=file> by CSS selector.**
+**Upload local files into an <input type=file> by CSS (or a css=/frame= locator).**
 
-Sets one or more local files on a file input element via CDP `DOM.setFileInputFiles`, the only reliable way to drive uploads (typing into a file input is ignored by browsers and `input.files` is read-only to page script). Resolves the selector to a node, then sets the files; the browser fires native `input`/`change` events so reactive pages update.
+Sets one or more local files on a file input element via CDP `DOM.setFileInputFiles`, the only reliable way to drive uploads (typing into a file input is ignored by browsers and `input.files` is read-only to page script). Resolves the selector through the SAME locator grammar as web.click/web.type (the `selector` doc below) — so a `css=`-prefixed selector works, and `frame=<css> >> css=<inner>` can target a file input inside a SAME-PROCESS (incl. same-site cross-origin) iframe. A bare `text=`/`role=` is accepted but rarely matches a file input (they are usually visually hidden, so have no visible text / accessible name); prefer `css=`/`frame=`. Then sets the files and the browser fires native `input`/`change` events so reactive pages update.
 
 SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. If `LOOM_UPLOAD_ROOT` is unset the verb fails closed (`kind: "upload_root_not_configured"`). Paths are canonicalized (symlink-escape defense) and must resolve under the root, else `kind: "upload_path_blocked"`. Enforced in ALL profiles. Per-call caps: 20 files, 100 MiB/file, 200 MiB total (`upload_too_many_files` / `upload_file_too_large` / `upload_total_too_large`). Non-existent paths → `upload_path_not_found`; selector miss → `selector_not_found`; a non-file input target → `not_a_file_input`. Single-file inputs take `paths[0]`.
 
@@ -408,7 +408,7 @@ SECURITY: file paths are gated behind the `LOOM_UPLOAD_ROOT` allow-list. If `LOO
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
-| `selector` | `string` | required | CSS query selector for the target <input type=file>. Standard CSS Level 3 syntax. |
+| `selector` | `string` | required | Locator for the target element. Plain CSS (Level 3) by default; or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` (case-insensitive substring, first visible match), `role=<role>[name="<accessible name>"]` (ARIA role + a W3C accessible-name subset), and `frame=<css>` to descend into an iframe. `frame=` is REQUIRED to cross an origin boundary — a bare locator never reaches into a cross-origin frame (e.g. `frame=iframe[src*="widget"] >> css=#send`). |
 | `paths` | `array` | required | Absolute file paths to upload. Each must resolve under LOOM_UPLOAD_ROOT. Single-file inputs use paths[0]. |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 

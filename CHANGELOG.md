@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`web.set_input_files` now accepts the locator grammar (`css=` / `frame=`).** The verb passed
+  its `--selector` straight to `DOM.querySelector` and never ran the locator-grammar parser that
+  `web.click`/`web.type` gained in #223. So a `css=`-prefixed selector — the documented way to
+  write one — never resolved, and a non-resolving selector surfaced (under `--json`) as the
+  opaque `surface_trap: action dispatch failed` (via `ShimFailure → SurfaceTrap`). The result:
+  `set_input_files --selector "css=#upload"` trapped even for a valid file under a valid
+  `LOOM_UPLOAD_ROOT`. It now resolves the selector through the same frame-aware resolver
+  click/type use — so `css=` works and `frame=<css> >> css=<inner>` can upload into a
+  **same-process (incl. same-site cross-origin) iframe** — and a genuine no-match returns the
+  typed `selector_not_found` outcome. The `LOOM_UPLOAD_ROOT` allow-list (the file-path boundary)
+  is unchanged. Host-side only: no WIT, vendored-wasm, or hash-chain change; replay stays
+  byte-equal (NFR-DET-01).
+
 ## [0.13.0] — 2026-06-23 — Interact Inside Cross-Origin Iframes + text=/role= Locators
 
 A minor release that lets the interaction verbs reach **inside a cross-origin iframe** and
