@@ -41,7 +41,7 @@ from loom.types import (
 
 # Single source of truth for the package version: pyproject.toml reads this via
 # [tool.hatch.version], and the publish workflow asserts it matches the release tag.
-__version__ = "0.12.2"
+__version__ = "0.12.3"
 __all__ = [
     "Session",
     "AsyncSession",
