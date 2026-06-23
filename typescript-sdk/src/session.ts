@@ -337,16 +337,20 @@ export class Session {
   /**
    * Type `text` into `selector`.
    *
-   * `mode: "value"` (default) sets `.value` via `Runtime.evaluate` + synthetic
-   * `input`/`change` events (`isTrusted:false`). `mode: "keystrokes"` focuses
-   * the element and dispatches a real per-character CDP `Input.dispatchKeyEvent`
-   * sequence (`isTrusted:true`) — required by trust-gating frameworks (e.g.
-   * Auth0 New Universal Login) that ignore synthetic events.
+   * `mode: "fill"` (default) focuses the element, selects its existing content,
+   * and commits `text` via a single CDP `Input.insertText` — a genuine
+   * (`isTrusted:true`) edit, the same mechanism as Playwright `fill()`. It drives
+   * React/react-hook-form `onChange` AND is treated as user-entered, so
+   * trust-gating flows (e.g. Auth0 New Universal Login) advance; `text: ""`
+   * clears the field. `mode: "value"` is the legacy path: `.value` via
+   * `Runtime.evaluate` + synthetic `input`/`change` events (`isTrusted:false`) —
+   * a back-compat escape hatch. `mode: "keystrokes"` dispatches a real
+   * per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`).
    */
   async typeText(
     selector: string,
     text: string,
-    opts: { mode?: "value" | "keystrokes"; deadlineMs?: number } = {},
+    opts: { mode?: "fill" | "value" | "keystrokes"; deadlineMs?: number } = {},
   ): Promise<Receipt> {
     const payload: Record<string, unknown> = { selector, text };
     if (opts.mode !== undefined) payload["mode"] = opts.mode;

@@ -1436,6 +1436,7 @@ fn canned_response(method: &str, params: &Value) -> Value {
         // the trusted-input receipt.
         "DOM.focus" => json!({}),
         "Input.dispatchKeyEvent" => json!({}),
+        "Input.insertText" => json!({}),
         "Input.dispatchMouseEvent" => json!({}),
         "DOM.getBoxModel" => {
             let nid = params.get("nodeId").and_then(|n| n.as_u64()).unwrap_or(0);

@@ -749,18 +749,23 @@ best-effort and never aborts the session.",
         name: "web.type",
         summary: "Focus an input and type text into it.",
         description: "\
-Resolves the selector, focuses the element, sets its `.value` to \
-`text`, and dispatches `input` and `change` events so framework-bound \
-listeners observe the update.\n\n\
-By default (`mode: \"value\"`) the text is sent in one batch and the \
-synthetic `input`/`change` events are `isTrusted:false`. With \
-`mode: \"keystrokes\"`, loom focuses the element and dispatches a REAL \
-per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`) — \
-required by trust-gating frameworks (e.g. Auth0 New Universal Login) that \
-ignore synthetic events. Keystrokes change record-time fidelity only; \
-replay stays structural.\n\n\
-Failure mode: in `value` mode a selector miss → `kind: \"js_throw\"`; in \
-`keystrokes` mode a selector miss → `kind: \"selector_not_found\"`.",
+Resolves the selector, focuses the element, and enters `text`.\n\n\
+By default (`mode: \"fill\"`) loom selects the field's existing content and \
+commits `text` via a single CDP `Input.insertText` — a GENUINE \
+(`isTrusted:true`) edit through the browser's editing pipeline, the same \
+mechanism as Playwright `fill()`. This drives React/Vue/react-hook-form \
+`onChange` AND is treated as user-entered, so trust-gating flows (e.g. Auth0 \
+New Universal Login) advance. `Input.insertText` over the selection means \
+`text: \"\"` clears the field.\n\n\
+`mode: \"value\"` is the legacy path: set `.value` via `Runtime.evaluate` + \
+synthetic `input`/`change` events (`isTrusted:false`). It updates the DOM \
+value but trust-gating frameworks treat it as not user-entered — kept as a \
+back-compat escape hatch. `mode: \"keystrokes\"` dispatches a REAL \
+per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`).\n\n\
+All three change record-time fidelity only; replay stays structural. \
+Failure mode: in `fill`/`keystrokes` a selector miss → \
+`kind: \"selector_not_found\"`; in `value` a selector miss → \
+`kind: \"js_throw\"`.",
         params: &[
             ParamMeta {
                 name: "session_id",
@@ -783,12 +788,12 @@ Failure mode: in `value` mode a selector miss → `kind: \"js_throw\"`; in \
             ParamMeta {
                 name: "mode",
                 ty: ParamType::String,
-                doc: "Dispatch mode: \"value\" (default — set .value via Runtime.evaluate + synthetic events) or \"keystrokes\" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true).",
+                doc: "Dispatch mode: \"fill\" (default — focus + CDP Input.insertText, Playwright fill() semantics: a genuine isTrusted edit that drives React/react-hook-form onChange and clears on empty text), \"value\" (legacy — .value via Runtime.evaluate + synthetic events, isTrusted:false; the back-compat escape hatch), or \"keystrokes\" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true). An unrecognized mode behaves as \"value\".",
                 required: false,
             },
             DEADLINE_MS_PARAM,
         ],
-        returns: "Receipt with `status: \"ok\"`. Selector miss / non-input target → `kind: \"js_throw\"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).",
+        returns: "Receipt with `status: \"ok\"`. A selector miss in `fill`/`keystrokes` → `kind: \"selector_not_found\"`; in `value` → `kind: \"js_throw\"`. The `outcome_hash` is a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint: `fill`/`keystrokes` stamp the host-side trusted-input marker, `value` the `Runtime.evaluate` envelope marker — either way the manifest hash chain stays replay-equal. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).",
         example: &["loom", "action", "web.type", "--session", "<SESSION>", "--selector", "#email", "--text", "user@example.com"],
     },
     ActionMeta {

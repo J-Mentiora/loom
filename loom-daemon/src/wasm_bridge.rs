@@ -424,13 +424,25 @@ impl WasmHostBridge for WasmBridge {
             ..
         } = &action
         {
-            if mode.as_deref() == Some("keystrokes") {
+            // cdp-trusted-input: the default `fill` mode (CDP Input.insertText —
+            // Playwright fill()) and `keystrokes` are dispatched host-side here;
+            // `value` (and any unknown string) falls through to the WASM-guest
+            // Runtime.evaluate path. Single source of truth: classify_web_type_mode.
+            let dispatch = classify_web_type_mode(mode.as_deref());
+            if dispatch != WebTypeDispatch::ValueGuest {
                 let host = Arc::clone(&self.host);
                 let sid = session_id_str.to_string();
                 let sel = selector.clone();
                 let txt = text.clone();
                 let action_id = session.allocate_action_id();
-                match handle.block_on(host.type_keystrokes(&sid, &sel, &txt, 0)) {
+                let outcome = match dispatch {
+                    WebTypeDispatch::Fill => handle.block_on(host.type_fill(&sid, &sel, &txt, 0)),
+                    WebTypeDispatch::Keystrokes => {
+                        handle.block_on(host.type_keystrokes(&sid, &sel, &txt, 0))
+                    }
+                    WebTypeDispatch::ValueGuest => unreachable!("guarded above"),
+                };
+                match outcome {
                     Ok(outcome) => {
                         return Ok(build_input_dispatch_receipt(
                             action_id,

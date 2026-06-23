@@ -485,6 +485,52 @@ impl WasmHost {
         })
     }
 
+    /// cdp-trusted-input: `web.type` DEFAULT (`mode:"fill"`). Focus the element
+    /// and drive the value through CDP `Input.insertText` (Playwright `fill()`
+    /// semantics) so React/react-hook-form `onChange` fires AND the value is
+    /// treated as genuinely user-entered. Host-side intercept (like recording) —
+    /// does NOT run the WASM guest. A missing shim (no navigate yet) is a clear
+    /// error, not a silent no-op.
+    pub async fn type_fill(
+        &self,
+        session_id: &str,
+        selector: &str,
+        text: &str,
+        budget_ms: u64,
+    ) -> Result<crate::shim_manager::InputDispatchOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.type",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        let result = self
+            .shim
+            .send_type_fill(
+                effective_id,
+                shim_session_id,
+                0,
+                selector.to_string(),
+                text.to_string(),
+                budget_ms,
+            )
+            .await;
+        // Redacted observability (F7): log selector + char COUNT + outcome —
+        // NEVER the typed text (could be a password).
+        match &result {
+            Ok(o) => {
+                tracing::debug!(session_id = %session_id, selector = %selector, chars = text.chars().count(), outcome = ?o, "web.type fill dispatched")
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, selector = %selector, error = %e, "web.type fill failed")
+            }
+        }
+        result
+    }
+
     /// cdp-trusted-input: `web.type mode:keystrokes`. Focus the element and send
     /// real per-character `Input.dispatchKeyEvent` frames (`isTrusted:true`).
     /// Host-side intercept (like recording) — does NOT run the WASM guest. A

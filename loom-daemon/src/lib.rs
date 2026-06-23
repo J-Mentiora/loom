@@ -1007,12 +1007,15 @@ mod tests {
                 "Runtime.evaluate",
             ),
             (
-                // value mode (default) still builds the Runtime.evaluate setter JS.
+                // cdp-trusted-input: the DEFAULT (`mode:None`) is now `fill`
+                // (host-side CDP Input.insertText) → build_chromium_args returns
+                // None; only the legacy `value` mode builds the Runtime.evaluate
+                // setter JS, so this sweep uses `mode:"value"` explicitly.
                 Action::WebType {
                     session_id: session.clone(),
                     selector: s("input"),
                     text: s("hello"),
-                    mode: None,
+                    mode: Some(s("value")),
                 },
                 "Runtime.evaluate",
             ),
@@ -1243,8 +1246,10 @@ mod tests {
         assert_ne!(r_a.action_hash, r_other.action_hash);
     }
 
-    /// type sets value via the framework-aware native setter (so React/Vue/Angular
-    /// trackers see the change) AND dispatches input/change events.
+    /// `mode:"value"` sets value via the framework-aware native setter (so
+    /// React/Vue/Angular trackers see the change) AND dispatches input/change
+    /// events. (The default `fill` mode is host-side CDP Input.insertText and
+    /// builds no Runtime.evaluate args — covered by the host-side fill tests.)
     #[test]
     fn build_chromium_args_type_emits_runtime_evaluate_setting_value_and_dispatching_input_change()
     {
@@ -1252,7 +1257,7 @@ mod tests {
             session_id: s("sess"),
             selector: s("input"),
             text: s("hello"),
-            mode: None,
+            mode: Some(s("value")),
         };
         let msg = decode_cdp(&action).expect("Some");
         assert_eq!(msg.method, "Runtime.evaluate");
@@ -1375,7 +1380,7 @@ mod tests {
             session_id: s("sess"),
             selector: selector.clone(),
             text: s("v"),
-            mode: None,
+            mode: Some(s("value")),
         };
         let msg = decode_cdp(&action).expect("Some");
         let expr = expr_of(&msg);
@@ -1406,6 +1411,59 @@ mod tests {
             quotes % 2,
             0,
             "odd number of unescaped quotes in expr: {expr}"
+        );
+    }
+
+    /// cdp-trusted-input: the DEFAULT (`mode:None`) and explicit `mode:"fill"`
+    /// are dispatched host-side (CDP Input.insertText), so `build_chromium_args`
+    /// builds NO Runtime.evaluate args for them — proving the default flip is
+    /// routed away from the WASM-guest value path. `mode:"keystrokes"` is also
+    /// host-side; only `value` (and unknown → value) builds guest args.
+    #[test]
+    fn build_chromium_args_type_default_and_fill_are_host_side_no_guest_args() {
+        for mode in [None, Some(s("fill")), Some(s("keystrokes"))] {
+            let action = Action::WebType {
+                session_id: s("sess"),
+                selector: s("input"),
+                text: s("hello"),
+                mode: mode.clone(),
+            };
+            assert!(
+                decode_cdp(&action).is_none(),
+                "web.type mode {mode:?} must be host-side intercepted (no Runtime.evaluate args)"
+            );
+        }
+        // value (and an unknown string) DO build guest args.
+        for mode in [Some(s("value")), Some(s("totally-unknown"))] {
+            let action = Action::WebType {
+                session_id: s("sess"),
+                selector: s("input"),
+                text: s("hello"),
+                mode,
+            };
+            let msg = decode_cdp(&action).expect("value/unknown mode builds guest args");
+            assert_eq!(msg.method, "Runtime.evaluate");
+        }
+    }
+
+    /// The single-source-of-truth mode classifier (decisions.md D8).
+    #[test]
+    fn classify_web_type_mode_maps_modes_to_dispatch_paths() {
+        use crate::wire_receipts::{classify_web_type_mode, WebTypeDispatch};
+        assert_eq!(classify_web_type_mode(None), WebTypeDispatch::Fill);
+        assert_eq!(classify_web_type_mode(Some("fill")), WebTypeDispatch::Fill);
+        assert_eq!(
+            classify_web_type_mode(Some("keystrokes")),
+            WebTypeDispatch::Keystrokes
+        );
+        assert_eq!(
+            classify_web_type_mode(Some("value")),
+            WebTypeDispatch::ValueGuest
+        );
+        // Unknown strings fall back to value (back-compat — no error).
+        assert_eq!(
+            classify_web_type_mode(Some("nope")),
+            WebTypeDispatch::ValueGuest
         );
     }
 

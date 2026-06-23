@@ -154,6 +154,52 @@ pub(crate) fn mouse_event(ty: &str, x: i64, y: i64, button: &str, click_count: i
     }
 }
 
+/// Build one `Input.insertText` frame — inserts `text` at the focused element's
+/// caret/selection through Chromium's editing pipeline, producing a single
+/// GENUINE (`isTrusted:true`) `beforeinput`/`input` event. This is what
+/// Playwright `fill()` uses: React's synthetic-event system observes it, so a
+/// controlled input's `onChange` fires and react-hook-form state updates — unlike
+/// a `.value` set (value-tracker ignores it) or per-key `dispatchKeyEvent`.
+pub(crate) fn insert_text_event(text: &str) -> CdpMessage {
+    CdpMessage {
+        method: "Input.insertText".into(),
+        params: Value::Map(vec![(Value::Text("text".into()), Value::Text(text.into()))]),
+    }
+}
+
+/// `web.type` DEFAULT (`mode:"fill"`) CDP sequence — Playwright `fill()` semantics:
+/// select the focused element's existing content (so the insert REPLACES rather
+/// than appends — and `text:""` clears), then commit `text` via a single genuine
+/// `Input.insertText`. The caller focuses the element first (`resolve_and_focus`).
+///
+/// The select step is a `Runtime.evaluate` (`el.select()` / `setSelectionRange`,
+/// typeof-guarded for non-`<input>` targets) rather than a Ctrl/Cmd+A keystroke:
+/// the select-all accelerator is OS-dependent in Chromium (Cmd+A on macOS), so a
+/// keyboard chord would silently fail to clear on the very platform the bug
+/// reproduces (macOS). The selector is `serde_json`-escaped — no JS injection.
+/// A JS exception inside the evaluate is NOT a CDP error (evaluate "succeeds"
+/// with `exceptionDetails`), so the clear stays best-effort without aborting the
+/// insert.
+pub(crate) fn fill_events(selector: &str, text: &str) -> Vec<CdpMessage> {
+    // serde_json::to_string yields a safely-quoted JS string literal for the
+    // selector (same escaping the value-mode builder uses). Fall back to an
+    // empty-string literal on the impossible serialize error so we never panic.
+    let sel = serde_json::to_string(selector).unwrap_or_else(|_| "\"\"".to_string());
+    let select_expr = format!(
+        "(function(){{var e=document.querySelector({sel});\
+          if(e){{if(typeof e.select==='function'){{e.select();}}\
+          else if(typeof e.setSelectionRange==='function'){{e.setSelectionRange(0,(e.value||'').length);}}}}}})()"
+    );
+    let select = CdpMessage {
+        method: "Runtime.evaluate".into(),
+        params: Value::Map(vec![
+            (Value::Text("expression".into()), Value::Text(select_expr)),
+            (Value::Text("returnByValue".into()), Value::Bool(true)),
+        ]),
+    };
+    vec![select, insert_text_event(text)]
+}
+
 /// keyDown(+text) → keyUp frames for every char of `text` (no modifiers, no
 /// inter-key delay — deterministic under the virtual clock).
 pub(crate) fn keystroke_events_for_text(text: &str) -> Vec<CdpMessage> {
@@ -308,5 +354,66 @@ mod tests {
         assert_eq!(int_of(field(&m, "y").unwrap()), Some(34));
         assert_eq!(text_of(field(&m, "button").unwrap()), Some("left"));
         assert_eq!(int_of(field(&m, "clickCount").unwrap()), Some(1));
+    }
+
+    #[test]
+    fn insert_text_event_carries_method_and_exact_text() {
+        let m = insert_text_event("user@example.com");
+        assert_eq!(method_of(&m), "Input.insertText");
+        assert_eq!(
+            text_of(field(&m, "text").unwrap()),
+            Some("user@example.com")
+        );
+    }
+
+    #[test]
+    fn fill_events_selects_before_inserting_with_exact_payload() {
+        let evs = fill_events("#email", "user@example.com");
+        // Two frames, in order: select existing content, THEN insert.
+        assert_eq!(evs.len(), 2);
+        assert_eq!(
+            method_of(&evs[0]),
+            "Runtime.evaluate",
+            "clear/select must precede the insert (replace, not append)"
+        );
+        let expr = text_of(field(&evs[0], "expression").unwrap()).unwrap();
+        assert!(
+            expr.contains("querySelector"),
+            "select step queries the selector"
+        );
+        assert!(expr.contains("#email"), "select step embeds the selector");
+        assert!(
+            expr.contains("select"),
+            "select step calls select()/setSelectionRange"
+        );
+        assert_eq!(method_of(&evs[1]), "Input.insertText");
+        assert_eq!(
+            text_of(field(&evs[1], "text").unwrap()),
+            Some("user@example.com"),
+            "insertText must carry the exact typed text"
+        );
+    }
+
+    #[test]
+    fn fill_events_empty_text_is_a_clear() {
+        // insertText over a full selection with "" deletes the selected content
+        // → fill("") clears the field.
+        let evs = fill_events("#email", "");
+        assert_eq!(text_of(field(&evs[1], "text").unwrap()), Some(""));
+    }
+
+    #[test]
+    fn fill_events_escapes_a_selector_with_quotes_no_injection() {
+        // A selector containing a double-quote must not break out of the JS string.
+        let evs = fill_events("input[name=\"q\"]", "v");
+        let expr = text_of(field(&evs[0], "expression").unwrap()).unwrap();
+        // serde_json escapes the inner quotes, so the raw unescaped breakout
+        // sequence (`"q"`) never appears verbatim in the expression.
+        assert!(expr.contains("querySelector"));
+        assert!(expr.contains("name="), "selector content survives escaping");
+        assert!(
+            !expr.contains("querySelector(\"input[name=\"q\"]\")"),
+            "selector must be escaped, not concatenated raw"
+        );
     }
 }
