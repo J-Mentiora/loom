@@ -29,7 +29,7 @@ Loom ships with the following registered actions. Run \fBloom action <name> --he
 Clear ALL cookies in the browser's cookie jar (CDP `Network.clearBrowserCookies`).
 .TP
 \fBweb.click\fR
-Click an element by CSS selector.
+Click an element by CSS selector or a text=/role=/frame= locator.
 .TP
 \fBweb.delete_cookies\fR
 Delete a single cookie scoped by (name, url?, domain?, path?) — CDP `Network.deleteCookies`.
@@ -77,7 +77,7 @@ Start recording a video (screencast) of the page.
 Stop the active video recording and return its content hash.
 .TP
 \fBweb.type\fR
-Focus an input and type text into it.
+Focus an input (by CSS or a text=/role=/frame= locator) and type text into it.
 .TP
 \fBweb.wait\fR
 Wait until a CSS selector resolves (or until timeout).

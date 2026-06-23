@@ -10,7 +10,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 ### `web.*`
 
 - [`web.clear_cookies`](#web-clear_cookies) — Clear ALL cookies in the browser's cookie jar (CDP `Network.clearBrowserCookies`).
-- [`web.click`](#web-click) — Click an element by CSS selector.
+- [`web.click`](#web-click) — Click an element by CSS selector or a text=/role=/frame= locator.
 - [`web.delete_cookies`](#web-delete_cookies) — Delete a single cookie scoped by (name, url?, domain?, path?) — CDP `Network.deleteCookies`.
 - [`web.evaluate`](#web-evaluate) — Run a JavaScript expression in the page and return the value.
 - [`web.get_cookies`](#web-get_cookies) — Read cookies from the browser's cookie jar (CDP `Network.getCookies`).
@@ -26,7 +26,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.snapshot`](#web-snapshot) — Capture a full DOM snapshot of the active page.
 - [`web.start_recording`](#web-start_recording) — Start recording a video (screencast) of the page.
 - [`web.stop_recording`](#web-stop_recording) — Stop the active video recording and return its content hash.
-- [`web.type`](#web-type) — Focus an input and type text into it.
+- [`web.type`](#web-type) — Focus an input (by CSS or a text=/role=/frame= locator) and type text into it.
 - [`web.wait`](#web-wait) — Wait until a CSS selector resolves (or until timeout).
 - [`web.wait_for`](#web-wait_for) — Wait until the current page reaches a readiness state (settle-capture).
 
@@ -59,7 +59,7 @@ loom action web.clear_cookies --session <SESSION>
 
 ### <a id="web-click"></a>`web.click`
 
-**Click an element by CSS selector.**
+**Click an element by CSS selector or a text=/role=/frame= locator.**
 
 Resolves a CSS query selector against the active page and dispatches a synthetic click on the matched element. Surfaces selector misses as a typed `js_throw` host error rather than a generic 500 — clients can distinguish "no such element" from "element raised during click handler" by inspecting the `kind` field of the host error.
 
@@ -70,7 +70,7 @@ Animations and transitions are forced to 0s under loom's deterministic profile, 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
-| `selector` | `string` | required | CSS query selector for the target element. Standard CSS Level 3 syntax. |
+| `selector` | `string` | required | Locator for the target element. Plain CSS (Level 3) by default; or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` (case-insensitive substring, first visible match), `role=<role>[name="<accessible name>"]` (ARIA role + a W3C accessible-name subset), and `frame=<css>` to descend into an iframe. `frame=` is REQUIRED to cross an origin boundary — a bare locator never reaches into a cross-origin frame (e.g. `frame=iframe[src*="widget"] >> css=#send`). |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
 **Returns:** Receipt with `status: "ok"` and `side_effects` populated when the click triggered DOM mutations. Selector miss → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (the evaluate returns `undefined`, so it is CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain. It captures the synchronous post-action DOM, so insert an explicit `web.wait_for` before reading it when the effect is async (timer/fetch-driven).
@@ -502,7 +502,7 @@ loom action web.stop_recording --session <SESSION>
 
 ### <a id="web-type"></a>`web.type`
 
-**Focus an input and type text into it.**
+**Focus an input (by CSS or a text=/role=/frame= locator) and type text into it.**
 
 Resolves the selector, focuses the element, and enters `text`.
 
@@ -517,7 +517,7 @@ All three change record-time fidelity only; replay stays structural. Failure mod
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
-| `selector` | `string` | required | CSS query selector for the input element. |
+| `selector` | `string` | required | Locator for the target element. Plain CSS (Level 3) by default; or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` (case-insensitive substring, first visible match), `role=<role>[name="<accessible name>"]` (ARIA role + a W3C accessible-name subset), and `frame=<css>` to descend into an iframe. `frame=` is REQUIRED to cross an origin boundary — a bare locator never reaches into a cross-origin frame (e.g. `frame=iframe[src*="widget"] >> css=#send`). |
 | `text` | `string` | required | Text to type into the element. |
 | `mode` | `string` | optional | Dispatch mode: "fill" (default — focus + CDP Input.insertText, Playwright fill() semantics: a genuine isTrusted edit that drives React/react-hook-form onChange and clears on empty text), "value" (legacy — .value via Runtime.evaluate + synthetic events, isTrusted:false; the back-compat escape hatch), or "keystrokes" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true). An unrecognized mode behaves as "value". |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
