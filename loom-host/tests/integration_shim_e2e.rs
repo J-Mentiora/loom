@@ -604,6 +604,33 @@ async fn trusted_input_dispatch_round_trip() {
         .expect("press_key transport error");
     assert_eq!(bad, O::UnknownKey);
 
+    // web.type DEFAULT (fill / Input.insertText) into the fixtured element → Ok.
+    // Mirrors the keystrokes path but commits the value via a single genuine
+    // `Input.insertText` (Playwright `fill()` semantics) so React/RHF onChange fires.
+    let filled = mgr
+        .send_type_fill(
+            id.clone(),
+            0,
+            0,
+            "#submit".into(),
+            "user@example.com".into(),
+            0,
+        )
+        .await
+        .expect("type_fill transport error");
+    assert_eq!(
+        filled,
+        O::Ok,
+        "fill into a resolvable element should succeed"
+    );
+
+    // Missing selector → SelectorNotFound (typed application outcome, not a transport error).
+    let fill_miss = mgr
+        .send_type_fill(id.clone(), 0, 0, "#missing".into(), "x".into(), 0)
+        .await
+        .expect("type_fill transport error");
+    assert_eq!(fill_miss, O::SelectorNotFound);
+
     mgr.shutdown_session("test-session-input").await;
     drop(user_data_dir);
 }

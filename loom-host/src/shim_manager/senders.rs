@@ -11,7 +11,9 @@
 // lifecycle / breaker methods stay in `shim_manager.rs`.
 
 use super::helpers::{cbor_get, cbor_u64, map_shim_code, parse_evaluate_payload, shim_error_class};
-use super::input_dispatch::{keystroke_events_for_text, mouse_event, press_key_events};
+use super::input_dispatch::{
+    fill_events, keystroke_events_for_text, mouse_event, press_key_events,
+};
 use super::process::send_and_await;
 use super::shim_manager::ShimManager;
 use super::types::{
@@ -975,6 +977,51 @@ impl ShimManager {
                 session_id,
                 target_id,
                 keystroke_events_for_text(&text),
+                budget_ms,
+            )
+            .await
+        {
+            Ok(()) => {
+                self.record_success(&id);
+                Ok(InputDispatchOutcome::Ok)
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Application);
+                Err(e)
+            }
+        }
+    }
+
+    /// `web.type` DEFAULT (`mode:"fill"`) — focus `selector`, then drive the value
+    /// through CDP `Input.insertText` (Playwright `fill()` semantics): select the
+    /// existing content and commit `text` as one GENUINE (`isTrusted:true`) edit so
+    /// React/react-hook-form `onChange` fires AND the value is treated as
+    /// user-entered. Same selector-resolution + breaker bookkeeping as
+    /// `send_type_keystrokes`; differs only in the dispatched frames.
+    pub async fn send_type_fill(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: String,
+        text: String,
+        budget_ms: u64,
+    ) -> Result<InputDispatchOutcome, LoomError> {
+        self.check_breaker(&id)?;
+        if !self
+            .resolve_and_focus(&id, session_id, target_id, &selector, budget_ms)
+            .await
+            .inspect_err(|_| self.record_failure(&id, FailureClass::Transport))?
+        {
+            self.record_success(&id);
+            return Ok(InputDispatchOutcome::SelectorNotFound);
+        }
+        match self
+            .dispatch_input_events(
+                &id,
+                session_id,
+                target_id,
+                fill_events(&selector, &text),
                 budget_ms,
             )
             .await

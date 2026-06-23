@@ -463,8 +463,38 @@ pub(crate) fn build_scroll_expression(
     )
 }
 
-/// cdp-trusted-input: receipt for a trusted-input verb (`web.type
-/// mode:keystrokes`, `web.press_key`, trusted `web.click`). `Ok` → Success with
+/// cdp-trusted-input: how a `web.type` invocation dispatches, by `mode`. The
+/// SINGLE source of truth shared by the host-side intercept (`wasm_bridge`) and
+/// the value-mode JS builder (`build_chromium_args`), so the two routers never
+/// drift (see decisions.md D8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebTypeDispatch {
+    /// Default (`mode` absent or `"fill"`): host-side CDP `Input.insertText`
+    /// (Playwright `fill()` — genuine `isTrusted:true` edit that drives a
+    /// framework's `onChange`/react-hook-form state).
+    Fill,
+    /// `mode:"keystrokes"`: host-side per-char `Input.dispatchKeyEvent`.
+    Keystrokes,
+    /// `mode:"value"` (or any unrecognized string → back-compat): WASM-guest
+    /// `Runtime.evaluate` prototype-setter + synthetic `input`/`change` events.
+    ValueGuest,
+}
+
+/// Classify a `web.type` `mode` into its dispatch path. `None`/`"fill"` → `Fill`
+/// (the default after the flip); `"keystrokes"` → `Keystrokes`; everything else
+/// — `"value"` AND any unknown string — → `ValueGuest`, preserving the pre-flip
+/// "unknown → value" behavior (decisions.md D5/D8; council: don't error on an
+/// unknown mode).
+pub(crate) fn classify_web_type_mode(mode: Option<&str>) -> WebTypeDispatch {
+    match mode {
+        None | Some("fill") => WebTypeDispatch::Fill,
+        Some("keystrokes") => WebTypeDispatch::Keystrokes,
+        _ => WebTypeDispatch::ValueGuest,
+    }
+}
+
+/// cdp-trusted-input: receipt for a trusted-input verb (`web.type`
+/// fill/keystrokes, `web.press_key`, trusted `web.click`). `Ok` → Success with
 /// a CONSTANT `outcome_hash` dispatch-success marker (NOT page-state-bearing, so
 /// the manifest hash chain stays replay-equal, exactly like the existing
 /// interaction verbs). Application outcomes map to typed error `kind`s. The
@@ -616,10 +646,12 @@ pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
             mode,
             ..
         } => {
-            // cdp-trusted-input: `mode:"keystrokes"` is intercepted host-side
-            // (real per-char Input.dispatchKeyEvent); only the default `value`
-            // mode builds the Runtime.evaluate args here.
-            if mode.as_deref() == Some("keystrokes") {
+            // cdp-trusted-input: the default `fill` mode and `keystrokes` are
+            // intercepted host-side in wasm_bridge (CDP Input.insertText /
+            // dispatchKeyEvent); only the legacy `value` mode (and any unknown
+            // string → value, back-compat) builds the Runtime.evaluate args here.
+            // Single source of truth: classify_web_type_mode (decisions.md D8).
+            if classify_web_type_mode(mode.as_deref()) != WebTypeDispatch::ValueGuest {
                 return None;
             }
             // Direct `el.value = text` bypasses React/Vue/Angular value

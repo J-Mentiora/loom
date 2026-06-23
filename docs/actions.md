@@ -504,11 +504,13 @@ loom action web.stop_recording --session <SESSION>
 
 **Focus an input and type text into it.**
 
-Resolves the selector, focuses the element, sets its `.value` to `text`, and dispatches `input` and `change` events so framework-bound listeners observe the update.
+Resolves the selector, focuses the element, and enters `text`.
 
-By default (`mode: "value"`) the text is sent in one batch and the synthetic `input`/`change` events are `isTrusted:false`. With `mode: "keystrokes"`, loom focuses the element and dispatches a REAL per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`) — required by trust-gating frameworks (e.g. Auth0 New Universal Login) that ignore synthetic events. Keystrokes change record-time fidelity only; replay stays structural.
+By default (`mode: "fill"`) loom selects the field's existing content and commits `text` via a single CDP `Input.insertText` — a GENUINE (`isTrusted:true`) edit through the browser's editing pipeline, the same mechanism as Playwright `fill()`. This drives React/Vue/react-hook-form `onChange` AND is treated as user-entered, so trust-gating flows (e.g. Auth0 New Universal Login) advance. `Input.insertText` over the selection means `text: ""` clears the field.
 
-Failure mode: in `value` mode a selector miss → `kind: "js_throw"`; in `keystrokes` mode a selector miss → `kind: "selector_not_found"`.
+`mode: "value"` is the legacy path: set `.value` via `Runtime.evaluate` + synthetic `input`/`change` events (`isTrusted:false`). It updates the DOM value but trust-gating frameworks treat it as not user-entered — kept as a back-compat escape hatch. `mode: "keystrokes"` dispatches a REAL per-character CDP `Input.dispatchKeyEvent` sequence (`isTrusted:true`).
+
+All three change record-time fidelity only; replay stays structural. Failure mode: in `fill`/`keystrokes` a selector miss → `kind: "selector_not_found"`; in `value` a selector miss → `kind: "js_throw"`.
 
 **Parameters**
 
@@ -517,10 +519,10 @@ Failure mode: in `value` mode a selector miss → `kind: "js_throw"`; in `keystr
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | CSS query selector for the input element. |
 | `text` | `string` | required | Text to type into the element. |
-| `mode` | `string` | optional | Dispatch mode: "value" (default — set .value via Runtime.evaluate + synthetic events) or "keystrokes" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true). |
+| `mode` | `string` | optional | Dispatch mode: "fill" (default — focus + CDP Input.insertText, Playwright fill() semantics: a genuine isTrusted edit that drives React/react-hook-form onChange and clears on empty text), "value" (legacy — .value via Runtime.evaluate + synthetic events, isTrusted:false; the back-compat escape hatch), or "keystrokes" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true). An unrecognized mode behaves as "value". |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
-**Returns:** Receipt with `status: "ok"`. Selector miss / non-input target → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
+**Returns:** Receipt with `status: "ok"`. A selector miss in `fill`/`keystrokes` → `kind: "selector_not_found"`; in `value` → `kind: "js_throw"`. The `outcome_hash` is a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint: `fill`/`keystrokes` stamp the host-side trusted-input marker, `value` the `Runtime.evaluate` envelope marker — either way the manifest hash chain stays replay-equal. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
 
 **Example**
 
