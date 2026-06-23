@@ -49,7 +49,6 @@ mod auth_perms;
 mod cli_args;
 mod core_bridge;
 mod health;
-mod locator;
 mod wasm_bridge;
 mod wire_receipts;
 

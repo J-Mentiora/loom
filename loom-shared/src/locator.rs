@@ -1,5 +1,6 @@
-//! Locator grammar parser for the interaction verbs' `--selector` string.
+//! Locator grammar for the interaction verbs' `--selector` string.
 //!
+//! Shared by the daemon (parse/validate) and the host shim-manager (resolution).
 //! Parsed for *resolution only* — the raw selector string is what feeds
 //! `args_canonical_bytes`, so a plain CSS selector hashes byte-identically to
 //! today (this parser never rewrites the selector before hashing).
@@ -18,7 +19,6 @@
 //! REQUIRES an explicit `frame=<css>` segment. (Enforced at resolution time.)
 
 /// One resolution step in a parsed locator chain.
-#[allow(dead_code)] // constructed by the Phase 3 parser + the tests below
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Segment {
     /// CSS selector (the default for a bare, prefix-less selector).
@@ -33,7 +33,6 @@ pub enum Segment {
 }
 
 /// Why a locator string failed to parse.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LocatorParseError {
     /// A segment used a `prefix=` form whose prefix is not one of
@@ -43,11 +42,24 @@ pub enum LocatorParseError {
     Empty,
 }
 
+impl std::fmt::Display for LocatorParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LocatorParseError::UnknownPrefix(p) => write!(
+                f,
+                "unknown locator prefix `{p}=` (expected css=/text=/role=/frame=)"
+            ),
+            LocatorParseError::Empty => write!(f, "empty locator"),
+        }
+    }
+}
+
+impl std::error::Error for LocatorParseError {}
+
 /// If `seg` begins with a bare-identifier prefix (`ident=`), return
 /// `(prefix, rest)`. Returns `None` when the first non-identifier byte is not
 /// `=` — so `button#submit` and `input[name="x"]` (where the first `=` is inside
 /// `[]`) are NOT mistaken for prefixes, while `text=…` / `xpath=…` are.
-#[allow(dead_code)] // used by parse_locator; wired into resolution next
 fn segment_prefix(seg: &str) -> Option<(&str, &str)> {
     let bytes = seg.as_bytes();
     let mut i = 0;
@@ -76,7 +88,6 @@ fn segment_prefix(seg: &str) -> Option<(&str, &str)> {
 /// top-level ` >> ` parses as a single [`Segment::Css`] — identical resolution
 /// behavior to the pre-locator CSS-only path. Segments are joined by ` >> `
 /// (space-`>>`-space; not the CSS child combinator `>`).
-#[allow(dead_code)] // wired into resolution in the next build step
 pub fn parse_locator(raw: &str) -> Result<Vec<Segment>, LocatorParseError> {
     if raw.trim().is_empty() {
         return Err(LocatorParseError::Empty);
@@ -102,6 +113,12 @@ pub fn parse_locator(raw: &str) -> Result<Vec<Segment>, LocatorParseError> {
     Ok(segments)
 }
 
+/// True when the locator is a single bare/`css=` segment — i.e. exactly the
+/// pre-locator behavior. Lets callers keep the legacy fast path byte-for-byte.
+pub fn is_plain_css(segments: &[Segment]) -> bool {
+    matches!(segments, [Segment::Css(_)])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +130,15 @@ mod tests {
         assert_eq!(
             parse_locator("button#submit").unwrap(),
             vec![Segment::Css("button#submit".into())]
+        );
+        assert!(is_plain_css(&parse_locator("button#submit").unwrap()));
+    }
+
+    #[test]
+    fn attribute_selector_with_equals_is_css_not_prefix() {
+        assert_eq!(
+            parse_locator(r#"input[name="email"]"#).unwrap(),
+            vec![Segment::Css(r#"input[name="email"]"#.into())]
         );
     }
 
@@ -147,14 +173,12 @@ mod tests {
     fn css_scope_then_text_composes() {
         assert_eq!(
             parse_locator("css=.list >> text=Item").unwrap(),
-            vec![Segment::Css(".list".into()), Segment::Text("Item".into()),]
+            vec![Segment::Css(".list".into()), Segment::Text("Item".into())]
         );
     }
 
     #[test]
     fn unknown_prefix_is_a_typed_error() {
-        // A `prefix=` form with an unknown prefix must NOT be silently treated
-        // as a CSS selector — it is a typed parse error.
         assert_eq!(
             parse_locator("xpath=//button"),
             Err(LocatorParseError::UnknownPrefix("xpath".into()))

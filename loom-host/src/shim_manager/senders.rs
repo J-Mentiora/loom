@@ -21,6 +21,7 @@ use super::types::{
     SendPressKeyParams, SendSetInputFilesParams, SendWaitForParams, SetInputFilesOutcome, ShimId,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
+use loom_shared::locator::{parse_locator, Segment};
 use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome, ScreencastOutcome};
 use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
 use std::time::Duration;
@@ -1088,6 +1089,164 @@ impl ShimManager {
 
     /// Always-trusted `web.click` — resolve the element's hit point (box-model
     /// center, scrolling into view first) and dispatch a trusted
+    /// `DOM.querySelector(root, css)` → `Some(nodeId)` (a 0 nodeId ⇒ `None`).
+    async fn dom_query_selector(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        root: u64,
+        css: &str,
+        budget_ms: u64,
+    ) -> Result<Option<u64>, LoomError> {
+        use ciborium::value::{Integer, Value};
+        let qs = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.querySelector".into(),
+                    params: Value::Map(vec![
+                        (
+                            Value::Text("nodeId".into()),
+                            Value::Integer(Integer::from(root)),
+                        ),
+                        (Value::Text("selector".into()), Value::Text(css.to_string())),
+                    ]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
+        Ok(if node == 0 { None } else { Some(node) })
+    }
+
+    /// Resolve a (possibly `frame=`-prefixed) locator to a DOM `nodeId` in the
+    /// page session, descending through same-process iframes (incl. same-site
+    /// cross-origin) via `DOM.describeNode{pierce:true}` → `contentDocument`.
+    /// CDP is not bound by the same-origin policy, so a cross-origin (but
+    /// in-process) frame's content is reachable this way — the
+    /// `iframe.contentDocument === null` blocker is a page-JS limitation, not a
+    /// CDP one.
+    ///
+    /// Returns `Ok(Some(nodeId))` on a match; `Ok(None)` when nothing matched, the
+    /// frame is out-of-process (no in-process `contentDocument`), or the leaf is a
+    /// `text=`/`role=` form (resolved by the evaluate-tier resolver, not this DOM
+    /// path). `Err` only on transport failure.
+    pub(super) async fn resolve_locator_node(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: &str,
+        budget_ms: u64,
+    ) -> Result<Option<u64>, LoomError> {
+        use ciborium::value::{Integer, Value};
+
+        let segments = match parse_locator(selector) {
+            Ok(s) => s,
+            Err(_) => return Ok(None),
+        };
+
+        let doc = self
+            .cdp_send_one(
+                id,
+                session_id,
+                target_id,
+                CdpMessage {
+                    method: "DOM.getDocument".into(),
+                    params: Value::Map(vec![(
+                        Value::Text("depth".into()),
+                        Value::Integer(Integer::from(0)),
+                    )]),
+                },
+                budget_ms,
+            )
+            .await?
+            .map_err(|(code, detail)| {
+                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+            })?;
+        let mut root = cbor_get(&doc, "root")
+            .and_then(|r| cbor_get(r, "nodeId"))
+            .and_then(cbor_u64)
+            .ok_or_else(|| {
+                LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: getDocument: no root.nodeId", id.0),
+                )
+            })?;
+
+        let last = segments.len() - 1;
+        for (i, seg) in segments.iter().enumerate() {
+            let is_last = i == last;
+            match seg {
+                Segment::Frame(css) => {
+                    let iframe = match self
+                        .dom_query_selector(id, session_id, target_id, root, css, budget_ms)
+                        .await?
+                    {
+                        Some(n) => n,
+                        None => return Ok(None),
+                    };
+                    let described = self
+                        .cdp_send_one(
+                            id,
+                            session_id,
+                            target_id,
+                            CdpMessage {
+                                method: "DOM.describeNode".into(),
+                                params: Value::Map(vec![
+                                    (
+                                        Value::Text("nodeId".into()),
+                                        Value::Integer(Integer::from(iframe)),
+                                    ),
+                                    (
+                                        Value::Text("depth".into()),
+                                        Value::Integer(Integer::from(-1i64)),
+                                    ),
+                                    (Value::Text("pierce".into()), Value::Bool(true)),
+                                ]),
+                            },
+                            budget_ms,
+                        )
+                        .await?
+                        .map_err(|(code, detail)| {
+                            LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
+                        })?;
+                    match cbor_get(&described, "node")
+                        .and_then(|n| cbor_get(n, "contentDocument"))
+                        .and_then(|cd| cbor_get(cd, "nodeId"))
+                        .and_then(cbor_u64)
+                    {
+                        Some(n) if n != 0 => root = n,
+                        // No in-process contentDocument ⇒ out-of-process (OOPIF)
+                        // frame; not handled on this DOM path.
+                        _ => return Ok(None),
+                    }
+                }
+                Segment::Css(css) => {
+                    match self
+                        .dom_query_selector(id, session_id, target_id, root, css, budget_ms)
+                        .await?
+                    {
+                        Some(n) if is_last => return Ok(Some(n)),
+                        Some(n) => root = n, // intermediate css scope
+                        None => return Ok(None),
+                    }
+                }
+                // text=/role= are resolved by the evaluate-tier resolver, not
+                // this DOM path.
+                Segment::Text(_) | Segment::Role(_) => return Ok(None),
+            }
+        }
+        // Ended on a `frame=` segment with no leaf target.
+        Ok(None)
+    }
+
     /// `Input.dispatchMouseEvent` mouseMoved→mousePressed→mouseReleased. No
     /// `el.click()` fallback. `SelectorNotFound` / `NotHittable` are typed
     /// outcomes; transport failures surface as `Err`.
@@ -1102,61 +1261,19 @@ impl ShimManager {
         use ciborium::value::{Integer, Value};
         self.check_breaker(&id)?;
 
-        // Resolve the node id (DOM.getDocument → DOM.querySelector).
-        let doc = self
-            .cdp_send_one(
-                &id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.getDocument".into(),
-                    params: Value::Map(vec![(
-                        Value::Text("depth".into()),
-                        Value::Integer(Integer::from(0)),
-                    )]),
-                },
-                budget_ms,
-            )
+        // Resolve the (possibly `frame=`-prefixed) locator to a node id,
+        // descending into same-process iframes for cross-origin reach.
+        let node = match self
+            .resolve_locator_node(&id, session_id, target_id, &selector, budget_ms)
             .await
             .inspect_err(|_| self.record_failure(&id, FailureClass::Transport))?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let root = cbor_get(&doc, "root")
-            .and_then(|r| cbor_get(r, "nodeId"))
-            .and_then(cbor_u64)
-            .ok_or_else(|| {
-                LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {}: getDocument: no root.nodeId", id.0),
-                )
-            })?;
-        let qs = self
-            .cdp_send_one(
-                &id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.querySelector".into(),
-                    params: Value::Map(vec![
-                        (
-                            Value::Text("nodeId".into()),
-                            Value::Integer(Integer::from(root)),
-                        ),
-                        (Value::Text("selector".into()), Value::Text(selector)),
-                    ]),
-                },
-                budget_ms,
-            )
-            .await?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
-        if node == 0 {
-            self.record_success(&id);
-            return Ok(InputDispatchOutcome::SelectorNotFound);
-        }
+        {
+            Some(n) => n,
+            None => {
+                self.record_success(&id);
+                return Ok(InputDispatchOutcome::SelectorNotFound);
+            }
+        };
 
         // Scroll into view (best-effort) before resolving coordinates.
         let _ = self

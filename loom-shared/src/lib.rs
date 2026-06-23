@@ -19,6 +19,7 @@ pub mod chromium_resolver;
 pub mod cookie_types;
 pub mod dom_normalize;
 pub mod error_format;
+pub mod locator;
 pub mod logging;
 pub mod navigate_outcome;
 pub mod redacted;
