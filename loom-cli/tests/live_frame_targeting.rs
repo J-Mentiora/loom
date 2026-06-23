@@ -81,6 +81,7 @@ where
 
 const WIDGET_HTML: &str = "<!doctype html><html><head><title>widget</title></head><body>\
      <button id=\"b1\">B1</button><button id=\"b2\">B2</button>\
+     <input id=\"composer\" oninput=\"this.setAttribute('data-typed','yes')\">\
      <script>\
        document.getElementById('b1').addEventListener('click', function(){\
          document.getElementById('b2').id = 'b2done';\
@@ -175,7 +176,23 @@ fn cross_origin_iframe_click_lands_via_frame_locator() {
         "#b2 was renamed to #b2done by the handler, so #b2 must no longer resolve; got {gone}"
     );
 
-    eprintln!("cross-origin iframe click: reach + land + scope-fence all OK");
+    // 5) Type into the cross-origin composer: focus descends through the frame,
+    //    then `Input.insertText` targets the focused element. The composer's
+    //    synchronous `oninput` sets data-typed=yes, so resolving
+    //    `input[data-typed="yes"]` proves the keystrokes landed in the frame.
+    let typed = type_text(&harness, &sid, "frame=#w >> css=#composer", "hello");
+    assert_eq!(
+        typed["status"], "success",
+        "web.type must focus + insert into the cross-origin composer; got {typed}"
+    );
+    let typed_landed = click(&harness, &sid, r#"frame=#w >> css=input[data-typed="yes"]"#);
+    assert_eq!(
+        typed_landed["status"], "success",
+        "the composer's oninput must have fired (data-typed=yes) — proof the typed \
+         text landed inside the cross-origin frame; got {typed_landed}"
+    );
+
+    eprintln!("cross-origin iframe click + type: reach + land + scope-fence all OK");
     let _ = run_loom(&harness, &["session", "close", &sid]);
 }
 
@@ -237,6 +254,26 @@ fn click(harness: &DaemonTestHarness, sid: &str, selector: &str) -> serde_json::
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
         panic!(
             "click({selector}) stdout not JSON: {e}; status={} stderr={:?}",
+            out.status, out.stderr
+        )
+    })
+}
+
+fn type_text(
+    harness: &DaemonTestHarness,
+    sid: &str,
+    selector: &str,
+    text: &str,
+) -> serde_json::Value {
+    let out = run_loom(
+        harness,
+        &[
+            "action", "web.type", "--session", sid, "--selector", selector, "--text", text,
+        ],
+    );
+    serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "type({selector}) stdout not JSON: {e}; status={} stderr={:?}",
             out.status, out.stderr
         )
     })

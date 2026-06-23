@@ -858,59 +858,19 @@ impl ShimManager {
         budget_ms: u64,
     ) -> Result<bool, LoomError> {
         use ciborium::value::{Integer, Value};
-        let doc = self
-            .cdp_send_one(
-                id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.getDocument".into(),
-                    params: Value::Map(vec![(
-                        Value::Text("depth".into()),
-                        Value::Integer(Integer::from(0)),
-                    )]),
-                },
-                budget_ms,
-            )
+        // Frame-aware resolution (descends same-process cross-origin iframes);
+        // for a bare/plain CSS selector this is the same getDocument →
+        // querySelector path as before.
+        let node = match self
+            .resolve_locator_node(id, session_id, target_id, selector, budget_ms)
             .await?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let root = cbor_get(&doc, "root")
-            .and_then(|r| cbor_get(r, "nodeId"))
-            .and_then(cbor_u64)
-            .ok_or_else(|| {
-                LoomError::new(
-                    LoomErrorCode::ShimFailure,
-                    format!("shim {}: getDocument: no root.nodeId", id.0),
-                )
-            })?;
-        let qs = self
-            .cdp_send_one(
-                id,
-                session_id,
-                target_id,
-                CdpMessage {
-                    method: "DOM.querySelector".into(),
-                    params: Value::Map(vec![
-                        (
-                            Value::Text("nodeId".into()),
-                            Value::Integer(Integer::from(root)),
-                        ),
-                        (Value::Text("selector".into()), Value::Text(selector.into())),
-                    ]),
-                },
-                budget_ms,
-            )
-            .await?
-            .map_err(|(code, detail)| {
-                LoomError::new(map_shim_code(code), format!("shim {}: {detail}", id.0))
-            })?;
-        let node = cbor_get(&qs, "nodeId").and_then(cbor_u64).unwrap_or(0);
-        if node == 0 {
-            return Ok(false);
-        }
+        {
+            Some(n) => n,
+            None => return Ok(false),
+        };
         // Best-effort focus — ignore a CDP error (non-focusable element).
+        // `Input.insertText`/`dispatchKeyEvent` then target the focused element,
+        // which is correct even when it lives inside a cross-origin frame.
         let _ = self
             .cdp_send_one(
                 id,
