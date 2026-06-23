@@ -198,3 +198,108 @@ async fn wait_for_never_settles_dom_is_dom_unstable() {
 
     mgr.shutdown_session("waitfor-dom-unstable").await;
 }
+
+/// Variant of `make_manager_with_script` that ALSO captures the fake-chromium CDP
+/// method log (`LOOM_FAKE_CHROMIUM_LOG`) inside the tempdir, returning its path so
+/// a test can assert the exact CDP command sequence the shim issued.
+fn make_manager_with_script_and_log(
+    session_label: &str,
+    script_json: &str,
+) -> (
+    std::sync::Arc<ShimManager>,
+    ShimId,
+    tempfile::TempDir,
+    std::path::PathBuf,
+) {
+    let user_data_dir = tempfile::tempdir().expect("tempdir");
+    let script_path = user_data_dir.path().join("settle_script.json");
+    std::fs::write(&script_path, script_json).expect("write settle script");
+    let log_path = user_data_dir.path().join("cdp_methods.log");
+
+    let obs = HostObservability::new(true);
+    let mgr = ShimManager::new(obs);
+    let id = ShimId(format!("chromium:{session_label}"));
+    mgr.register(
+        id.clone(),
+        ShimConfig {
+            binary_path: shim_bin().into(),
+            args: vec![],
+            env: vec![
+                ("LOOM_SHIM_CHROMIUM_PATH".into(), fake_chromium_bin()),
+                (
+                    "LOOM_SHIM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_USER_DATA_DIR".into(),
+                    user_data_dir.path().display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_SCRIPT".into(),
+                    script_path.display().to_string(),
+                ),
+                (
+                    "LOOM_FAKE_CHROMIUM_LOG".into(),
+                    log_path.display().to_string(),
+                ),
+            ],
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 30_000,
+            recv_timeout_ms: 60_000,
+        },
+    );
+    (mgr, id, user_data_dir, log_path)
+}
+
+/// Regression guard for `auth0-ulp-submit`: a standalone `web.wait_for` MUST arm a
+/// bounded virtual-time BUDGET so the page's PENDING timers advance under the
+/// determinism clock pin.
+///
+/// Before the fix, `wait_for` only re-armed a budget AFTER a navigation had
+/// already begun (`renavigated`); on the common path it settled the current page
+/// with no budget arm at all. Under the deterministic virtual clock that is frozen
+/// after the prior navigate's budget drained, a preceding interaction verb
+/// (`web.click` / `web.press_key`) that ran a handler scheduling async work behind
+/// a `setTimeout` (e.g. Auth0 New ULP's react-hook-form `onSubmit`: async validate
+/// → `navigator.credentials` probe → `fetch(POST)`) stalled at that first
+/// macrotask — so the page never began the navigation `wait_for` was meant to
+/// observe, and `wait_for` returned `reached` on the still-`complete` document.
+///
+/// Asserting the shim issued a budget-carrying `Emulation.setVirtualTimePolicy`
+/// during a BARE wait_for (no navigate) pins the fix through the real host → shim
+/// path. The budgetless `policy:"pause"` inject pin does NOT count — it carries no
+/// `budget` and is present with or without the fix.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_arms_virtual_time_budget_for_pending_timers() {
+    assert_binaries_built();
+    // Default clean page: complete, stable, quiet — no navigation in flight. This
+    // is exactly the shape that exposed the bug (the old common path settled
+    // immediately WITHOUT arming a budget).
+    let script = r#"{ "settle_probe": [[true, "http://fake.test/app", 0]] }"#;
+    let (mgr, id, _udd, log_path) = make_manager_with_script_and_log("waitfor-vt-budget", script);
+
+    let outcome = wait_for_settled(&mgr, &id).await;
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "the page must still settle cleanly with the budget armed"
+    );
+
+    mgr.shutdown_session("waitfor-vt-budget").await;
+
+    // At least one budget-carrying `setVirtualTimePolicy` must appear in the CDP
+    // log for this wait_for. String match is sufficient + dependency-free: the
+    // budget-arm line contains both the method and a `"budget"` key; the inject
+    // pin line contains the method but no `"budget"`.
+    let log = std::fs::read_to_string(&log_path).expect("read cdp log");
+    let armed_budget = log
+        .lines()
+        .any(|l| l.contains("setVirtualTimePolicy") && l.contains("\"budget\""));
+    assert!(
+        armed_budget,
+        "web.wait_for must arm a budget-carrying setVirtualTimePolicy so pending \
+         timers advance (auth0-ulp-submit). CDP log was:\n{log}"
+    );
+}

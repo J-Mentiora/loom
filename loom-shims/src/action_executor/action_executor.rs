@@ -1143,6 +1143,53 @@ impl ActionExecutor for ChromiumActionExecutor {
         // replays identically; the tick ceiling (from `budget`) bounds it to a
         // typed `timeout`/`dom_unstable` instead of hanging.
         let timeout = budget.unwrap_or_else(navigate_budget);
+        let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
+
+        // settle-drives-pending-timers (auth0-ulp-submit): under the determinism
+        // clock pin the virtual clock is FROZEN here — the prior navigate/settle
+        // drained its budget and a cleanly-drained budget is deliberately left
+        // paused (see page_navigate STEP 4c / the exit-resume note: only an
+        // UNDRAINED budget resumes to `advance`). A preceding interaction verb
+        // (web.click / web.press_key — host-side raw `Input.*` passthroughs that
+        // arm no budget of their own) can run a page handler that schedules async
+        // work behind a timer: e.g. Auth0 New Universal Login's react-hook-form
+        // onSubmit does async validate → `navigator.credentials` WebAuthn probe →
+        // `fetch(POST /u/login/identifier)`. With the clock frozen that chain
+        // stalls at its first macrotask/`setTimeout` await — BEFORE it ever issues
+        // the request — so the page never begins the navigation this wait_for is
+        // meant to observe, and the old "no-vt-arm common path" settled the still-
+        // `complete` document immediately (the bug).
+        //
+        // Arm a bounded virtual-time budget HERE — the same helper + ordering
+        // navigate STEP 4c uses (subscribe to the expiry BEFORE arming so a stale
+        // event can't satisfy the wait) — so pending timers fire and any resulting
+        // top-level navigation begins. The settle + reattach below then observe and
+        // resolve it on the new document. Determinism-safe (NFR-DET-01): the VT
+        // control commands are shim-internal and excluded from the manifest hash
+        // (navigate arms budgets the same way); the settle verdict stays a pure
+        // function of the deterministic per-tick observation sequence, so it is
+        // replay-equal. A page with no pending timers drains the budget immediately
+        // (one extra CDP round-trip), unchanged verdict.
+        let mut initial_budget_drained = true;
+        if vt_active {
+            let (vt_expired_rx, _vt_reg) = self.subscribe_cdp_event_once(
+                crate::determinism_injector::determinism_injector::VIRTUAL_TIME_BUDGET_EXPIRED_EVENT,
+            );
+            let vt_budget = CdpMessage {
+                method: crate::determinism_injector::determinism_injector::VIRTUAL_TIME_METHOD
+                    .to_string(),
+                params:
+                    crate::determinism_injector::determinism_injector::build_virtual_time_budget_params(
+                    ),
+            };
+            if let Err(e) = self.cdp.command(target_id, vt_budget, Some(timeout)).await {
+                tracing::warn!(target_id, error = %e, "wait_for: virtual-time budget arm failed");
+                initial_budget_drained = false;
+            } else {
+                initial_budget_drained = tokio::time::timeout(timeout, vt_expired_rx).await.is_ok();
+            }
+        }
+
         let reattach_start = tokio::time::Instant::now();
         let mut settle = crate::readiness_monitor::wait_for_settle(
             &self.cdp,
@@ -1158,12 +1205,10 @@ impl ActionExecutor for ChromiumActionExecutor {
         )
         .await;
 
-        // client-nav-reattach (D9): wait_for keeps its no-vt-arm common path —
-        // an already-complete page settles immediately above with no re-arm. The
-        // vt-arm path is entered ONLY when the page is wedged on a self-initiated
-        // navigation (`renavigated`), giving wait_for the same bounded re-attach
-        // as navigate so it resolves on the new document instead of hanging.
-        let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
+        // client-nav-reattach (D9): the initial budget arm above advanced pending
+        // timers; if that began a top-level navigation the settle reads `loading`
+        // and the vt-arm reattach path re-settles on the new document, giving
+        // wait_for the same bounded re-attach as navigate instead of hanging.
         let outcome = self
             .settle_with_reattach(
                 target_id,
@@ -1175,9 +1220,13 @@ impl ActionExecutor for ChromiumActionExecutor {
             )
             .await;
         settle = outcome.settle;
-        // A budget left undrained (re-arm failure / drain timeout) on the final
-        // hop would wedge the next command on a paused clock — resume on exit.
-        let needs_resume = matches!(outcome.last_drained, Some(false));
+        // A budget left undrained — either the initial arm above (arm failure /
+        // drain timeout) or the final reattach hop — would wedge the next command
+        // on a paused clock mid-flight, so resume to `advance` on exit. A cleanly
+        // drained budget (the common case) is deliberately left paused/frozen,
+        // matching navigate's clean-path exit so a subsequent web.evaluate clock
+        // read stays replay-equal.
+        let needs_resume = !initial_budget_drained || matches!(outcome.last_drained, Some(false));
         if vt_active && needs_resume {
             self.resume_virtual_time(target_id, timeout).await;
         }
