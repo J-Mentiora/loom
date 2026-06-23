@@ -65,6 +65,8 @@ Resolves a CSS query selector against the active page and dispatches a synthetic
 
 Animations and transitions are forced to 0s under loom's deterministic profile, so click handlers complete synchronously. The receipt's `side_effects` records any DOM mutations triggered by the handler.
 
+When the click triggers a TOP-LEVEL navigation (a form-submit button, an `<a href>` link) or an async re-render, follow it with `web.wait_for` — NOT `web.wait`. loom drives Chromium under a virtual-time clock that is frozen once a navigate drains its budget; `web.wait_for` re-arms a budget so the post-click navigation advances and settles, whereas `web.wait` only polls the CURRENT document for a selector and never drives the navigation.
+
 **Parameters**
 
 | Name | Type | Required | Description |
@@ -541,6 +543,8 @@ Polls the page until the supplied CSS selector matches at least one element, or 
 Polling cadence is fixed under the deterministic profile so two sessions with the same seed produce identical poll counts. The wait returns as soon as the predicate is true on any poll iteration.
 
 Typed error: `kind: "wait_predicate_false"` if the selector never resolves before the timeout. Use this to fail loud rather than chaining a brittle `web.click` against an element that is not yet present.
+
+`web.wait` polls the CURRENT document and arms no virtual-time budget, so it does NOT drive a navigation. After an interaction that triggers a top-level navigation (form submit, link click), use `web.wait_for` to advance and settle the new page first — then `web.wait` for a selector on it if you need to gate on a specific element.
 
 **Parameters**
 
