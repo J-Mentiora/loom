@@ -6,6 +6,35 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.2] — 2026-06-24 — Repeated `web.navigate` No Longer Degrades the Session
+
+A patch release that fixes a session-wedging regression: within a single session, each successive
+`web.navigate` took ~20s longer than the last, and by the ~4th call it exceeded the 30s deadline and
+hung — the `loom-shim-chromium` subprocess then exited, leaving an orphan Chromium, and every later verb
+returned `surface_trap`. It reproduced under `--no-determinism` even on a trivial page like
+`example.com`, so it blocked any multi-step agentic journey that navigates more than a few times. The
+root cause was the navigate-exit virtual-clock resume guard being too broad: with virtual-time capture
+on (the default), each navigate left the renderer's virtual clock paused at the drained budget horizon,
+and under `--no-determinism` — where there is no replay contract to preserve — that paused clock deferred
+the next navigate's `Page.loadEventFired`, so each call burned its full settle budget. Host-side shim
+fix only; no WIT, vendored-wasm, or hash-chain change, and the determinism-pinned path is byte-identical,
+so replay stays byte-equal (NFR-DET-01). (#227)
+
+### Fixed
+
+- **Repeated `web.navigate` in one session no longer degrades, then wedges, the session.** Virtual-time
+  capture is on by default and independent of `--no-determinism`, so `page_navigate` arms and drains a
+  per-navigation virtual-time budget on every call. The exit-resume guard left the renderer's virtual
+  clock frozen on the clean-drain path (`!budget_drained`) to keep a later `web.evaluate` clock read
+  replay-equal — correct under determinism, but too broad under `--no-determinism`, where a paused
+  virtual clock defers the next navigate's `Page.loadEventFired`. The determinism-OFF navigate path
+  awaits load before re-arming a budget, so it deadlocked on the deferred load and burned the full
+  navigate budget every call, compounding until the 30s deadline wedged the session. The renderer is now
+  resumed (`setVirtualTimePolicy{advance}`) on navigate exit unless on the determinism-pinned clean-drain
+  path (`clock_pinned && budget_drained`), so every navigate starts on an advancing clock and settles
+  promptly. The fix is provably a no-op under determinism (the new guard is algebraically identical to
+  the old one whenever the clock is pinned), so replay-equality is untouched. (#227)
+
 ## [0.13.1] — 2026-06-23 — `set_input_files` Locator Grammar
 
 A patch release that brings `web.set_input_files` in line with `web.click`/`web.type`: the
