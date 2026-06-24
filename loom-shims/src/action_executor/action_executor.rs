@@ -136,6 +136,29 @@ fn navigate_budget() -> Duration {
         .get_or_init(|| parse_navigate_budget(std::env::var(NAVIGATE_BUDGET_ENV).ok().as_deref()))
 }
 
+/// Decide whether to RESUME (advance) the renderer's virtual clock on navigate
+/// exit. The clock is left FROZEN at the drained budget horizon ONLY on the
+/// determinism-pinned clean-drain path (`clock_pinned && budget_drained`), where
+/// a later `web.evaluate` clock read must replay byte-equal. In EVERY other case
+/// — determinism OFF (`clock_pinned == false`), or the budget did not cleanly
+/// drain — the clock must be resumed: a paused virtual clock defers the NEXT
+/// navigate's `Page.loadEventFired`, and the determinism-OFF navigate path awaits
+/// load BEFORE re-arming a budget, so it would deadlock on the deferred load and
+/// burn the full navigate budget every call (navigate-degradation regression;
+/// the +20s-per-navigate wedge). `vt_active == false` means virtual time is
+/// disabled outright (`LOOM_CAPTURE_VIRTUAL_TIME=0`) → nothing to resume.
+///
+/// Pure so the resume policy is unit-testable without a live renderer; the three
+/// `page_navigate` exit guards (success + the two CDP-error bail paths) all route
+/// through it so the policy can never drift between them.
+pub(crate) fn should_resume_virtual_clock(
+    vt_active: bool,
+    clock_pinned: bool,
+    budget_drained: bool,
+) -> bool {
+    vt_active && !(clock_pinned && budget_drained)
+}
+
 /// settle-capture: serde defaults for the readiness fields on
 /// `ActionResult::Navigated`, so a pre-feature CBOR payload decodes unchanged.
 fn default_settle_until_field() -> String {
@@ -897,9 +920,9 @@ impl ActionExecutor for ChromiumActionExecutor {
             Ok(r) => r,
             Err(e) => {
                 // animation-capture (Mode A): un-pause before bailing so the next
-                // command isn't wedged on a paused clock (only when the budget was
-                // not cleanly drained).
-                if vt_active && !budget_drained {
+                // command isn't wedged on a paused clock (unless we are on the
+                // determinism-pinned clean-drain path — see the success-path guard).
+                if should_resume_virtual_clock(vt_active, clock_pinned, budget_drained) {
                     self.resume_virtual_time(target_id, timeout).await;
                 }
                 return Err(action_error_to_response(ActionError::Cdp(e), 0, None));
@@ -925,8 +948,9 @@ impl ActionExecutor for ChromiumActionExecutor {
         let shot_result = match self.cdp.command(target_id, shot_msg, Some(timeout)).await {
             Ok(r) => r,
             Err(e) => {
-                // animation-capture (Mode A): un-pause before bailing (see STEP 5).
-                if vt_active && !budget_drained {
+                // animation-capture (Mode A): un-pause before bailing (see STEP 5
+                // and the success-path guard for the determinism-pinned exception).
+                if should_resume_virtual_clock(vt_active, clock_pinned, budget_drained) {
                     self.resume_virtual_time(target_id, timeout).await;
                 }
                 return Err(action_error_to_response(ActionError::Cdp(e), 0, None));
@@ -1078,13 +1102,17 @@ impl ActionExecutor for ChromiumActionExecutor {
             .map(|e| e.status)
             .unwrap_or(0);
 
-        // animation-capture (Mode A): on the SUCCESS path resume the renderer ONLY
-        // when the budget was NOT cleanly drained (rearm fail / drain timeout) —
-        // those leave it paused mid-flight and would wedge the next command. A
-        // cleanly drained budget leaves a screenshottable horizon with a frozen,
-        // deterministic clock, so we DON'T resume it (preserving replay-equality
-        // for a subsequent web.evaluate clock read).
-        if vt_active && !budget_drained {
+        // animation-capture (Mode A): on the SUCCESS path resume the renderer
+        // UNLESS we are on the determinism-pinned clean-drain path. A cleanly
+        // drained budget UNDER the determinism clock pin leaves a screenshottable
+        // horizon with a frozen, deterministic clock, so we DON'T resume it
+        // (preserving replay-equality for a subsequent web.evaluate clock read).
+        // With determinism OFF there is no replay contract, so a frozen clock is
+        // pure harm: it defers the NEXT navigate's Page.loadEventFired and wedges
+        // the determinism-OFF navigate path into burning its full budget every
+        // call (navigate-degradation). `should_resume_virtual_clock` encodes the
+        // policy once for all three exit guards.
+        if should_resume_virtual_clock(vt_active, clock_pinned, budget_drained) {
             self.resume_virtual_time(target_id, timeout).await;
         }
 

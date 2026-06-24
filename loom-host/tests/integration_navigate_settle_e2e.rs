@@ -155,6 +155,36 @@ async fn navigate_settled(
     .expect("send_navigate returned an error")
 }
 
+/// Drive one `settled` navigate with an explicit `determinism_enabled` flag.
+/// (The `navigate_settled` wrapper above is the determinism-ON case; the
+/// navigate-degradation regression needs the `--no-determinism` path.)
+async fn navigate_with_determinism(
+    mgr: &std::sync::Arc<ShimManager>,
+    id: &ShimId,
+    outer_timeout: Duration,
+    determinism_enabled: bool,
+) -> loom_shared::navigate_outcome::NavigateOutcome {
+    tokio::time::timeout(
+        outer_timeout,
+        mgr.send_navigate(loom_host::shim_manager::SendNavigateParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            url: "http://fake.test/status/200".into(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            blocklist_enabled: true,
+            until: "settled".to_string(),
+            determinism_enabled,
+        }),
+    )
+    .await
+    .expect("send_navigate timed out (the degraded session must not hang the whole test)")
+    .expect("send_navigate returned an error")
+}
+
 /// Drive one `settled` wait_for against the scripted fake page (idempotent
 /// spawn — no prior navigate needed).
 async fn wait_for_settled(
@@ -528,4 +558,54 @@ async fn static_page_under_determinism_reaches_settled() {
     );
 
     mgr.shutdown_session("settle-static").await;
+}
+
+// ── (navigate-degradation) repeated navigate in ONE session does NOT degrade ──
+// Regression for the "+20s per web.navigate, then the session wedges" bug. Under
+// `--no-determinism` (`determinism_enabled=false`) loom still arms + drains a
+// per-navigation virtual-time budget (animation-capture runs regardless of
+// determinism). Real headless Chromium — and now fake-chromium — leaves virtual
+// time PAUSED once a budget drains. The unfixed exit guard (`!budget_drained`)
+// skipped the renderer RESUME after a clean drain, so the clock stayed paused and
+// the NEXT navigate's `Page.loadEventFired` was deferred; the determinism-OFF
+// navigate path awaits load BEFORE re-arming, so every navigate after the first
+// burned its full ~10s load-wait budget, compounding until the 30s host deadline
+// wedged the session. The resume-guard fix (`should_resume_virtual_clock`) un-pauses
+// the clock on navigate exit whenever determinism is OFF, so every navigate starts
+// on an advancing clock and settles promptly. The session (hence the paused-clock
+// state) persists across the loop — exactly the multi-navigate journey that broke.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn repeated_navigate_no_determinism_does_not_degrade() {
+    assert_binaries_built();
+    let script = r#"{ "settle_probe": [[true, "http://fake.test/static", 0]] }"#;
+    let (mgr, id, _udd) = make_manager_with_script("nav-degradation", script);
+
+    // Drive several navigates IN ONE SESSION under --no-determinism. The first is
+    // always fast; navigates 2..N are where the clock-left-paused regression bit
+    // (each burned the full load-wait budget on an unfixed build).
+    for i in 1..=4 {
+        let started = std::time::Instant::now();
+        let outcome = navigate_with_determinism(&mgr, &id, Duration::from_secs(30), false).await;
+        let elapsed = started.elapsed();
+
+        assert_eq!(
+            outcome.settle_outcome, "reached",
+            "navigate #{i} must settle (got settle_outcome={}, settle_ms={})",
+            outcome.settle_outcome, outcome.settle_ms
+        );
+        // THE REGRESSION ASSERTION: a degraded navigate spent its full ~10s
+        // load-wait budget waiting for a load event deferred under the paused
+        // clock. The fix keeps every navigate well inside the budget (sub-second).
+        // 8s cleanly separates fixed (<1s) from the ~10s-per-call degradation —
+        // the same wall-clock bound the determinism static-page test uses.
+        assert!(
+            elapsed < Duration::from_secs(8),
+            "navigate #{i} under --no-determinism must complete promptly with no \
+             per-call budget burn; took {elapsed:?} — the virtual clock was left \
+             paused and the load event deferred (navigate-degradation)",
+        );
+    }
+
+    mgr.shutdown_session("nav-degradation").await;
 }

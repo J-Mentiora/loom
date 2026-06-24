@@ -377,11 +377,22 @@ async fn handle_connection(
         // Track the virtual-time clock pin (see `vt_clock_paused` above). A
         // budgetless `policy:"pause"` is the inject-time origin pin; the
         // budget-carrying arm is handled after the response is sent below.
-        if method == "Emulation.setVirtualTimePolicy"
-            && params.get("budget").is_none()
-            && params.get("policy").and_then(|p| p.as_str()) == Some("pause")
-        {
-            vt_clock_paused = true;
+        if method == "Emulation.setVirtualTimePolicy" && params.get("budget").is_none() {
+            match params.get("policy").and_then(|p| p.as_str()) {
+                // Inject-time origin pin (determinism ON) — clock paused.
+                Some("pause") => vt_clock_paused = true,
+                // Navigate-exit RESUME (`resume_virtual_time`,
+                // `build_virtual_time_resume_params` → `{policy:"advance"}`, no
+                // budget): real Chromium lets virtual time advance freely again, so
+                // the clock un-pauses and the NEXT navigate's load fires promptly.
+                // Modeling this is what makes the navigate-degradation regression
+                // observable here: WITHOUT the resume-guard fix the executor never
+                // sends this advance after a clean drain under `--no-determinism`,
+                // so `vt_clock_paused` stays true (set when the budget drained
+                // below) and the next navigate's load defers → the +20s/call wedge.
+                Some("advance") => vt_clock_paused = false,
+                _ => {}
+            }
         }
 
         let mut result = if let Some(eval_result) = evaluate_response {
@@ -554,9 +565,15 @@ async fn handle_connection(
         // budget await (cross-run determinism) completes promptly instead of
         // waiting out its wall-clock timeout. The budget is treated as
         // instantly drained (the fake has no real virtual clock), after which
-        // the clock is paused again — `vt_clock_paused` stays true so the NEXT
-        // navigate's load event defers until ITS budget arm, exactly like a
-        // second navigation against real Chromium.
+        // the clock is paused again so the NEXT navigate's load event defers
+        // until ITS budget arm, exactly like a second navigation against real
+        // Chromium (CDP `virtualTimeBudgetExpired` leaves virtual time paused).
+        // This re-pause is what reproduces the navigate-degradation wedge under
+        // `--no-determinism`: the executor must send a budgetless `advance`
+        // (resume) on navigate exit to un-pause before the next navigate, which
+        // the resume-guard fix does (the unfixed `!budget_drained` guard skipped
+        // it after a clean drain, so the clock stayed paused and the next load
+        // deferred for the full budget).
         if method == "Emulation.setVirtualTimePolicy" && params.get("budget").is_some() {
             if paused_doc.is_some() {
                 // `pauseIfNetworkFetchesPending`: the paused document fetch
@@ -593,6 +610,11 @@ async fn handle_connection(
                 {
                     return;
                 }
+                // Real Chromium leaves virtual time PAUSED once a budget drains
+                // (until the next policy is set). Model that so a subsequent
+                // navigate's load event defers — the executor must explicitly
+                // resume (`advance`) to clear it.
+                vt_clock_paused = true;
             }
         }
 
