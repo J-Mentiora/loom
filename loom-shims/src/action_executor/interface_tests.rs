@@ -4,8 +4,8 @@
 // no CDP payload escape (`ActionResult` is typed), error mapping.
 
 use super::action_executor::{
-    action_error_to_response, parse_navigate_budget, ActionError, ActionResult,
-    DEFAULT_ACTION_BUDGET, DEFAULT_NAVIGATE_BUDGET,
+    action_error_to_response, parse_navigate_budget, should_resume_virtual_clock, ActionError,
+    ActionResult, DEFAULT_ACTION_BUDGET, DEFAULT_NAVIGATE_BUDGET,
 };
 use crate::ipc_endpoint::ipc_endpoint::{ShimErrorCode, ShimResponse};
 use ciborium::value::Value as CborValue;
@@ -413,4 +413,52 @@ fn main_document_index_none_when_no_events() {
         find_main_document_index(&[], "frame-main", "loader-main"),
         None
     );
+}
+
+// === Virtual-clock resume policy (navigate-degradation regression) ===
+//
+// `should_resume_virtual_clock` decides whether `page_navigate`'s exit guards
+// un-pause the renderer's virtual clock. The clock is left FROZEN at the drained
+// budget horizon ONLY on the determinism-pinned clean-drain path (replay-equal
+// clock reads). In every other case it MUST resume — a frozen clock defers the
+// NEXT navigate's Page.loadEventFired, and the determinism-OFF navigate path
+// awaits load BEFORE re-arming a budget, so it deadlocks and burns the full
+// navigate budget every call (the +20s-per-navigate wedge). All three exit guards
+// (success + the two CDP-error bails) route through this one helper.
+
+#[test]
+fn resume_clock_left_frozen_only_on_determinism_pinned_clean_drain() {
+    // determinism pinned + budget cleanly drained → leave frozen (replay-equal).
+    assert!(
+        !should_resume_virtual_clock(true, true, true),
+        "determinism-pinned clean drain must stay frozen for replay-equality"
+    );
+}
+
+#[test]
+fn resume_clock_under_no_determinism_after_clean_drain_is_the_regression_fix() {
+    // THE FIX: determinism OFF (clock_pinned=false) + budget drained. Pre-fix this
+    // was `!budget_drained` → false → clock left paused → next navigate's load
+    // deferred → +20s/call degradation. Post-fix it MUST resume.
+    assert!(
+        should_resume_virtual_clock(true, false, true),
+        "navigate-degradation: with determinism OFF the clock must resume even after a clean budget drain"
+    );
+}
+
+#[test]
+fn resume_clock_when_budget_not_drained_regardless_of_pin() {
+    // A not-cleanly-drained budget leaves the renderer paused mid-flight and would
+    // wedge the next command — always resume (unchanged from the original guard).
+    assert!(should_resume_virtual_clock(true, true, false));
+    assert!(should_resume_virtual_clock(true, false, false));
+}
+
+#[test]
+fn resume_clock_noop_when_virtual_time_disabled() {
+    // vt_active=false (LOOM_CAPTURE_VIRTUAL_TIME=0) → no virtual clock to resume.
+    assert!(!should_resume_virtual_clock(false, false, false));
+    assert!(!should_resume_virtual_clock(false, true, true));
+    assert!(!should_resume_virtual_clock(false, false, true));
+    assert!(!should_resume_virtual_clock(false, true, false));
 }
