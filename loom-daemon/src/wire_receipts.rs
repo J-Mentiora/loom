@@ -541,14 +541,49 @@ pub(crate) fn build_input_dispatch_receipt(
     r
 }
 
-/// Deterministic, **session-independent** `action_hash` for the host-side input
-/// verbs (web.click / web.type keystrokes / web.press_key). Hashes the verb +
+/// Build the receipt for the host-intercepted `web.wait` verb. Mirrors
+/// [`build_input_dispatch_receipt`]: a `Resolved` wait reuses the all-None success
+/// template + a constant `outcome_hash` marker; a `PredicateFalse` (deadline
+/// elapsed) maps to the typed `kind: "wait_predicate_false"` error receipt — the
+/// SAME wire kind the old guest path surfaced on a missed selector. The
+/// `action_hash` is session-independent (`web.wait\0{selector}`) so replay stays
+/// hash-equal regardless of poll timing (only the verdict is recorded, never the
+/// poll count).
+pub(crate) fn build_wait_receipt(
+    action_id: u64,
+    session_id: &str,
+    action: &Action,
+    outcome: loom_host::shim_manager::WaitResolveOutcome,
+) -> Receipt {
+    use loom_host::shim_manager::WaitResolveOutcome as W;
+    let mut r = match outcome {
+        W::Resolved => {
+            let mut r = build_recording_started_receipt(action_id, session_id);
+            r.outcome_hash = Some(loom_core::content_store::sha256_hex(b"loom:wait:resolved"));
+            r
+        }
+        W::PredicateFalse => recording_error_receipt(
+            action_id,
+            session_id,
+            "wait_predicate_false",
+            "selector did not appear before timeout".to_string(),
+        ),
+    };
+    r.action_hash = Some(input_action_hash(action));
+    r
+}
+
+/// Deterministic, **session-independent** `action_hash` for the host-side verbs
+/// (web.click / web.type keystrokes / web.press_key / web.wait). Hashes the verb +
 /// its input params (NOT `session_id`) so the same script replays to the same
 /// hash across sessions, matching how the guest derives `action_hash` from the
-/// canonical CDP payload (which also excludes the session).
+/// canonical CDP payload (which also excludes the session). `timeout_ms` is a
+/// wall-clock budget, not part of a wait's identity, so it is excluded (two waits
+/// for the same selector with different timeouts are the same logical action).
 fn input_action_hash(action: &Action) -> String {
     let canonical = match action {
         Action::WebClick { selector, .. } => format!("web.click\u{0}{selector}"),
+        Action::WebWait { selector, .. } => format!("web.wait\u{0}{selector}"),
         Action::WebType {
             selector,
             text,
@@ -719,11 +754,12 @@ pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
             ))
         }
 
-        Action::WebWait { selector, .. } => {
-            // Single probe — full polling is a follow-up feature.
-            let sel = serde_json::to_string(selector).ok()?;
-            runtime_evaluate(format!("document.querySelector({sel}) !== null"))
-        }
+        // web.wait is now intercepted host-side (like web.click): the daemon polls
+        // the locator via `host.wait` → `send_wait` (reusing the `resolve_locator_node`
+        // grammar resolver), so there is no guest Runtime.evaluate envelope. Handled
+        // in wasm_bridge before build_chromium_args is reached; this arm satisfies
+        // the match. (The old raw `querySelector(sel)` probe threw on text=/role=.)
+        Action::WebWait { .. } => return None,
 
         // settle-capture: web.wait_for uses the typed `wait_for_execute` host
         // function (like navigate/evaluate), NOT a single CDP envelope —

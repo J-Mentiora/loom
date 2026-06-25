@@ -19,12 +19,24 @@ use super::shim_manager::ShimManager;
 use super::types::{
     EvaluateOutcome, FailureClass, InputDispatchOutcome, SendEvaluateParams, SendNavigateParams,
     SendPressKeyParams, SendSetInputFilesParams, SendWaitForParams, SetInputFilesOutcome, ShimId,
+    WaitResolveOutcome,
 };
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_shared::locator::{parse_locator, Segment};
 use loom_shared::navigate_outcome::{NavigateOutcome, NetworkLogOutcome, ScreencastOutcome};
 use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
 use std::time::Duration;
+
+/// `web.wait` deadline when the caller omits `timeout_ms` (the action_registry
+/// docs already promise "typically 30 s").
+const DEFAULT_WAIT_TIMEOUT_MS: u64 = 30_000;
+/// Hard ceiling on a `web.wait` deadline — clamps a pathological / runaway
+/// `timeout_ms` so a single wait can't pin a session indefinitely.
+const MAX_WAIT_TIMEOUT_MS: u64 = 600_000;
+/// Re-probe cadence for `web.wait` locator resolution. Sequential (each probe is
+/// awaited before the next sleep), so this is a floor on the gap between probes,
+/// not a concurrent fan-out — it keeps the renderer/transport load modest.
+const WAIT_POLL_INTERVAL_MS: u64 = 100;
 
 impl ShimManager {
     /// Send a typed PageNavigate request and decode the response as
@@ -1246,6 +1258,60 @@ impl ShimManager {
         Ok(node)
     }
 
+    /// `web.wait` — poll the (possibly `>>`-grammar / `frame=`-prefixed) locator
+    /// until it resolves to a node or the deadline elapses. Resolution reuses the
+    /// exact host-side path `send_trusted_click` uses (`resolve_locator_node` →
+    /// `marker_resolver_js` for `text=`/`role=`), so `web.wait` accepts the SAME
+    /// locator grammar as `web.click` — not just a bare CSS selector. A bare
+    /// value is treated as CSS (back-compat). `css=` matches presence; `text=` /
+    /// `role=` match a VISIBLE element (the same resolver web.click uses).
+    ///
+    /// `timeout_ms` is the wall-clock deadline (omitted → [`DEFAULT_WAIT_TIMEOUT_MS`],
+    /// clamped to [`MAX_WAIT_TIMEOUT_MS`]); the locator is re-probed every
+    /// [`WAIT_POLL_INTERVAL_MS`]. Probes are sequential (each awaited before the
+    /// next), so they never overlap on the transport. `Resolved` / `PredicateFalse`
+    /// are typed application outcomes; a transport failure surfaces as `Err`.
+    pub async fn send_wait(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+        selector: String,
+        timeout_ms: Option<u64>,
+    ) -> Result<WaitResolveOutcome, LoomError> {
+        self.check_breaker(&id)?;
+
+        let deadline_ms = timeout_ms
+            .unwrap_or(DEFAULT_WAIT_TIMEOUT_MS)
+            .min(MAX_WAIT_TIMEOUT_MS);
+
+        // Per-probe CDP budget 0 ⇒ `cdp_send_one` falls back to the configured
+        // recv timeout (same as `send_trusted_click`).
+        let resolved = poll_locator_until_resolved(
+            Duration::from_millis(deadline_ms),
+            Duration::from_millis(WAIT_POLL_INTERVAL_MS),
+            || self.resolve_locator_node(&id, session_id, target_id, &selector, 0),
+        )
+        .await;
+
+        match resolved {
+            Ok(true) => {
+                self.record_success(&id);
+                Ok(WaitResolveOutcome::Resolved)
+            }
+            Ok(false) => {
+                // Deadline elapsed without a match — a clean application outcome,
+                // NOT a failure (so it must not trip the breaker).
+                self.record_success(&id);
+                Ok(WaitResolveOutcome::PredicateFalse)
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(e)
+            }
+        }
+    }
+
     /// `Input.dispatchMouseEvent` mouseMoved→mousePressed→mouseReleased. No
     /// `el.click()` fallback. `SelectorNotFound` / `NotHittable` are typed
     /// outcomes; transport failures surface as `Err`.
@@ -1478,6 +1544,36 @@ fn parse_role_spec(spec: &str) -> (String, Option<String>) {
     }
 }
 
+/// Poll `probe` every `interval` until it yields `Ok(Some(_))` (→ `Ok(true)`) or
+/// `deadline` elapses without a match (→ `Ok(false)`). The first probe runs
+/// immediately (an already-present locator resolves with no delay), and the
+/// deadline is checked AFTER each miss so a just-in-time appearance still counts.
+/// A transport `Err` from a probe aborts the poll (propagated unchanged) — the
+/// same fail-fast contract `send_trusted_click` uses for a dead/unreachable shim.
+///
+/// Time is driven by `tokio::time`, so a `start_paused` test advances the clock
+/// virtually (no real sleeping) and the poll/deadline logic stays deterministic.
+async fn poll_locator_until_resolved<F, Fut>(
+    deadline: Duration,
+    interval: Duration,
+    mut probe: F,
+) -> Result<bool, LoomError>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Option<u64>, LoomError>>,
+{
+    let start = tokio::time::Instant::now();
+    loop {
+        if probe().await?.is_some() {
+            return Ok(true);
+        }
+        if start.elapsed() >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
 #[cfg(test)]
 mod locator_resolver_tests {
     use super::*;
@@ -1539,5 +1635,76 @@ mod locator_resolver_tests {
             js.contains("\"continue\""),
             "name lowercased + embedded: {js}"
         );
+    }
+
+    use std::cell::Cell;
+
+    // The poll loop is the heart of `send_wait`: it turns the single-probe
+    // `resolve_locator_node` into a deadline-bounded wait. These tests pin its
+    // three outcomes on a paused clock (no real sleeping), with the probe
+    // standing in for the locator resolver.
+
+    /// A locator that appears only on the 3rd probe (the unit-level "delayed
+    /// element") still resolves — and the deadline check is AFTER the miss, so
+    /// the just-in-time appearance counts.
+    #[tokio::test(start_paused = true)]
+    async fn poll_resolves_on_delayed_appearance() {
+        let calls = Cell::new(0u32);
+        let got = poll_locator_until_resolved(
+            Duration::from_millis(30_000),
+            Duration::from_millis(100),
+            || {
+                let n = calls.get() + 1;
+                calls.set(n);
+                // None for the first two probes, Some(node) on the third.
+                async move { Ok(if n >= 3 { Some(42u64) } else { None }) }
+            },
+        )
+        .await
+        .expect("poll must not error");
+        assert!(got, "delayed locator must resolve to true");
+        assert_eq!(calls.get(), 3, "should stop probing the moment it resolves");
+    }
+
+    /// A locator that never appears polls until the deadline, then reports
+    /// `false` (which `send_wait` maps to `PredicateFalse` → `wait_predicate_false`).
+    #[tokio::test(start_paused = true)]
+    async fn poll_times_out_when_never_resolves() {
+        let calls = Cell::new(0u32);
+        let got = poll_locator_until_resolved(
+            Duration::from_millis(500),
+            Duration::from_millis(100),
+            || {
+                calls.set(calls.get() + 1);
+                async { Ok(None) }
+            },
+        )
+        .await
+        .expect("a timeout is a clean false, not an error");
+        assert!(!got, "a never-appearing locator must time out to false");
+        // 500ms / 100ms cadence ⇒ several probes before the deadline trips.
+        assert!(
+            calls.get() >= 5,
+            "should have polled repeatedly before timing out: {}",
+            calls.get()
+        );
+    }
+
+    /// A transport error from a probe aborts the poll immediately (fail-fast,
+    /// matching `send_trusted_click`) — it is NOT swallowed into a timeout.
+    #[tokio::test(start_paused = true)]
+    async fn poll_propagates_transport_error() {
+        let err = poll_locator_until_resolved(
+            Duration::from_millis(30_000),
+            Duration::from_millis(100),
+            || async {
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    "shim transport died",
+                ))
+            },
+        )
+        .await;
+        assert!(err.is_err(), "a probe transport error must propagate");
     }
 }

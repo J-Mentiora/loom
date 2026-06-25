@@ -302,6 +302,90 @@ fn set_input_files_selector_grammar_probe() {
     let _ = run_loom(&harness, &["session", "close", &sid]);
 }
 
+// ─── web.wait locator grammar (regression for the reported js_throw) ──────────
+//
+// The filer's repro: `web.wait --selector "text=Ready 1"` → js_throw, while
+// `web.click --selector "text=Ready 1"` → success. web.wait passed the raw
+// locator to `querySelector`, so any non-CSS grammar (text=/role=/css=) raised a
+// SyntaxError. web.wait is now host-intercepted and resolves the SAME grammar as
+// web.click. This pins the grammar + the timeout→wait_predicate_false outcome.
+//
+// NOTE: the *delayed-appearance* polling semantics are unit-tested in
+// loom-host `senders.rs` (`poll_resolves_on_delayed_appearance`) on a paused
+// clock — under determinism a `setTimeout`-injected element will NOT fire during
+// web.wait's no-virtual-time-budget poll (the deferred virtual-time re-arm, P1),
+// so the genuine "appears after a delay" case belongs at the unit level.
+const WAIT_GRAMMAR_HTML: &str =
+    "<!doctype html><html><head><title>wait grammar</title></head><body>\
+     <button id=\"ready\">Ready 1</button>\
+     <div id=\"box\">box contents</div>\
+     </body></html>";
+
+#[test]
+#[ignore = "real Chromium (no network); gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn web_wait_accepts_locator_grammar_not_just_css() {
+    let Some(chromium) = live_gate() else { return };
+
+    let app = spawn_static_server(|path| (path == "/").then(|| WAIT_GRAMMAR_HTML.to_string()));
+    let app_url = format!("http://{app}/");
+
+    let mut harness = harness_for(&chromium);
+    provision_web_world(harness.home());
+    harness.start();
+    let sid = create_session(&harness);
+
+    let nav = navigate(&harness, &sid, &app_url, "settled");
+    assert_eq!(nav["status"], "success", "navigate must succeed; got {nav}");
+
+    // The reported repro: a `text=` locator. Before the fix this threw js_throw
+    // (raw querySelector("text=Ready 1") → SyntaxError). It must now resolve.
+    let by_text = web_wait(&harness, &sid, "text=Ready 1", Some(5000));
+    assert_eq!(
+        by_text["status"], "success",
+        "text= locator must resolve in web.wait (not js_throw); got {by_text}"
+    );
+
+    // `role=` grammar resolves too (ARIA role + accessible name).
+    let by_role = web_wait(&harness, &sid, "role=button[name=\"Ready 1\"]", Some(5000));
+    assert_eq!(
+        by_role["status"], "success",
+        "role= locator must resolve in web.wait; got {by_role}"
+    );
+
+    // Bare CSS still works (back-compat — unchanged presence semantics).
+    let by_css = web_wait(&harness, &sid, "#box", Some(5000));
+    assert_eq!(
+        by_css["status"], "success",
+        "bare CSS selector must still resolve; got {by_css}"
+    );
+
+    // A genuine no-match polls to the deadline and reports the typed
+    // wait_predicate_false — NOT js_throw, NOT a crash. Short timeout keeps it quick.
+    let miss = web_wait(&harness, &sid, "text=Definitely Not Present", Some(800));
+    assert_ne!(
+        miss["status"], "success",
+        "a never-appearing locator must not report success; got {miss}"
+    );
+    assert!(
+        serde_json::to_string(&miss)
+            .unwrap()
+            .contains("wait_predicate_false"),
+        "timeout must surface the typed wait_predicate_false kind; got {miss}"
+    );
+
+    // Daemon stays serviceable after the timeout.
+    let alive = eval_text(&harness, &sid, "1 + 1");
+    assert!(
+        json_contains(&alive, "2"),
+        "daemon must stay serviceable after a web.wait timeout; got {alive}"
+    );
+
+    eprintln!(
+        "web.wait grammar: text=/role=/css= resolve; no-match → wait_predicate_false; serviceable"
+    );
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+}
+
 // ─── P1 characterization: trusted click on an async button (NOT a standalone bug) ──
 //
 // The filer's P1 (a 30s trusted-click wedge) does NOT reproduce in isolation —
@@ -813,6 +897,34 @@ fn wait_for(harness: &DaemonTestHarness, sid: &str, until: &str) -> serde_json::
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
         panic!(
             "wait_for stdout not JSON: {e}; status={} stderr={:?}",
+            out.status, out.stderr
+        )
+    })
+}
+
+fn web_wait(
+    harness: &DaemonTestHarness,
+    sid: &str,
+    selector: &str,
+    timeout_ms: Option<u64>,
+) -> serde_json::Value {
+    let mut args = vec![
+        "action".to_string(),
+        "web.wait".to_string(),
+        "--session".to_string(),
+        sid.to_string(),
+        "--selector".to_string(),
+        selector.to_string(),
+    ];
+    if let Some(t) = timeout_ms {
+        args.push("--timeout_ms".to_string());
+        args.push(t.to_string());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = run_loom(harness, &arg_refs);
+    serde_json::from_str(&out.stdout).unwrap_or_else(|e| {
+        panic!(
+            "web.wait({selector}) stdout not JSON: {e}; status={} stderr={:?}",
             out.status, out.stderr
         )
     })
