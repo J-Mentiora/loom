@@ -1411,15 +1411,22 @@ fn marker_resolver_js(seg: &Segment) -> Option<String> {
     }
 }
 
-/// First *visible* element whose normalized text contains `needle` (case-
-/// insensitive), preferring the smallest such element (most specific match).
+/// Deepest *visible* element whose normalized text contains `needle` (case-
+/// insensitive). An element is disqualified if any of its direct children's own
+/// text also contains the needle — i.e. the match is really deeper — so a
+/// full-width wrapper never wins over the tight control it contains (this
+/// cascades through wrapper chains because `textContent` ignores CSS). Among the
+/// remaining deepest containers the smallest bounding-box area is picked. This is
+/// Playwright `getByText()` semantics. (The old code ranked by `textContent`
+/// length, which tied a wrapper with its sole-text child; pre-order + strict `<`
+/// then made the wrapper win, so `web.click` landed on its empty center.)
 fn text_resolver_js(needle: &str) -> String {
     let n = serde_json::to_string(needle).unwrap_or_else(|_| "\"\"".into());
     let mut body = String::from(JS_PRELUDE);
     body.push_str("var needle=norm(");
     body.push_str(&n);
     body.push_str(").toLowerCase();if(!needle)return false;");
-    body.push_str("var best=null,bestLen=1e9,all=document.querySelectorAll('body *');for(var i=0;i<all.length;i++){var e=all[i];if(!vis(e))continue;var t=norm(e.textContent).toLowerCase();if(t.indexOf(needle)!==-1&&t.length<bestLen){best=e;bestLen=t.length;}}if(best){best.setAttribute(M,'1');return true;}return false;");
+    body.push_str("var best=null,bestArea=Infinity,all=document.querySelectorAll('body *');for(var i=0;i<all.length;i++){var e=all[i];if(!vis(e))continue;if(norm(e.textContent).toLowerCase().indexOf(needle)===-1)continue;var kids=e.children,deeper=false;for(var j=0;j<kids.length;j++){if(norm(kids[j].textContent).toLowerCase().indexOf(needle)!==-1){deeper=true;break;}}if(deeper)continue;var r=e.getBoundingClientRect(),area=r.width*r.height;if(area<bestArea){best=e;bestArea=area;}}if(best){best.setAttribute(M,'1');return true;}return false;");
     wrap(&body)
 }
 
@@ -1492,6 +1499,27 @@ mod locator_resolver_tests {
             "needle must be JSON-escaped: {js}"
         );
         assert!(js.starts_with("(function(){") && js.ends_with("})()"));
+    }
+
+    #[test]
+    fn text_resolver_picks_deepest_container_not_longest_text() {
+        // Regression guard: the resolver must no longer rank by textContent length
+        // (which tied a wrapper with its sole-text child and let the wrapper win).
+        let js = text_resolver_js("Continue");
+        assert!(
+            !js.contains("bestLen"),
+            "must not rank candidates by textContent length: {js}"
+        );
+        // It must disqualify wrappers by checking whether a direct child also
+        // contains the needle, then select the tightest box by area.
+        assert!(
+            js.contains("e.children"),
+            "must inspect direct children to disqualify wrappers: {js}"
+        );
+        assert!(
+            js.contains("getBoundingClientRect") && js.contains("bestArea"),
+            "must select the deepest container by smallest bounding-box area: {js}"
+        );
     }
 
     #[test]
