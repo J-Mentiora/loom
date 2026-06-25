@@ -6,6 +6,34 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.4] — 2026-06-25 — `web.wait` Accepts the Locator Grammar
+
+A patch release that closes the last gap in loom's locator grammar: `web.wait --selector`
+now accepts the same `css=` / `text=` / `role=` / `frame=` grammar that `web.click`,
+`web.type`, and `web.set_input_files` already resolve. Previously `web.wait --selector
+"text=Ready 1"` threw `js_throw` (the daemon passed the raw locator straight to
+`document.querySelector`, an invalid CSS selector → `SyntaxError`), while the very same
+locator clicked fine — a confusing asymmetry for agents. `web.wait` is now intercepted
+host-side like `web.click` and polls the resolved locator until it matches or `timeout_ms`
+elapses, which also makes real the polling the docs already promised (the old path was a
+single probe). A bare value still resolves as CSS (back-compat); a timeout still surfaces
+the typed `kind: "wait_predicate_false"`. Host/daemon-side only — no WIT, vendored-wasm, or
+hash-chain change; only the resolved/timed-out verdict is recorded (never poll count or
+timing), so replay stays byte-equal (NFR-DET-01). (#233)
+
+### Added
+
+- **Locator grammar for `web.wait`.** `web.wait --selector` resolves `text=` (visible text),
+  `role=` (ARIA role + accessible name), `css=`/bare (CSS, presence), and a `frame=` prefix
+  (same-process iframe) — the same grammar as `web.click`/`web.type` — and polls the locator
+  (100 ms cadence, default 30 s timeout clamped to 600 s) until it resolves. (#233)
+
+### Fixed
+
+- **`web.wait` no longer throws `js_throw` on a non-CSS locator.** `text=`/`role=`/`css=`
+  forms reached Chrome as literal (invalid) CSS selectors and raised a `SyntaxError`; they
+  now route through the host-side locator resolver, matching `web.click`. (#233)
+
 ## [0.13.3] — 2026-06-25 — `no_determinism` Sessions Stop Wedging on Cross-Origin Auth'd SPAs
 
 A patch release that unblocks driving real authenticated SPAs under `--no-determinism`
