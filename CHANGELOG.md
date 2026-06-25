@@ -6,6 +6,58 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.3] — 2026-06-25 — `no_determinism` Sessions Stop Wedging on Cross-Origin Auth'd SPAs
+
+A patch release that unblocks driving real authenticated SPAs under `--no-determinism`
+(real wall-clock — the mode MCP/agentic clients use). The complement to v0.13.2's fix:
+that release fixed the navigate-*exit* virtual-clock resume under `--no-determinism`;
+this one fixes the *arm* side. A `--no-determinism` session navigating a second time to
+a heavy app behind a cross-origin login (e.g. an Auth0 New Universal Login with a hidden
+`prompt=none` silent-auth iframe) hung the full deadline and left the session unusable
+(every later verb `surface_trap`ped). Root cause: the virtual-time arm/await was gated on
+the process-global capture flag (`virtual_time_enabled()`, on by default) rather than on
+whether the session actually pinned the clock at inject — so a `--no-determinism` session,
+which never pins the clock, still armed a virtual-time budget and then awaited a
+`virtualTimeBudgetExpired` that can't fire on a real wall-clock (a cross-origin iframe
+keeps network fetches pending under `pauseIfNetworkFetchesPending`, so the budget never
+expires). Host-side shim fix only; no WIT, vendored-wasm, or hash-chain change, and the
+determinism-pinned path is byte-identical, so replay stays byte-equal (NFR-DET-01). (#230)
+
+Also adds the ability to request `no_determinism` through the MCP implicit-session path
+so MCP clients can drive real auth'd SPAs (whose bootstrap timers never fire under the
+frozen clock) on a real wall-clock. (#229)
+
+### Added
+
+- **`no_determinism` on the MCP implicit-session path.** A new
+  `LOOM_MCP_SESSION_NO_DETERMINISM` env baseline plus a `no_determinism` boolean on the
+  `session.create` tool and `session.reset`, merged over the env baseline like the other
+  knobs and forwarded to `session.create`. The key is emitted only when enabled, so the
+  default create shape is byte-identical to before; a typo'd boolean is a hard startup
+  error (determinism is never silently left on). Such a session is recorded
+  non-replayable, as on the CLI path. (#229)
+
+### Fixed
+
+- **`--no-determinism` navigate/`wait_for` no longer arms (and then hangs on) virtual
+  time.** The arm/await is now gated on whether the session actually pinned the clock at
+  inject (`determinism_injector::clock_pinned`, recorded only when the freeze-inject runs
+  — i.e. under `determinism_enabled`) instead of the env-global capture flag. A
+  `--no-determinism` session takes the clean real-clock load+settle path, so a repeated
+  navigate to a cross-origin-iframe SPA (the Auth0 silent-auth case) settles promptly
+  instead of wedging the session on the second navigate. Determinism-ON behavior is
+  byte-identical (the new gate equals the old one whenever the clock is pinned), and
+  `--no-determinism` sessions are non-replayable, so the replay hash chain is unchanged
+  (NFR-DET-01). (#230)
+
+### Changed
+
+- **The shim is now observable when it fails.** `loom-host` drains the
+  `loom-shim-chromium` subprocess's stderr into the daemon log (it was captured but never
+  read, so a shim panic surfaced only as an opaque `ExitStatus(256)`), and the shim gained
+  a `RUST_LOG`-gated stderr tracing subscriber (it previously had none). Diagnostics only;
+  silent by default. (#230)
+
 ## [0.13.2] — 2026-06-24 — Repeated `web.navigate` No Longer Degrades the Session
 
 A patch release that fixes a session-wedging regression: within a single session, each successive
