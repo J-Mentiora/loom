@@ -1412,21 +1412,26 @@ fn marker_resolver_js(seg: &Segment) -> Option<String> {
 }
 
 /// Deepest *visible* element whose normalized text contains `needle` (case-
-/// insensitive). An element is disqualified if any of its direct children's own
-/// text also contains the needle — i.e. the match is really deeper — so a
-/// full-width wrapper never wins over the tight control it contains (this
-/// cascades through wrapper chains because `textContent` ignores CSS). Among the
-/// remaining deepest containers the smallest bounding-box area is picked. This is
-/// Playwright `getByText()` semantics. (The old code ranked by `textContent`
-/// length, which tied a wrapper with its sole-text child; pre-order + strict `<`
-/// then made the wrapper win, so `web.click` landed on its empty center.)
+/// insensitive). Candidates are the visible, text-matching elements; an element is
+/// disqualified when it *contains another candidate* — i.e. the real match is
+/// nested deeper — so a full-width wrapper never wins over the tight control it
+/// contains. Disqualification is visibility-gated on purpose: a hidden child (a
+/// `display:none`/`visibility:hidden` twin, a `.sr-only` label, an inline
+/// `<script>`/`<style>` whose code happens to contain the text) is not a
+/// candidate, so it neither steals the click nor makes its visible parent
+/// unresolvable. Among the remaining deepest candidates we prefer the shortest
+/// normalized text (closest to an exact match), then the smallest bounding-box
+/// area. This is Playwright `getByText()` semantics. (The old code ranked all
+/// matches by `textContent` length, which tied a wrapper with its sole-text child;
+/// pre-order + strict `<` then made the wrapper win, so `web.click` landed on its
+/// empty center.)
 fn text_resolver_js(needle: &str) -> String {
     let n = serde_json::to_string(needle).unwrap_or_else(|_| "\"\"".into());
     let mut body = String::from(JS_PRELUDE);
     body.push_str("var needle=norm(");
     body.push_str(&n);
     body.push_str(").toLowerCase();if(!needle)return false;");
-    body.push_str("var best=null,bestArea=Infinity,all=document.querySelectorAll('body *');for(var i=0;i<all.length;i++){var e=all[i];if(!vis(e))continue;if(norm(e.textContent).toLowerCase().indexOf(needle)===-1)continue;var kids=e.children,deeper=false;for(var j=0;j<kids.length;j++){if(norm(kids[j].textContent).toLowerCase().indexOf(needle)!==-1){deeper=true;break;}}if(deeper)continue;var r=e.getBoundingClientRect(),area=r.width*r.height;if(area<bestArea){best=e;bestArea=area;}}if(best){best.setAttribute(M,'1');return true;}return false;");
+    body.push_str("var all=document.querySelectorAll('body *'),cand=[];for(var i=0;i<all.length;i++){var e=all[i];if(vis(e)&&norm(e.textContent).toLowerCase().indexOf(needle)!==-1)cand.push(e);}var best=null,bestLen=Infinity,bestArea=Infinity;for(var i=0;i<cand.length;i++){var e=cand[i],inner=false;for(var j=0;j<cand.length;j++){if(j!==i&&e.contains(cand[j])){inner=true;break;}}if(inner)continue;var len=norm(e.textContent).length,r=e.getBoundingClientRect(),area=r.width*r.height;if(len<bestLen||(len===bestLen&&area<bestArea)){best=e;bestLen=len;bestArea=area;}}if(best){best.setAttribute(M,'1');return true;}return false;");
     wrap(&body)
 }
 
@@ -1502,23 +1507,27 @@ mod locator_resolver_tests {
     }
 
     #[test]
-    fn text_resolver_picks_deepest_container_not_longest_text() {
-        // Regression guard: the resolver must no longer rank by textContent length
-        // (which tied a wrapper with its sole-text child and let the wrapper win).
+    fn text_resolver_disqualifies_wrapper_via_nested_visible_candidate() {
         let js = text_resolver_js("Continue");
+        // Candidacy is visibility-gated: a hidden child must neither be clicked nor
+        // disqualify its visible parent.
         assert!(
-            !js.contains("bestLen"),
-            "must not rank candidates by textContent length: {js}"
+            js.contains("vis(e)"),
+            "candidates must be visibility-gated: {js}"
         );
-        // It must disqualify wrappers by checking whether a direct child also
-        // contains the needle, then select the tightest box by area.
+        // A wrapper is disqualified when it CONTAINS another (visible) candidate, so
+        // the click lands on the tight control, not the wrapper's empty center.
         assert!(
-            js.contains("e.children"),
-            "must inspect direct children to disqualify wrappers: {js}"
+            js.contains("e.contains("),
+            "must disqualify ancestors that contain a nested visible match: {js}"
         );
+        // Among deepest candidates, prefer the closest-to-exact text then the
+        // tightest box — not a global smallest-area pick.
         assert!(
-            js.contains("getBoundingClientRect") && js.contains("bestArea"),
-            "must select the deepest container by smallest bounding-box area: {js}"
+            js.contains("bestLen")
+                && js.contains("bestArea")
+                && js.contains("getBoundingClientRect"),
+            "must rank by shortest text then bounding-box area: {js}"
         );
     }
 

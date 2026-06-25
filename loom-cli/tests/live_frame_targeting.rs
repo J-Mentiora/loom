@@ -351,6 +351,63 @@ fn text_locator_clicks_offcenter_button_not_wrapper_center() {
     let _ = run_loom(&harness, &["session", "close", &sid]);
 }
 
+/// Regression for the visibility-gated candidacy: a normal button whose text is
+/// duplicated inside a `display:none` child (the `.sr-only`/hidden-twin pattern).
+/// The hidden child must NOT disqualify the visible button (which would leave the
+/// resolver with no clickable candidate) — `text=Continue` must still click the
+/// button and fire its handler.
+const HIDDEN_TWIN_HTML: &str = "<!doctype html><html><head><title>idle</title></head><body>\
+     <button id=\"btn\" onclick=\"document.title='CLICKED'\">Continue\
+       <span style=\"display:none\">Continue</span></button>\
+     </body></html>";
+
+#[test]
+#[ignore = "real Chromium (no network); gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn text_locator_ignores_hidden_duplicate_text_child() {
+    if std::env::var("LOOM_LIVE_E2E").as_deref() != Ok("1") {
+        eprintln!("skip: set LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH to run");
+        return;
+    }
+    let chromium = match std::env::var("LOOM_CHROMIUM_PATH") {
+        Ok(p) if Path::new(&p).exists() => p,
+        _ => {
+            eprintln!("skip: LOOM_CHROMIUM_PATH unset/missing");
+            return;
+        }
+    };
+    let app = spawn_static_server(|path| (path == "/").then(|| HIDDEN_TWIN_HTML.to_string()));
+    let app_url = format!("http://{app}/");
+
+    let mut harness = DaemonTestHarness::new()
+        .env("LOOM_CHROMIUM_PATH", &chromium)
+        .env(
+            "LOOM_CHROMIUM_EXTRA_FLAGS",
+            "--no-sandbox --disable-dev-shm-usage --use-mock-keychain --password-store=basic",
+        )
+        .with_ready_timeout(std::time::Duration::from_secs(30));
+    provision_web_world(harness.home());
+    harness.start();
+    let sid = create_session(&harness);
+
+    let nav = navigate(&harness, &sid, &app_url, "settled");
+    assert_eq!(nav["status"], "success", "navigate must succeed; got {nav}");
+
+    let by_text = click(&harness, &sid, "text=Continue");
+    assert_eq!(
+        by_text["status"], "success",
+        "text=Continue must resolve despite the hidden duplicate-text child; got {by_text}"
+    );
+    let after = eval_text(&harness, &sid, "document.title");
+    assert!(
+        json_contains(&after, "CLICKED"),
+        "the visible button must be clicked even though a display:none child shares its \
+         text (the hidden child must not disqualify the parent); got {after}"
+    );
+
+    eprintln!("text= locator ignored the hidden duplicate-text child and clicked the button: OK");
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+}
+
 fn json_contains(v: &serde_json::Value, needle: &str) -> bool {
     serde_json::to_string(v)
         .map(|s| s.contains(needle))
