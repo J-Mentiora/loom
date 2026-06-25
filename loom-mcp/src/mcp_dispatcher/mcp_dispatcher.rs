@@ -78,6 +78,13 @@ pub const ENV_SESSION_PROFILE: &str = "LOOM_MCP_SESSION_PROFILE";
 /// `{"session_walltime_ms":30000}`). Parsed as opaque JSON here; the
 /// daemon owns `BudgetLimits` deserialization + key-allowlisting.
 pub const ENV_SESSION_BUDGET: &str = "LOOM_MCP_SESSION_BUDGET";
+/// Env var: when truthy (`1`/`true`/`yes`/`on`), the implicit session is
+/// created with `no_determinism` — the page keeps a REAL wall-clock and
+/// unseeded RNG instead of loom's frozen virtual clock. Required to drive
+/// real auth'd SPAs whose bootstrap (e.g. Auth0 silent-auth iframe + its
+/// `setTimeout` token race) never fires under a frozen clock, leaving the
+/// app shell unrendered. Such a session is recorded NON-REPLAYABLE.
+pub const ENV_SESSION_NO_DETERMINISM: &str = "LOOM_MCP_SESSION_NO_DETERMINISM";
 
 /// Profile used for the implicit session when no override is configured.
 /// `standard` so denylist surprises don't confuse MCP clients (the
@@ -102,6 +109,10 @@ pub struct SessionOptions {
     /// Opaque budget limits forwarded verbatim to `session.create`
     /// (`{"wall_clock":"30s"}` or `{"session_walltime_ms":30000}`).
     pub budget: Option<serde_json::Value>,
+    /// When `Some(true)`, forward `no_determinism: true` to `session.create`
+    /// (real wall-clock + unseeded RNG). `None`/`Some(false)` keep loom's
+    /// default frozen-clock determinism. See `ENV_SESSION_NO_DETERMINISM`.
+    pub no_determinism: Option<bool>,
 }
 
 /// Live implicit-session record: the daemon-assigned id plus the exact
@@ -147,6 +158,9 @@ pub struct SessionResetParams {
     /// Opaque budget limits; merged over the env baseline like the other
     /// knobs and forwarded to `session.create` (daemon validates).
     pub budget: Option<serde_json::Value>,
+    /// Per-reset override for real wall-clock mode; merged over the env
+    /// baseline (`ENV_SESSION_NO_DETERMINISM`) like the other knobs.
+    pub no_determinism: Option<bool>,
 }
 
 /// Arguments of `loom.session.diff`.
