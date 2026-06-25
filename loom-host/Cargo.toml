@@ -51,6 +51,10 @@ hex = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# test-util enables tokio's paused clock (`#[tokio::test(start_paused = true)]`)
+# so the web.wait poll-loop tests advance time virtually — deterministic, no
+# real sleeping, no wall-clock flake.
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true }
 loom-core = { workspace = true, features = ["mock"] }
 # wasm_preemption_tests builds a real CoreApiFacade, which needs a

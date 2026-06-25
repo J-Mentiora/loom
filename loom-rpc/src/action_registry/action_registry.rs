@@ -820,15 +820,20 @@ Failure mode: in `fill`/`keystrokes` a selector miss → \
     },
     ActionMeta {
         name: "web.wait",
-        summary: "Wait until a CSS selector resolves (or until timeout).",
+        summary: "Wait until a locator resolves (or until timeout).",
         description: "\
-Polls the page until the supplied CSS selector matches at least one \
-element, or until `timeout_ms` milliseconds elapse. When `timeout_ms` \
-is omitted, loom uses the daemon-configured default (typically 30 s).\n\n\
-Polling cadence is fixed under the deterministic profile so two \
-sessions with the same seed produce identical poll counts. The wait \
-returns as soon as the predicate is true on any poll iteration.\n\n\
-Typed error: `kind: \"wait_predicate_false\"` if the selector never \
+Polls the page until the supplied locator matches at least one element, \
+or until `timeout_ms` milliseconds elapse. When `timeout_ms` is omitted, \
+loom uses the daemon-configured default (typically 30 s).\n\n\
+`selector` accepts the SAME locator grammar as `web.click` / `web.type`: a \
+bare value (or `css=`) is a CSS selector and matches on presence; `text=` \
+matches a visible element by its text, `role=` by ARIA role + accessible \
+name, and a `frame=` prefix scopes into a same-process iframe. The wait \
+returns as soon as the locator resolves on any poll iteration.\n\n\
+Only the final verdict (resolved vs. timed-out) is recorded on the receipt — \
+never the poll count or timing — so replay stays hash-equal regardless of \
+how long the element took to appear.\n\n\
+Typed error: `kind: \"wait_predicate_false\"` if the locator never \
 resolves before the timeout. Use this to fail loud rather than \
 chaining a brittle `web.click` against an element that is not yet \
 present.\n\n\
@@ -847,18 +852,18 @@ it if you need to gate on a specific element.",
             ParamMeta {
                 name: "selector",
                 ty: ParamType::String,
-                doc: "CSS query selector. Wait succeeds the first poll where this resolves.",
+                doc: "Locator: a bare/`css=` CSS selector, or `text=`/`role=`/`frame=` (same grammar as web.click). Wait succeeds the first poll where it resolves.",
                 required: true,
             },
             ParamMeta {
                 name: "timeout_ms",
                 ty: ParamType::U64,
-                doc: "Maximum wait time in milliseconds. Optional; defaults to the daemon's configured wait timeout.",
+                doc: "Maximum wait time in milliseconds. Optional; defaults to the daemon's configured wait timeout (~30 s), clamped to a 600 s ceiling.",
                 required: false,
             },
             DEADLINE_MS_PARAM,
         ],
-        returns: "Receipt with `status: \"ok\"` once the selector resolves. Timeout → `kind: \"wait_predicate_false\"`.",
+        returns: "Receipt with `status: \"ok\"` once the locator resolves. Timeout → `kind: \"wait_predicate_false\"`.",
         example: &["loom", "action", "web.wait", "--session", "<SESSION>", "--selector", "#results", "--timeout_ms", "10000"],
     },
     ActionMeta {

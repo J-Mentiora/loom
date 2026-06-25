@@ -1043,14 +1043,8 @@ mod tests {
                 },
                 "Runtime.evaluate",
             ),
-            (
-                Action::WebWait {
-                    session_id: session.clone(),
-                    selector: s("a"),
-                    timeout_ms: Some(1000),
-                },
-                "Runtime.evaluate",
-            ),
+            // web.wait is host-intercepted (like web.click) → no guest envelope;
+            // its None case is asserted by build_chromium_args_wait_is_host_side_returns_none.
             (
                 Action::WebScreenshot {
                     session_id: session.clone(),
@@ -1244,6 +1238,70 @@ mod tests {
         };
         let r_other = build_input_dispatch_receipt(3, "sess-A", &a_other, InputDispatchOutcome::Ok);
         assert_ne!(r_a.action_hash, r_other.action_hash);
+    }
+
+    /// web.wait is now host-intercepted (poll `host.wait` → `send_wait`, reusing the
+    /// locator-grammar resolver), so build_chromium_args returns None — the guard
+    /// against regressing back to the raw `querySelector(sel)` guest envelope that
+    /// threw `js_throw` on `text=`/`role=` locators (the reported bug).
+    #[test]
+    fn build_chromium_args_wait_is_host_side_returns_none() {
+        let action = Action::WebWait {
+            session_id: s("sess"),
+            selector: s("text=Ready 1"),
+            timeout_ms: Some(5000),
+        };
+        assert!(
+            decode_cdp(&action).is_none(),
+            "web.wait is host-side (polled locator resolution) → expected None"
+        );
+    }
+
+    /// The host-side `web.wait` receipt mirrors the click contract: a `Resolved`
+    /// wait carries a constant `outcome_hash` marker + a SESSION-INDEPENDENT
+    /// `action_hash` (replay-equal), and a `PredicateFalse` wait surfaces the typed
+    /// `wait_predicate_false` error kind. `timeout_ms` is excluded from the hash.
+    #[test]
+    fn build_wait_receipt_is_session_independent_and_typed() {
+        use crate::wire_receipts::build_wait_receipt;
+        use loom_host::shim_manager::WaitResolveOutcome;
+        let a_sess_a = Action::WebWait {
+            session_id: s("sess-A"),
+            selector: s("text=Ready 1"),
+            timeout_ms: Some(5000),
+        };
+        let a_sess_b = Action::WebWait {
+            session_id: s("sess-B"),
+            selector: s("text=Ready 1"),
+            timeout_ms: Some(9999), // different timeout → must NOT change the hash
+        };
+        let r_a = build_wait_receipt(1, "sess-A", &a_sess_a, WaitResolveOutcome::Resolved);
+        let r_b = build_wait_receipt(2, "sess-B", &a_sess_b, WaitResolveOutcome::Resolved);
+        assert!(
+            r_a.action_hash.is_some(),
+            "host-side wait receipt must carry action_hash"
+        );
+        assert!(
+            r_a.outcome_hash.is_some(),
+            "resolved wait must stamp the constant dispatch marker"
+        );
+        assert_eq!(
+            r_a.action_hash, r_b.action_hash,
+            "action_hash must be session- and timeout-independent (replay-equal)"
+        );
+        // Different selector → different action_hash.
+        let a_other = Action::WebWait {
+            session_id: s("sess-A"),
+            selector: s("text=Other"),
+            timeout_ms: Some(5000),
+        };
+        let r_other = build_wait_receipt(3, "sess-A", &a_other, WaitResolveOutcome::Resolved);
+        assert_ne!(r_a.action_hash, r_other.action_hash);
+
+        // PredicateFalse → typed wait_predicate_false error receipt, no outcome marker.
+        let r_to = build_wait_receipt(4, "sess-A", &a_sess_a, WaitResolveOutcome::PredicateFalse);
+        let err = r_to.error.expect("timeout must produce an error receipt");
+        assert_eq!(err.kind, "wait_predicate_false");
     }
 
     /// `mode:"value"` sets value via the framework-aware native setter (so

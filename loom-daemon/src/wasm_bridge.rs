@@ -495,6 +495,44 @@ impl WasmHostBridge for WasmBridge {
             }
         }
 
+        // web.wait is intercepted host-side (like web.click) so it can resolve the
+        // SAME `>>` locator grammar (`text=`/`role=`/`css=`/`frame=`) via
+        // `host.wait` → `send_wait` and poll until the locator resolves or
+        // `timeout_ms` elapses — instead of the old guest path that passed the raw
+        // value to `querySelector` (which threw on `text=`/`role=`). Poll timing is
+        // never recorded; only the Resolved/PredicateFalse verdict, so replay stays
+        // structural (NFR-DET-01).
+        if let Action::WebWait {
+            selector,
+            timeout_ms,
+            ..
+        } = &action
+        {
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let sel = selector.clone();
+            let to = *timeout_ms;
+            let action_id = session.allocate_action_id();
+            match handle.block_on(host.wait(&sid, &sel, to)) {
+                Ok(outcome) => {
+                    return Ok(build_wait_receipt(
+                        action_id,
+                        session_id_str,
+                        &action,
+                        outcome,
+                    ))
+                }
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "wait_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+
         let session_handle = SessionHandle {
             session_id: session.id.clone(),
             handle: handle.clone(),

@@ -657,6 +657,49 @@ impl WasmHost {
         }
         result
     }
+
+    /// `web.wait` — poll the locator until it resolves or `timeout_ms` elapses.
+    /// Mirrors [`trusted_click`](Self::trusted_click): a registered-target guard,
+    /// then the host-side `send_wait` (which reuses the same locator-grammar
+    /// resolution, so `web.wait` accepts `css=`/`text=`/`role=`/`frame=`, not just
+    /// a bare CSS selector). Returns the typed wait outcome; transport failures
+    /// surface as `Err`.
+    pub async fn wait(
+        &self,
+        session_id: &str,
+        selector: &str,
+        timeout_ms: Option<u64>,
+    ) -> Result<crate::shim_manager::WaitResolveOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.wait",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        let result = self
+            .shim
+            .send_wait(
+                effective_id,
+                shim_session_id,
+                0,
+                selector.to_string(),
+                timeout_ms,
+            )
+            .await;
+        // Redacted observability (F7): selector is a CSS selector, not secret.
+        match &result {
+            Ok(o) => {
+                tracing::debug!(session_id = %session_id, selector = %selector, timeout_ms = ?timeout_ms, outcome = ?o, "web.wait dispatched")
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, selector = %selector, error = %e, "web.wait failed")
+            }
+        }
+        result
+    }
 }
 
 /// Result of [`WasmHost::stop_recording`]. `screencast_after_hash` is the CAS

@@ -153,6 +153,17 @@ pub enum InputDispatchOutcome {
     UnknownKey,
 }
 
+/// Outcome of a `web.wait` locator poll (`send_wait`). An application outcome the
+/// host maps to a typed wire receipt, distinct from transport `Err(LoomError)`:
+/// - `Resolved` — the locator matched a node on some poll before the deadline.
+/// - `PredicateFalse` — the deadline elapsed without the locator ever resolving
+///   (surfaced to the CLI as the typed `kind: "wait_predicate_false"`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaitResolveOutcome {
+    Resolved,
+    PredicateFalse,
+}
+
 /// Parsed result of a `Runtime.evaluate` CDP call. Exactly one of `result`
 /// / `exception` is `Some` per CDP semantics.
 #[derive(Debug, Clone, PartialEq)]

@@ -27,7 +27,7 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.start_recording`](#web-start_recording) — Start recording a video (screencast) of the page.
 - [`web.stop_recording`](#web-stop_recording) — Stop the active video recording and return its content hash.
 - [`web.type`](#web-type) — Focus an input (by CSS or a text=/role=/frame= locator) and type text into it.
-- [`web.wait`](#web-wait) — Wait until a CSS selector resolves (or until timeout).
+- [`web.wait`](#web-wait) — Wait until a locator resolves (or until timeout).
 - [`web.wait_for`](#web-wait_for) — Wait until the current page reaches a readiness state (settle-capture).
 
 ## Actions
@@ -536,13 +536,15 @@ loom action web.type --session <SESSION> --selector #email --text user@example.c
 
 ### <a id="web-wait"></a>`web.wait`
 
-**Wait until a CSS selector resolves (or until timeout).**
+**Wait until a locator resolves (or until timeout).**
 
-Polls the page until the supplied CSS selector matches at least one element, or until `timeout_ms` milliseconds elapse. When `timeout_ms` is omitted, loom uses the daemon-configured default (typically 30 s).
+Polls the page until the supplied locator matches at least one element, or until `timeout_ms` milliseconds elapse. When `timeout_ms` is omitted, loom uses the daemon-configured default (typically 30 s).
 
-Polling cadence is fixed under the deterministic profile so two sessions with the same seed produce identical poll counts. The wait returns as soon as the predicate is true on any poll iteration.
+`selector` accepts the SAME locator grammar as `web.click` / `web.type`: a bare value (or `css=`) is a CSS selector and matches on presence; `text=` matches a visible element by its text, `role=` by ARIA role + accessible name, and a `frame=` prefix scopes into a same-process iframe. The wait returns as soon as the locator resolves on any poll iteration.
 
-Typed error: `kind: "wait_predicate_false"` if the selector never resolves before the timeout. Use this to fail loud rather than chaining a brittle `web.click` against an element that is not yet present.
+Only the final verdict (resolved vs. timed-out) is recorded on the receipt — never the poll count or timing — so replay stays hash-equal regardless of how long the element took to appear.
+
+Typed error: `kind: "wait_predicate_false"` if the locator never resolves before the timeout. Use this to fail loud rather than chaining a brittle `web.click` against an element that is not yet present.
 
 `web.wait` polls the CURRENT document and arms no virtual-time budget, so it does NOT drive a navigation. After an interaction that triggers a top-level navigation (form submit, link click), use `web.wait_for` to advance and settle the new page first — then `web.wait` for a selector on it if you need to gate on a specific element.
 
@@ -551,11 +553,11 @@ Typed error: `kind: "wait_predicate_false"` if the selector never resolves befor
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
-| `selector` | `string` | required | CSS query selector. Wait succeeds the first poll where this resolves. |
-| `timeout_ms` | `u64` | optional | Maximum wait time in milliseconds. Optional; defaults to the daemon's configured wait timeout. |
+| `selector` | `string` | required | Locator: a bare/`css=` CSS selector, or `text=`/`role=`/`frame=` (same grammar as web.click). Wait succeeds the first poll where it resolves. |
+| `timeout_ms` | `u64` | optional | Maximum wait time in milliseconds. Optional; defaults to the daemon's configured wait timeout (~30 s), clamped to a 600 s ceiling. |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
-**Returns:** Receipt with `status: "ok"` once the selector resolves. Timeout → `kind: "wait_predicate_false"`.
+**Returns:** Receipt with `status: "ok"` once the locator resolves. Timeout → `kind: "wait_predicate_false"`.
 
 **Example**
 
