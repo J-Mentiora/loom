@@ -303,3 +303,65 @@ async fn wait_for_arms_virtual_time_budget_for_pending_timers() {
          timers advance (auth0-ulp-submit). CDP log was:\n{log}"
     );
 }
+
+/// Companion regression guard for the staging Auth0 wedge: a `--no-determinism`
+/// session (real wall-clock, clock never pinned at inject) must NOT arm a
+/// virtual-time budget on wait_for. Pre-fix, the arm was gated on the process-
+/// global capture flag (`virtual_time_enabled()`), so `--no-determinism` sessions
+/// armed a budget and then hung awaiting a `virtualTimeBudgetExpired` that never
+/// fires on a real clock (the 2nd authed navigate to a heavy cross-origin SPA
+/// wedged the whole session). The fix gates the arm on whether the clock was
+/// ACTUALLY pinned (`determinism_injector::clock_pinned`, set only when inject
+/// ran under `determinism_enabled`). This pins that through the real host → shim
+/// path: with `determinism_enabled: false` the shim must issue NO budget-carrying
+/// `setVirtualTimePolicy`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn no_determinism_wait_for_does_not_arm_virtual_time_budget() {
+    assert_binaries_built();
+    // Clean page — the same shape the determinism-ON budget test uses.
+    let script = r#"{ "settle_probe": [[true, "http://fake.test/app", 0]] }"#;
+    let (mgr, id, _udd, log_path) = make_manager_with_script_and_log("waitfor-no-det-vt", script);
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(180),
+        mgr.send_wait_for(loom_host::shim_manager::SendWaitForParams {
+            id: id.clone(),
+            action_id: "test-action".to_string(),
+            session_id: 0,
+            target_id: 0,
+            until: "settled".to_string(),
+            budget_ms: 30_000,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            // The session runs on the REAL wall-clock; the clock is never pinned.
+            determinism_enabled: false,
+        }),
+    )
+    .await
+    .expect(
+        "send_wait_for timed out (no_determinism wait_for must return a typed verdict, not hang)",
+    )
+    .expect("send_wait_for returned an error");
+
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "no_determinism wait_for must still settle the clean page on the real clock"
+    );
+
+    mgr.shutdown_session("waitfor-no-det-vt").await;
+
+    // NO budget-carrying setVirtualTimePolicy may appear: the session never pinned
+    // the clock, so arming a budget — and then awaiting a virtualTimeBudgetExpired
+    // that can't fire on a real clock — must not happen.
+    let log = std::fs::read_to_string(&log_path).expect("read cdp log");
+    let armed_budget = log
+        .lines()
+        .any(|l| l.contains("setVirtualTimePolicy") && l.contains("\"budget\""));
+    assert!(
+        !armed_budget,
+        "no_determinism wait_for must NOT arm a budget-carrying setVirtualTimePolicy \
+         (it would await a virtualTimeBudgetExpired that never fires on the real clock — \
+         the staging Auth0 wedge). CDP log was:\n{log}"
+    );
+}

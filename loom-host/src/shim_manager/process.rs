@@ -174,7 +174,7 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
     // host needs to force-tear-down a hung shim. But the shim's own
     // Chromium subtree is reaped via the shim-side process_group call
     // in ChromiumSupervisor::start (Part B of this PR).
-    let child = cmd.spawn().map_err(|e| {
+    let mut child = cmd.spawn().map_err(|e| {
         unsafe {
             libc::close(parent_fd);
             libc::close(child_fd);
@@ -184,6 +184,28 @@ pub async fn spawn_shim(config: &SpawnConfig) -> Result<Arc<ShimProcess>, LoomEr
             format!("spawn shim {:?}: {e}", config.binary_path),
         )
     })?;
+
+    // Drain the shim's piped stderr into the daemon log. The shim's stderr
+    // (panic messages with `panicked at …`, `RUST_LOG` traces) was previously
+    // captured by the pipe but never read — so a shim panic surfaced only as an
+    // opaque `ExitStatus(256)` in the watcher, with the actual cause lost in the
+    // undrained pipe (and, under verbose `RUST_LOG`, a full 64KB pipe could even
+    // block the shim on write). Forward each line at WARN under a dedicated
+    // target so a crash is diagnosable from the daemon log alone.
+    if let Some(stderr) = child.stderr.take() {
+        let shim_pid_for_stderr = child.id();
+        tokio::spawn(async move {
+            use tokio::io::AsyncBufReadExt;
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                tracing::warn!(
+                    target: "loom_host::shim_stderr",
+                    shim_pid = shim_pid_for_stderr,
+                    "{line}"
+                );
+            }
+        });
+    }
 
     // STEP 3: parent closes its copy of child_fd.
     unsafe { libc::close(child_fd) };

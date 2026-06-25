@@ -426,7 +426,12 @@ impl ChromiumActionExecutor {
         mut settle: crate::readiness_monitor::SettleResult,
         kind: ReattachKind,
     ) -> ReattachOutcome {
-        let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
+        // Only re-arm the virtual-time budget on re-attach when THIS session
+        // actually pinned the clock at inject. A `--no-determinism` session runs
+        // on the real wall-clock and never pinned it, so re-arming is pointless
+        // and harmful: the expiry event never reliably fires on a real-clock
+        // page, hanging the re-settle until the deadline.
+        let clock_pinned = crate::determinism_injector::determinism_injector::clock_pinned();
         let mut hops: u32 = 0;
         let mut last_drained: Option<bool> = None;
         while settle.renavigated && hops < MAX_REATTACH_HOPS {
@@ -441,13 +446,13 @@ impl ChromiumActionExecutor {
                 "{}: re-attaching to client-initiated top-level navigation",
                 kind.verb()
             );
-            let new_load = if vt_active {
+            let new_load = if clock_pinned {
                 let (lf, drained) = self.rearm_for_reattach(target_id, remaining).await;
                 last_drained = Some(drained);
                 lf
             } else {
-                // No determinism clock pin: the new document loads on its own
-                // wall-clock; no budget to re-arm.
+                // No determinism clock pin (or `--no-determinism`): the new
+                // document loads on its own wall-clock; no budget to re-arm.
                 true
             };
             let remaining = timeout.saturating_sub(reattach_start.elapsed());
@@ -798,7 +803,17 @@ impl ActionExecutor for ChromiumActionExecutor {
         // full 30s CDP timeout — so we resume (`advance`) on exit ONLY then.
         let mut budget_drained = false;
 
-        if vt_active {
+        // Only drive virtual time when THIS session actually pinned the clock at
+        // inject (`clock_pinned`). A `--no-determinism` session has `vt_active`
+        // true (the global capture flag) but runs on the REAL wall-clock — arming
+        // a virtual-time budget here makes `virtualTimeBudgetExpired` unreliable
+        // (it never fires while a cross-origin iframe keeps network fetches
+        // pending under `pauseIfNetworkFetchesPending`), so navigate burned the
+        // full timeout and, on a heavy auth'd SPA, wedged the next navigate. Gate
+        // on `clock_pinned`, not `vt_active`, so no_determinism takes the clean
+        // real-clock load+settle path. (No replay impact: no_determinism sessions
+        // are non-replayable.)
+        if clock_pinned {
             // Subscribe to the budget-expiry event immediately BEFORE issuing
             // the arm command — after the prior navigate's awaits, not at
             // navigate start. The WS command/response round-trip orders this
@@ -922,7 +937,7 @@ impl ActionExecutor for ChromiumActionExecutor {
                 // animation-capture (Mode A): un-pause before bailing so the next
                 // command isn't wedged on a paused clock (unless we are on the
                 // determinism-pinned clean-drain path — see the success-path guard).
-                if should_resume_virtual_clock(vt_active, clock_pinned, budget_drained) {
+                if should_resume_virtual_clock(clock_pinned, clock_pinned, budget_drained) {
                     self.resume_virtual_time(target_id, timeout).await;
                 }
                 return Err(action_error_to_response(ActionError::Cdp(e), 0, None));
@@ -950,7 +965,7 @@ impl ActionExecutor for ChromiumActionExecutor {
             Err(e) => {
                 // animation-capture (Mode A): un-pause before bailing (see STEP 5
                 // and the success-path guard for the determinism-pinned exception).
-                if should_resume_virtual_clock(vt_active, clock_pinned, budget_drained) {
+                if should_resume_virtual_clock(clock_pinned, clock_pinned, budget_drained) {
                     self.resume_virtual_time(target_id, timeout).await;
                 }
                 return Err(action_error_to_response(ActionError::Cdp(e), 0, None));
@@ -1112,7 +1127,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         // the determinism-OFF navigate path into burning its full budget every
         // call (navigate-degradation). `should_resume_virtual_clock` encodes the
         // policy once for all three exit guards.
-        if should_resume_virtual_clock(vt_active, clock_pinned, budget_drained) {
+        if should_resume_virtual_clock(clock_pinned, clock_pinned, budget_drained) {
             self.resume_virtual_time(target_id, timeout).await;
         }
 
@@ -1171,7 +1186,13 @@ impl ActionExecutor for ChromiumActionExecutor {
         // replays identically; the tick ceiling (from `budget`) bounds it to a
         // typed `timeout`/`dom_unstable` instead of hanging.
         let timeout = budget.unwrap_or_else(navigate_budget);
-        let vt_active = crate::determinism_injector::determinism_injector::virtual_time_enabled();
+        // Gate the virtual-time arm+await on whether this session actually pinned
+        // the clock at inject. A `--no-determinism` session never pinned it, so
+        // arming a budget here would await a `virtualTimeBudgetExpired` that never
+        // reliably fires on the real wall-clock (e.g. while a cross-origin
+        // silent-auth iframe keeps network fetches pending) — the wedge behind the
+        // 2nd authed action on a heavy SPA. (No replay impact: non-replayable.)
+        let clock_pinned = crate::determinism_injector::determinism_injector::clock_pinned();
 
         // settle-drives-pending-timers (auth0-ulp-submit): under the determinism
         // clock pin the virtual clock is FROZEN here — the prior navigate/settle
@@ -1199,7 +1220,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         // replay-equal. A page with no pending timers drains the budget immediately
         // (one extra CDP round-trip), unchanged verdict.
         let mut initial_budget_drained = true;
-        if vt_active {
+        if clock_pinned {
             let (vt_expired_rx, _vt_reg) = self.subscribe_cdp_event_once(
                 crate::determinism_injector::determinism_injector::VIRTUAL_TIME_BUDGET_EXPIRED_EVENT,
             );
@@ -1255,7 +1276,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         // matching navigate's clean-path exit so a subsequent web.evaluate clock
         // read stays replay-equal.
         let needs_resume = !initial_budget_drained || matches!(outcome.last_drained, Some(false));
-        if vt_active && needs_resume {
+        if clock_pinned && needs_resume {
             self.resume_virtual_time(target_id, timeout).await;
         }
 

@@ -566,6 +566,118 @@ fn press_key_on_oopif_does_not_crash_shim() {
     let _ = run_loom(&harness, &["session", "close", &sid]);
 }
 
+// ── no_determinism repeated-navigate to a cross-origin-iframe SPA stays fast ──
+// Regression for the staging Auth0 wedge: a `--no-determinism` (real wall-clock)
+// session navigating repeatedly to a page that injects a hidden cross-origin
+// iframe (mimicking the Auth0 `prompt=none` silent-auth iframe) used to WEDGE on
+// the 2nd navigate. Root cause: navigate/`wait_for` armed + awaited a virtual-time
+// budget whenever the global capture flag (`virtual_time_enabled()`) was on — even
+// in a `--no-determinism` session that never pinned the clock — and
+// `virtualTimeBudgetExpired` never reliably fired on the real-clock page (the
+// cross-origin iframe keeps network fetches pending under
+// `pauseIfNetworkFetchesPending`), so every navigate burned its full timeout and
+// the 2nd one wedged the session. Fixed by gating the virtual-time path on
+// whether the clock was ACTUALLY pinned at inject (`clock_pinned`), so
+// `--no-determinism` takes the clean real-clock load+settle path.
+//
+// Guard: under `--no-determinism`, every navigate to such a page succeeds, the
+// shim stays responsive, and each navigate completes well under the per-call
+// deadline (it no longer stalls the full timeout waiting for a vt budget that
+// can't expire). Determinism-ON behavior is unchanged (covered by
+// live_client_redirect_reattach + integration_navigate_settle_e2e).
+#[test]
+#[ignore = "real Chromium (no network); gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn no_determinism_repeated_navigate_to_cross_origin_iframe_spa_stays_fast() {
+    let Some(chromium) = live_gate() else { return };
+
+    // Origin B: the "silent-auth" iframe content (forced into its own renderer).
+    let auth = spawn_static_server(|path| {
+        (path == "/silent-auth").then(|| {
+            "<!doctype html><html><head><title>silent-auth</title></head>\
+             <body>auth<script>/* token re-check */</script></body></html>"
+                .to_string()
+        })
+    });
+    let auth_origin = format!("http://{auth}");
+
+    // Origin A: the app whose SDK injects the hidden cross-origin iframe on load.
+    let app_html = format!(
+        "<!doctype html><html><head><title>app</title></head><body><h1 id=\"app\">app</h1>\
+         <script>\
+           var f=document.createElement('iframe');\
+           f.id='silent-auth';f.style.display='none';\
+           f.src='http://{auth}/silent-auth';\
+           document.body.appendChild(f);\
+         </script></body></html>"
+    );
+    let app = spawn_static_server(move |path| (path == "/").then(|| app_html.clone()));
+    let app_url = format!("http://{app}/");
+
+    // --isolate-origins forces the auth origin out-of-process (true OOPIF).
+    let mut harness = DaemonTestHarness::new()
+        .env("LOOM_CHROMIUM_PATH", &chromium)
+        .env(
+            "LOOM_CHROMIUM_EXTRA_FLAGS",
+            format!(
+                "--no-sandbox --disable-dev-shm-usage --use-mock-keychain --password-store=basic \
+                 --isolate-origins={auth_origin} --site-per-process"
+            ),
+        )
+        // Shim stderr (incl. any panic backtrace) is drained into daemon.stderr.
+        .env("RUST_BACKTRACE", "full")
+        .with_ready_timeout(Duration::from_secs(30));
+    provision_web_world(harness.home());
+    harness.start();
+
+    // --no-determinism: real wall-clock (the studio's mode, where the bug lived).
+    let out = run_loom(
+        &harness,
+        &[
+            "session",
+            "create",
+            "--no-determinism",
+            "--profile",
+            "standard",
+        ],
+    );
+    assert_eq!(out.status, 0, "session create failed: {}", out.stderr);
+    let sid = serde_json::from_str::<serde_json::Value>(&out.stdout).expect("session create JSON")
+        ["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+
+    let daemon_stderr = harness.home().join("daemon.stderr");
+    for i in 1..=4 {
+        let t0 = Instant::now();
+        let nav = navigate(&harness, &sid, &app_url, "settled");
+        let elapsed = t0.elapsed();
+        let log = std::fs::read_to_string(&daemon_stderr).unwrap_or_default();
+        assert_eq!(
+            nav["status"], "success",
+            "navigate #{i} must succeed (no wedge); got {nav}\n--- daemon.stderr ---\n{log}"
+        );
+        // Pre-fix, navigate stalled the full settle timeout (~10-20s) waiting for a
+        // virtualTimeBudgetExpired that never came. Post-fix it's a real-clock
+        // settle (sub-second on this trivial page). 10s is a generous ceiling that
+        // still catches the regression.
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "navigate #{i} took {elapsed:?} — the no_determinism virtual-time stall is back\n\
+             --- daemon.stderr ---\n{log}"
+        );
+        let alive = eval_text(&harness, &sid, "1 + 1");
+        assert!(
+            json_contains(&alive, "2"),
+            "shim must stay responsive after navigate #{i}; got {alive}\n\
+             --- daemon.stderr ---\n{log}"
+        );
+    }
+
+    eprintln!("no_determinism repeated navigate to cross-origin-iframe SPA: fast + responsive ×4");
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+}
+
 // ─── helpers (mirrors live_frame_targeting) ───────────────────────────────────
 
 fn json_contains(v: &serde_json::Value, needle: &str) -> bool {

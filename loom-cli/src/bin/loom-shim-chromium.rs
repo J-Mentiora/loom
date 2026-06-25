@@ -46,6 +46,19 @@ fn main() -> ExitCode {
             std::env::temp_dir().join(format!("loom-chromium-{}", std::process::id()))
         });
 
+    // Optional structured logging to stderr — drained into the daemon log by
+    // `loom-host` (ShimManager). The shim was previously unobservable: a hang or
+    // panic surfaced only as an opaque `ExitStatus(256)` with no cause. Silent by
+    // default (no overhead, deterministic); enable with `RUST_LOG`
+    // (e.g. `RUST_LOG=loom_shims=trace`).
+    if std::env::var_os("RUST_LOG").is_some() {
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .with_writer(std::io::stderr)
+            .with_target(true)
+            .try_init();
+    }
+
     let config = loom_shims::supervisor::SupervisorConfig::new(chromium_path, user_data_dir);
 
     let rt = match tokio::runtime::Builder::new_multi_thread()
