@@ -405,6 +405,7 @@ async fn implicit_session_create_forwards_seed_clock_anchor_profile() {
         clock_anchor: Some(1_700_000_000_000),
         profile: Some("full".into()),
         budget: None,
+        no_determinism: None,
     };
     let (dispatcher, caller) = primed_dispatcher(options, HashMap::new()).await;
     let result = dispatcher.tools_call(navigate_params()).await;
@@ -414,6 +415,27 @@ async fn implicit_session_create_forwards_seed_clock_anchor_profile() {
         creates,
         vec![json!({ "profile": "full", "seed": 42, "clock_anchor": 1_700_000_000_000_u64 })],
         "env-derived options must reach session.create"
+    );
+}
+
+#[tokio::test]
+async fn implicit_session_create_forwards_no_determinism() {
+    // A truthy `LOOM_MCP_SESSION_NO_DETERMINISM` baseline must reach
+    // session.create as `no_determinism:true` (real wall-clock + unseeded RNG)
+    // — the implicit-session path MCP clients (e.g. the studio) drive auth'd
+    // SPAs through. `Some(false)` must NOT emit the key (byte-identical default).
+    let options = SessionOptions {
+        no_determinism: Some(true),
+        ..SessionOptions::default()
+    };
+    let (dispatcher, caller) = primed_dispatcher(options, HashMap::new()).await;
+    let result = dispatcher.tools_call(navigate_params()).await;
+    assert!(!result.is_error, "navigate must succeed: {result:?}");
+    let creates = RecordingFakeCaller::calls_for(&caller.calls, "session.create");
+    assert_eq!(
+        creates,
+        vec![json!({ "profile": "standard", "no_determinism": true })],
+        "no_determinism baseline must reach session.create"
     );
 }
 
@@ -462,7 +484,7 @@ async fn implicit_session_create_with_default_options_is_unchanged() {
 #[test]
 fn session_options_parse_valid_invalid_and_empty_values() {
     assert_eq!(
-        SessionOptions::from_values(None, None, None, None).unwrap(),
+        SessionOptions::from_values(None, None, None, None, None).unwrap(),
         SessionOptions::default()
     );
     assert_eq!(
@@ -471,6 +493,7 @@ fn session_options_parse_valid_invalid_and_empty_values() {
             Some("1700000000000".into()),
             Some("standard".into()),
             Some(r#"{"session_walltime_ms":30000}"#.into()),
+            Some("true".into()),
         )
         .unwrap(),
         SessionOptions {
@@ -478,6 +501,7 @@ fn session_options_parse_valid_invalid_and_empty_values() {
             clock_anchor: Some(1_700_000_000_000),
             profile: Some("standard".into()),
             budget: Some(json!({ "session_walltime_ms": 30000 })),
+            no_determinism: Some(true),
         }
     );
     // Shell `VAR=` (empty/whitespace) means unset, not an error.
@@ -487,26 +511,49 @@ fn session_options_parse_valid_invalid_and_empty_values() {
             Some("  ".into()),
             Some(String::new()),
             Some("   ".into()),
+            Some("  ".into()),
         )
         .unwrap(),
         SessionOptions::default()
     );
     // Malformed numerics fail loudly — a silently-dropped seed would
     // yield non-deterministic captures that look deterministic.
-    let err =
-        SessionOptions::from_values(Some("not-a-number".into()), None, None, None).unwrap_err();
+    let err = SessionOptions::from_values(Some("not-a-number".into()), None, None, None, None)
+        .unwrap_err();
     assert_eq!(err.code, LoomErrorCode::InvalidArgument);
     assert!(err.message.contains("LOOM_MCP_SESSION_SEED"), "{err}");
-    let err = SessionOptions::from_values(None, Some("-5".into()), None, None).unwrap_err();
+    let err = SessionOptions::from_values(None, Some("-5".into()), None, None, None).unwrap_err();
     assert!(
         err.message.contains("LOOM_MCP_SESSION_CLOCK_ANCHOR"),
         "{err}"
     );
     // Malformed budget JSON fails loudly too — a silently-dropped budget
     // would let a runaway page outlive its intended kill deadline.
-    let err = SessionOptions::from_values(None, None, None, Some("{not json".into())).unwrap_err();
+    let err =
+        SessionOptions::from_values(None, None, None, Some("{not json".into()), None).unwrap_err();
     assert_eq!(err.code, LoomErrorCode::InvalidArgument);
     assert!(err.message.contains("LOOM_MCP_SESSION_BUDGET"), "{err}");
+    // A typo'd boolean fails loudly — must not silently leave determinism on.
+    let err =
+        SessionOptions::from_values(None, None, None, None, Some("maybe".into())).unwrap_err();
+    assert_eq!(err.code, LoomErrorCode::InvalidArgument);
+    assert!(
+        err.message.contains("LOOM_MCP_SESSION_NO_DETERMINISM"),
+        "{err}"
+    );
+    // no_determinism forwards into the create params only when enabled.
+    assert_eq!(
+        SessionOptions {
+            no_determinism: Some(true),
+            ..SessionOptions::default()
+        }
+        .to_create_params(),
+        json!({ "profile": "standard", "no_determinism": true })
+    );
+    assert_eq!(
+        SessionOptions::default().to_create_params(),
+        json!({ "profile": "standard" })
+    );
 }
 
 #[test]
@@ -529,6 +576,7 @@ fn session_options_from_env_reads_process_env() {
             clock_anchor: Some(1_700_000_000_001),
             profile: Some("standard".into()),
             budget: Some(json!({ "wall_clock": "30s" })),
+            no_determinism: None,
         }
     );
     assert_eq!(
@@ -549,6 +597,7 @@ async fn evicted_implicit_session_recreates_with_same_options_and_retries() {
             clock_anchor: None,
             profile: None,
             budget: None,
+            no_determinism: None,
         };
         let dead = HashMap::from([("fixture-session-1".to_string(), gone)]);
         let (dispatcher, caller) = primed_dispatcher(options, dead).await;
@@ -718,6 +767,7 @@ async fn session_reset_closes_old_session_and_merges_options_over_env_baseline()
         clock_anchor: Some(2),
         profile: None,
         budget: None,
+        no_determinism: None,
     };
     let (dispatcher, caller) = primed_dispatcher(baseline, HashMap::new()).await;
     // First tool call creates fixture-session-1 with the baseline.
@@ -778,6 +828,7 @@ async fn session_reset_forwards_budget_and_falls_back_to_baseline() {
         clock_anchor: None,
         profile: None,
         budget: Some(json!({ "wall_clock": "60s" })),
+        no_determinism: None,
     };
     let (dispatcher, caller) = primed_dispatcher(baseline, HashMap::new()).await;
     // First tool call creates fixture-session-1 with the baseline budget.
@@ -852,6 +903,7 @@ async fn session_info_reports_id_options_and_created_at() {
         clock_anchor: Some(7),
         profile: None,
         budget: None,
+        no_determinism: None,
     };
     let (dispatcher, _caller) = primed_dispatcher(baseline, HashMap::new()).await;
     let result = dispatcher

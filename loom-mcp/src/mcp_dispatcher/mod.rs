@@ -21,6 +21,7 @@ impl SessionOptions {
             std::env::var(ENV_SESSION_CLOCK_ANCHOR).ok(),
             std::env::var(ENV_SESSION_PROFILE).ok(),
             std::env::var(ENV_SESSION_BUDGET).ok(),
+            std::env::var(ENV_SESSION_NO_DETERMINISM).ok(),
         )
     }
 
@@ -34,6 +35,7 @@ impl SessionOptions {
         clock_anchor: Option<String>,
         profile: Option<String>,
         budget: Option<String>,
+        no_determinism: Option<String>,
     ) -> Result<Self, LoomError> {
         Ok(Self {
             seed: parse_env_u64(ENV_SESSION_SEED, seed)?,
@@ -42,6 +44,7 @@ impl SessionOptions {
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty()),
             budget: parse_env_json(ENV_SESSION_BUDGET, budget)?,
+            no_determinism: parse_env_bool(ENV_SESSION_NO_DETERMINISM, no_determinism)?,
         })
     }
 
@@ -68,6 +71,11 @@ impl SessionOptions {
         if let Some(budget) = &self.budget {
             params.insert("budget".to_string(), budget.clone());
         }
+        // Only emit the key when enabling it, so the all-default shape stays
+        // byte-identical to the pre-feature `{"profile":"standard"}`.
+        if self.no_determinism == Some(true) {
+            params.insert("no_determinism".to_string(), serde_json::json!(true));
+        }
         serde_json::Value::Object(params)
     }
 }
@@ -84,6 +92,27 @@ fn parse_env_u64(var: &str, raw: Option<String>) -> Result<Option<u64>, LoomErro
             format!("{var} must be a non-negative integer, got {trimmed:?}"),
         )
     })
+}
+
+/// Parse an env-shaped boolean (the no-determinism baseline). Empty/whitespace
+/// is unset (shell `VAR=`). Truthy: `1`/`true`/`yes`/`on` (case-insensitive);
+/// falsy: `0`/`false`/`no`/`off`. Anything else is a hard startup error — a
+/// typo'd flag must not silently leave determinism on (it would hand the
+/// consumer a frozen-clock session that LOOKS like it asked for live time).
+fn parse_env_bool(var: &str, raw: Option<String>) -> Result<Option<bool>, LoomError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(Some(true)),
+        "0" | "false" | "no" | "off" => Ok(Some(false)),
+        _ => Err(LoomError::new(
+            LoomErrorCode::InvalidArgument,
+            format!("{var} must be a boolean (1/true/yes/on or 0/false/no/off), got {trimmed:?}"),
+        )),
+    }
 }
 
 /// Parse an env-shaped JSON value (the budget baseline). Empty/whitespace
@@ -395,6 +424,10 @@ impl McpDispatcher {
                               limits (e.g. {\"wall_clock\":\"30s\"} or \
                               {\"session_walltime_ms\":30000}) — a runaway page is \
                               budget-killed with error.kind=\"budget_exceeded\". \
+                              `no_determinism:true` runs the session on a REAL \
+                              wall-clock + unseeded RNG (needed to drive real auth'd \
+                              SPAs whose bootstrap timers never fire under the frozen \
+                              clock); such a session is NON-replayable. \
                               Returns {session_id}."
                     .into(),
                 input_schema: obj(
@@ -403,6 +436,7 @@ impl McpDispatcher {
                         "clock_anchor": uint,
                         "profile": { "type": "string" },
                         "budget": { "type": "object" },
+                        "no_determinism": { "type": "boolean" },
                     }),
                     serde_json::json!([]),
                 ),
@@ -636,6 +670,7 @@ impl McpDispatcher {
             clock_anchor: p.clock_anchor.or(self.baseline_options.clock_anchor),
             profile: p.profile.or_else(|| self.baseline_options.profile.clone()),
             budget: p.budget.or_else(|| self.baseline_options.budget.clone()),
+            no_determinism: p.no_determinism.or(self.baseline_options.no_determinism),
         };
         let mut guard = self.implicit_session.lock().await;
         // Close the outgoing session best-effort: an error just means the
