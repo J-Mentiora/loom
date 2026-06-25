@@ -85,6 +85,29 @@ pub fn virtual_time_enabled() -> bool {
     std::env::var("LOOM_CAPTURE_VIRTUAL_TIME").as_deref() != Ok("0")
 }
 
+/// Process-global: did THIS session pin the virtual-time clock at inject?
+/// The shim is one-session-per-process, and the determinism freeze-inject runs
+/// once per session and ONLY when `determinism_enabled` (see
+/// `target_manager::create_new_target`). A `--no-determinism` session never
+/// injects, so this stays `false` — letting navigate/`wait_for` skip the
+/// virtual-time arm+await (whose `virtualTimeBudgetExpired` never reliably
+/// arrives on a real wall-clock page, which is what hung the 2nd navigate to a
+/// heavy cross-origin auth'd SPA). Set once at inject; read on the verb path.
+static CLOCK_PINNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether the virtual-time clock is pinned for this session (set at inject).
+/// Verbs gate their virtual-time arm+await on this so `--no-determinism`
+/// sessions take the clean real-clock load+settle path.
+pub fn clock_pinned() -> bool {
+    CLOCK_PINNED.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Record at inject whether this session pinned the virtual-time clock. Called
+/// from the freeze-inject path (which only runs when `determinism_enabled`).
+pub(crate) fn set_clock_pinned(pinned: bool) {
+    CLOCK_PINNED.store(pinned, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Pure helper: build the CBOR params for re-arming the virtual-time budget on a
 /// navigation (no `initialVirtualTime` — the origin was pinned at inject; this
 /// just grants a bounded budget for the page to advance through during load +
@@ -419,6 +442,11 @@ impl DeterminismInjector for ChromiumDeterminismInjector {
         // structured context and DEGRADE GRACEFULLY — the page still renders
         // (with a non-deterministic real-time clock); we never hang or hard-fail
         // the capture. Gated by LOOM_CAPTURE_VIRTUAL_TIME for rollback (P6).
+        // Record whether this (determinism_enabled) session pins the virtual-time
+        // clock, so the verb path can gate its budget arm+await on it. inject()
+        // only runs under `determinism_enabled`; `virtual_time_enabled()` (env)
+        // decides vt-clock vs frozen-clock here.
+        set_clock_pinned(virtual_time_enabled());
         let mut need_freeze = !virtual_time_enabled();
         if virtual_time_enabled() {
             let vt_msg = CdpMessage {
