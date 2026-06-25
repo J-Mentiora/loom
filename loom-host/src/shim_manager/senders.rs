@@ -1411,15 +1411,27 @@ fn marker_resolver_js(seg: &Segment) -> Option<String> {
     }
 }
 
-/// First *visible* element whose normalized text contains `needle` (case-
-/// insensitive), preferring the smallest such element (most specific match).
+/// Deepest *visible* element whose normalized text contains `needle` (case-
+/// insensitive). Candidates are the visible, text-matching elements; an element is
+/// disqualified when it *contains another candidate* — i.e. the real match is
+/// nested deeper — so a full-width wrapper never wins over the tight control it
+/// contains. Disqualification is visibility-gated on purpose: a hidden child (a
+/// `display:none`/`visibility:hidden` twin, a `.sr-only` label, an inline
+/// `<script>`/`<style>` whose code happens to contain the text) is not a
+/// candidate, so it neither steals the click nor makes its visible parent
+/// unresolvable. Among the remaining deepest candidates we prefer the shortest
+/// normalized text (closest to an exact match), then the smallest bounding-box
+/// area. This is Playwright `getByText()` semantics. (The old code ranked all
+/// matches by `textContent` length, which tied a wrapper with its sole-text child;
+/// pre-order + strict `<` then made the wrapper win, so `web.click` landed on its
+/// empty center.)
 fn text_resolver_js(needle: &str) -> String {
     let n = serde_json::to_string(needle).unwrap_or_else(|_| "\"\"".into());
     let mut body = String::from(JS_PRELUDE);
     body.push_str("var needle=norm(");
     body.push_str(&n);
     body.push_str(").toLowerCase();if(!needle)return false;");
-    body.push_str("var best=null,bestLen=1e9,all=document.querySelectorAll('body *');for(var i=0;i<all.length;i++){var e=all[i];if(!vis(e))continue;var t=norm(e.textContent).toLowerCase();if(t.indexOf(needle)!==-1&&t.length<bestLen){best=e;bestLen=t.length;}}if(best){best.setAttribute(M,'1');return true;}return false;");
+    body.push_str("var all=document.querySelectorAll('body *'),cand=[];for(var i=0;i<all.length;i++){var e=all[i];if(vis(e)&&norm(e.textContent).toLowerCase().indexOf(needle)!==-1)cand.push(e);}var best=null,bestLen=Infinity,bestArea=Infinity;for(var i=0;i<cand.length;i++){var e=cand[i],inner=false;for(var j=0;j<cand.length;j++){if(j!==i&&e.contains(cand[j])){inner=true;break;}}if(inner)continue;var len=norm(e.textContent).length,r=e.getBoundingClientRect(),area=r.width*r.height;if(len<bestLen||(len===bestLen&&area<bestArea)){best=e;bestLen=len;bestArea=area;}}if(best){best.setAttribute(M,'1');return true;}return false;");
     wrap(&body)
 }
 
@@ -1492,6 +1504,31 @@ mod locator_resolver_tests {
             "needle must be JSON-escaped: {js}"
         );
         assert!(js.starts_with("(function(){") && js.ends_with("})()"));
+    }
+
+    #[test]
+    fn text_resolver_disqualifies_wrapper_via_nested_visible_candidate() {
+        let js = text_resolver_js("Continue");
+        // Candidacy is visibility-gated: a hidden child must neither be clicked nor
+        // disqualify its visible parent.
+        assert!(
+            js.contains("vis(e)"),
+            "candidates must be visibility-gated: {js}"
+        );
+        // A wrapper is disqualified when it CONTAINS another (visible) candidate, so
+        // the click lands on the tight control, not the wrapper's empty center.
+        assert!(
+            js.contains("e.contains("),
+            "must disqualify ancestors that contain a nested visible match: {js}"
+        );
+        // Among deepest candidates, prefer the closest-to-exact text then the
+        // tightest box — not a global smallest-area pick.
+        assert!(
+            js.contains("bestLen")
+                && js.contains("bestArea")
+                && js.contains("getBoundingClientRect"),
+            "must rank by shortest text then bounding-box area: {js}"
+        );
     }
 
     #[test]

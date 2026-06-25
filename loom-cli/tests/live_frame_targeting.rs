@@ -274,6 +274,140 @@ fn top_frame_text_and_role_locators_click_a_testid_less_button() {
     let _ = run_loom(&harness, &["session", "close", &sid]);
 }
 
+/// Regression for the `text=` wrapper bug: a full-width footer whose ONLY text comes
+/// from a right-aligned `<button>Continue</button>`. The footer and the button have
+/// IDENTICAL `textContent` ("Continue"), so the old length-ranking resolver (pre-order +
+/// strict `<`) marked the footer and clicked its geometric CENTER — empty space, no
+/// handler — while reporting success. With the deepest-container fix the button itself is
+/// marked, so the click lands on it and its `onclick` sets `document.title='CLICKED'`.
+/// `justify-content:flex-end` pins the button to the right edge so the footer center is
+/// provably NOT over the button.
+const OFFCENTER_FOOTER_HTML: &str = "<!doctype html><html><head><title>idle</title>\
+     <style>html,body{margin:0;padding:0}\
+       #footer{box-sizing:border-box;display:flex;justify-content:flex-end;align-items:center;\
+               width:100%;height:96px;padding:0 24px;background:#eee}\
+       #btn{padding:12px 28px}</style></head><body>\
+     <div id=\"footer\">\
+       <button id=\"btn\" onclick=\"document.title='CLICKED'\">Continue</button>\
+     </div></body></html>";
+
+#[test]
+#[ignore = "real Chromium (no network); gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn text_locator_clicks_offcenter_button_not_wrapper_center() {
+    if std::env::var("LOOM_LIVE_E2E").as_deref() != Ok("1") {
+        eprintln!("skip: set LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH to run");
+        return;
+    }
+    let chromium = match std::env::var("LOOM_CHROMIUM_PATH") {
+        Ok(p) if Path::new(&p).exists() => p,
+        _ => {
+            eprintln!("skip: LOOM_CHROMIUM_PATH unset/missing");
+            return;
+        }
+    };
+    let app = spawn_static_server(|path| (path == "/").then(|| OFFCENTER_FOOTER_HTML.to_string()));
+    let app_url = format!("http://{app}/");
+
+    let mut harness = DaemonTestHarness::new()
+        .env("LOOM_CHROMIUM_PATH", &chromium)
+        .env(
+            "LOOM_CHROMIUM_EXTRA_FLAGS",
+            "--no-sandbox --disable-dev-shm-usage --use-mock-keychain --password-store=basic",
+        )
+        .with_ready_timeout(std::time::Duration::from_secs(30));
+    provision_web_world(harness.home());
+    harness.start();
+    let sid = create_session(&harness);
+
+    let nav = navigate(&harness, &sid, &app_url, "settled");
+    assert_eq!(nav["status"], "success", "navigate must succeed; got {nav}");
+
+    // Sanity: the handler has not fired yet.
+    let before = eval_text(&harness, &sid, "document.title");
+    assert!(
+        json_contains(&before, "idle"),
+        "title must start as 'idle' before the click; got {before}"
+    );
+
+    // text=Continue: the footer and the button share the same textContent, so the resolver
+    // must pick the DEEPEST container (the button), not the full-width wrapper whose center
+    // is empty space.
+    let by_text = click(&harness, &sid, "text=Continue");
+    assert_eq!(
+        by_text["status"], "success",
+        "text=Continue must resolve + click; got {by_text}"
+    );
+
+    // Proof the click landed on the button (not the empty footer center): its onclick set
+    // the title. Before the deepest-container fix this stayed 'idle' (silent no-op).
+    let after = eval_text(&harness, &sid, "document.title");
+    assert!(
+        json_contains(&after, "CLICKED"),
+        "text=Continue must click the right-aligned button (title→CLICKED), not the footer \
+         wrapper's empty center; got {after}"
+    );
+
+    eprintln!("text= locator clicked the off-center button, not the wrapper center: OK");
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+}
+
+/// Regression for the visibility-gated candidacy: a normal button whose text is
+/// duplicated inside a `display:none` child (the `.sr-only`/hidden-twin pattern).
+/// The hidden child must NOT disqualify the visible button (which would leave the
+/// resolver with no clickable candidate) — `text=Continue` must still click the
+/// button and fire its handler.
+const HIDDEN_TWIN_HTML: &str = "<!doctype html><html><head><title>idle</title></head><body>\
+     <button id=\"btn\" onclick=\"document.title='CLICKED'\">Continue\
+       <span style=\"display:none\">Continue</span></button>\
+     </body></html>";
+
+#[test]
+#[ignore = "real Chromium (no network); gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn text_locator_ignores_hidden_duplicate_text_child() {
+    if std::env::var("LOOM_LIVE_E2E").as_deref() != Ok("1") {
+        eprintln!("skip: set LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH to run");
+        return;
+    }
+    let chromium = match std::env::var("LOOM_CHROMIUM_PATH") {
+        Ok(p) if Path::new(&p).exists() => p,
+        _ => {
+            eprintln!("skip: LOOM_CHROMIUM_PATH unset/missing");
+            return;
+        }
+    };
+    let app = spawn_static_server(|path| (path == "/").then(|| HIDDEN_TWIN_HTML.to_string()));
+    let app_url = format!("http://{app}/");
+
+    let mut harness = DaemonTestHarness::new()
+        .env("LOOM_CHROMIUM_PATH", &chromium)
+        .env(
+            "LOOM_CHROMIUM_EXTRA_FLAGS",
+            "--no-sandbox --disable-dev-shm-usage --use-mock-keychain --password-store=basic",
+        )
+        .with_ready_timeout(std::time::Duration::from_secs(30));
+    provision_web_world(harness.home());
+    harness.start();
+    let sid = create_session(&harness);
+
+    let nav = navigate(&harness, &sid, &app_url, "settled");
+    assert_eq!(nav["status"], "success", "navigate must succeed; got {nav}");
+
+    let by_text = click(&harness, &sid, "text=Continue");
+    assert_eq!(
+        by_text["status"], "success",
+        "text=Continue must resolve despite the hidden duplicate-text child; got {by_text}"
+    );
+    let after = eval_text(&harness, &sid, "document.title");
+    assert!(
+        json_contains(&after, "CLICKED"),
+        "the visible button must be clicked even though a display:none child shares its \
+         text (the hidden child must not disqualify the parent); got {after}"
+    );
+
+    eprintln!("text= locator ignored the hidden duplicate-text child and clicked the button: OK");
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+}
+
 fn json_contains(v: &serde_json::Value, needle: &str) -> bool {
     serde_json::to_string(v)
         .map(|s| s.contains(needle))
