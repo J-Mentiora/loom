@@ -252,7 +252,7 @@ async fn read_blob_uri_returns_png_bytes() {
     assert!(
         blob.starts_with("iVBORw0KGg"),
         "blob must be base64 of a PNG (prefix iVBORw0KGg); got {:?}",
-        &blob.chars().take(12).collect::<String>()
+        blob.chars().take(12).collect::<String>()
     );
 }
 
