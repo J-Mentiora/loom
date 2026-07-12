@@ -281,6 +281,10 @@ pub struct ChromiumActionExecutor {
     /// recorder issues `Page.startScreencast`/`Ack`/`stopScreencast` on the
     /// same connection.
     pub(crate) recorder: Arc<crate::screencast_recorder::ScreencastRecorder>,
+    /// voice-call-io (task 04): synthetic-microphone audio inject. Shares `cdp`
+    /// (issues `Runtime.evaluate`/`callFunctionOn`) and `targets` (reads the
+    /// per-target `audio_nonce` to address the in-page enqueue hook).
+    pub(crate) audio: Arc<crate::audio_bridge::AudioBridge>,
 }
 
 impl ChromiumActionExecutor {
@@ -293,12 +297,17 @@ impl ChromiumActionExecutor {
             cdp.clone(),
             Arc::new(crate::screencast_recorder::FfmpegSidecarEncoder),
         ));
+        let audio = Arc::new(crate::audio_bridge::AudioBridge::new(
+            cdp.clone(),
+            targets.clone(),
+        ));
         Self {
             cdp,
             network,
             targets,
             default_budget: DEFAULT_ACTION_BUDGET,
             recorder,
+            audio,
         }
     }
 
@@ -590,6 +599,20 @@ pub trait ActionExecutor: Send + Sync {
             error: Some("screencast recording not supported by this executor".to_string()),
             ..Default::default()
         }
+    }
+
+    /// voice-call-io (task 04): inject daemon-resolved audio bytes into the
+    /// target's synthetic microphone via the in-page enqueue hook. `Err(typed_kind)`
+    /// (no session abort) on a page rejection / timeout / audio-not-enabled. Default
+    /// impl (non-Chromium executors) reports unsupported.
+    async fn inject_audio(
+        &self,
+        _session_id: loom_shared::shim_protocol::SessionId,
+        _target_id: TargetId,
+        _bytes: Vec<u8>,
+        _await_playout: bool,
+    ) -> Result<loom_shared::navigate_outcome::AudioInjectOutcome, String> {
+        Err("audio inject not supported by this executor".to_string())
     }
 }
 
@@ -1402,6 +1425,18 @@ impl ActionExecutor for ChromiumActionExecutor {
         target_id: TargetId,
     ) -> loom_shared::navigate_outcome::ScreencastOutcome {
         self.recorder.stop(target_id).await
+    }
+
+    async fn inject_audio(
+        &self,
+        session_id: loom_shared::shim_protocol::SessionId,
+        target_id: TargetId,
+        bytes: Vec<u8>,
+        await_playout: bool,
+    ) -> Result<loom_shared::navigate_outcome::AudioInjectOutcome, String> {
+        self.audio
+            .inject(session_id, target_id, &bytes, await_playout)
+            .await
     }
 }
 

@@ -415,6 +415,34 @@ async fn handle_request(
                 screencast_outcome_to_cbor(&outcome),
             )
         }
+        ShimRequest::InjectAudio {
+            request_id,
+            session_id,
+            target_id,
+            audio_bytes,
+            await_playout,
+        } => {
+            // Daemon already resolved + size-bounded the payload. The typed error
+            // KIND (no_microphone_request / audio_decode_failed / inject_timeout /
+            // audio_not_enabled / …) rides the `detail` string; the daemon derives
+            // the receipt kind from it.
+            match action_executor
+                .inject_audio(session_id, target_id, audio_bytes, await_playout)
+                .await
+            {
+                Ok(outcome) => make_ok_response(
+                    request_id,
+                    Some(session_id),
+                    audio_inject_outcome_to_cbor(&outcome),
+                ),
+                Err(detail) => make_error_response(
+                    request_id,
+                    Some(session_id),
+                    ShimErrorCode::CdpProtocolError,
+                    detail,
+                ),
+            }
+        }
         ShimRequest::Shutdown { .. } => unreachable!("Shutdown handled in run loop"),
         ShimRequest::Health { .. } => unreachable!("Health handled in run loop"),
     }
@@ -424,6 +452,18 @@ async fn handle_request(
 /// (mirrors `network_log_outcome_to_cbor`).
 fn screencast_outcome_to_cbor(
     outcome: &loom_shared::navigate_outcome::ScreencastOutcome,
+) -> CborValue {
+    let mut bytes = Vec::new();
+    if ciborium::ser::into_writer(outcome, &mut bytes).is_err() {
+        return CborValue::Null;
+    }
+    ciborium::de::from_reader(&bytes[..]).unwrap_or(CborValue::Null)
+}
+
+/// Serialise an `AudioInjectOutcome` to CBOR for `ShimResponse::Ok.payload`
+/// (mirrors `screencast_outcome_to_cbor`).
+fn audio_inject_outcome_to_cbor(
+    outcome: &loom_shared::navigate_outcome::AudioInjectOutcome,
 ) -> CborValue {
     let mut bytes = Vec::new();
     if ciborium::ser::into_writer(outcome, &mut bytes).is_err() {
@@ -482,6 +522,11 @@ fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
             ..
         }
         | ShimRequest::StopRecording {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::InjectAudio {
             request_id,
             session_id,
             ..
@@ -601,7 +646,8 @@ pub fn route_target(req: &ShimRequest) -> RouteTarget {
         | ShimRequest::GetNetworkLog { .. }
         | ShimRequest::WaitFor { .. }
         | ShimRequest::StartRecording { .. }
-        | ShimRequest::StopRecording { .. } => RouteTarget::ActionExecutor,
+        | ShimRequest::StopRecording { .. }
+        | ShimRequest::InjectAudio { .. } => RouteTarget::ActionExecutor,
         ShimRequest::Shutdown { .. } => RouteTarget::Shutdown,
         ShimRequest::Health { .. } => RouteTarget::Health,
     }

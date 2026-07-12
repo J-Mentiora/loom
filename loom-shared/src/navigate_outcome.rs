@@ -156,6 +156,26 @@ pub struct AudioCaptureOutcome {
     pub error: Option<String>,
 }
 
+/// voice-call-io (task 04): the CBOR payload returned in `ShimResponse::Ok` for a
+/// successful `ShimRequest::InjectAudio`. Purely OBSERVATIONAL — it never enters
+/// the replay hash chain (the receipt carries a constant `outcome_hash`); it exists
+/// so the daemon can surface enqueue/playout completion on the receipt as a
+/// non-hashed field (PRD D11 `await_playout`). `serde(default)` on every field for
+/// CBOR wire back-compat.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub struct AudioInjectOutcome {
+    /// Decoded clip duration in milliseconds, as reported by the in-page
+    /// `AudioBuffer` (`decodeAudioData` → `buffer.duration` × 1000). `0` if the
+    /// page did not report a duration.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Whether the shim waited for playout to complete (`await_playout: true` → the
+    /// enqueue Promise resolved on the source node's `ended` event) rather than
+    /// returning as soon as the clip was enqueued.
+    #[serde(default)]
+    pub awaited_playout: bool,
+}
+
 /// Console line captured by the shim (currently always empty; real capture is followup work).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShimConsoleLine {

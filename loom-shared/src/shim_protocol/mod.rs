@@ -267,6 +267,26 @@ pub enum ShimRequest {
         session_id: SessionId,
         target_id: TargetId,
     },
+    /// voice-call-io (task 04): inject caller-provided audio bytes into the
+    /// page's synthetic microphone. The daemon has already resolved the
+    /// payload (blob-ref → CAS or inline base64 → bytes) and size-bounded it
+    /// (≤ 8 MiB decoded) — the shim stays CAS-free and receives raw `audio_bytes`.
+    /// The shim base64-encodes them and hands them to the per-session nonce'd
+    /// in-page enqueue hook via `Runtime.callFunctionOn` (bytes travel as a
+    /// `CallArgument`, never string-interpolated). `ShimResponse::Ok` carries a
+    /// CBOR [`crate::navigate_outcome::AudioInjectOutcome`] (enqueue/playout
+    /// duration); the outcome is observational and never enters the hash chain.
+    InjectAudio {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+        /// Decoded, size-checked audio bytes (any format `decodeAudioData`
+        /// accepts — WAV/mp3/opus). Resolved daemon-side (PRD D12).
+        audio_bytes: Vec<u8>,
+        /// When `true`, the enqueue Promise resolves on the source node's
+        /// `ended` event (playout complete) rather than on `start()` (PRD D11).
+        await_playout: bool,
+    },
     /// Cooperative shutdown. Drains in-flight, then exits.
     Shutdown { request_id: u64 },
     /// Liveness + introspection probe. The shim responds with a
@@ -429,6 +449,26 @@ mod tests {
             epoch_ms: EpochMs(1_700_000_000_000),
             determinism_enabled: true,
             audio_enabled: default_audio_enabled(),
+        };
+        let payload = ciborium_to_vec(&req).unwrap();
+        let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
+        wire.extend_from_slice(&payload);
+        let decoded = decode_frame(&wire).expect("decode");
+        assert_eq!(decoded, req);
+    }
+
+    /// voice-call-io (task 04): the new `InjectAudio` wire variant must survive
+    /// the CBOR frame round-trip (host encodes → shim decodes), including the raw
+    /// `audio_bytes` payload and the `await_playout` flag. Task 02 landed the RPC
+    /// surface but NOT this variant; this proves the shim-boundary contract.
+    #[test]
+    fn inject_audio_round_trips() {
+        let req = ShimRequest::InjectAudio {
+            request_id: 77,
+            session_id: 3,
+            target_id: 0,
+            audio_bytes: vec![0x52, 0x49, 0x46, 0x46, 0x00, 0xFF, 0x7E, 0x01],
+            await_playout: true,
         };
         let payload = ciborium_to_vec(&req).unwrap();
         let mut wire = (payload.len() as u32).to_be_bytes().to_vec();

@@ -18,6 +18,7 @@ loom-core = { workspace = true }
 loom-host = { workspace = true }
 loom-rpc = { workspace = true }
 
+base64 = { workspace = true }
 ciborium = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

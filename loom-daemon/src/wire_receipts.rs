@@ -324,6 +324,44 @@ pub(crate) fn recording_error_receipt(
     }
 }
 
+/// voice-call-io (task 04): success receipt for `web.inject_audio`. Carries a
+/// CONSTANT per-verb `outcome_hash` dispatch-success marker (NOT audio/page state),
+/// exactly like the interaction verbs (`build_input_dispatch_receipt`) and
+/// `build_wait_receipt`, so a voice session's manifest hash chain stays
+/// replay-equal. `await_playout` completion is surfaced only as a daemon-side
+/// tracing event (D18), never on the receipt or in the hash.
+pub(crate) fn build_inject_audio_receipt(action_id: u64, session_id: &str) -> Receipt {
+    let mut r = build_recording_started_receipt(action_id, session_id);
+    r.outcome_hash = Some(loom_core::content_store::sha256_hex(
+        b"loom:audio:inject-ok",
+    ));
+    r
+}
+
+/// Map a failed `web.inject_audio` (the `LoomError` message threaded up from the
+/// shim's typed `detail`) to a typed receipt `error.kind`. The shim emits the bare
+/// kind in `ShimResponse::Error.detail`; it arrives here embedded in the host error
+/// string (`"shim chromium:<sid>: <kind>"`), so match on substrings. Unknown →
+/// `inject_failed` (never silently succeeds).
+pub(crate) fn classify_inject_error(message: &str) -> &'static str {
+    for kind in [
+        "no_microphone_request",
+        "audio_decode_failed",
+        "audio_not_enabled",
+        "inject_timeout",
+        "audio_bridge_unavailable",
+        "payload_too_large",
+        "invalid_argument",
+        "blob_not_found",
+        "determinism_enabled",
+    ] {
+        if message.contains(kind) {
+            return kind;
+        }
+    }
+    "inject_failed"
+}
+
 pub(crate) fn cookie_validation_error_receipt(
     action_id: u64,
     session_id: &str,
