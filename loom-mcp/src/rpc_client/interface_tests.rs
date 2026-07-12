@@ -258,7 +258,7 @@ async fn web_screenshot_tool_result_includes_inline_png_image_block() {
     assert!(
         data.starts_with("iVBORw0KGg"),
         "image data must be base64 of a PNG (prefix iVBORw0KGg); got prefix {:?}",
-        &data.chars().take(12).collect::<String>()
+        data.chars().take(12).collect::<String>()
     );
 }
 
