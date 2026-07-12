@@ -642,7 +642,7 @@ jobs:
           echo "$RF" | grep -q -- '-Dwarnings' || { echo "::error::RUSTFLAGS lost -Dwarnings"; exit 1; }
           echo "RUSTFLAGS=$RF" >> "$GITHUB_ENV"
       - name: Restore pinned-Chromium cache
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.config/loom/chromium
           key: chromium-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('loom-cli/src/chromium_pin.rs') }}
