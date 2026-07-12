@@ -436,6 +436,32 @@ impl WasmHost {
             .await
     }
 
+    /// voice-call-io (task 04): inject caller-provided audio bytes into the
+    /// session's synthetic microphone. Payload is already resolved + size-bounded
+    /// by the daemon; the shim receives raw bytes and hands them to the in-page
+    /// enqueue hook. Errors if no page target exists (navigate + join the call
+    /// first). Returns the observational [`AudioInjectOutcome`] (duration + whether
+    /// playout was awaited); the daemon logs it and builds a constant-hash receipt.
+    pub async fn inject_audio(
+        &self,
+        session_id: &str,
+        audio_bytes: Vec<u8>,
+        await_playout: bool,
+    ) -> Result<loom_shared::navigate_outcome::AudioInjectOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate to the call before web.inject_audio",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_inject_audio(effective_id, shim_session_id, 0, audio_bytes, await_playout)
+            .await
+    }
+
     /// video-capture: stop the active recording, write the encoded `.webm` to
     /// the content store, and return the content hash + metadata. The `.webm`
     /// bytes are non-deterministic and live OUTSIDE the manifest hash chain

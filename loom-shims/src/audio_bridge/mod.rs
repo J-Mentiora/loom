@@ -19,6 +19,14 @@ use sha2::{Digest, Sha256};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// task 04: inject side (`AudioBridge::inject`). Split into its own file, mirroring
+// `screencast_recorder/`, so its tests + the future capture impl live beside it.
+mod audio_bridge;
+pub use audio_bridge::AudioBridge;
+
+#[cfg(test)]
+mod interface_tests;
+
 /// The raw, un-rendered mic-override bootstrap. Embedded at compile time; the
 /// `__LOOM_AUDIO_NONCE__` token is substituted per target by
 /// [`render_bootstrap_script`].
@@ -85,16 +93,13 @@ pub fn build_install_params(nonce: &str) -> ciborium::value::Value {
     ])
 }
 
-// ── task 04/05 seams (Architecture §5) ───────────────────────────────────────
+// ── task 05 seam (Architecture §5) ───────────────────────────────────────────
 //
-// The capture side (`AudioBridge` with a `cdp` handle + a per-target
-// `CaptureState` map, `Caps`, `AudioClock`, `inject`/`start_capture`/
-// `stop_capture`) lands in tasks 04 (inject) and 05 (capture). It is intentionally
-// NOT stubbed here: an `AudioBridge` struct that nothing constructs would carry
-// dead fields (a `-D warnings` clippy failure), and a premature `Caps`/`AudioClock`
-// shape would just be churn to reshape when those tasks land. The install seam
-// above (nonce + render + params) is the only piece task 03 needs, and it slots
-// cleanly beneath the future capture layer.
+// Task 04 landed `AudioBridge::inject` in `audio_bridge.rs`. The capture side
+// (`start_capture`/`stop_capture` + a per-target `CaptureState` map, `Caps`,
+// `AudioClock`) is task 05 and extends the same struct. It is intentionally NOT
+// stubbed yet: premature `Caps`/`AudioClock` shapes would just be churn to reshape
+// when that task lands.
 
 #[cfg(test)]
 mod tests {

@@ -547,6 +547,7 @@ fn set_request_id(req: &mut ShimRequest, id: u64) {
         | ShimRequest::GetNetworkLog { request_id, .. }
         | ShimRequest::StartRecording { request_id, .. }
         | ShimRequest::StopRecording { request_id, .. }
+        | ShimRequest::InjectAudio { request_id, .. }
         | ShimRequest::Shutdown { request_id }
         | ShimRequest::Health { request_id } => *request_id = id,
     }

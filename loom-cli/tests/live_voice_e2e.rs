@@ -784,6 +784,242 @@ fn workspace_root() -> PathBuf {
         .to_path_buf()
 }
 
+// ── task 04 (Inject) real-browser AC1 proof ──────────────────────────────────
+//
+// The TestCdp unit tests prove inject issues the correct CDP calls; this proves
+// the whole chain actually lands audio on the synthetic mic track in the pinned
+// Chromium: an `--audio` session's `getUserMedia({audio:true})` returns loom's
+// synthetic track, `web.inject_audio` enqueues a loud tone into it, and a
+// `MediaStreamTrackProcessor` tap on that same track then reads a non-silent
+// peak. Gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH, like the R7 spike.
+
+/// Minimal standard-alphabet base64 (no dep) for the inline WAV payload.
+fn base64_encode(input: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
+    for chunk in input.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (b[0] as u32) << 16 | (b[1] as u32) << 8 | b[2] as u32;
+        out.push(A[(n >> 18 & 63) as usize] as char);
+        out.push(A[(n >> 12 & 63) as usize] as char);
+        out.push(if chunk.len() > 1 {
+            A[(n >> 6 & 63) as usize] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            A[(n & 63) as usize] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+/// A ~0.3 s 16 kHz mono i16 WAV of a loud 440 Hz sine (amplitude ~0.6 full-scale)
+/// — clearly non-silent so the tap's peak assertion is unambiguous.
+fn tone_wav() -> Vec<u8> {
+    let rate: u32 = 16_000;
+    let n: u32 = rate * 3 / 10; // 0.3 s
+    let mut pcm = Vec::with_capacity(n as usize * 2);
+    for i in 0..n {
+        let t = i as f64 / rate as f64;
+        let s = (2.0 * std::f64::consts::PI * 440.0 * t).sin() * 0.6;
+        pcm.extend_from_slice(&((s * i16::MAX as f64) as i16).to_le_bytes());
+    }
+    let data_len = pcm.len() as u32;
+    let mut wav = Vec::with_capacity(44 + pcm.len());
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes()); // fmt chunk size
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&1u16.to_le_bytes()); // mono
+    wav.extend_from_slice(&rate.to_le_bytes());
+    wav.extend_from_slice(&(rate * 2).to_le_bytes()); // byte rate
+    wav.extend_from_slice(&2u16.to_le_bytes()); // block align
+    wav.extend_from_slice(&16u16.to_le_bytes()); // bits/sample
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&data_len.to_le_bytes());
+    wav.extend_from_slice(&pcm);
+    wav
+}
+
+/// Starts `getUserMedia({audio:true})` (→ loom's synthetic track via the task-03
+/// override) and a persistent `MediaStreamTrackProcessor` loop that records the
+/// running peak amplitude on `window.__loomInjectPeak`. Fire-and-forget: returns
+/// immediately; the loop keeps running on the page event loop between actions.
+const AC1_TAP_SETUP: &str = r#"
+(async () => {
+  window.__loomInjectPeak = 0;
+  window.__loomTapError = null;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const track = stream.getAudioTracks()[0];
+    if (!track) { window.__loomTapError = 'no audio track'; return JSON.stringify({ ok: false }); }
+    const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
+    (async () => {
+      for (;;) {
+        const { value: frame, done } = await reader.read();
+        if (done || !frame) break;
+        try {
+          const opts = { planeIndex: 0, format: 'f32-planar' };
+          const buf = new Float32Array(frame.allocationSize(opts) / 4);
+          frame.copyTo(buf, opts);
+          for (let i = 0; i < buf.length; i++) {
+            const a = Math.abs(buf[i]);
+            if (a > window.__loomInjectPeak) window.__loomInjectPeak = a;
+          }
+        } catch (e) { /* non-f32 frame; skip */ }
+        frame.close();
+      }
+    })();
+    return JSON.stringify({ ok: true });
+  } catch (e) {
+    window.__loomTapError = String((e && (e.message || e.name)) || e);
+    return JSON.stringify({ ok: false });
+  }
+})()
+"#;
+
+#[test]
+#[ignore = "real Chromium; gated on LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH"]
+fn inject_audio_delivers_samples_to_mic_track() {
+    if std::env::var("LOOM_LIVE_E2E").as_deref() != Ok("1") {
+        eprintln!("skip: set LOOM_LIVE_E2E=1 + LOOM_CHROMIUM_PATH to run");
+        return;
+    }
+    let chromium = match std::env::var("LOOM_CHROMIUM_PATH") {
+        Ok(p) if Path::new(&p).exists() => p,
+        _ => {
+            eprintln!("skip: LOOM_CHROMIUM_PATH unset/missing");
+            return;
+        }
+    };
+
+    let mut harness = DaemonTestHarness::new()
+        .env("LOOM_CHROMIUM_PATH", &chromium)
+        .env("LOOM_CHROMIUM_EXTRA_FLAGS", CHROMIUM_FLAGS)
+        .with_ready_timeout(std::time::Duration::from_secs(30));
+    provision_web_world(harness.home());
+    harness.start();
+
+    // `--audio` installs the synthetic-mic bootstrap; `--no-determinism` keeps
+    // virtual time from freezing the async tap loop; `standard` lifts the JS
+    // denylist so the tap's evaluate isn't blocked.
+    let sid = {
+        let out = run_loom(
+            &harness,
+            &[
+                "session",
+                "create",
+                "--profile",
+                "standard",
+                "--no-determinism",
+                "--audio",
+            ],
+        );
+        let v: serde_json::Value = serde_json::from_str(&out.stdout)
+            .unwrap_or_else(|e| panic!("session create not JSON: {e}; stderr={:?}", out.stderr));
+        v["session_id"].as_str().expect("session_id").to_string()
+    };
+
+    let url = serve(FIXTURE_HTML);
+    let nav = run_loom(
+        &harness,
+        &[
+            "action",
+            "web.navigate",
+            "--session",
+            &sid,
+            "--url",
+            &url,
+            "--until",
+            "load",
+        ],
+    );
+    let nav_receipt: serde_json::Value = serde_json::from_str(&nav.stdout)
+        .unwrap_or_else(|e| panic!("navigate not JSON: {e}; stderr={:?}", nav.stderr));
+    assert_eq!(
+        nav_receipt["status"], "success",
+        "navigate must succeed; got {nav_receipt}"
+    );
+
+    // Start the gUM tap (returns immediately; the read loop persists).
+    let tap = run_loom(
+        &harness,
+        &[
+            "action",
+            "web.evaluate",
+            "--session",
+            &sid,
+            "--expression",
+            AC1_TAP_SETUP,
+        ],
+    );
+    assert!(
+        tap.stdout.contains("\"ok\":true") || tap.stdout.contains("ok\": true"),
+        "gUM tap setup failed: stdout={} stderr={:?}",
+        truncate(&tap.stdout, 400),
+        tap.stderr
+    );
+
+    // Inject the loud tone; await_playout=true so the call returns only after the
+    // clip has played through the destination node (samples definitely flowed).
+    let b64 = base64_encode(&tone_wav());
+    let inject = run_loom(
+        &harness,
+        &[
+            "action",
+            "web.inject_audio",
+            "--session",
+            &sid,
+            "--audio_b64",
+            &b64,
+            "--await_playout",
+            "true",
+        ],
+    );
+    let inject_receipt: serde_json::Value =
+        serde_json::from_str(&inject.stdout).unwrap_or_else(|e| {
+            panic!(
+                "inject not JSON: {e}; stdout={} stderr={:?}",
+                inject.stdout, inject.stderr
+            )
+        });
+    assert_eq!(
+        inject_receipt["status"], "success",
+        "inject_audio must succeed; got {inject_receipt}"
+    );
+    assert!(
+        inject_receipt["outcome_hash"].as_str().is_some(),
+        "inject receipt must carry the constant outcome_hash; got {inject_receipt}"
+    );
+
+    // The tap must have observed non-silent audio on the mic track.
+    let peak = evaluate_probe(
+        &harness,
+        &sid,
+        "JSON.stringify({ stage: 'ok', peak: window.__loomInjectPeak || 0, message: String(window.__loomTapError||'') })",
+    );
+    let _ = run_loom(&harness, &["session", "close", &sid]);
+
+    assert!(
+        peak.peak > 0.05,
+        "injected tone must reach the mic track: observed peak={} (tap error={:?})",
+        peak.peak,
+        peak.message
+    );
+    eprintln!(
+        "AC1 OK — injected tone reached the synthetic mic track, peak={}",
+        peak.peak
+    );
+}
+
 // ── decision-model tests (no browser; these run in normal CI) ────────────────
 //
 // The live probe cannot be red-then-green — the "implementation" is Chromium. These give the
