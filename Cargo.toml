@@ -41,7 +41,7 @@ wasmtime-wasi = "45"
 wit-bindgen = "0.58"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 gimli = "0.34"
-addr2line = "0.26"
+addr2line = "0.27"
 ciborium = "0.2"
 base64 = "0.22"
 
