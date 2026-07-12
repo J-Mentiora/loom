@@ -204,9 +204,17 @@ async fn handle_request(
             seed,
             epoch_ms,
             determinism_enabled,
+            audio_enabled,
         } => {
             match target_manager
-                .create_new_target(session_id, profile, seed, epoch_ms, determinism_enabled)
+                .create_new_target(
+                    session_id,
+                    profile,
+                    seed,
+                    epoch_ms,
+                    determinism_enabled,
+                    audio_enabled,
+                )
                 .await
             {
                 Ok(target_id) => {
@@ -259,6 +267,7 @@ async fn handle_request(
             blocklist_enabled,
             until,
             determinism_enabled,
+            audio_enabled,
         } => {
             // Lazy-spawn: when the host doesn't know the target yet (target_id == 0),
             // create one here so the per-session seed reaches the inject path even
@@ -272,6 +281,7 @@ async fn handle_request(
                         seed,
                         epoch_ms,
                         determinism_enabled,
+                        audio_enabled,
                     )
                     .await
                 {
@@ -299,6 +309,7 @@ async fn handle_request(
                     blocklist_enabled,
                     settle_mode,
                     determinism_enabled,
+                    audio_enabled,
                 )
                 .await
             {

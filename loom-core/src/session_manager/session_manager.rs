@@ -102,6 +102,17 @@ pub struct SessionCreateOpts {
     /// both branch on this value.
     #[serde(default = "default_profile_string")]
     pub profile: String,
+    /// voice-call-io: operator's `session create --audio` opt-in. Default
+    /// `false`. When `true`, the session is a browser voice call: the shim
+    /// launches Chromium with the fake-media flags, grants the `audioCapture`
+    /// permission (scoped to the navigated origin, reset on close), and installs
+    /// the synthetic-microphone bootstrap (`audio_bootstrap.js`) at target spawn
+    /// so `getUserMedia({audio})` resolves to a loom-controlled stream. Strictly
+    /// opt-in — the override replaces `getUserMedia`, so it must never touch an
+    /// ordinary session. Carried to the shim as `audio_enabled` on
+    /// `SpawnTarget`/`PageNavigate` (mirrors `determinism_enabled`).
+    #[serde(default)]
+    pub audio: bool,
 }
 
 fn default_profile_string() -> String {
@@ -122,6 +133,7 @@ impl Default for SessionCreateOpts {
             no_determinism: false,
             record_screencast: false,
             profile: default_profile_string(),
+            audio: false,
         }
     }
 }
@@ -262,6 +274,12 @@ pub struct Session {
     /// `false` by default. Read by the daemon to auto-start a whole-session
     /// screencast after the first navigate and finalize it at close.
     pub record_screencast: bool,
+    /// voice-call-io: operator's `session create --audio` opt-in. `false` by
+    /// default. Read by the host's target-spawn / navigate path to compute the
+    /// per-request `audio_enabled` carried on `SpawnTarget`/`PageNavigate`, which
+    /// gates the fake-media launch flags, the origin-scoped `audioCapture` grant,
+    /// and the synthetic-microphone bootstrap install. Mirrors `no_determinism`.
+    pub audio: bool,
     /// Per-session determinism seed. The `Option<u64> → Seed` collapse
     /// happens exactly once, at `LocalSessionManager::create` —
     /// `opts.seed.unwrap_or(default_seed)`. Downstream layers (HostState,

@@ -10,6 +10,7 @@ pub mod error {
 
 // ---- Module declarations ----
 pub mod action_executor;
+pub mod audio_bridge;
 pub mod cdp_connection;
 pub mod determinism_injector;
 pub mod determinism_script_template;

@@ -39,6 +39,7 @@ fn decode_frame_round_trips_shim_request() {
         seed: loom_shared::types::Seed(0),
         epoch_ms: loom_shared::types::EpochMs(0),
         determinism_enabled: true,
+        audio_enabled: false,
     };
     // Hand-roll the wire bytes for a request (encode_frame is for responses;
     // the request side is structurally identical though).

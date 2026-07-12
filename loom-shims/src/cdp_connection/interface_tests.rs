@@ -4,8 +4,10 @@
 // registration (acyclicity).
 
 use super::cdp_connection::{
+    build_grant_audio_capture_params, build_reset_permissions_params, grant_origin_for_url,
     is_browser_scope_method, method_matches, CdpConnection, CdpError, ChromiumCdpConnection,
-    EventFilter, EventHandler, DEFAULT_CDP_TIMEOUT,
+    EventFilter, EventHandler, DEFAULT_CDP_TIMEOUT, GRANT_PERMISSIONS_METHOD,
+    RESET_PERMISSIONS_METHOD,
 };
 use crate::ipc_endpoint::ipc_endpoint::{CdpMessage, ShimErrorCode, TargetId};
 use ciborium::value::Value as CborValue;
@@ -492,6 +494,76 @@ async fn connect_cleans_up_on_bootstrap_failure_and_retry_succeeds() {
     );
 
     cdp.invalidate_session();
+}
+
+// === voice-call-io (task 03): audioCapture grant/reset ===
+
+/// Both permission methods are browser-scope (no sessionId on the wire) — the
+/// grant/reset are context-level, mirroring `Browser.setDownloadBehavior`.
+#[test]
+fn audio_permission_methods_are_browser_scope() {
+    assert!(is_browser_scope_method(GRANT_PERMISSIONS_METHOD));
+    assert!(is_browser_scope_method(RESET_PERMISSIONS_METHOD));
+}
+
+/// The navigate-path grant is scoped to the navigated origin (D16), carries the
+/// `audioCapture` permission, and NEVER an all-origins grant.
+#[test]
+fn grant_params_are_origin_scoped_audiocapture() {
+    let origin = "https://call.example.com";
+    let params = build_grant_audio_capture_params(origin);
+    let map = match &params {
+        CborValue::Map(m) => m,
+        other => panic!("expected Map params, got {other:?}"),
+    };
+    // origin present + exact
+    let got_origin = map
+        .iter()
+        .find(|(k, _)| k == &CborValue::Text("origin".into()))
+        .and_then(|(_, v)| match v {
+            CborValue::Text(s) => Some(s.clone()),
+            _ => None,
+        });
+    assert_eq!(
+        got_origin.as_deref(),
+        Some(origin),
+        "grant must scope to origin"
+    );
+    // permission is exactly ["audioCapture"]
+    let perms = map
+        .iter()
+        .find(|(k, _)| k == &CborValue::Text("permissions".into()))
+        .map(|(_, v)| v.clone())
+        .expect("permissions present");
+    assert_eq!(
+        perms,
+        CborValue::Array(vec![CborValue::Text("audioCapture".into())]),
+        "grant must carry exactly the audioCapture permission"
+    );
+}
+
+/// The close-path reset targets the whole context (empty params) — no origin,
+/// so every granted permission is cleared.
+#[test]
+fn reset_params_are_empty() {
+    assert_eq!(build_reset_permissions_params(), CborValue::Map(vec![]));
+}
+
+/// Origin scoping only applies to http(s) navigations; about:blank / data: have
+/// no meaningful origin to grant, so the grant is skipped there.
+#[test]
+fn grant_origin_extracted_from_http_urls_only() {
+    assert_eq!(
+        grant_origin_for_url("https://call.example.com/room/42?x=1").as_deref(),
+        Some("https://call.example.com")
+    );
+    assert_eq!(
+        grant_origin_for_url("http://localhost:3000/").as_deref(),
+        Some("http://localhost:3000")
+    );
+    assert_eq!(grant_origin_for_url("about:blank"), None);
+    assert_eq!(grant_origin_for_url("data:text/html,<p>hi"), None);
+    assert_eq!(grant_origin_for_url("not a url"), None);
 }
 
 /// A token outliving `invalidate_session` (or the connection itself) is

@@ -46,6 +46,7 @@ pub fn run(config: &BenchmarkConfig) -> Result<SessionCreateReport, BenchmarkErr
         no_blocklist: false,
         no_determinism: false,
         record_screencast: false,
+        audio: false,
         profile: "safe".to_string(),
     };
 
@@ -68,6 +69,7 @@ pub fn run(config: &BenchmarkConfig) -> Result<SessionCreateReport, BenchmarkErr
         no_blocklist: false,
         no_determinism: false,
         record_screencast: false,
+        audio: false,
         profile: "safe".to_string(),
     };
 
@@ -148,6 +150,7 @@ mod tests {
             no_blocklist: false,
             no_determinism: false,
             record_screencast: false,
+            audio: false,
             profile: "safe".to_string(),
         };
 

@@ -560,6 +560,9 @@ impl Host for HostState {
         let blocklist_enabled = !self.no_blocklist;
         // settle-capture (4b): per-session determinism toggle.
         let determinism_enabled = !self.no_determinism;
+        // voice-call-io: per-session audio opt-in, carried onto the wire so the
+        // shim installs the mic bootstrap on the (lazy-spawned) target.
+        let audio_enabled = self.audio;
         let manifest_writer = self.core.manifest_writer.clone();
         let session_id_for_audit = self.session_id.clone();
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
@@ -588,6 +591,13 @@ impl Host for HostState {
             // Browser.downloadWillBegin visibility handler is a deferred
             // follow-up; not implemented today.
             register_chromium_shim_if_absent(&shim_manager, &session_id_str, |config| {
+                // voice-call-io: signal the `--audio` opt-in to the shim's
+                // supervisor (which spawns Chromium before any `audio_enabled`
+                // wire request arrives) so it adds the fake-media launch flags.
+                // Threaded exactly like LOOM_SHIM_PROFILE below.
+                if audio_enabled {
+                    config.env.push(("LOOM_SHIM_AUDIO".into(), "1".into()));
+                }
                 if profile_for_register == "safe" {
                     config.env.push(("LOOM_SHIM_PROFILE".into(), "safe".into()));
                     match &downloads_dir_for_register {
@@ -633,6 +643,7 @@ impl Host for HostState {
                     blocklist_enabled,
                     until,
                     determinism_enabled,
+                    audio_enabled,
                 })
                 .await
                 .map_err(loom_to_wit_error)?;
@@ -829,6 +840,9 @@ impl Host for HostState {
         let epoch_ms = self.epoch_ms;
         // settle-capture (4b): per-session determinism toggle.
         let determinism_enabled = !self.no_determinism;
+        // voice-call-io: per-session audio opt-in, carried onto the wire so the
+        // shim installs the mic bootstrap on the (lazy-spawned) target.
+        let audio_enabled = self.audio;
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
 
         let maybe_id: Result<ShimId, HostError> =
@@ -839,7 +853,14 @@ impl Host for HostState {
             } else {
                 // wait_for never navigates or downloads, so it needs only the
                 // common register core (no safe-profile downloads_dir env).
-                register_chromium_shim_if_absent(&shim_manager, &session_id_str, |_config| {})
+                register_chromium_shim_if_absent(&shim_manager, &session_id_str, |config| {
+                    // voice-call-io: thread the --audio opt-in to the shim's
+                    // supervisor (fake-media launch flags) at whichever verb
+                    // registers the shim first. Mirrors the navigate site.
+                    if audio_enabled {
+                        config.env.push(("LOOM_SHIM_AUDIO".into(), "1".into()));
+                    }
+                })
             };
 
         async move {
@@ -858,6 +879,7 @@ impl Host for HostState {
                     seed,
                     epoch_ms,
                     determinism_enabled,
+                    audio_enabled,
                 })
                 .await
                 .map_err(loom_to_wit_error)?;
@@ -900,6 +922,9 @@ impl Host for HostState {
         let epoch_ms = self.epoch_ms;
         // settle-capture (4b): per-session determinism toggle.
         let determinism_enabled = !self.no_determinism;
+        // voice-call-io: per-session audio opt-in, carried onto the wire so the
+        // shim installs the mic bootstrap on the (lazy-spawned) target.
+        let audio_enabled = self.audio;
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
 
         // Resolve effective shim ID and lazy-register if needed (same
@@ -910,7 +935,14 @@ impl Host for HostState {
                     "evaluate_execute not allowed in replay mode".to_owned(),
                 ))
             } else {
-                register_chromium_shim_if_absent(&shim_manager, &session_id_str, |_config| {})
+                register_chromium_shim_if_absent(&shim_manager, &session_id_str, |config| {
+                    // voice-call-io: thread the --audio opt-in to the shim's
+                    // supervisor (fake-media launch flags) at whichever verb
+                    // registers the shim first. Mirrors the navigate site.
+                    if audio_enabled {
+                        config.env.push(("LOOM_SHIM_AUDIO".into(), "1".into()));
+                    }
+                })
             };
 
         async move {
@@ -930,6 +962,7 @@ impl Host for HostState {
                     seed,
                     epoch_ms,
                     determinism_enabled,
+                    audio_enabled,
                 })
                 .await
                 .map_err(loom_to_wit_error)?;
@@ -1007,6 +1040,9 @@ impl Host for HostState {
         let epoch_ms = self.epoch_ms;
         // settle-capture (4b): per-session determinism toggle.
         let determinism_enabled = !self.no_determinism;
+        // voice-call-io: per-session audio opt-in, carried onto the wire so the
+        // shim installs the mic bootstrap on the (lazy-spawned) target.
+        let audio_enabled = self.audio;
         let shim_session_id = shim_manager.shim_session_id_for(&session_id_str);
 
         // Resolve effective shim ID and lazy-register if needed (same
@@ -1037,6 +1073,7 @@ impl Host for HostState {
                     seed,
                     epoch_ms,
                     determinism_enabled,
+                    audio_enabled,
                 })
                 .await
                 .map_err(loom_to_wit_error)?;

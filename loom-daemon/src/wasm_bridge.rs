@@ -548,6 +548,9 @@ impl WasmHostBridge for WasmBridge {
             no_blocklist: session.no_blocklist,
             // settle-capture (4b): thread the determinism toggle through.
             no_determinism: session.no_determinism,
+            // voice-call-io: thread the --audio opt-in through to HostState so
+            // target-creating host fns carry audio_enabled on the shim wire.
+            audio: session.audio,
             // thread profile + downloads_dir into the
             // SessionHandle so HostState can inject env vars at shim spawn.
             profile: session.profile.clone(),

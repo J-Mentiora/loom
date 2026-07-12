@@ -1919,6 +1919,7 @@ mod tests {
             no_determinism: false,
             clock_anchor: None,
             record_screencast: false,
+            audio: false,
         }
     }
 
@@ -2059,6 +2060,7 @@ mod tests {
                 no_determinism: false,
                 clock_anchor: None,
                 record_screencast: true,
+                audio: true,
             })
             .expect("create A");
         let sess_a = bridge
@@ -2077,6 +2079,10 @@ mod tests {
             sess_a.record_screencast,
             "record_screencast=true must thread (field added by the screencast feature merge)"
         );
+        assert!(
+            sess_a.audio,
+            "audio=true must thread (voice-call-io --audio opt-in reaches Session.audio)"
+        );
 
         // create B: mirror — flips both bools, proving no_determinism threads to `true` too.
         let (sid_b, _) = bridge
@@ -2090,6 +2096,7 @@ mod tests {
                 no_determinism: true,
                 clock_anchor: None,
                 record_screencast: false,
+                audio: false,
             })
             .expect("create B");
         let sess_b = bridge
@@ -2103,6 +2110,7 @@ mod tests {
             !sess_b.record_screencast,
             "record_screencast=false must thread"
         );
+        assert!(!sess_b.audio, "audio=false must thread");
 
         let _ = std::fs::remove_dir_all(&tmp);
     }

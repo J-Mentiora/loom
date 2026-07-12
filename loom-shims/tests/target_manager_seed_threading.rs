@@ -112,7 +112,7 @@ async fn create_new_target_actually_awaits_inject_and_sends_cdp_command() {
     let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
 
     let target_id = mgr
-        .create_new_target(1, "default".into(), Seed(42), EpochMs(0), true)
+        .create_new_target(1, "default".into(), Seed(42), EpochMs(0), true, false)
         .await
         .expect("create_new_target must succeed when inject succeeds");
 
@@ -140,14 +140,14 @@ async fn create_new_target_failed_inject_leaves_flag_false_and_no_session_bindin
     let mgr = ChromiumTargetManager::new(cdp_failing.clone(), injector, build_response_tx());
 
     let result = mgr
-        .create_new_target(2, "default".into(), Seed(42), EpochMs(0), true)
+        .create_new_target(2, "default".into(), Seed(42), EpochMs(0), true, false)
         .await;
     assert!(result.is_err(), "inject failure must propagate");
 
     // Re-trying must NOT short-circuit through a poisoned by_session map —
     // the second create_new_target also exercises a fresh inject attempt.
     let result2 = mgr
-        .create_new_target(2, "default".into(), Seed(42), EpochMs(0), true)
+        .create_new_target(2, "default".into(), Seed(42), EpochMs(0), true, false)
         .await;
     assert!(
         result2.is_err(),
@@ -170,11 +170,11 @@ async fn create_new_target_idempotent_per_session() {
     let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
 
     let t1 = mgr
-        .create_new_target(7, "default".into(), Seed(42), EpochMs(0), true)
+        .create_new_target(7, "default".into(), Seed(42), EpochMs(0), true, false)
         .await
         .unwrap();
     let t2 = mgr
-        .create_new_target(7, "default".into(), Seed(42), EpochMs(0), true)
+        .create_new_target(7, "default".into(), Seed(42), EpochMs(0), true, false)
         .await
         .unwrap();
     assert_eq!(t1, t2, "same session must yield same target_id");
@@ -189,5 +189,100 @@ async fn create_new_target_idempotent_per_session() {
             .count(),
         2,
         "second create_new_target must NOT re-inject (count stays at the first inject's 2)"
+    );
+}
+
+// ── voice-call-io (task 03): audio bootstrap install ─────────────────────────
+
+/// AC5 (unit): an `--audio` target (audio_enabled=true) issues an EXTRA
+/// `addScriptToEvaluateOnNewDocument` for the mic override, on top of the two
+/// determinism scripts, and records the per-target nonce on TargetState.
+#[tokio::test]
+async fn create_new_target_with_audio_installs_mic_override() {
+    let cdp = RecordingCdp::new();
+    let injector = ChromiumDeterminismInjector::new(cdp.clone(), TEMPLATE.to_string());
+    let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
+
+    let target_id = mgr
+        .create_new_target(11, "default".into(), Seed(42), EpochMs(0), true, true)
+        .await
+        .expect("create_new_target must succeed with audio");
+
+    let methods = cdp.methods();
+    // determinism script + IO override (2) + the mic-override bootstrap (1) = 3.
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
+        3,
+        "audio session must install the mic override in ADDITION to the 2 determinism scripts"
+    );
+    let state = mgr
+        .target_state(target_id)
+        .expect("target state must exist");
+    let nonce = state
+        .audio_nonce
+        .expect("audio_nonce must be recorded after a successful install");
+    assert_eq!(nonce.len(), 16, "nonce is 16 hex chars");
+}
+
+/// AC-R1 (unit): a NON-audio target (audio_enabled=false) installs NO mic
+/// override — only the two determinism scripts — and records no audio nonce.
+#[tokio::test]
+async fn create_new_target_without_audio_installs_no_mic_override() {
+    let cdp = RecordingCdp::new();
+    let injector = ChromiumDeterminismInjector::new(cdp.clone(), TEMPLATE.to_string());
+    let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
+
+    let target_id = mgr
+        .create_new_target(12, "default".into(), Seed(42), EpochMs(0), true, false)
+        .await
+        .expect("create_new_target must succeed without audio");
+
+    let methods = cdp.methods();
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
+        2,
+        "non-audio session must install ONLY the 2 determinism scripts (no mic override)"
+    );
+    let state = mgr
+        .target_state(target_id)
+        .expect("target state must exist");
+    assert!(
+        state.audio_nonce.is_none(),
+        "non-audio session must record no audio nonce"
+    );
+}
+
+/// AC5 best-effort: when audio is on but determinism is OFF (`--no-determinism`,
+/// the real-voice-call config), the ONLY installed script is the mic override —
+/// proving the override rides its own inject, not the (skipped) determinism path.
+#[tokio::test]
+async fn audio_without_determinism_installs_only_mic_override() {
+    let cdp = RecordingCdp::new();
+    let injector = ChromiumDeterminismInjector::new(cdp.clone(), TEMPLATE.to_string());
+    let mgr = ChromiumTargetManager::new(cdp.clone(), injector, build_response_tx());
+
+    let target_id = mgr
+        .create_new_target(13, "default".into(), Seed(0), EpochMs(0), false, true)
+        .await
+        .expect("create_new_target must succeed");
+
+    let methods = cdp.methods();
+    assert_eq!(
+        methods
+            .iter()
+            .filter(|m| m.as_str() == ADD_SCRIPT_METHOD)
+            .count(),
+        1,
+        "no-determinism + audio must install exactly the mic override"
+    );
+    assert!(
+        mgr.target_state(target_id).unwrap().audio_nonce.is_some(),
+        "audio nonce recorded even under --no-determinism"
     );
 }

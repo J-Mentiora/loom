@@ -25,7 +25,9 @@
 
 use crate::cdp_connection::cdp_connection::{CdpConnection, CdpError};
 use crate::determinism_injector::determinism_injector::DeterminismInjector;
-use crate::ipc_endpoint::ipc_endpoint::{ResponseSender, SessionId, ShimErrorCode, TargetId};
+use crate::ipc_endpoint::ipc_endpoint::{
+    CdpMessage, ResponseSender, SessionId, ShimErrorCode, TargetId,
+};
 use loom_shared::types::{EpochMs, Seed};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -41,6 +43,12 @@ pub struct TargetState {
     pub determinism_injected: bool,
     /// Profile string passed at `spawn_target` time.
     pub profile: String,
+    /// voice-call-io: the per-target nonce the mic-override bootstrap was
+    /// rendered with (`window.__loom_<nonce>`), set when `--audio` and the
+    /// install succeeded. `None` for non-`--audio` targets (or if the
+    /// best-effort install failed). Task 05's capture tap reads this to address
+    /// the in-page API + exclude injected tracks.
+    pub audio_nonce: Option<String>,
 }
 
 impl TargetState {
@@ -51,6 +59,7 @@ impl TargetState {
             attached_at: Instant::now(),
             determinism_injected: false,
             profile,
+            audio_nonce: None,
         }
     }
 }
@@ -106,6 +115,12 @@ pub trait TargetManager: Send + Sync {
         // settle-capture (4b): when `false`, SKIP the determinism freeze-inject
         // (real clock + unseeded RNG). The R3 readiness flag still flips.
         determinism_enabled: bool,
+        // voice-call-io (task 03): when `true` (session created with `--audio`),
+        // install the synthetic-microphone bootstrap (`audio_bootstrap.js`) with
+        // a fresh per-target nonce. Best-effort — unlike the determinism inject
+        // (load-bearing R3), a failed audio install only WARNs; audio is a
+        // convenience layer, so it must never fail target creation.
+        audio_enabled: bool,
     ) -> Result<TargetId, TargetError>;
 
     /// Look up the target for a session; None if unknown.
@@ -164,6 +179,7 @@ impl TargetManager for ChromiumTargetManager {
         seed: Seed,
         epoch_ms: EpochMs,
         determinism_enabled: bool,
+        audio_enabled: bool,
     ) -> Result<TargetId, TargetError> {
         // Idempotent: return existing target if session already has one
         if let Some(existing) = self.by_session.read().get(&session_id).copied() {
@@ -190,6 +206,42 @@ impl TargetManager for ChromiumTargetManager {
                 .map_err(|e| TargetError::DeterminismInjectionFailed(e.to_string()))?;
         }
         state.determinism_injected = true;
+
+        // voice-call-io (task 03): install the synthetic-microphone bootstrap
+        // for `--audio` sessions. UNLIKE the determinism inject above (load-
+        // bearing R3), this is BEST-EFFORT: a real voice call runs
+        // `--no-determinism`, so the determinism inject never fires and the mic
+        // override rides its own `addScriptToEvaluateOnNewDocument`
+        // (runImmediately) so it is in place before the app's first
+        // `getUserMedia`. A failed install only WARNs — audio is a convenience
+        // layer, and the `--use-fake-device` launch flag is the benign fallback
+        // (a beep, never a hang).
+        if audio_enabled {
+            let nonce = crate::audio_bridge::generate_nonce();
+            let msg = CdpMessage {
+                method: crate::audio_bridge::ADD_SCRIPT_METHOD.to_string(),
+                params: crate::audio_bridge::build_install_params(&nonce),
+            };
+            match self.cdp.command(target_id, msg, None).await {
+                Ok(_) => {
+                    tracing::info!(
+                        target_id,
+                        "audio: synthetic-microphone bootstrap installed (--audio)"
+                    );
+                    state.audio_nonce = Some(nonce);
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        target_id,
+                        error = %e,
+                        "audio: addScriptToEvaluateOnNewDocument for the mic override \
+                         failed; getUserMedia will return the real (fake-device) mic, \
+                         not injected audio"
+                    );
+                }
+            }
+        }
+
         self.by_target.write().insert(target_id, state);
         self.by_session.write().insert(session_id, target_id);
         Ok(target_id)

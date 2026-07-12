@@ -219,6 +219,22 @@ impl Supervisor for ChromiumSupervisor {
         for f in &self.config.extra_flags {
             cmd.arg(f);
         }
+        // voice-call-io (task 03): when the daemon spawned this shim for an
+        // `--audio` session (signalled via `LOOM_SHIM_AUDIO=1`, threaded the same
+        // way `LOOM_SHIM_PROFILE`/`LOOM_SHIM_DOWNLOADS_DIR` are — the shim can't
+        // read the per-navigate `audio_enabled` wire field this early), add the
+        // fake-media launch flags. Per plan-council FND-0020 we DO NOT add
+        // `--use-fake-ui-for-media-stream` (it auto-accepts EVERY origin and
+        // would nullify the origin-scoped CDP `grantPermissions`); the CDP grant
+        // is the single scoped accept path. `--use-fake-device` gives an
+        // enumerable mic (device-gated call UIs proceed; a benign beep is the
+        // fallback if the override ever misses), and `--autoplay-policy` lets the
+        // AudioContext start + the remote audio autoplay without a user gesture.
+        if audio_launch_enabled() {
+            for f in AUDIO_CHROMIUM_FLAGS {
+                cmd.arg(f);
+            }
+        }
         // Env-var escape hatch for environments where Chromium needs
         // extra flags the daemon doesn't know to set: unprivileged
         // Docker containers (`--no-sandbox`), GHA runners with no
@@ -559,6 +575,33 @@ pub fn locale_scrub_env() -> (Vec<(&'static str, &'static str)>, Vec<&'static st
     (
         vec![("LC_ALL", "C.UTF-8"), ("LANG", "C.UTF-8")],
         vec!["LC_MESSAGES", "LC_NUMERIC", "LC_TIME"],
+    )
+}
+
+/// voice-call-io (task 03): per-session env signal the daemon sets when spawning
+/// the shim for an `--audio` session (mirrors `LOOM_SHIM_PROFILE`). The supervisor
+/// spawns Chromium before any `audio_enabled` wire request arrives, so the opt-in
+/// is threaded as this env var rather than read off the wire.
+pub const LOOM_SHIM_AUDIO_ENV: &str = "LOOM_SHIM_AUDIO";
+
+/// Chromium launch flags for an `--audio` session. Deliberately EXCLUDES
+/// `--use-fake-ui-for-media-stream` (plan-council FND-0020): it auto-accepts the
+/// mic prompt for EVERY origin, nullifying the origin-scoped CDP `grantPermissions`
+/// which is the single, scoped accept path. `--use-fake-device` provides an
+/// enumerable fake mic (device-gated call UIs proceed; benign-beep fallback if the
+/// synthetic-mic override ever misses); `--autoplay-policy` lets the AudioContext
+/// start `running` and the remote agent audio autoplay without a user gesture.
+pub const AUDIO_CHROMIUM_FLAGS: &[&str] = &[
+    "--use-fake-device-for-media-stream",
+    "--autoplay-policy=no-user-gesture-required",
+];
+
+/// Whether this shim's session opted into `--audio` (reads [`LOOM_SHIM_AUDIO_ENV`]).
+/// Truthy on `1`/`true` (case-insensitive), matching the daemon's env contract.
+pub fn audio_launch_enabled() -> bool {
+    matches!(
+        std::env::var(LOOM_SHIM_AUDIO_ENV).as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE") | Ok("True")
     )
 }
 

@@ -4,12 +4,63 @@
 // version mismatch, state-invalidation cascade.
 
 use super::supervisor::{
-    extract_ws_url, locale_scrub_env, parse_active_port_file, restart_allowed, RestartBudget,
-    SupervisorConfig, SupervisorError,
+    audio_launch_enabled, extract_ws_url, locale_scrub_env, parse_active_port_file,
+    restart_allowed, RestartBudget, SupervisorConfig, SupervisorError, AUDIO_CHROMIUM_FLAGS,
+    LOOM_SHIM_AUDIO_ENV,
 };
 use crate::ipc_endpoint::ipc_endpoint::ShimErrorCode;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+// Env mutation is process-global; serialize the audio-gate tests (repo
+// convention: ENV_LOCK).
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+// === voice-call-io (task 03): audio launch flags ===
+
+/// FND-0020: the audio flags give a fake device + gesture-free autoplay but MUST
+/// NOT include `--use-fake-ui-for-media-stream` (which auto-accepts every origin
+/// and would nullify the origin-scoped CDP grant).
+#[test]
+fn audio_flags_include_fake_device_and_autoplay_but_not_fake_ui() {
+    assert!(AUDIO_CHROMIUM_FLAGS
+        .iter()
+        .any(|f| f.contains("use-fake-device-for-media-stream")));
+    assert!(AUDIO_CHROMIUM_FLAGS
+        .iter()
+        .any(|f| f.contains("autoplay-policy")));
+    assert!(
+        !AUDIO_CHROMIUM_FLAGS
+            .iter()
+            .any(|f| f.contains("use-fake-ui-for-media-stream")),
+        "FND-0020: --use-fake-ui-for-media-stream must NOT be added (it would \
+         nullify the origin-scoped CDP grant)"
+    );
+}
+
+/// AC-R1 (supervisor layer): the audio gate is off unless the daemon set
+/// `LOOM_SHIM_AUDIO` truthy — so a non-`--audio` session adds no launch flags.
+#[test]
+fn audio_launch_gate_reads_env() {
+    let _g = ENV_LOCK.lock().unwrap();
+    let prev = std::env::var(LOOM_SHIM_AUDIO_ENV).ok();
+    std::env::remove_var(LOOM_SHIM_AUDIO_ENV);
+    assert!(
+        !audio_launch_enabled(),
+        "unset must be off (no flags added)"
+    );
+    std::env::set_var(LOOM_SHIM_AUDIO_ENV, "0");
+    assert!(!audio_launch_enabled(), "0 must be off");
+    std::env::set_var(LOOM_SHIM_AUDIO_ENV, "1");
+    assert!(audio_launch_enabled(), "1 must be on");
+    std::env::set_var(LOOM_SHIM_AUDIO_ENV, "true");
+    assert!(audio_launch_enabled(), "true must be on");
+    match prev {
+        Some(v) => std::env::set_var(LOOM_SHIM_AUDIO_ENV, v),
+        None => std::env::remove_var(LOOM_SHIM_AUDIO_ENV),
+    }
+}
 
 // === L5 parse_devtools_url helpers ===
 

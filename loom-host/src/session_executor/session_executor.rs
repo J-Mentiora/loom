@@ -112,6 +112,10 @@ pub struct SessionHandle {
     /// Operator's `--no-determinism` opt-out (settle-capture 4b). Threaded
     /// from `Session.no_determinism` onto `HostState.no_determinism`.
     pub no_determinism: bool,
+    /// voice-call-io: operator's `--audio` opt-in. Threaded from `Session.audio`
+    /// onto `HostState.audio`; each target-creating host fn carries it as the
+    /// `audio_enabled` wire field on SpawnTarget/PageNavigate.
+    pub audio: bool,
     /// Operator's `--profile` choice (`"safe" | "standard" | "full"`).
     /// Threaded from `Session.profile` so HostState can inject
     /// `LOOM_SHIM_PROFILE` into per-session shim spawns

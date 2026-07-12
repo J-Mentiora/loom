@@ -148,6 +148,7 @@ async fn navigate_settled(
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await
@@ -178,6 +179,7 @@ async fn navigate_with_determinism(
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled,
+            audio_enabled: false,
         }),
     )
     .await
@@ -204,6 +206,7 @@ async fn wait_for_settled(
             seed: loom_shared::types::Seed(0),
             epoch_ms: loom_shared::types::EpochMs(0),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await

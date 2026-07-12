@@ -521,6 +521,10 @@ pub trait ActionExecutor: Send + Sync {
     ///
     /// Errors: `R3OrderingViolation` if `determinism_injected == false`;
     /// `CdpTimeout` if budget exceeded.
+    // 8 args (incl. audio_enabled): the per-navigate wire fields are passed
+    // positionally to mirror the ShimRequest::PageNavigate variant; a params
+    // struct would just re-wrap the same fields.
+    #[allow(clippy::too_many_arguments)]
     async fn page_navigate(
         &self,
         target_id: TargetId,
@@ -533,6 +537,11 @@ pub trait ActionExecutor: Send + Sync {
         // virtual-time budget to drain before DOM capture so timer-driven DOM
         // mutations have deterministically fired. `--no-determinism` → false.
         determinism_enabled: bool,
+        // voice-call-io (task 03): when true (`--audio` session), grant
+        // `audioCapture` scoped to this navigation's origin (D16) before issuing
+        // `Page.navigate`, so the app's first `getUserMedia({audio})` proceeds
+        // without a prompt. Best-effort — a grant failure only WARNs.
+        audio_enabled: bool,
     ) -> Result<ActionResult, ShimResponse>;
 
     /// settle-capture slice 2: run a standalone readiness wait on `target_id`
@@ -631,6 +640,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn page_navigate(
         &self,
         target_id: TargetId,
@@ -639,6 +649,7 @@ impl ActionExecutor for ChromiumActionExecutor {
         blocklist_enabled: bool,
         settle_mode: crate::readiness_monitor::SettleMode,
         determinism_enabled: bool,
+        audio_enabled: bool,
     ) -> Result<ActionResult, ShimResponse> {
         // R3 PRECONDITION. Refuse to navigate before the
         // determinism script has been installed for this target. Today
@@ -653,6 +664,47 @@ impl ActionExecutor for ChromiumActionExecutor {
                 ShimErrorCode::ShimInternalError,
                 "R3OrderingViolation",
             ));
+        }
+
+        // voice-call-io (task 03): for an `--audio` session, grant `audioCapture`
+        // scoped to THIS navigation's origin (D16 — never all-origins) BEFORE
+        // issuing `Page.navigate`, so the permission is in place when the app's
+        // first `getUserMedia({audio})` fires. Browser-scope method (no
+        // sessionId). BEST-EFFORT: a failure only WARNs (mirrors the STEP 5
+        // setDownloadBehavior precedent) — the `--use-fake-device` beep is the
+        // benign fallback. Non-http(s) targets (about:blank/data:) have no origin
+        // to grant, so the grant is skipped. The successful grant is recorded so
+        // the clean close path issues `Browser.resetPermissions`.
+        if audio_enabled {
+            if let Some(origin) = crate::cdp_connection::cdp_connection::grant_origin_for_url(&url)
+            {
+                let grant_msg = CdpMessage {
+                    method: crate::cdp_connection::cdp_connection::GRANT_PERMISSIONS_METHOD
+                        .to_string(),
+                    params: crate::cdp_connection::cdp_connection::build_grant_audio_capture_params(
+                        &origin,
+                    ),
+                };
+                match self.cdp.command(target_id, grant_msg, budget).await {
+                    Ok(_) => {
+                        crate::cdp_connection::cdp_connection::mark_audio_capture_granted();
+                        tracing::info!(
+                            target_id,
+                            origin = %origin,
+                            "audio: Browser.grantPermissions(audioCapture) granted for origin"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            target_id,
+                            origin = %origin,
+                            error = %e,
+                            "audio: Browser.grantPermissions(audioCapture) failed; relying on \
+                             --use-fake-device fallback (getUserMedia may prompt or beep)"
+                        );
+                    }
+                }
+            }
         }
 
         // Tighter default for navigate so unreachable hosts surface a
@@ -1289,6 +1341,28 @@ impl ActionExecutor for ChromiumActionExecutor {
     }
 
     async fn page_close(&self, target_id: TargetId) -> Result<ActionResult, ShimResponse> {
+        // voice-call-io (task 03): on the CLEAN close path, reset the granted
+        // `audioCapture` permission (D16/FND-0006) BEFORE closing the target.
+        // Only when this session actually granted it. Browser-scope, best-effort
+        // — a failure only WARNs. On a crash/abort the whole browser context is
+        // torn down instead, so the grant dies with it (no cross-session leak).
+        if crate::cdp_connection::cdp_connection::audio_capture_granted() {
+            let reset_msg = CdpMessage {
+                method: crate::cdp_connection::cdp_connection::RESET_PERMISSIONS_METHOD.to_string(),
+                params: crate::cdp_connection::cdp_connection::build_reset_permissions_params(),
+            };
+            if let Err(e) = self.cdp.command(target_id, reset_msg, None).await {
+                tracing::warn!(
+                    target_id,
+                    error = %e,
+                    "audio: Browser.resetPermissions on close failed (best-effort; the browser \
+                     context teardown clears the grant regardless)"
+                );
+            } else {
+                tracing::info!(target_id, "audio: Browser.resetPermissions issued on close");
+            }
+        }
+
         // Target.closeTarget over CDP. Best-effort — even if the CDP call
         // fails (Chromium already shut down), the upstream caller treats
         // the target as gone.
