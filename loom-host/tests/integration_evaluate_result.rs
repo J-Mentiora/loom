@@ -117,6 +117,7 @@ async fn evaluate(
             seed: loom_shared::types::Seed(42),
             epoch_ms: loom_shared::types::EpochMs(1_700_000_000_000),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await

@@ -125,6 +125,7 @@ async fn wait_for_settled(
             seed: loom_shared::types::Seed(0),
             epoch_ms: loom_shared::types::EpochMs(0),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await
@@ -336,6 +337,7 @@ async fn no_determinism_wait_for_does_not_arm_virtual_time_budget() {
             epoch_ms: loom_shared::types::EpochMs(0),
             // The session runs on the REAL wall-clock; the clock is never pinned.
             determinism_enabled: false,
+            audio_enabled: false,
         }),
     )
     .await

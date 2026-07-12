@@ -21,6 +21,7 @@ fn params(
         no_blocklist: false,
         no_determinism: false,
         record_screencast: false,
+        audio: false,
         clock_anchor: None,
     }
 }
@@ -39,6 +40,7 @@ fn params_with_capture_policy(
         no_blocklist: false,
         no_determinism: false,
         record_screencast: false,
+        audio: false,
         clock_anchor: None,
     }
 }

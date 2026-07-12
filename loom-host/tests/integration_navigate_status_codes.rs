@@ -113,6 +113,7 @@ async fn navigate(
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await
@@ -290,6 +291,7 @@ async fn naverr_stale_document_events_do_not_leak_into_next_navigate() {
             seed: loom_shared::types::Seed(0),
             epoch_ms: loom_shared::types::EpochMs(0),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await

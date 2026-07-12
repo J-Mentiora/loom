@@ -35,6 +35,7 @@ impl LocalSessionManager {
         let no_blocklist = opts.no_blocklist;
         let no_determinism = opts.no_determinism;
         let record_screencast = opts.record_screencast;
+        let audio = opts.audio;
         let profile = opts.profile.clone();
 
         // The Option<u64> → Seed collapse happens HERE — exactly once.
@@ -131,6 +132,7 @@ impl LocalSessionManager {
             no_blocklist,
             no_determinism,
             record_screencast,
+            audio,
             seed,
             determinism,
             epoch_ms,

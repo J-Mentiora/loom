@@ -347,6 +347,13 @@ pub struct CreateSessionParams {
     /// (surfaced by `session.info`). Pre-feature clients omit the field → `false`.
     #[serde(default)]
     pub record_screencast: bool,
+    /// voice-call-io: operator's `session create --audio` opt-in. Default
+    /// `false`. Maps to `SessionCreateOpts.audio`; when set, the session is a
+    /// browser voice call (fake-media launch flags, origin-scoped `audioCapture`
+    /// grant, synthetic-microphone bootstrap). Pre-feature clients omit the
+    /// field → `false` (audio off).
+    #[serde(default)]
+    pub audio: bool,
 }
 
 fn default_profile() -> String {

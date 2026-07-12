@@ -64,6 +64,7 @@ impl ShimManager {
             blocklist_enabled,
             until,
             determinism_enabled,
+            audio_enabled,
         } = params;
         // action_id is reserved for receipt correlation (Q5 plumbing); not
         // sent to the shim — shim deals only with target_id + CDP frames.
@@ -93,6 +94,9 @@ impl ShimManager {
             until,
             // settle-capture (4b): per-session determinism toggle.
             determinism_enabled,
+            // voice-call-io: per-session audio opt-in (installs the mic bootstrap
+            // on the lazy-spawned target).
+            audio_enabled,
         };
 
         // Use the larger of budget_ms and recv_timeout_ms so callers can
@@ -373,6 +377,7 @@ impl ShimManager {
             seed,
             epoch_ms,
             determinism_enabled,
+            audio_enabled,
         } = params;
         // action_id reserved for receipt correlation (Q5 plumbing).
         let _action_id = action_id;
@@ -398,6 +403,8 @@ impl ShimManager {
             epoch_ms,
             // settle-capture (4b): per-session determinism toggle.
             determinism_enabled,
+            // voice-call-io: per-session audio opt-in (installs the mic bootstrap).
+            audio_enabled,
         };
         let _ = send_and_await(
             &process,
@@ -491,6 +498,7 @@ impl ShimManager {
             seed,
             epoch_ms,
             determinism_enabled,
+            audio_enabled,
         } = params;
         // action_id reserved for receipt correlation (Q5 plumbing).
         let _action_id = action_id;
@@ -521,6 +529,8 @@ impl ShimManager {
             epoch_ms,
             // settle-capture (4b): per-session determinism toggle.
             determinism_enabled,
+            // voice-call-io: per-session audio opt-in (installs the mic bootstrap).
+            audio_enabled,
         };
         // Best-effort: if SpawnTarget fails (e.g. unknown shim error),
         // fall through to the eval anyway and surface the eval's own
@@ -630,6 +640,7 @@ impl ShimManager {
             seed,
             epoch_ms,
             determinism_enabled,
+            audio_enabled,
         } = params;
         let _action_id = action_id;
 
@@ -656,6 +667,8 @@ impl ShimManager {
             epoch_ms,
             // settle-capture (4b): per-session determinism toggle.
             determinism_enabled,
+            // voice-call-io: per-session audio opt-in (installs the mic bootstrap).
+            audio_enabled,
         };
         let _ = send_and_await(
             &process,

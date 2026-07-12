@@ -176,6 +176,7 @@ fn cli_create_includes_capture_policy_in_rpc_params() {
             no_blocklist: false,
             no_determinism: false,
             record_screencast: false,
+            audio: false,
             clock_anchor: None,
         };
         // The CLI's `create()` handler turns `Some(variant)` into a JSON

@@ -119,6 +119,16 @@ pub struct CreateArgs {
     #[arg(long = "record-screencast", default_value_t = false)]
     #[serde(default)]
     pub record_screencast: bool,
+    /// voice-call-io: mark this session as a browser voice call. Launches
+    /// Chromium with the fake-media flags, grants the `audioCapture` permission
+    /// (scoped to the navigated origin, reset on close), and installs a
+    /// synthetic-microphone bootstrap so `getUserMedia({audio})` resolves to a
+    /// loom-controlled stream — letting an agent speak into an in-browser
+    /// WebRTC call via the `web.inject_audio`/`web.say` verbs. Opt-in; it
+    /// replaces `getUserMedia`, so it never touches an ordinary session.
+    #[arg(long = "audio", default_value_t = false)]
+    #[serde(default)]
+    pub audio: bool,
 }
 
 /// Parse a --budget flag string into BudgetLimits.
@@ -434,6 +444,11 @@ pub async fn create(rpc: &RpcClient, cfg: &CliConfig, args: CreateArgs) -> Resul
             "record_screencast".to_string(),
             serde_json::Value::Bool(true),
         );
+    }
+    // voice-call-io: forward `--audio`; only when true so a non-audio session
+    // keeps the pre-feature params shape.
+    if args.audio {
+        params.insert("audio".to_string(), serde_json::Value::Bool(true));
     }
     let resp = rpc
         .call("session.create", serde_json::Value::Object(params))

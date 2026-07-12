@@ -36,6 +36,7 @@ fn default_opts() -> SessionCreateOpts {
         no_blocklist: false,
         no_determinism: false,
         record_screencast: false,
+        audio: false,
         profile: "safe".to_string(),
     }
 }

@@ -90,6 +90,13 @@ pub struct HostState {
     /// create a target (SpawnTarget / PageNavigate); when off, the shim
     /// SKIPS the determinism freeze-inject.
     pub no_determinism: bool,
+    /// voice-call-io: operator's `--audio` opt-in. Threaded from `Session.audio`.
+    /// Each typed host fn that creates a target (SpawnTarget / PageNavigate)
+    /// computes `audio_enabled = self.audio` and carries it on the ShimRequest;
+    /// when on, the shim installs the synthetic-microphone bootstrap and the
+    /// navigate path grants the origin-scoped `audioCapture` permission. Mirrors
+    /// `no_determinism`.
+    pub audio: bool,
     /// Operator's `--profile` choice. Threaded from `SessionHandle.profile`
     /// for the safe-profile download-confinement path — the lazy-clone
     /// shim-config sites in `host_impl.rs` read this to inject

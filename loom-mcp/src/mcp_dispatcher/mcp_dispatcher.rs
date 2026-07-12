@@ -85,6 +85,14 @@ pub const ENV_SESSION_BUDGET: &str = "LOOM_MCP_SESSION_BUDGET";
 /// `setTimeout` token race) never fires under a frozen clock, leaving the
 /// app shell unrendered. Such a session is recorded NON-REPLAYABLE.
 pub const ENV_SESSION_NO_DETERMINISM: &str = "LOOM_MCP_SESSION_NO_DETERMINISM";
+/// Env var: when truthy (`1`/`true`/`yes`/`on`), the implicit session is
+/// created with `audio` — a browser voice call. The shim launches Chromium
+/// with the fake-media flags, grants the `audioCapture` permission (scoped to
+/// the navigated origin, reset on close), and installs a synthetic-microphone
+/// bootstrap so `getUserMedia({audio})` resolves to a loom-controlled stream
+/// (letting an MCP agent drive an in-browser WebRTC call). Opt-in — omitted or
+/// falsy leaves the session untouched.
+pub const ENV_SESSION_AUDIO: &str = "LOOM_MCP_SESSION_AUDIO";
 
 /// Profile used for the implicit session when no override is configured.
 /// `standard` so denylist surprises don't confuse MCP clients (the
@@ -113,6 +121,11 @@ pub struct SessionOptions {
     /// (real wall-clock + unseeded RNG). `None`/`Some(false)` keep loom's
     /// default frozen-clock determinism. See `ENV_SESSION_NO_DETERMINISM`.
     pub no_determinism: Option<bool>,
+    /// When `Some(true)`, forward `audio: true` to `session.create` (browser
+    /// voice call: fake-media flags + `audioCapture` grant + synthetic-mic
+    /// bootstrap). `None`/`Some(false)` keep an ordinary session. See
+    /// `ENV_SESSION_AUDIO`.
+    pub audio: Option<bool>,
 }
 
 /// Live implicit-session record: the daemon-assigned id plus the exact
@@ -161,6 +174,9 @@ pub struct SessionResetParams {
     /// Per-reset override for real wall-clock mode; merged over the env
     /// baseline (`ENV_SESSION_NO_DETERMINISM`) like the other knobs.
     pub no_determinism: Option<bool>,
+    /// Per-reset override for the browser-voice-call opt-in; merged over the
+    /// env baseline (`ENV_SESSION_AUDIO`) like the other knobs.
+    pub audio: Option<bool>,
 }
 
 /// Arguments of `loom.session.diff`.

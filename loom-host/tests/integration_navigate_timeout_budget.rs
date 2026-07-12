@@ -124,6 +124,7 @@ async fn navigate(
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await

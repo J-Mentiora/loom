@@ -125,6 +125,7 @@ async fn blocklist_ga_subresource_is_blocked_and_recorded() {
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await
@@ -185,6 +186,7 @@ async fn blocklist_second_navigate_to_blocklisted_host_still_succeeds() {
                 blocklist_enabled: true,
                 until: "settled".to_string(),
                 determinism_enabled: true,
+                audio_enabled: false,
             }),
         )
         .await
@@ -238,6 +240,7 @@ async fn no_blocklist_disables_enforcement() {
             blocklist_enabled: false, // disabled per --no-blocklist
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await

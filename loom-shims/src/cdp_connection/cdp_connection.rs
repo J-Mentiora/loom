@@ -493,6 +493,72 @@ pub fn is_browser_scope_method(method: &str) -> bool {
     )
 }
 
+// ── voice-call-io (task 03): audioCapture permission grant/reset ─────────────
+//
+// For an `--audio` session (the `audio_enabled` wire field carried to the shim),
+// the mic-override bootstrap + the fake-media launch flags need a granted
+// `audioCapture` permission so the app's `getUserMedia({audio})` proceeds without
+// a prompt. Per plan-council FND-0020/D16 we DROPPED `--use-fake-ui-for-media-
+// stream` (which auto-accepts EVERY origin) in favour of a single origin-scoped
+// CDP grant issued at navigate (the origin is only known then). On the clean
+// close path we `Browser.resetPermissions`; on a crash the whole browser context
+// is torn down, so the grant dies with it (no cross-session leak — FND-0006).
+// Both are BEST-EFFORT (warn-on-fail), mirroring the STEP 5 `setDownloadBehavior`
+// precedent — the `--use-fake-device` beep is the benign fallback.
+
+/// Browser-scope CDP method that grants a permission for an origin.
+pub const GRANT_PERMISSIONS_METHOD: &str = "Browser.grantPermissions";
+/// Browser-scope CDP method that clears all granted permissions in the context.
+pub const RESET_PERMISSIONS_METHOD: &str = "Browser.resetPermissions";
+
+/// Whether THIS shim's session has granted `audioCapture`. Set on the first
+/// successful `--audio` navigate grant; read on the clean close path to decide
+/// whether to issue `Browser.resetPermissions`. A process global is correct
+/// because the shim is one-session-per-process.
+static AUDIO_CAPTURE_GRANTED: AtomicBool = AtomicBool::new(false);
+
+/// Record that this session granted `audioCapture`.
+pub fn mark_audio_capture_granted() {
+    AUDIO_CAPTURE_GRANTED.store(true, Ordering::SeqCst);
+}
+
+/// Whether this session granted `audioCapture` (gate for reset-on-close).
+pub fn audio_capture_granted() -> bool {
+    AUDIO_CAPTURE_GRANTED.load(Ordering::SeqCst)
+}
+
+/// The origin (`scheme://host[:port]`) to scope the `audioCapture` grant to
+/// (D16 — NOT an all-origins grant). Returns `None` for non-`http(s)` targets
+/// (`about:blank`, `data:` …) where there is no meaningful origin to grant, so
+/// the caller simply skips the grant.
+pub fn grant_origin_for_url(url: &str) -> Option<String> {
+    let parsed = ::url::Url::parse(url).ok()?;
+    match parsed.scheme() {
+        "http" | "https" => Some(parsed.origin().ascii_serialization()),
+        _ => None,
+    }
+}
+
+/// Build the CBOR params for `Browser.grantPermissions({permissions:
+/// ["audioCapture"], origin})`, scoped to `origin` (D16).
+pub fn build_grant_audio_capture_params(origin: &str) -> CborValue {
+    CborValue::Map(vec![
+        (
+            CborValue::Text("permissions".into()),
+            CborValue::Array(vec![CborValue::Text("audioCapture".into())]),
+        ),
+        (
+            CborValue::Text("origin".into()),
+            CborValue::Text(origin.to_string()),
+        ),
+    ])
+}
+
+/// Build the CBOR params for `Browser.resetPermissions` (whole browser context).
+pub fn build_reset_permissions_params() -> CborValue {
+    CborValue::Map(vec![])
+}
+
 impl ChromiumCdpConnection {
     /// Bootstrap a Page session on top of the just-connected browser-level
     /// WebSocket. Real Chromium requires this sequence before any

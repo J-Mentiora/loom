@@ -20,6 +20,7 @@ fn spawn_target_routes_to_target_manager() {
         seed: Seed(0),
         epoch_ms: EpochMs(0),
         determinism_enabled: true,
+        audio_enabled: false,
     };
     assert_eq!(route_target(&req), RouteTarget::TargetManager);
 }
@@ -36,6 +37,7 @@ fn page_navigate_routes_to_target_manager() {
         blocklist_enabled: true,
         until: "settled".to_string(),
         determinism_enabled: true,
+        audio_enabled: false,
     };
     assert_eq!(route_target(&req), RouteTarget::TargetManager);
 }
@@ -146,6 +148,7 @@ fn route_target_handles_every_shim_request_variant() {
             seed: Seed(0),
             epoch_ms: EpochMs(0),
             determinism_enabled: true,
+            audio_enabled: false,
         },
         ShimRequest::CdpSend {
             request_id: 2,
@@ -166,6 +169,7 @@ fn route_target_handles_every_shim_request_variant() {
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         },
         ShimRequest::PageClose {
             request_id: 4,
@@ -200,6 +204,7 @@ async fn dispatcher_run_returns_on_shutdown_request() {
             _: String,
             _: Seed,
             _: EpochMs,
+            _: bool,
             _: bool,
         ) -> Result<TargetId, crate::target_manager::target_manager::TargetError> {
             Ok(0)
@@ -236,6 +241,7 @@ async fn dispatcher_run_returns_on_shutdown_request() {
                 result: CborValue::Null,
             })
         }
+        #[allow(clippy::too_many_arguments)]
         async fn page_navigate(
             &self,
             _: TargetId,
@@ -243,6 +249,7 @@ async fn dispatcher_run_returns_on_shutdown_request() {
             _: Option<std::time::Duration>,
             _: bool,
             _: crate::readiness_monitor::SettleMode,
+            _: bool,
             _: bool,
         ) -> Result<ActionResult, ShimResponse> {
             Ok(ActionResult::CdpResult {

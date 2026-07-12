@@ -90,6 +90,7 @@ fn live_host_state(fx: &Fixture) -> HostState {
         epoch_ms: EpochMs(0),
         no_blocklist: false,
         no_determinism: false,
+        audio: false,
         profile: "safe".into(),
         downloads_dir: None,
         capture_dom_after: false,

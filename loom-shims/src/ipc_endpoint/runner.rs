@@ -244,6 +244,7 @@ mod tests {
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         };
         // Encode the request as if the host were sending it from the peer:
         // we abuse the response channel to push raw bytes through.

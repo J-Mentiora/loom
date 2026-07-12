@@ -125,6 +125,7 @@ async fn navigate_outcome_carries_upstream_inputs_for_wire_receipt() {
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await
@@ -314,6 +315,7 @@ async fn error_navigate_summary_counts_4xx_as_error() {
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await
@@ -360,6 +362,7 @@ async fn navigate_dom_bytes(session_label: &str) -> Vec<u8> {
             blocklist_enabled: true,
             until: "settled".to_string(),
             determinism_enabled: true,
+            audio_enabled: false,
         }),
     )
     .await

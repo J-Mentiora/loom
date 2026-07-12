@@ -22,6 +22,7 @@ impl SessionOptions {
             std::env::var(ENV_SESSION_PROFILE).ok(),
             std::env::var(ENV_SESSION_BUDGET).ok(),
             std::env::var(ENV_SESSION_NO_DETERMINISM).ok(),
+            std::env::var(ENV_SESSION_AUDIO).ok(),
         )
     }
 
@@ -36,6 +37,7 @@ impl SessionOptions {
         profile: Option<String>,
         budget: Option<String>,
         no_determinism: Option<String>,
+        audio: Option<String>,
     ) -> Result<Self, LoomError> {
         Ok(Self {
             seed: parse_env_u64(ENV_SESSION_SEED, seed)?,
@@ -45,6 +47,7 @@ impl SessionOptions {
                 .filter(|p| !p.is_empty()),
             budget: parse_env_json(ENV_SESSION_BUDGET, budget)?,
             no_determinism: parse_env_bool(ENV_SESSION_NO_DETERMINISM, no_determinism)?,
+            audio: parse_env_bool(ENV_SESSION_AUDIO, audio)?,
         })
     }
 
@@ -75,6 +78,11 @@ impl SessionOptions {
         // byte-identical to the pre-feature `{"profile":"standard"}`.
         if self.no_determinism == Some(true) {
             params.insert("no_determinism".to_string(), serde_json::json!(true));
+        }
+        // voice-call-io: only emit `audio` when enabling it, keeping the
+        // all-default shape byte-identical to the pre-feature params.
+        if self.audio == Some(true) {
+            params.insert("audio".to_string(), serde_json::json!(true));
         }
         serde_json::Value::Object(params)
     }
@@ -437,6 +445,7 @@ impl McpDispatcher {
                         "profile": { "type": "string" },
                         "budget": { "type": "object" },
                         "no_determinism": { "type": "boolean" },
+                        "audio": { "type": "boolean" },
                     }),
                     serde_json::json!([]),
                 ),
@@ -671,6 +680,7 @@ impl McpDispatcher {
             profile: p.profile.or_else(|| self.baseline_options.profile.clone()),
             budget: p.budget.or_else(|| self.baseline_options.budget.clone()),
             no_determinism: p.no_determinism.or(self.baseline_options.no_determinism),
+            audio: p.audio.or(self.baseline_options.audio),
         };
         let mut guard = self.implicit_session.lock().await;
         // Close the outgoing session best-effort: an error just means the

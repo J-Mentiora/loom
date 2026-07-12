@@ -50,6 +50,7 @@ fn create_args_field_names_match_schema() {
         no_blocklist: false,
         no_determinism: false,
         record_screencast: false,
+        audio: false,
         clock_anchor: Some(1_700_000_000_000),
     })
     .unwrap();

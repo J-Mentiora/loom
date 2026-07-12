@@ -110,6 +110,16 @@ pub fn default_determinism_enabled() -> bool {
     true
 }
 
+/// Serde default for the `audio_enabled` wire fields (voice-call-io task 03).
+/// Returns `false` — the INVERSE of `determinism_enabled`'s safe-default-on:
+/// audio (synthetic-mic bootstrap + `audioCapture` grant + fake-media launch
+/// flags) is strictly opt-in (`SessionCreateOpts.audio` / `--audio`), so an
+/// old-shape payload with the field absent must decode to audio-OFF. This
+/// keeps a non-`--audio` session's bytes identical to the pre-feature wire.
+pub fn default_audio_enabled() -> bool {
+    false
+}
+
 /// Inbound request frames from `loom-host::ShimManager`.
 /// CBOR-encoded as a discriminated union via the `kind` tag.
 ///
@@ -137,6 +147,15 @@ pub enum ShimRequest {
         /// payloads decode to the strict deterministic default.
         #[serde(default = "default_determinism_enabled")]
         determinism_enabled: bool,
+        /// voice-call-io (task 03): when `true` (session created with
+        /// `--audio`), the target_manager installs the synthetic-microphone
+        /// bootstrap (`audio_bootstrap.js`) at spawn via
+        /// `addScriptToEvaluateOnNewDocument{runImmediately:true}`. Serde-
+        /// default `false` (opt-in — the inverse of `determinism_enabled`);
+        /// an old-shape payload decodes to audio-off, leaving ordinary
+        /// sessions byte-identical to the pre-feature wire.
+        #[serde(default = "default_audio_enabled")]
+        audio_enabled: bool,
     },
     /// Issue a CDP command against a previously-spawned target.
     /// Note: no `grant_id` field. Vault substitution is upstream
@@ -190,6 +209,11 @@ pub enum ShimRequest {
         /// default `true` so an old-shape payload decodes to deterministic.
         #[serde(default = "default_determinism_enabled")]
         determinism_enabled: bool,
+        /// voice-call-io (task 03): audio opt-in for the lazy-spawn path (when
+        /// the host navigates without a prior explicit `SpawnTarget`). Same
+        /// semantics + serde-default (`false`) as `SpawnTarget::audio_enabled`.
+        #[serde(default = "default_audio_enabled")]
+        audio_enabled: bool,
     },
     /// settle-capture slice 2: standalone readiness wait on the current page
     /// (no navigation, no capture). The shim runs the same SettleDriver /
@@ -404,6 +428,7 @@ mod tests {
             seed: Seed(42),
             epoch_ms: EpochMs(1_700_000_000_000),
             determinism_enabled: true,
+            audio_enabled: default_audio_enabled(),
         };
         let payload = ciborium_to_vec(&req).unwrap();
         let mut wire = (payload.len() as u32).to_be_bytes().to_vec();
@@ -427,6 +452,7 @@ mod tests {
             blocklist_enabled: true,
             until: default_settle_until(),
             determinism_enabled: default_determinism_enabled(),
+            audio_enabled: default_audio_enabled(),
         };
         let req_b = ShimRequest::PageNavigate {
             request_id: 2,
@@ -438,6 +464,7 @@ mod tests {
             blocklist_enabled: true,
             until: default_settle_until(),
             determinism_enabled: default_determinism_enabled(),
+            audio_enabled: default_audio_enabled(),
         };
 
         let resp_b = ShimResponse::Ok {
@@ -516,6 +543,7 @@ mod tests {
             blocklist_enabled: true,
             until: default_settle_until(),
             determinism_enabled: default_determinism_enabled(),
+            audio_enabled: default_audio_enabled(),
         };
         let bytes = ciborium_to_vec(&req).unwrap();
         let back: ShimRequest = ciborium_from_slice(&bytes).unwrap();
@@ -535,6 +563,7 @@ mod tests {
             blocklist_enabled: true,
             until: default_settle_until(),
             determinism_enabled: default_determinism_enabled(),
+            audio_enabled: default_audio_enabled(),
         };
         let bytes = ciborium_to_vec(&req).unwrap();
         let back: ShimRequest = ciborium_from_slice(&bytes).unwrap();
@@ -603,6 +632,7 @@ mod tests {
             blocklist_enabled: false,
             until: default_settle_until(),
             determinism_enabled: default_determinism_enabled(),
+            audio_enabled: default_audio_enabled(),
         };
         let bytes = ciborium_to_vec(&req).unwrap();
         let back: ShimRequest = ciborium_from_slice(&bytes).unwrap();
@@ -692,5 +722,137 @@ mod tests {
             "old-shape SpawnTarget (no seed/epoch_ms) MUST fail to decode, \
              got: {result:?}"
         );
+    }
+
+    // === audio_enabled wire-protocol (voice-call-io task 03) ===
+    //
+    // Like `blocklist_enabled` and unlike seed/epoch_ms, `audio_enabled` is a
+    // `serde(default)` field so host/shim version skew stays safe. The default,
+    // however, is `false` (audio is opt-in) — the INVERSE of blocklist's
+    // safe-default-on. These tests pin both the absent→false and present→carried
+    // wire behavior for `SpawnTarget` and `PageNavigate`.
+
+    /// A `SpawnTarget` payload omitting `audio_enabled` (e.g. a pre-feature host)
+    /// decodes to `false` — audio stays off, wire bytes match the old shape.
+    #[test]
+    fn spawn_target_without_audio_enabled_field_defaults_to_false() {
+        let payload = ciborium::value::Value::Map(vec![
+            (
+                ciborium::value::Value::Text("kind".into()),
+                ciborium::value::Value::Text("spawn_target".into()),
+            ),
+            (
+                ciborium::value::Value::Text("request_id".into()),
+                ciborium::value::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::value::Value::Text("session_id".into()),
+                ciborium::value::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::value::Value::Text("profile".into()),
+                ciborium::value::Value::Text("default".into()),
+            ),
+            (
+                ciborium::value::Value::Text("seed".into()),
+                ciborium::value::Value::Integer(42.into()),
+            ),
+            (
+                ciborium::value::Value::Text("epoch_ms".into()),
+                ciborium::value::Value::Integer(1_700_000_000_000_i64.into()),
+            ),
+        ]);
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut buf).unwrap();
+        let decoded: ShimRequest = ciborium_from_slice(&buf)
+            .expect("payload missing audio_enabled MUST decode (opt-in default-off)");
+        match decoded {
+            ShimRequest::SpawnTarget { audio_enabled, .. } => {
+                assert!(
+                    !audio_enabled,
+                    "missing audio_enabled must default to false (opt-in)"
+                );
+            }
+            other => panic!("expected SpawnTarget, got {other:?}"),
+        }
+    }
+
+    /// A `PageNavigate` payload omitting `audio_enabled` decodes to `false`.
+    #[test]
+    fn page_navigate_without_audio_enabled_field_defaults_to_false() {
+        let payload = ciborium::value::Value::Map(vec![
+            (
+                ciborium::value::Value::Text("kind".into()),
+                ciborium::value::Value::Text("page_navigate".into()),
+            ),
+            (
+                ciborium::value::Value::Text("request_id".into()),
+                ciborium::value::Value::Integer(7.into()),
+            ),
+            (
+                ciborium::value::Value::Text("session_id".into()),
+                ciborium::value::Value::Integer(1.into()),
+            ),
+            (
+                ciborium::value::Value::Text("target_id".into()),
+                ciborium::value::Value::Integer(0.into()),
+            ),
+            (
+                ciborium::value::Value::Text("url".into()),
+                ciborium::value::Value::Text("https://example.com".into()),
+            ),
+            (
+                ciborium::value::Value::Text("seed".into()),
+                ciborium::value::Value::Integer(42.into()),
+            ),
+            (
+                ciborium::value::Value::Text("epoch_ms".into()),
+                ciborium::value::Value::Integer(1_700_000_000_000_i64.into()),
+            ),
+        ]);
+        let mut buf = Vec::new();
+        ciborium::ser::into_writer(&payload, &mut buf).unwrap();
+        let decoded: ShimRequest = ciborium_from_slice(&buf)
+            .expect("payload missing audio_enabled MUST decode (opt-in default-off)");
+        match decoded {
+            ShimRequest::PageNavigate { audio_enabled, .. } => {
+                assert!(
+                    !audio_enabled,
+                    "missing audio_enabled must default to false (opt-in)"
+                );
+            }
+            other => panic!("expected PageNavigate, got {other:?}"),
+        }
+    }
+
+    /// An explicit `audio_enabled=true` round-trips on both variants.
+    #[test]
+    fn audio_enabled_true_round_trips() {
+        let spawn = ShimRequest::SpawnTarget {
+            request_id: 1,
+            session_id: 2,
+            profile: "default".into(),
+            seed: Seed(1),
+            epoch_ms: EpochMs(1),
+            determinism_enabled: false,
+            audio_enabled: true,
+        };
+        let bytes = ciborium_to_vec(&spawn).unwrap();
+        assert_eq!(spawn, ciborium_from_slice::<ShimRequest>(&bytes).unwrap());
+
+        let nav = ShimRequest::PageNavigate {
+            request_id: 3,
+            session_id: 2,
+            target_id: 4,
+            url: "https://example.com".into(),
+            seed: Seed(1),
+            epoch_ms: EpochMs(1),
+            blocklist_enabled: true,
+            until: default_settle_until(),
+            determinism_enabled: false,
+            audio_enabled: true,
+        };
+        let bytes = ciborium_to_vec(&nav).unwrap();
+        assert_eq!(nav, ciborium_from_slice::<ShimRequest>(&bytes).unwrap());
     }
 }

@@ -539,6 +539,7 @@ impl ReplayEngine for LocalReplayEngine {
             // refused non-deterministic sources above).
             no_determinism: false,
             record_screencast: false,
+            audio: false,
             // Replay sessions inherit the source's profile via the manifest;
             // the gate is a daemon-layer concern that doesn't fire on replay
             // (no live shim). Default-safe is fine for the in-memory copy.

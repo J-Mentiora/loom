@@ -317,6 +317,10 @@ impl CoreFacadeBridge for CoreBridge {
             no_blocklist: params.no_blocklist,
             no_determinism: params.no_determinism,
             record_screencast: params.record_screencast,
+            // voice-call-io: `--audio` opt-in reaches the Session, which drives
+            // the per-request `audio_enabled` on SpawnTarget/PageNavigate (gate
+            // for the fake-media flags, audioCapture grant, and mic bootstrap).
+            audio: params.audio,
             // `--profile` must reach the Session: the evaluate gate (B) and
             // download confinement (C) both branch on `Session.profile`.
             profile: params.profile,

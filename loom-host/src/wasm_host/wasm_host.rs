@@ -302,6 +302,7 @@ impl WasmHost {
             epoch_ms: session.epoch_ms,
             no_blocklist: session.no_blocklist,
             no_determinism: session.no_determinism,
+            audio: session.audio,
             profile: session.profile.clone(),
             downloads_dir: session.downloads_dir.clone(),
             capture_dom_after: session.capture_dom_after,

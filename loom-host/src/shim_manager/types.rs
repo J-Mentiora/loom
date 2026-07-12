@@ -216,6 +216,9 @@ pub struct SendNavigateParams {
     pub blocklist_enabled: bool,
     pub until: String,
     pub determinism_enabled: bool,
+    /// voice-call-io: per-session `--audio` opt-in carried onto the wire
+    /// `PageNavigate.audio_enabled` (and the lazy-spawn `SpawnTarget`).
+    pub audio_enabled: bool,
 }
 
 /// Params for [`ShimManager::send_wait_for`].
@@ -230,6 +233,8 @@ pub struct SendWaitForParams {
     pub seed: Seed,
     pub epoch_ms: EpochMs,
     pub determinism_enabled: bool,
+    /// voice-call-io: carried onto the idempotent lazy-spawn `SpawnTarget`.
+    pub audio_enabled: bool,
 }
 
 /// Params for [`ShimManager::send_evaluate`].
@@ -244,6 +249,8 @@ pub struct SendEvaluateParams {
     pub seed: Seed,
     pub epoch_ms: EpochMs,
     pub determinism_enabled: bool,
+    /// voice-call-io: carried onto the idempotent lazy-spawn `SpawnTarget`.
+    pub audio_enabled: bool,
 }
 
 /// Params for [`ShimManager::send_set_input_files`].
@@ -259,6 +266,8 @@ pub struct SendSetInputFilesParams {
     pub seed: Seed,
     pub epoch_ms: EpochMs,
     pub determinism_enabled: bool,
+    /// voice-call-io: carried onto the idempotent lazy-spawn `SpawnTarget`.
+    pub audio_enabled: bool,
 }
 
 /// Params for [`ShimManager::send_press_key`] (cdp-trusted-input). Bundled so
