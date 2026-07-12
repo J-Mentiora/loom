@@ -114,6 +114,48 @@ pub struct ScreencastOutcome {
     pub error: Option<String>,
 }
 
+/// voice-call-io: decoded result of a `web.stop_audio_capture` shim call.
+///
+/// Mirrors [`ScreencastOutcome`]: the shim drains the in-page inbound-audio
+/// buffer, resamples to 16 kHz mono i16, muxes a WAV, and returns the bytes
+/// inline; the HOST writes them to the content-addressed store and derives the
+/// `audio_after_hash` (a later task). The captured audio is OBSERVATIONAL and is
+/// excluded from the replay hash chain. `serde(default)` on every field for CBOR
+/// wire back-compat.
+///
+/// This type is landed by the wire+surface task as the stable decode target; the
+/// shim producer and the host consumer are wired in later increments.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct AudioCaptureOutcome {
+    /// WAV bytes: a 44-byte RIFF header followed by 16 kHz mono i16 PCM. Empty on
+    /// a best-effort failure or when no inbound samples were captured. Plain
+    /// `Vec<u8>` to match the existing shim→host media transport.
+    #[serde(default)]
+    pub wav_bytes: Vec<u8>,
+    /// Number of i16 samples in `wav_bytes` (post-resample, 16 kHz mono).
+    #[serde(default)]
+    pub sample_count: u64,
+    /// Captured duration in milliseconds, derived from `sample_count / rate`
+    /// (NOT wall clock), so it stays stable under drain-cadence jitter.
+    #[serde(default)]
+    pub duration_ms: u64,
+    /// Count of zero-filled gaps from packet loss / DTX in the inbound stream.
+    #[serde(default)]
+    pub dropped_frames: u64,
+    /// The inbound track's native sample rate, before host-side resampling.
+    #[serde(default)]
+    pub source_sample_rate: u32,
+    /// Why capture stopped: `explicit` | `byte_cap` | `duration_cap` |
+    /// `no_samples` | `no_inbound_track` | `session_closed` | `error`. Reports the
+    /// *reason capture stopped* independent of mux success (a mux failure is
+    /// surfaced via `error` + empty `wav_bytes`, never `encoder_unavailable`).
+    #[serde(default)]
+    pub stop_reason: String,
+    /// Set on a best-effort failure (mux error / no inbound track).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
 /// Console line captured by the shim (currently always empty; real capture is followup work).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShimConsoleLine {

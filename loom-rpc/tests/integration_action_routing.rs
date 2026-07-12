@@ -210,6 +210,11 @@ impl WasmHostBridge for CannedHostBridge {
             | Action::WebDeleteCookies { session_id, .. }
             | Action::WebNetworkLog { session_id } => session_id.clone(),
             Action::WebPressKey { session_id, .. } => session_id.clone(),
+            // voice-call-io: audio verbs.
+            Action::WebInjectAudio { session_id, .. }
+            | Action::WebStartAudioCapture { session_id, .. }
+            | Action::WebStopAudioCapture { session_id }
+            | Action::WebSay { session_id, .. } => session_id.clone(),
         };
         Ok(Receipt {
             action_id: 42,

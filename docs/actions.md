@@ -15,16 +15,20 @@ Every JSON-RPC action loom exposes, with its parameters, return shape, and a cop
 - [`web.evaluate`](#web-evaluate) — Run a JavaScript expression in the page and return the value.
 - [`web.get_cookies`](#web-get_cookies) — Read cookies from the browser's cookie jar (CDP `Network.getCookies`).
 - [`web.hover`](#web-hover) — Dispatch a mouseover event at a CSS selector.
+- [`web.inject_audio`](#web-inject_audio) — Inject caller-provided audio into the page's virtual microphone.
 - [`web.navigate`](#web-navigate) — Load a URL, follow redirects, capture DOM and screenshot.
 - [`web.network_log`](#web-network_log) — Read the per-request network entries observed since the last navigate.
 - [`web.press_key`](#web-press_key) — Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.
+- [`web.say`](#web-say) — Speak text into the page's microphone via a configured external TTS backend.
 - [`web.screenshot`](#web-screenshot) — Capture a PNG screenshot of the page or a selected element.
 - [`web.scroll`](#web-scroll) — Scroll the page (or an element) by a (delta_x, delta_y) offset.
 - [`web.select`](#web-select) — Set the value of a `<select>` element and dispatch `change`.
 - [`web.set_cookies`](#web-set_cookies) — Inject cookies into the browser's network stack via CDP `Network.setCookies`.
 - [`web.set_input_files`](#web-set_input_files) — Upload local files into an <input type=file> by CSS (or a css=/frame= locator).
 - [`web.snapshot`](#web-snapshot) — Capture a full DOM snapshot of the active page.
+- [`web.start_audio_capture`](#web-start_audio_capture) — Begin capturing inbound call audio into a bounded in-page buffer.
 - [`web.start_recording`](#web-start_recording) — Start recording a video (screencast) of the page.
+- [`web.stop_audio_capture`](#web-stop_audio_capture) — Stop inbound audio capture; return the buffered audio as a WAV reference.
 - [`web.stop_recording`](#web-stop_recording) — Stop the active video recording and return its content hash.
 - [`web.type`](#web-type) — Focus an input (by CSS or a text=/role=/frame= locator) and type text into it.
 - [`web.wait`](#web-wait) — Wait until a locator resolves (or until timeout).
@@ -196,6 +200,33 @@ loom action web.hover --session <SESSION> --selector .menu-toggle
 
 ---
 
+### <a id="web-inject_audio"></a>`web.inject_audio`
+
+**Inject caller-provided audio into the page's virtual microphone.**
+
+Feeds caller-provided audio into the page as if it arrived from the microphone, so a browser voice agent under test 'hears' a scripted utterance. The payload is supplied EITHER inline as base64 (`audio_b64`) OR by content-store reference (`blob_ref`) — exactly one — and the daemon resolves and size-bounds it before dispatch.
+
+The call returns once the audio is ENQUEUED, not when playout completes; pass `await_playout: true` (JSON boolean) to wait for the source node to end. This registry entry SURFACES the verb (MCP `tools/list`, `action.web.*` alias, docs); the injection itself is wired in a later increment and is only meaningful on an audio-enabled session.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `blob_ref` | `string` | optional | Optional content-store hash of the audio payload (mutually exclusive with `audio_b64`). |
+| `audio_b64` | `string` | optional | Optional base64-encoded audio payload, inline (mutually exclusive with `blob_ref`); size-bounded before decode. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
+
+**Returns:** Receipt with `status: "ok"`. `outcome_hash` is a constant enqueue-success marker; playout completion (when `await_playout` is set) is a receipt field and is never hashed.
+
+**Example**
+
+```sh
+loom action web.inject_audio --session <SESSION>
+```
+
+---
+
 ### <a id="web-navigate"></a>`web.navigate`
 
 **Load a URL, follow redirects, capture DOM and screenshot.**
@@ -282,6 +313,32 @@ Host-side verb (CDP Input.*), like the trusted `web.click` — does not run the 
 
 ```sh
 loom action web.press_key --session <SESSION> --key Enter
+```
+
+---
+
+### <a id="web-say"></a>`web.say`
+
+**Speak text into the page's microphone via a configured external TTS backend.**
+
+Synthesizes `text` to speech through an operator-configured external TTS backend and injects the result into the page's virtual microphone — the spoken equivalent of `web.inject_audio`. loom ships NO TTS engine; the operator wires one via environment (a command or URL), and the synthesized bytes flow through the same injection path and size bounds as any other audio payload.
+
+The call returns on ENQUEUE; pass `await_playout: true` (JSON boolean) to wait for playout to finish. This is a P1, feature-gated verb; this registry entry SURFACES it (MCP `tools/list`, `action.web.*` alias, docs) while the TTS backend and injection are wired in later increments.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `text` | `string` | required | The text to synthesize and speak into the page microphone. Length-bounded by the TTS backend. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
+
+**Returns:** Receipt with `status: "ok"`. `outcome_hash` is a constant enqueue-success marker. When no TTS backend is configured, a typed error names both backend environment variables.
+
+**Example**
+
+```sh
+loom action web.say --session <SESSION> --text 'hello there'
 ```
 
 ---
@@ -447,6 +504,33 @@ loom action web.snapshot --session <SESSION>
 
 ---
 
+### <a id="web-start_audio_capture"></a>`web.start_audio_capture`
+
+**Begin capturing inbound call audio into a bounded in-page buffer.**
+
+Starts recording the INBOUND audio of a WebRTC call on the session's page — the remote participant(s), not the injected microphone — into a bounded in-page ring buffer. Paired with `web.stop_audio_capture`, which returns the buffered audio as a WAV content reference. `max_duration_ms` and `max_bytes` cap the capture; on a cap hit the capture truncates (never errors) and the stop reports the reason.
+
+At most one capture is active per session; the injected microphone track is excluded from the capture by provenance so a session never records its own injected audio. This registry entry SURFACES the verb; the capture tap is wired in a later increment and requires an audio-enabled session.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `max_duration_ms` | `u64` | optional | Optional capture duration cap in milliseconds; on expiry the capture truncates and stop reports `duration_cap`. Omit or 0 for a safe default. |
+| `max_bytes` | `u64` | optional | Optional captured-bytes cap; on hit the capture truncates and stop reports `byte_cap`. Omit or 0 for a safe default. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
+
+**Returns:** Receipt with `status: "ok"` acknowledging capture start. The captured audio is returned by `web.stop_audio_capture`, not here.
+
+**Example**
+
+```sh
+loom action web.start_audio_capture --session <SESSION>
+```
+
+---
+
 ### <a id="web-start_recording"></a>`web.start_recording`
 
 **Start recording a video (screencast) of the page.**
@@ -473,6 +557,31 @@ PRIVACY: a recording captures whatever is on screen, INCLUDING any passwords, PI
 
 ```sh
 loom action web.start_recording --session <SESSION>
+```
+
+---
+
+### <a id="web-stop_audio_capture"></a>`web.stop_audio_capture`
+
+**Stop inbound audio capture; return the buffered audio as a WAV reference.**
+
+Stops the active inbound-audio capture started by `web.start_audio_capture`, drains the in-page buffer, resamples to 16 kHz mono, and returns the result as a WAV content reference plus a `stop_reason` (explicit, a cap hit, no inbound track, or session close). The returned reference is fetchable to a playable `.wav` via `loom blob get`.
+
+The captured audio is OBSERVATIONAL — it is excluded from the replay hash chain, so a voice session must run with determinism disabled. This registry entry SURFACES the verb; the drain, resample, and WAV mux are wired in a later increment. Calling it without an active capture is a typed error.
+
+**Parameters**
+
+| Name | Type | Required | Description |
+|------|------|----------|-------------|
+| `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
+| `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
+
+**Returns:** Receipt with `audio_after_hash` (or an audio blob reference; fetch via `loom blob get <hash>`) and `stop_reason` (one of explicit, byte_cap, duration_cap, no_samples, no_inbound_track, session_closed, error).
+
+**Example**
+
+```sh
+loom action web.stop_audio_capture --session <SESSION>
 ```
 
 ---

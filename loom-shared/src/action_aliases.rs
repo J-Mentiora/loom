@@ -46,6 +46,12 @@ pub const METHOD_ALIASES: &[(&str, &str)] = &[
     // real-daemon call (the canonicaliser is table-only — no generic strip).
     ("action.web.start_recording", "web.start_recording"),
     ("action.web.stop_recording", "web.stop_recording"),
+    // voice-call-io: the 4 audio verbs. Each canonical target has a
+    // `BUILTIN_SCHEMAS` entry (enforced by `test_every_alias_target_appears_in_builtin_schemas`).
+    ("action.web.inject_audio", "web.inject_audio"),
+    ("action.web.start_audio_capture", "web.start_audio_capture"),
+    ("action.web.stop_audio_capture", "web.stop_audio_capture"),
+    ("action.web.say", "web.say"),
 ];
 
 /// Resolve `method` to its canonical name. Unknown or already-canonical
