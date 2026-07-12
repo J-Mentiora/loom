@@ -579,6 +579,12 @@ pub fn router_required_params(method: &str) -> Option<&'static [&'static str]> {
         "web.network_log" => &["session_id"],
         // cdp-trusted-input: `selector` + `modifiers` are optional.
         "web.press_key" => &["session_id", "key"],
+        // voice-call-io: audio verbs are surface-only in task 02. `deadline_ms`
+        // and the audio payload/caps fields are all optional (threaded/defaulted).
+        "web.inject_audio" => &["session_id"],
+        "web.start_audio_capture" => &["session_id"],
+        "web.stop_audio_capture" => &["session_id"],
+        "web.say" => &["session_id", "text"],
         _ => return None,
     })
 }
@@ -592,16 +598,20 @@ pub fn known_router_methods() -> &'static [&'static str] {
         "web.evaluate",
         "web.get_cookies",
         "web.hover",
+        "web.inject_audio",
         "web.navigate",
         "web.network_log",
         "web.press_key",
+        "web.say",
         "web.screenshot",
         "web.scroll",
         "web.select",
         "web.set_cookies",
         "web.set_input_files",
         "web.snapshot",
+        "web.start_audio_capture",
         "web.start_recording",
+        "web.stop_audio_capture",
         "web.stop_recording",
         "web.type",
         "web.wait",
@@ -873,6 +883,50 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
                 url,
                 domain,
                 path,
+            })
+        }
+        // voice-call-io: audio verbs. Surface only in task 02 — these parse into
+        // typed Actions but have no daemon intercept yet (wired in tasks 03–05, 09).
+        "web.inject_audio" => {
+            let session_id = session_id_from_params(&params)?;
+            let blob_ref = params
+                .get("blob_ref")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let audio_b64 = params
+                .get("audio_b64")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let await_playout = params.get("await_playout").and_then(|v| v.as_bool());
+            Ok(Action::WebInjectAudio {
+                session_id,
+                blob_ref,
+                audio_b64,
+                await_playout,
+            })
+        }
+        "web.start_audio_capture" => {
+            let session_id = session_id_from_params(&params)?;
+            let max_duration_ms = params.get("max_duration_ms").and_then(|v| v.as_u64());
+            let max_bytes = params.get("max_bytes").and_then(|v| v.as_u64());
+            Ok(Action::WebStartAudioCapture {
+                session_id,
+                max_duration_ms,
+                max_bytes,
+            })
+        }
+        "web.stop_audio_capture" => {
+            let session_id = session_id_from_params(&params)?;
+            Ok(Action::WebStopAudioCapture { session_id })
+        }
+        "web.say" => {
+            let session_id = session_id_from_params(&params)?;
+            let text = required_str(&params, "text")?;
+            let await_playout = params.get("await_playout").and_then(|v| v.as_bool());
+            Ok(Action::WebSay {
+                session_id,
+                text,
+                await_playout,
             })
         }
         other => Err(JsonRpcError {

@@ -93,6 +93,28 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
         "web.network_log",
         r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
     ),
+    // voice-call-io: 4 audio verbs. Request shapes mirror the `parse_action`
+    // arms + `ActionMeta` params. `session` (not `session_id`) is the wire
+    // field; `deadline_ms` is optional everywhere. `await_playout` is a JSON
+    // boolean (no CLI ParamType exists for it, so it is schema/MCP-only).
+    // Surface only — behavior is wired in later tasks. Response is the standard
+    // hash-only triple (audio result fields land on the Receipt in a later task).
+    (
+        "web.inject_audio",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"blob_ref":{"type":"string"},"audio_b64":{"type":"string"},"await_playout":{"type":"boolean"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.start_audio_capture",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"max_duration_ms":{"type":"integer"},"max_bytes":{"type":"integer"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.stop_audio_capture",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"}},"required":["session"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
+    (
+        "web.say",
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"text":{"type":"string"},"await_playout":{"type":"boolean"}},"required":["session","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+    ),
     // `rpc.schemas` — JSON-RPC introspection. Wire-side
     // schema_validator treats it as a built-in (no param check); this
     // CLI-side schema is permissive so `loom action rpc.schemas` reaches

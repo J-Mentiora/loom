@@ -44,6 +44,11 @@ fn action_enum_has_typed_variants_no_cdp_shaped_value() {
             Action::WebDeleteCookies { .. } => {}
             Action::WebNetworkLog { .. } => {}
             Action::WebPressKey { .. } => {}
+            // voice-call-io: audio verbs.
+            Action::WebInjectAudio { .. } => {}
+            Action::WebStartAudioCapture { .. } => {}
+            Action::WebStopAudioCapture { .. } => {}
+            Action::WebSay { .. } => {}
         }
     }
     let _ = _audit_variants;

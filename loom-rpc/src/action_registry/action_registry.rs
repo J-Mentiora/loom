@@ -330,6 +330,44 @@ synchronise.",
         example: &["loom", "action", "web.hover", "--session", "<SESSION>", "--selector", ".menu-toggle"],
     },
     ActionMeta {
+        name: "web.inject_audio",
+        summary: "Inject caller-provided audio into the page's virtual microphone.",
+        description: "\
+Feeds caller-provided audio into the page as if it arrived from the \
+microphone, so a browser voice agent under test 'hears' a scripted \
+utterance. The payload is supplied EITHER inline as base64 (`audio_b64`) \
+OR by content-store reference (`blob_ref`) — exactly one — and the daemon \
+resolves and size-bounds it before dispatch.\n\n\
+The call returns once the audio is ENQUEUED, not when playout completes; \
+pass `await_playout: true` (JSON boolean) to wait for the source node to \
+end. This registry entry SURFACES the verb (MCP `tools/list`, `action.web.*` \
+alias, docs); the injection itself is wired in a later increment and is only \
+meaningful on an audio-enabled session.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "blob_ref",
+                ty: ParamType::String,
+                doc: "Optional content-store hash of the audio payload (mutually exclusive with `audio_b64`).",
+                required: false,
+            },
+            ParamMeta {
+                name: "audio_b64",
+                ty: ParamType::String,
+                doc: "Optional base64-encoded audio payload, inline (mutually exclusive with `blob_ref`); size-bounded before decode.",
+                required: false,
+            },
+            DEADLINE_MS_PARAM,
+        ],
+        returns: "Receipt with `status: \"ok\"`. `outcome_hash` is a constant enqueue-success marker; playout completion (when `await_playout` is set) is a receipt field and is never hashed.",
+        example: &["loom", "action", "web.inject_audio", "--session", "<SESSION>"],
+    },
+    ActionMeta {
         name: "web.navigate",
         summary: "Load a URL, follow redirects, capture DOM and screenshot.",
         description: "\
@@ -470,6 +508,38 @@ is a constant dispatch-success marker, so replay stays structural.",
         ],
         returns: "Receipt with `status: \"ok\"`. `outcome_hash` is a per-verb CONSTANT dispatch-success marker (not page-state). Unknown key/modifier → `kind: \"unknown_key\"`; a `selector` matching nothing → `kind: \"selector_not_found\"`.",
         example: &["loom", "action", "web.press_key", "--session", "<SESSION>", "--key", "Enter"],
+    },
+    ActionMeta {
+        name: "web.say",
+        summary: "Speak text into the page's microphone via a configured external TTS backend.",
+        description: "\
+Synthesizes `text` to speech through an operator-configured external TTS \
+backend and injects the result into the page's virtual microphone — the \
+spoken equivalent of `web.inject_audio`. loom ships NO TTS engine; the \
+operator wires one via environment (a command or URL), and the synthesized \
+bytes flow through the same injection path and size bounds as any other \
+audio payload.\n\n\
+The call returns on ENQUEUE; pass `await_playout: true` (JSON boolean) to \
+wait for playout to finish. This is a P1, feature-gated verb; this registry \
+entry SURFACES it (MCP `tools/list`, `action.web.*` alias, docs) while the \
+TTS backend and injection are wired in later increments.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "text",
+                ty: ParamType::String,
+                doc: "The text to synthesize and speak into the page microphone. Length-bounded by the TTS backend.",
+                required: true,
+            },
+            DEADLINE_MS_PARAM,
+        ],
+        returns: "Receipt with `status: \"ok\"`. `outcome_hash` is a constant enqueue-success marker. When no TTS backend is configured, a typed error names both backend environment variables.",
+        example: &["loom", "action", "web.say", "--session", "<SESSION>", "--text", "hello there"],
     },
     ActionMeta {
         name: "web.screenshot",
@@ -696,6 +766,44 @@ are stripped during normalisation, so they do not perturb the hash.",
         example: &["loom", "action", "web.snapshot", "--session", "<SESSION>"],
     },
     ActionMeta {
+        name: "web.start_audio_capture",
+        summary: "Begin capturing inbound call audio into a bounded in-page buffer.",
+        description: "\
+Starts recording the INBOUND audio of a WebRTC call on the session's page — \
+the remote participant(s), not the injected microphone — into a bounded \
+in-page ring buffer. Paired with `web.stop_audio_capture`, which returns the \
+buffered audio as a WAV content reference. `max_duration_ms` and `max_bytes` \
+cap the capture; on a cap hit the capture truncates (never errors) and the \
+stop reports the reason.\n\n\
+At most one capture is active per session; the injected microphone track is \
+excluded from the capture by provenance so a session never records its own \
+injected audio. This registry entry SURFACES the verb; the capture tap is \
+wired in a later increment and requires an audio-enabled session.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            ParamMeta {
+                name: "max_duration_ms",
+                ty: ParamType::U64,
+                doc: "Optional capture duration cap in milliseconds; on expiry the capture truncates and stop reports `duration_cap`. Omit or 0 for a safe default.",
+                required: false,
+            },
+            ParamMeta {
+                name: "max_bytes",
+                ty: ParamType::U64,
+                doc: "Optional captured-bytes cap; on hit the capture truncates and stop reports `byte_cap`. Omit or 0 for a safe default.",
+                required: false,
+            },
+            DEADLINE_MS_PARAM,
+        ],
+        returns: "Receipt with `status: \"ok\"` acknowledging capture start. The captured audio is returned by `web.stop_audio_capture`, not here.",
+        example: &["loom", "action", "web.start_audio_capture", "--session", "<SESSION>"],
+    },
+    ActionMeta {
         name: "web.start_recording",
         summary: "Start recording a video (screencast) of the page.",
         description: "\
@@ -742,6 +850,31 @@ recorded), so recording never affects replay-equality.",
         ],
         returns: "Receipt confirming the recording started (`code: web_action_completed`). The video hash is returned by `web.stop_recording`.",
         example: &["loom", "action", "web.start_recording", "--session", "<SESSION>"],
+    },
+    ActionMeta {
+        name: "web.stop_audio_capture",
+        summary: "Stop inbound audio capture; return the buffered audio as a WAV reference.",
+        description: "\
+Stops the active inbound-audio capture started by `web.start_audio_capture`, \
+drains the in-page buffer, resamples to 16 kHz mono, and returns the result \
+as a WAV content reference plus a `stop_reason` (explicit, a cap hit, no \
+inbound track, or session close). The returned reference is fetchable to a \
+playable `.wav` via `loom blob get`.\n\n\
+The captured audio is OBSERVATIONAL — it is excluded from the replay hash \
+chain, so a voice session must run with determinism disabled. This registry \
+entry SURFACES the verb; the drain, resample, and WAV mux are wired in a \
+later increment. Calling it without an active capture is a typed error.",
+        params: &[
+            ParamMeta {
+                name: "session_id",
+                ty: ParamType::String,
+                doc: "Session created via `loom session create`. 26-char ULID format.",
+                required: true,
+            },
+            DEADLINE_MS_PARAM,
+        ],
+        returns: "Receipt with `audio_after_hash` (or an audio blob reference; fetch via `loom blob get <hash>`) and `stop_reason` (one of explicit, byte_cap, duration_cap, no_samples, no_inbound_track, session_closed, error).",
+        example: &["loom", "action", "web.stop_audio_capture", "--session", "<SESSION>"],
     },
     ActionMeta {
         name: "web.stop_recording",

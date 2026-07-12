@@ -674,6 +674,13 @@ pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         // cdp-trusted-input: web.press_key is a host-side CDP Input.* verb (no
         // guest); intercepted in wasm_bridge before build_chromium_args.
         Action::WebPressKey { .. } => return None,
+        // voice-call-io: audio verbs are host-side intercepts (no direct-CDP
+        // envelope), like network_log/recording. Their daemon interception is
+        // added in a later task; this arm satisfies the exhaustive match.
+        Action::WebInjectAudio { .. }
+        | Action::WebStartAudioCapture { .. }
+        | Action::WebStopAudioCapture { .. }
+        | Action::WebSay { .. } => return None,
 
         Action::WebType {
             selector,
@@ -1208,6 +1215,11 @@ pub(crate) fn action_session_id(action: &Action) -> &str {
         | Action::WebDeleteCookies { session_id, .. } => session_id,
         Action::WebNetworkLog { session_id } => session_id,
         Action::WebPressKey { session_id, .. } => session_id,
+        // voice-call-io: audio verbs (surface only; dispatch wired in later tasks).
+        Action::WebInjectAudio { session_id, .. }
+        | Action::WebStartAudioCapture { session_id, .. }
+        | Action::WebStopAudioCapture { session_id }
+        | Action::WebSay { session_id, .. } => session_id,
     }
 }
 
@@ -1247,5 +1259,10 @@ pub(crate) fn action_verb(action: &Action) -> &str {
         Action::WebNetworkLog { .. } => "network-log",
         // cdp-trusted-input: host-side verb (no WIT export); label for telemetry.
         Action::WebPressKey { .. } => "press-key",
+        // voice-call-io: host-side audio verbs (no WIT export); labels for telemetry.
+        Action::WebInjectAudio { .. } => "inject-audio",
+        Action::WebStartAudioCapture { .. } => "start-audio-capture",
+        Action::WebStopAudioCapture { .. } => "stop-audio-capture",
+        Action::WebSay { .. } => "say",
     }
 }

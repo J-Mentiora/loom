@@ -43,6 +43,9 @@ Read cookies from the browser's cookie jar (CDP `Network.getCookies`).
 \fBweb.hover\fR
 Dispatch a mouseover event at a CSS selector.
 .TP
+\fBweb.inject_audio\fR
+Inject caller-provided audio into the page's virtual microphone.
+.TP
 \fBweb.navigate\fR
 Load a URL, follow redirects, capture DOM and screenshot.
 .TP
@@ -51,6 +54,9 @@ Read the per-request network entries observed since the last navigate.
 .TP
 \fBweb.press_key\fR
 Dispatch a real key press (Enter, Tab, …) via CDP Input.dispatchKeyEvent.
+.TP
+\fBweb.say\fR
+Speak text into the page's microphone via a configured external TTS backend.
 .TP
 \fBweb.screenshot\fR
 Capture a PNG screenshot of the page or a selected element.
@@ -70,8 +76,14 @@ Upload local files into an <input type=file> by CSS (or a css=/frame= locator).
 \fBweb.snapshot\fR
 Capture a full DOM snapshot of the active page.
 .TP
+\fBweb.start_audio_capture\fR
+Begin capturing inbound call audio into a bounded in-page buffer.
+.TP
 \fBweb.start_recording\fR
 Start recording a video (screencast) of the page.
+.TP
+\fBweb.stop_audio_capture\fR
+Stop inbound audio capture; return the buffered audio as a WAV reference.
 .TP
 \fBweb.stop_recording\fR
 Stop the active video recording and return its content hash.

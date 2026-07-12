@@ -202,6 +202,35 @@ pub enum Action {
     WebNetworkLog {
         session_id: String,
     },
+    // voice-call-io: browser voice-call I/O verbs (Architecture §2). SURFACE ONLY
+    // in task 02 — all four are host-side intercepts (no direct-CDP envelope) and
+    // their daemon/shim dispatch is wired in later tasks (03–05, 09). `deadline_ms`
+    // is threaded out-of-band by the router and is never a field here.
+    WebInjectAudio {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blob_ref: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        audio_b64: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        await_playout: Option<bool>,
+    },
+    WebStartAudioCapture {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_duration_ms: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_bytes: Option<u64>,
+    },
+    WebStopAudioCapture {
+        session_id: String,
+    },
+    WebSay {
+        session_id: String,
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        await_playout: Option<bool>,
+    },
     // Additional surface.verb pairs added as the WIT grows. The match
     // arm in `RpcHandlers` is exhaustive — adding a verb forces a
     // handler addition (compile-time evidence).
