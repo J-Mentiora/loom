@@ -24,6 +24,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod audio_bridge;
 pub use audio_bridge::AudioBridge;
 
+// task 05: capture pipeline building blocks (native → 16 kHz linear resampler and
+// the hand-written mono i16 WAV mux). Used by `AudioBridge::stop_capture`.
+mod resample;
+mod wav;
+
 #[cfg(test)]
 mod interface_tests;
 
