@@ -219,6 +219,17 @@ impl WasmHost {
                 self.write_recording_sidecar(session_id, hash, &result);
             }
         }
+        // voice-call-io (task 06, PRD D8): finalize any still-active audio capture
+        // the agent left open BEFORE tearing down the shim (the drain needs the live
+        // subprocess). No-op when nothing is capturing (stop returns audio_after_hash
+        // None). Like the recording, the captured WAV hash goes to a per-session
+        // sidecar — NEVER the manifest WAL — so the non-deterministic hash can't enter
+        // the replay chain.
+        if let Ok(result) = self.stop_audio_capture(session_id).await {
+            if let Some(hash) = &result.audio_after_hash {
+                self.write_audio_capture_sidecar(session_id, hash, &result);
+            }
+        }
         self.shim.shutdown_session(session_id).await;
     }
 
@@ -250,6 +261,46 @@ impl WasmHost {
             }
             Err(e) => {
                 tracing::warn!(session_id = %session_id, error = %e, "recordings sidecar: open failed")
+            }
+        }
+    }
+
+    /// voice-call-io (task 06): append a finalized capture's hash + metadata to the
+    /// per-session `audio_captures.jsonl` sidecar (under the sessions root, NOT the
+    /// manifest WAL — the non-deterministic WAV hash must never enter the hash chain,
+    /// mirroring `write_recording_sidecar`). Best-effort; a write failure is logged,
+    /// never propagated.
+    fn write_audio_capture_sidecar(
+        &self,
+        session_id: &str,
+        hash: &str,
+        result: &AudioCaptureResult,
+    ) {
+        use std::io::Write as _;
+        let dir = self.core.sessions_root.join(session_id);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(session_id = %session_id, error = %e, "audio-captures sidecar: mkdir failed");
+            return;
+        }
+        let path = dir.join("audio_captures.jsonl");
+        let line = serde_json::json!({
+            "audio_after_hash": hash,
+            "sample_count": result.sample_count,
+            "duration_ms": result.duration_ms,
+            "dropped_frames": result.dropped_frames,
+            "source_sample_rate": result.source_sample_rate,
+            "stop_reason": result.stop_reason,
+        });
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                let _ = writeln!(f, "{line}");
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "audio-captures sidecar: open failed")
             }
         }
     }
@@ -590,6 +641,26 @@ impl WasmHost {
                 }
             }
         };
+        // Loud WARN on a cap-truncated capture (Architecture §3); info on a stored
+        // capture. A cap stop still carries audio, so it takes the WARN branch.
+        if matches!(outcome.stop_reason.as_str(), "byte_cap" | "duration_cap") {
+            tracing::warn!(
+                session_id = %session_id,
+                stop_reason = %outcome.stop_reason,
+                sample_count = outcome.sample_count,
+                duration_ms = outcome.duration_ms,
+                "audio capture hit a cap and was TRUNCATED"
+            );
+        } else if audio_after_hash.is_some() {
+            tracing::info!(
+                session_id = %session_id,
+                duration_ms = outcome.duration_ms,
+                sample_count = outcome.sample_count,
+                dropped_frames = outcome.dropped_frames,
+                stop_reason = %outcome.stop_reason,
+                "audio capture stored to CAS"
+            );
+        }
         Ok(AudioCaptureResult {
             audio_after_hash,
             sample_count: outcome.sample_count,

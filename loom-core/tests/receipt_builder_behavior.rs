@@ -132,6 +132,58 @@ fn core_06_audio_after_hash_serializes_when_set() {
     );
 }
 
+// Minimal capture downgrades audio_after_blob_ref → audio_after_hash, exactly like
+// screenshot/screencast (the impl_capture downgrade + the capture_policy Minimal arm).
+#[test]
+fn core_06_minimal_downgrades_audio_blob_ref_to_hash() {
+    let mut receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-dg".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    let sha = "e".repeat(64);
+    receipt.audio_after_blob_ref = Some(ContentRef {
+        sha256: sha.clone(),
+        size_bytes: 32_044,
+    });
+    receipt.apply_capture_profile(CaptureProfile::Minimal);
+    assert!(
+        receipt.audio_after_blob_ref.is_none(),
+        "Minimal must strip the audio blob_ref"
+    );
+    assert_eq!(
+        receipt.audio_after_hash.as_deref(),
+        Some(sha.as_str()),
+        "Minimal must downgrade the audio blob_ref to its hash"
+    );
+}
+
+// M24: a POPULATED audio_after_blob_ref on a ReceiptPayload is tagged kind "audio"
+// by collect_content_refs — proving the D6 replay-exclusion safety net fires on the
+// manifest canonical bytes, not just the None (hash-neutral) case.
+#[test]
+fn core_06_populated_audio_blob_ref_is_tagged_audio() {
+    use loom_core::replay_engine::collect_content_refs;
+    let mut receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-m24".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    let sha = "f".repeat(64);
+    receipt.audio_after_blob_ref = Some(ContentRef {
+        sha256: sha.clone(),
+        size_bytes: 32_044,
+    });
+    let bytes = receipt.canonical_bytes().unwrap();
+    let refs = collect_content_refs(&bytes);
+    assert!(
+        refs.iter().any(|(s, kind)| s == &sha && kind == "audio"),
+        "populated audio_after_blob_ref must be collected as kind \"audio\"; got {refs:?}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // navigate default tier
 // ---------------------------------------------------------------------------

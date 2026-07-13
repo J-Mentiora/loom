@@ -495,7 +495,11 @@ impl WasmHostBridge for WasmBridge {
             // Resolve optional caps to safe defaults; the shim re-clamps via
             // `Caps::sanitized`, so the public API can never disable the caps.
             let dur = max_duration_ms.unwrap_or(300_000);
-            let bytes = max_bytes.unwrap_or(1_048_576);
+            // Default byte cap sized NOT to truncate before the duration default:
+            // 16 kHz mono i16 ≈ 32 KB/s, so 300 s ≈ 9.6 MiB — 16 MiB gives headroom
+            // (still well under the 64 MiB host ceiling). Callers pass max_bytes for a
+            // tighter bound. (#4: the previous 1 MiB default truncated at ~32 s.)
+            let bytes = max_bytes.unwrap_or(16 * 1024 * 1024);
             match handle.block_on(host.start_audio_capture(&sid, dur, bytes)) {
                 Ok(()) => {
                     return Ok(build_audio_capture_started_receipt(

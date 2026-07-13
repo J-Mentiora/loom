@@ -382,14 +382,22 @@ pub(crate) fn build_stop_audio_capture_receipt(
             r.audio_stop_reason = Some(result.stop_reason);
             r
         }
-        None => recording_error_receipt(
-            action_id,
-            session_id,
-            "audio_capture_failed",
-            result
-                .error
-                .unwrap_or_else(|| format!("capture produced no audio ({})", result.stop_reason)),
-        ),
+        None => {
+            // Preserve the typed stop_reason on the error receipt too (C4/#18):
+            // a caller seeing `no_inbound_track` / `no_samples` / `session_closed`
+            // gets the reason, not only a free-text message.
+            let stop_reason = result.stop_reason.clone();
+            let mut r = recording_error_receipt(
+                action_id,
+                session_id,
+                "audio_capture_failed",
+                result
+                    .error
+                    .unwrap_or_else(|| format!("capture produced no audio ({stop_reason})")),
+            );
+            r.audio_stop_reason = Some(stop_reason);
+            r
+        }
     }
 }
 
