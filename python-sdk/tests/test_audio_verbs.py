@@ -145,6 +145,23 @@ def test_save_audio_capture_writes_file(daemon, tmp_path):
     assert out.read_bytes() == WAV_BYTES
 
 
+def test_fetch_audio_capture_propagates_malformed_data_hex(daemon):
+    _register_audio(daemon)
+
+    def _bad_content_get(params: dict) -> dict:
+        return {"artifact_ref": params["artifact_ref"], "data_hex": "zz-not-hex", "size_bytes": 5}
+
+    daemon.register_handler("content.get", _bad_content_get)
+    with loom.Session.create(socket_path=str(daemon.socket_path), token=daemon.token) as s:
+        receipt = s.stop_audio_capture()
+        try:
+            s.fetch_audio_capture(receipt)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("malformed data_hex must raise, not zero-fill")
+
+
 def test_fetch_audio_capture_without_hash_raises(daemon):
     with loom.Session.create(socket_path=str(daemon.socket_path), token=daemon.token) as s:
         bare = Receipt._from_dict({"action_hash": "a" * 64, "outcome_hash": "b" * 64})

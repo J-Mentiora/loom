@@ -146,6 +146,21 @@ describe("audio verbs + retrieval helpers", () => {
     }
   });
 
+  test("fetchAudioCapture throws on malformed data_hex instead of zero-filling", async () => {
+    daemon.registerHandler("content.get", (params) => ({
+      artifact_ref: params["artifact_ref"],
+      data_hex: "zz-not-hex",
+      size_bytes: 5,
+    }));
+    const s = await Session.create({ socketPath: daemon.socketPath, token: daemon.token });
+    const receipt = await s.stopAudioCapture();
+    await assert.rejects(
+      () => s.fetchAudioCapture(receipt),
+      (err: Error) => err.message.includes("malformed data_hex"),
+    );
+    await s.close();
+  });
+
   test("fetchAudioCapture without audioAfterHash throws naming the field", async () => {
     const s = await Session.create({ socketPath: daemon.socketPath, token: daemon.token });
     const bare = { actionHash: "a".repeat(64), outcomeHash: "b".repeat(64), emittedAtMs: 1 } as Receipt;

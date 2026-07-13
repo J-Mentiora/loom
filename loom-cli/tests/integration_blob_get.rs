@@ -148,6 +148,54 @@ fn blob_get_overwrites_an_existing_output_file() {
 }
 
 #[test]
+fn blob_get_dash_output_streams_to_stdout_end_to_end() {
+    let (h, data_root) = harness();
+    let wav = wav_fixture();
+    let hash = seed_blob(&data_root, &wav);
+
+    let out = h
+        .loom_command()
+        .args(["blob", "get", &hash, "-o", "-"])
+        .output()
+        .expect("run loom blob get -o -");
+    assert!(
+        out.status.success(),
+        "-o - must stream to stdout; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.stdout, wav);
+}
+
+#[test]
+fn blob_get_disk_write_failure_exits_2_naming_the_path() {
+    let (h, data_root) = harness();
+    let wav = wav_fixture();
+    let hash = seed_blob(&data_root, &wav);
+
+    // A destination inside a nonexistent directory: fs::write fails ->
+    // CliError::Internal -> exit 2 (session-export precedent; see plan D3
+    // deviation note in decisions.md).
+    let bad = h.home().join("no-such-dir").join("out.wav");
+    let out = h
+        .loom_command()
+        .args(["blob", "get", &hash, "-o"])
+        .arg(&bad)
+        .output()
+        .expect("run loom blob get with unwritable path");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "disk-write failure maps Internal -> exit 2; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no-such-dir"),
+        "error must name the path: {stderr}"
+    );
+}
+
+#[test]
 fn blob_get_missing_hash_is_a_typed_daemon_error_exit_1() {
     let (h, _data_root) = harness();
     let absent = "a".repeat(64);

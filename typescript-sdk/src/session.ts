@@ -37,6 +37,11 @@ function buildActionParams(
 }
 
 function hexToBytes(hex: string): Uint8Array {
+  // The daemon always hex-encodes content.get responses; malformed hex means
+  // a broken/foreign endpoint — throw rather than silently zero-fill bytes.
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error("malformed data_hex in content.get response");
+  }
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
     bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
