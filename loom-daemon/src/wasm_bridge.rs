@@ -551,6 +551,96 @@ impl WasmHostBridge for WasmBridge {
             }
         }
 
+        // voice-call-io (task 09): web.say is a host/shim side-channel that layers on
+        // inject_audio — the daemon synthesizes `text` → audio bytes via the
+        // operator-configured TTS backend (LOOM_TTS_CMD / LOOM_TTS_URL, hardened in
+        // tts_backend.rs) and feeds them through the SAME inject path, so `say`
+        // inherits every inject bound (size cap, replay exclusion). Like inject, it
+        // hard-errors on a determinism-enabled session BEFORE synthesizing — a paused
+        // virtual clock would freeze the live call (PRD D5). `text` is NEVER logged
+        // (it can be sensitive call audio — plan-council P-A3); only its length and
+        // the failure class are observable.
+        if let Action::WebSay {
+            text,
+            await_playout,
+            ..
+        } = &action
+        {
+            let action_id = session.allocate_action_id();
+
+            if !session.no_determinism {
+                return Ok(recording_error_receipt(
+                    action_id,
+                    session_id_str,
+                    "determinism_enabled",
+                    "web.say requires a no-determinism session (a paused virtual clock \
+                     would freeze the live call); create the session with no-determinism \
+                     enabled"
+                        .to_string(),
+                ));
+            }
+
+            // Synthesize daemon-side (subprocess / SSRF-guarded HTTP). A typed TtsError
+            // maps straight to the receipt error.kind; the Display message never echoes
+            // `text` (P-A3).
+            let text_len = text.len();
+            let bytes = match handle.block_on(crate::tts_backend::synthesize(text)) {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id_str,
+                        kind = e.kind(),
+                        text_len,
+                        "audio.say_tts_failed"
+                    );
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        e.kind(),
+                        e.to_string(),
+                    ));
+                }
+            };
+
+            // A14: synthesized bytes pass the SAME inject size bound as any payload.
+            if bytes.len() > MAX_INJECT_BYTES {
+                return Ok(recording_error_receipt(
+                    action_id,
+                    session_id_str,
+                    "payload_too_large",
+                    format!(
+                        "synthesized audio is {} bytes, over the {MAX_INJECT_BYTES}-byte cap",
+                        bytes.len()
+                    ),
+                ));
+            }
+
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            let await_playout = await_playout.unwrap_or(false);
+            match handle.block_on(host.inject_audio(&sid, bytes, await_playout)) {
+                Ok(outcome) => {
+                    tracing::info!(
+                        session_id = %sid,
+                        text_len,
+                        duration_ms = outcome.duration_ms,
+                        awaited_playout = outcome.awaited_playout,
+                        "audio.say_enqueued"
+                    );
+                    return Ok(build_say_receipt(action_id, session_id_str));
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        classify_inject_error(&msg),
+                        msg,
+                    ));
+                }
+            }
+        }
+
         // cdp-trusted-input: web.click is ALWAYS trusted — host-side CDP
         // `Input.dispatchMouseEvent` at the element hit point (like recording, no
         // guest). web.type `mode:keystrokes` and web.press_key are likewise
@@ -1014,7 +1104,7 @@ pub(crate) fn build_host_bridge(
 
 /// Maximum decoded inject payload — 8 MiB (PRD FND-0029). A larger clip is
 /// rejected; the bound also caps in-page decode/playout CPU.
-const MAX_INJECT_BYTES: usize = 8 * 1024 * 1024;
+pub(crate) const MAX_INJECT_BYTES: usize = 8 * 1024 * 1024;
 
 /// Resolve + size-bound a `web.inject_audio` payload daemon-side (Architecture §3
 /// "Inject", A5, PRD D12). Exactly one of `blob_ref` / `audio_b64` must be present.

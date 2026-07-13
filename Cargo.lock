@@ -2397,6 +2397,7 @@ dependencies = [
  "loom-rpc",
  "loom-shared",
  "parking_lot",
+ "reqwest 0.12.28",
  "serde",
  "serde_jcs",
  "serde_json",

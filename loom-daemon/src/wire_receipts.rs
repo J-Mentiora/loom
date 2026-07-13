@@ -348,6 +348,18 @@ pub(crate) fn build_inject_audio_receipt(action_id: u64, session_id: &str) -> Re
     r
 }
 
+/// voice-call-io (task 09): success receipt for `web.say`. TTS output is injected
+/// through the ordinary `inject_audio` path, so this carries the SAME constant
+/// enqueue-success `outcome_hash` shape as `build_inject_audio_receipt` (a distinct
+/// per-verb marker keeps the manifest hash chain replay-equal; playout completion is
+/// a daemon tracing event, never a receipt field — D18). Replay-exclusion is inherited
+/// from the inject path — `web.say` adds no new replay wiring.
+pub(crate) fn build_say_receipt(action_id: u64, session_id: &str) -> Receipt {
+    let mut r = build_recording_started_receipt(action_id, session_id);
+    r.outcome_hash = Some(loom_core::content_store::sha256_hex(b"loom:audio:say-ok"));
+    r
+}
+
 /// voice-call-io (task 06): success receipt for `web.start_audio_capture` (capture
 /// began; the WAV hash arrives on the stop receipt). Carries a CONSTANT per-verb
 /// `outcome_hash` dispatch marker (PRD D6), mirroring `build_inject_audio_receipt`.
