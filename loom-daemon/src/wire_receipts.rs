@@ -1141,7 +1141,7 @@ pub(crate) fn build_navigate_wire_receipt(
     // `evaluate_return_value_blob_ref` (offloaded to content store);
     // for non-evaluate actions both are `None` and the fields are
     // skipped on serialisation. `blob_ref.sha256` is the wire form so
-    // CLI consumers can fetch via `loom content get`.
+    // CLI consumers can fetch via `loom blob get`.
     let return_value_json = builder.evaluate_return_value_json.clone();
     let return_value_blob_ref = builder
         .evaluate_return_value_blob_ref

@@ -42,6 +42,7 @@ fn command_variant_set_locked() {
     fn _ck(c: Command) -> &'static str {
         match c {
             Command::Session(_) => "session",
+            Command::Blob(_) => "blob",
             Command::Action(_) => "action",
             Command::Vault(_) => "vault",
             Command::Gc(_) => "gc",

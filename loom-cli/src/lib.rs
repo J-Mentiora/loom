@@ -12,6 +12,7 @@ pub mod action_help;
 pub mod admin_commands;
 pub mod auth_manager;
 pub mod benchmark_commands;
+pub mod blob_commands;
 pub mod chromium_downloader;
 pub mod chromium_pin;
 pub mod cli_config;
