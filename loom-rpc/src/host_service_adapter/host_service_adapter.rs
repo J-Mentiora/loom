@@ -287,6 +287,17 @@ pub struct Receipt {
     /// host-side, like `web.network_log`), so this never affects replay-equality.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screencast_after_hash: Option<String>,
+    /// voice-call-io: SHA-256 of the captured-call `.wav` in CAS, set on a
+    /// `web.stop_audio_capture` receipt. Fetch via `loom blob get <hash>`. Like
+    /// screencast, the audio bytes live OUTSIDE the manifest hash chain (capture is
+    /// intercepted host-side), so this never affects replay-equality.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_after_hash: Option<String>,
+    /// voice-call-io: why capture stopped (`explicit` | `byte_cap` | `duration_cap`
+    /// | `no_samples` | `no_inbound_track` | `session_closed` | `error`). Surfaced so
+    /// a cap-truncated capture is caller-observable, not just a server log line.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_stop_reason: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

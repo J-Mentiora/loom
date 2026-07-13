@@ -518,6 +518,12 @@ fn assemble_navigate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         screenshot_before_blob_ref: None,
         screencast_after_hash: None,
         screencast_after_blob_ref: None,
+        // voice-call-io: manifest audio fields stay None on the marshaller path —
+        // captured audio is intercepted daemon-side (wire receipt), never the guest
+        // path, so the manifest chain stays deterministic. Present as the D6
+        // replay-exclusion safety net.
+        audio_after_hash: None,
+        audio_after_blob_ref: None,
         llm_cache_hit: None,
         status,
         surface: ReceiptSurface::Web,
@@ -633,6 +639,12 @@ fn assemble_evaluate_canonical_bytes(builder: &ReceiptBuilder) -> Result<Vec<u8>
         screenshot_before_blob_ref: None,
         screencast_after_hash: None,
         screencast_after_blob_ref: None,
+        // voice-call-io: manifest audio fields stay None on the marshaller path —
+        // captured audio is intercepted daemon-side (wire receipt), never the guest
+        // path, so the manifest chain stays deterministic. Present as the D6
+        // replay-exclusion safety net.
+        audio_after_hash: None,
+        audio_after_blob_ref: None,
         llm_cache_hit: None,
         status,
         surface: ReceiptSurface::Web,

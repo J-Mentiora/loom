@@ -614,6 +614,33 @@ pub trait ActionExecutor: Send + Sync {
     ) -> Result<loom_shared::navigate_outcome::AudioInjectOutcome, String> {
         Err("audio inject not supported by this executor".to_string())
     }
+
+    /// voice-call-io (task 06): start capturing inbound (remote) WebRTC audio on
+    /// the target. Fire-and-confirm; `Err(typed_kind)` (no session abort) on
+    /// audio-not-enabled / double-start. Default impl reports unsupported.
+    async fn start_audio_capture(
+        &self,
+        _session_id: loom_shared::shim_protocol::SessionId,
+        _target_id: TargetId,
+        _caps: crate::audio_bridge::Caps,
+    ) -> Result<(), String> {
+        Err("audio capture not supported by this executor".to_string())
+    }
+
+    /// voice-call-io (task 06): stop the active capture, drain+resample+WAV-mux, and
+    /// return the outcome (errors embedded, never at the call boundary — mirrors
+    /// `stop_recording`). Default impl reports unsupported.
+    async fn stop_audio_capture(
+        &self,
+        _session_id: loom_shared::shim_protocol::SessionId,
+        _target_id: TargetId,
+    ) -> loom_shared::navigate_outcome::AudioCaptureOutcome {
+        loom_shared::navigate_outcome::AudioCaptureOutcome {
+            stop_reason: "error".to_string(),
+            error: Some("audio capture not supported by this executor".to_string()),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1437,6 +1464,23 @@ impl ActionExecutor for ChromiumActionExecutor {
         self.audio
             .inject(session_id, target_id, &bytes, await_playout)
             .await
+    }
+
+    async fn start_audio_capture(
+        &self,
+        session_id: loom_shared::shim_protocol::SessionId,
+        target_id: TargetId,
+        caps: crate::audio_bridge::Caps,
+    ) -> Result<(), String> {
+        self.audio.start_capture(session_id, target_id, caps).await
+    }
+
+    async fn stop_audio_capture(
+        &self,
+        session_id: loom_shared::shim_protocol::SessionId,
+        target_id: TargetId,
+    ) -> loom_shared::navigate_outcome::AudioCaptureOutcome {
+        self.audio.stop_capture(session_id, target_id).await
     }
 }
 

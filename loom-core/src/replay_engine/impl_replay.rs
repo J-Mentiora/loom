@@ -61,12 +61,16 @@ fn replay_blob_kind(field: &str) -> Option<&'static str> {
         | "screenshot_after_blob_ref"
         | "screenshot_before_blob_ref" => Some("screenshot"),
         "screencast_after_hash" | "screencast_after_blob_ref" => Some("screencast"),
+        // Captured voice-call audio (voice-call-io task 06): WebRTC bytes are
+        // non-deterministic, so the WAV artifact is excluded from the chain — only
+        // its content hash is recorded (PRD D6).
+        "audio_after_hash" | "audio_after_blob_ref" => Some("audio"),
         _ => None,
     }
 }
 
 /// Blob kinds excluded from the replay hash chain / field diffs (NFR-DET-01).
-const EXCLUDED_BLOB_KINDS: &[&str] = &["screenshot", "screencast"];
+const EXCLUDED_BLOB_KINDS: &[&str] = &["screenshot", "screencast", "audio"];
 
 /// True when a receipt field carries non-deterministic artifact bytes that are
 /// excluded from the replay chain (see [`replay_blob_kind`]).
@@ -208,6 +212,7 @@ pub fn collect_content_refs(receipt_bytes: &[u8]) -> Vec<(String, String)> {
     push_named("screenshot_after_blob_ref", "screenshot");
     push_named("screenshot_before_blob_ref", "screenshot");
     push_named("screencast_after_blob_ref", "screencast");
+    push_named("audio_after_blob_ref", "audio");
 
     // Per-request response-body blobs on navigate-tier receipts.
     if let Some(events) = val.get("network_events").and_then(|e| e.as_array()) {
@@ -730,6 +735,31 @@ mod blob_kind_tests {
             "dom_after_blob_ref",
             "url",
         ] {
+            assert!(
+                !is_excluded_artifact_field(f),
+                "{f} must NOT be excluded (no substring matching)"
+            );
+        }
+    }
+
+    // voice-call-io task 06 (AC7): captured-audio bytes are observational —
+    // content-hashed on the receipt, EXCLUDED from the replay hash chain and the
+    // missing-blob integrity gate, exactly like screencast/screenshot (PRD D6).
+    // Requires BOTH the `replay_blob_kind` arm AND `"audio"` in EXCLUDED_BLOB_KINDS.
+    #[test]
+    fn audio_capture_fields_are_excluded() {
+        for f in ["audio_after_hash", "audio_after_blob_ref"] {
+            assert!(is_excluded_artifact_field(f), "{f} must be excluded (AC7)");
+        }
+        assert_eq!(replay_blob_kind("audio_after_hash"), Some("audio"));
+        assert_eq!(replay_blob_kind("audio_after_blob_ref"), Some("audio"));
+    }
+
+    #[test]
+    fn unrelated_audio_prefixed_fields_are_not_excluded() {
+        // Exact-match map (R7): an `audio_*` field that is NOT a byte-carrier
+        // (a count/rate/config) must stay IN the chain.
+        for f in ["audio_config", "audio_after_count", "audio_sample_rate"] {
             assert!(
                 !is_excluded_artifact_field(f),
                 "{f} must NOT be excluded (no substring matching)"

@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 // task 04: inject side (`AudioBridge::inject`). Split into its own file, mirroring
 // `screencast_recorder/`, so its tests + the future capture impl live beside it.
 mod audio_bridge;
-pub use audio_bridge::AudioBridge;
+pub use audio_bridge::{AudioBridge, Caps};
 
 // task 05: capture pipeline building blocks (native → 16 kHz linear resampler and
 // the hand-written mono i16 WAV mux). Used by `AudioBridge::stop_capture`.

@@ -219,6 +219,17 @@ impl WasmHost {
                 self.write_recording_sidecar(session_id, hash, &result);
             }
         }
+        // voice-call-io (task 06, PRD D8): finalize any still-active audio capture
+        // the agent left open BEFORE tearing down the shim (the drain needs the live
+        // subprocess). No-op when nothing is capturing (stop returns audio_after_hash
+        // None). Like the recording, the captured WAV hash goes to a per-session
+        // sidecar — NEVER the manifest WAL — so the non-deterministic hash can't enter
+        // the replay chain.
+        if let Ok(result) = self.stop_audio_capture(session_id).await {
+            if let Some(hash) = &result.audio_after_hash {
+                self.write_audio_capture_sidecar(session_id, hash, &result);
+            }
+        }
         self.shim.shutdown_session(session_id).await;
     }
 
@@ -250,6 +261,46 @@ impl WasmHost {
             }
             Err(e) => {
                 tracing::warn!(session_id = %session_id, error = %e, "recordings sidecar: open failed")
+            }
+        }
+    }
+
+    /// voice-call-io (task 06): append a finalized capture's hash + metadata to the
+    /// per-session `audio_captures.jsonl` sidecar (under the sessions root, NOT the
+    /// manifest WAL — the non-deterministic WAV hash must never enter the hash chain,
+    /// mirroring `write_recording_sidecar`). Best-effort; a write failure is logged,
+    /// never propagated.
+    fn write_audio_capture_sidecar(
+        &self,
+        session_id: &str,
+        hash: &str,
+        result: &AudioCaptureResult,
+    ) {
+        use std::io::Write as _;
+        let dir = self.core.sessions_root.join(session_id);
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(session_id = %session_id, error = %e, "audio-captures sidecar: mkdir failed");
+            return;
+        }
+        let path = dir.join("audio_captures.jsonl");
+        let line = serde_json::json!({
+            "audio_after_hash": hash,
+            "sample_count": result.sample_count,
+            "duration_ms": result.duration_ms,
+            "dropped_frames": result.dropped_frames,
+            "source_sample_rate": result.source_sample_rate,
+            "stop_reason": result.stop_reason,
+        });
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                let _ = writeln!(f, "{line}");
+            }
+            Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "audio-captures sidecar: open failed")
             }
         }
     }
@@ -512,6 +563,115 @@ impl WasmHost {
         })
     }
 
+    /// voice-call-io (task 06): start capturing inbound (remote) WebRTC audio on the
+    /// session's active page target. Errors if no page exists yet (navigate + join
+    /// the call first). Does NOT spawn Chromium — a capture only makes sense once a
+    /// page is live. The daemon has already enforced the `no_determinism` gate.
+    pub async fn start_audio_capture(
+        &self,
+        session_id: &str,
+        max_duration_ms: u64,
+        max_bytes: u64,
+    ) -> Result<(), LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — navigate before web.start_audio_capture",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_start_audio_capture(effective_id, shim_session_id, 0, max_duration_ms, max_bytes)
+            .await
+    }
+
+    /// voice-call-io (task 06): stop the active capture, write the captured `.wav`
+    /// to the content store, and return the content hash + metadata. The WAV bytes
+    /// are non-deterministic and live OUTSIDE the manifest hash chain (only this
+    /// hash is recorded), so capture never affects replay-equality — exactly like
+    /// screencast.
+    pub async fn stop_audio_capture(
+        &self,
+        session_id: &str,
+    ) -> Result<AudioCaptureResult, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active capture (no page target)",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        let outcome = self
+            .shim
+            .send_stop_audio_capture(effective_id, shim_session_id, 0)
+            .await?;
+
+        // Write the WAV to CAS (host-side, like screencast). On empty capture there
+        // is no hash; `outcome.error` carries the reason for the receipt.
+        let mut error = outcome.error;
+        let audio_after_hash = if outcome.wav_bytes.is_empty() {
+            None
+        } else if outcome.wav_bytes.len() as u64 > HOST_MAX_CAPTURE_BYTES {
+            // [C1/M14] Host cap re-check: never trust the shim's byte count. A
+            // compromised/buggy shim returning an over-cap payload must not push
+            // unbounded bytes into CAS — reject with a typed error, no store.
+            tracing::warn!(
+                session_id = %session_id,
+                bytes = outcome.wav_bytes.len(),
+                "audio capture exceeded host byte ceiling; rejecting (shim cap bypass?)"
+            );
+            error = Some(format!(
+                "captured audio {} bytes exceeds host ceiling {HOST_MAX_CAPTURE_BYTES}; rejected",
+                outcome.wav_bytes.len()
+            ));
+            None
+        } else {
+            match self.core.content_store.put(&outcome.wav_bytes) {
+                Ok(cref) => Some(cref.sha256),
+                Err(e) => {
+                    // Capture SUCCEEDED but the store failed — record an accurate
+                    // error so the receipt doesn't silently claim "no audio".
+                    tracing::warn!(session_id = %session_id, error = %e, "audio capture CAS put failed");
+                    error = Some(format!("captured audio but CAS store failed: {e}"));
+                    None
+                }
+            }
+        };
+        // Loud WARN on a cap-truncated capture (Architecture §3); info on a stored
+        // capture. A cap stop still carries audio, so it takes the WARN branch.
+        if matches!(outcome.stop_reason.as_str(), "byte_cap" | "duration_cap") {
+            tracing::warn!(
+                session_id = %session_id,
+                stop_reason = %outcome.stop_reason,
+                sample_count = outcome.sample_count,
+                duration_ms = outcome.duration_ms,
+                "audio capture hit a cap and was TRUNCATED"
+            );
+        } else if audio_after_hash.is_some() {
+            tracing::info!(
+                session_id = %session_id,
+                duration_ms = outcome.duration_ms,
+                sample_count = outcome.sample_count,
+                dropped_frames = outcome.dropped_frames,
+                stop_reason = %outcome.stop_reason,
+                "audio capture stored to CAS"
+            );
+        }
+        Ok(AudioCaptureResult {
+            audio_after_hash,
+            sample_count: outcome.sample_count,
+            duration_ms: outcome.duration_ms,
+            dropped_frames: outcome.dropped_frames,
+            source_sample_rate: outcome.source_sample_rate,
+            stop_reason: outcome.stop_reason,
+            error,
+        })
+    }
+
     /// cdp-trusted-input: `web.type` DEFAULT (`mode:"fill"`). Focus the element
     /// and drive the value through CDP `Input.insertText` (Playwright `fill()`
     /// semantics) so React/react-hook-form `onChange` fires AND the value is
@@ -737,6 +897,27 @@ pub struct ScreencastResult {
     pub screencast_after_hash: Option<String>,
     pub frame_count: u64,
     pub duration_ms: u64,
+    pub stop_reason: String,
+    pub error: Option<String>,
+}
+
+/// Host-side absolute ceiling on a single captured WAV before it enters CAS —
+/// defense-in-depth beyond the shim `Caps` (a compromised/buggy shim cannot force
+/// unbounded CAS growth). 64 MiB ≈ 35 min of 16 kHz mono i16, far above any
+/// legitimate bounded voice capture.
+const HOST_MAX_CAPTURE_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Result of [`WasmHost::stop_audio_capture`]. `audio_after_hash` is the CAS
+/// SHA-256 of the captured `.wav` (None on an empty capture, an over-ceiling
+/// reject, or a CAS failure — in which case `error` is set). Mirrors
+/// [`ScreencastResult`]; the audio bytes never enter the manifest hash chain.
+#[derive(Debug, Default, Clone)]
+pub struct AudioCaptureResult {
+    pub audio_after_hash: Option<String>,
+    pub sample_count: u64,
+    pub duration_ms: u64,
+    pub dropped_frames: u64,
+    pub source_sample_rate: u32,
     pub stop_reason: String,
     pub error: Option<String>,
 }

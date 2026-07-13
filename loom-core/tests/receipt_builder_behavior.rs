@@ -79,6 +79,109 @@ fn core_04_1_click_receipt_default_tier() {
         receipt.return_value_blob_ref.is_none(),
         "no return_value_blob_ref for click"
     );
+
+    // voice-call-io task 06: audio fields default absent on every non-audio receipt.
+    assert!(
+        receipt.audio_after_hash.is_none(),
+        "click tier: no audio_after_hash"
+    );
+    assert!(
+        receipt.audio_after_blob_ref.is_none(),
+        "click tier: no audio_after_blob_ref"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// voice-call-io task 06 — audio field hash-neutrality (NFR-DET-01)
+// ---------------------------------------------------------------------------
+
+// The new `audio_after_*` fields are hash-neutral: absent (None) from every
+// non-audio receipt via `skip_serializing_if`, so no existing receipt's canonical
+// bytes (and thus the manifest hash chain) change. Adding the fields is replay-safe.
+#[test]
+fn core_06_audio_fields_absent_from_canonical_bytes_when_none() {
+    let receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-neutral".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    assert!(receipt.audio_after_hash.is_none());
+    assert!(receipt.audio_after_blob_ref.is_none());
+    let json = String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap();
+    assert!(
+        !json.contains("audio_after"),
+        "None audio fields must be absent from canonical bytes (hash-neutral); got: {json}"
+    );
+}
+
+// When set (the stop_audio_capture path), the hash serializes into canonical bytes.
+#[test]
+fn core_06_audio_after_hash_serializes_when_set() {
+    let mut receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-set".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    receipt.audio_after_hash = Some("c".repeat(64));
+    let json = String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap();
+    assert!(
+        json.contains("audio_after_hash"),
+        "a set audio_after_hash must appear in canonical bytes; got: {json}"
+    );
+}
+
+// Minimal capture downgrades audio_after_blob_ref → audio_after_hash, exactly like
+// screenshot/screencast (the impl_capture downgrade + the capture_policy Minimal arm).
+#[test]
+fn core_06_minimal_downgrades_audio_blob_ref_to_hash() {
+    let mut receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-dg".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    let sha = "e".repeat(64);
+    receipt.audio_after_blob_ref = Some(ContentRef {
+        sha256: sha.clone(),
+        size_bytes: 32_044,
+    });
+    receipt.apply_capture_profile(CaptureProfile::Minimal);
+    assert!(
+        receipt.audio_after_blob_ref.is_none(),
+        "Minimal must strip the audio blob_ref"
+    );
+    assert_eq!(
+        receipt.audio_after_hash.as_deref(),
+        Some(sha.as_str()),
+        "Minimal must downgrade the audio blob_ref to its hash"
+    );
+}
+
+// M24: a POPULATED audio_after_blob_ref on a ReceiptPayload is tagged kind "audio"
+// by collect_content_refs — proving the D6 replay-exclusion safety net fires on the
+// manifest canonical bytes, not just the None (hash-neutral) case.
+#[test]
+fn core_06_populated_audio_blob_ref_is_tagged_audio() {
+    use loom_core::replay_engine::collect_content_refs;
+    let mut receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-m24".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    let sha = "f".repeat(64);
+    receipt.audio_after_blob_ref = Some(ContentRef {
+        sha256: sha.clone(),
+        size_bytes: 32_044,
+    });
+    let bytes = receipt.canonical_bytes().unwrap();
+    let refs = collect_content_refs(&bytes);
+    assert!(
+        refs.iter().any(|(s, kind)| s == &sha && kind == "audio"),
+        "populated audio_after_blob_ref must be collected as kind \"audio\"; got {refs:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

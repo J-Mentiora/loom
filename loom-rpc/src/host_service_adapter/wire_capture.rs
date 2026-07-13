@@ -103,6 +103,8 @@ mod tests {
             dom_after_hash: None,
             screenshot_after_hash: Some("ss".into()),
             screencast_after_hash: None,
+            audio_after_hash: None,
+            audio_stop_reason: None,
             console_count: Some(3),
             network_count: Some(7),
             console_lines: vec![ShimConsoleLine {
