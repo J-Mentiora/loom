@@ -30,6 +30,10 @@ dirs = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 hex = { workspace = true }
+# voice-call-io task 09: web.say TTS backend POSTs to LOOM_TTS_URL (SSRF-guarded,
+# https-only, no redirects). Existing workspace dep (rustls-tls, no blocking) — no
+# new crate (PRD D4); already used by loom-host.
+reqwest = { workspace = true }
 # Per-session dispatch fence guard type (Session.dispatch_slot).
 parking_lot = { workspace = true }
 humantime = { workspace = true }
