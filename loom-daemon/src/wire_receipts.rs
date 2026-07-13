@@ -66,6 +66,8 @@ pub(crate) fn profile_restricted_evaluate_receipt(
         dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -130,6 +132,8 @@ pub(crate) fn upload_error_receipt(
         dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -179,6 +183,8 @@ pub(crate) fn build_network_log_receipt(
         dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -224,6 +230,8 @@ pub(crate) fn build_recording_started_receipt(action_id: u64, session_id: &str) 
         dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -305,6 +313,8 @@ pub(crate) fn recording_error_receipt(
         dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -336,6 +346,51 @@ pub(crate) fn build_inject_audio_receipt(action_id: u64, session_id: &str) -> Re
         b"loom:audio:inject-ok",
     ));
     r
+}
+
+/// voice-call-io (task 06): success receipt for `web.start_audio_capture` (capture
+/// began; the WAV hash arrives on the stop receipt). Carries a CONSTANT per-verb
+/// `outcome_hash` dispatch marker (PRD D6), mirroring `build_inject_audio_receipt`.
+pub(crate) fn build_audio_capture_started_receipt(action_id: u64, session_id: &str) -> Receipt {
+    let mut r = build_recording_started_receipt(action_id, session_id);
+    r.outcome_hash = Some(loom_core::content_store::sha256_hex(
+        b"loom:audio:capture-start-ok",
+    ));
+    r
+}
+
+/// voice-call-io (task 06): `web.stop_audio_capture` receipt. On success carries the
+/// observational `audio_after_hash` (the captured `.wav` CAS hash), a CONSTANT
+/// per-verb `outcome_hash`, and `audio_stop_reason` (so a `byte_cap`/`duration_cap`
+/// truncation is caller-observable, not just a server log). The WAV bytes live in
+/// CAS OUTSIDE the manifest hash chain (host-intercept, like screencast), so capture
+/// never affects replay-equality. A capture that produced no audio (no inbound track
+/// / mux error / host over-ceiling reject) → an error receipt carrying the
+/// stop_reason + error; the session itself is never aborted.
+pub(crate) fn build_stop_audio_capture_receipt(
+    action_id: u64,
+    session_id: &str,
+    result: loom_host::wasm_host::wasm_host::AudioCaptureResult,
+) -> Receipt {
+    match result.audio_after_hash {
+        Some(hash) => {
+            let mut r = build_recording_started_receipt(action_id, session_id);
+            r.outcome_hash = Some(loom_core::content_store::sha256_hex(
+                b"loom:audio:capture-stop-ok",
+            ));
+            r.audio_after_hash = Some(hash);
+            r.audio_stop_reason = Some(result.stop_reason);
+            r
+        }
+        None => recording_error_receipt(
+            action_id,
+            session_id,
+            "audio_capture_failed",
+            result
+                .error
+                .unwrap_or_else(|| format!("capture produced no audio ({})", result.stop_reason)),
+        ),
+    }
 }
 
 /// Map a failed `web.inject_audio` (the `LoomError` message threaded up from the
@@ -397,6 +452,8 @@ pub(crate) fn cookie_validation_error_receipt(
         dom_after_hash: None,
         screenshot_after_hash: None,
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: None,
         network_count: None,
         console_lines: vec![],
@@ -713,8 +770,9 @@ pub(crate) fn build_chromium_args(action: &Action) -> Option<Vec<u8>> {
         // guest); intercepted in wasm_bridge before build_chromium_args.
         Action::WebPressKey { .. } => return None,
         // voice-call-io: audio verbs are host-side intercepts (no direct-CDP
-        // envelope), like network_log/recording. Their daemon interception is
-        // added in a later task; this arm satisfies the exhaustive match.
+        // envelope), like network_log/recording — intercepted in wasm_bridge before
+        // build_chromium_args, so they have no CDP-replay args (None). (`WebSay` is
+        // task 09; it too resolves to InjectAudio host-side.)
         Action::WebInjectAudio { .. }
         | Action::WebStartAudioCapture { .. }
         | Action::WebStopAudioCapture { .. }
@@ -1137,6 +1195,8 @@ pub(crate) fn build_navigate_wire_receipt(
         dom_after_hash: builder.interaction_dom_after_hash.clone(),
         screenshot_after_hash: builder.navigate_screenshot_after_hash.clone(),
         screencast_after_hash: None,
+        audio_after_hash: None,
+        audio_stop_reason: None,
         console_count: builder.navigate_console_count,
         network_count: builder.navigate_network_count,
         console_lines,
@@ -1302,5 +1362,84 @@ pub(crate) fn action_verb(action: &Action) -> &str {
         Action::WebStartAudioCapture { .. } => "start-audio-capture",
         Action::WebStopAudioCapture { .. } => "stop-audio-capture",
         Action::WebSay { .. } => "say",
+    }
+}
+
+#[cfg(test)]
+mod audio_capture_receipt_tests {
+    use super::*;
+    use loom_host::wasm_host::wasm_host::AudioCaptureResult;
+    use loom_rpc::host_service_adapter::host_service_adapter::ReceiptStatus;
+
+    fn constant(marker: &[u8]) -> String {
+        loom_core::content_store::sha256_hex(marker)
+    }
+
+    #[test]
+    fn stop_success_carries_hash_reason_and_constant_marker() {
+        let hash = "ab".repeat(32);
+        let result = AudioCaptureResult {
+            audio_after_hash: Some(hash.clone()),
+            sample_count: 16_000,
+            duration_ms: 1_000,
+            dropped_frames: 0,
+            source_sample_rate: 48_000,
+            stop_reason: "explicit".to_string(),
+            error: None,
+        };
+        let r = build_stop_audio_capture_receipt(7, "sess-1", result);
+        assert!(matches!(r.status, ReceiptStatus::Success));
+        assert_eq!(r.audio_after_hash.as_deref(), Some(hash.as_str()));
+        assert_eq!(r.audio_stop_reason.as_deref(), Some("explicit"));
+        // Constant per-verb dispatch marker (PRD D6) — NOT the audio bytes hash, so
+        // two different captures chain identically at the manifest layer.
+        assert_eq!(
+            r.outcome_hash,
+            Some(constant(b"loom:audio:capture-stop-ok"))
+        );
+        assert_ne!(r.outcome_hash.as_deref(), Some(hash.as_str()));
+    }
+
+    #[test]
+    fn stop_surfaces_cap_truncation_reason_to_caller() {
+        // C4: a byte_cap/duration_cap truncation is caller-observable on the receipt,
+        // not just a server log line.
+        let result = AudioCaptureResult {
+            audio_after_hash: Some("cd".repeat(32)),
+            stop_reason: "byte_cap".to_string(),
+            ..Default::default()
+        };
+        let r = build_stop_audio_capture_receipt(1, "s", result);
+        assert_eq!(r.audio_stop_reason.as_deref(), Some("byte_cap"));
+    }
+
+    #[test]
+    fn stop_with_no_audio_is_typed_error_not_a_kill() {
+        // M18: a capture that produced no audio → Error-status receipt (session is
+        // never aborted); no audio hash.
+        let result = AudioCaptureResult {
+            audio_after_hash: None,
+            stop_reason: "no_inbound_track".to_string(),
+            error: Some("no inbound audio track".to_string()),
+            ..Default::default()
+        };
+        let r = build_stop_audio_capture_receipt(1, "s", result);
+        assert!(matches!(r.status, ReceiptStatus::Error));
+        assert!(r.audio_after_hash.is_none());
+        assert!(r.error.is_some());
+    }
+
+    #[test]
+    fn markers_are_stable_and_distinct() {
+        // M8: start/stop each carry a stable, distinct constant marker across calls.
+        let s1 = build_audio_capture_started_receipt(1, "a").outcome_hash;
+        let s2 = build_audio_capture_started_receipt(2, "b").outcome_hash;
+        assert_eq!(s1, s2, "start marker must be constant across captures");
+        assert_eq!(s1, Some(constant(b"loom:audio:capture-start-ok")));
+        assert_ne!(
+            s1,
+            Some(constant(b"loom:audio:capture-stop-ok")),
+            "start marker must differ from stop marker"
+        );
     }
 }

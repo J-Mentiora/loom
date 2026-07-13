@@ -79,6 +79,57 @@ fn core_04_1_click_receipt_default_tier() {
         receipt.return_value_blob_ref.is_none(),
         "no return_value_blob_ref for click"
     );
+
+    // voice-call-io task 06: audio fields default absent on every non-audio receipt.
+    assert!(
+        receipt.audio_after_hash.is_none(),
+        "click tier: no audio_after_hash"
+    );
+    assert!(
+        receipt.audio_after_blob_ref.is_none(),
+        "click tier: no audio_after_blob_ref"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// voice-call-io task 06 — audio field hash-neutrality (NFR-DET-01)
+// ---------------------------------------------------------------------------
+
+// The new `audio_after_*` fields are hash-neutral: absent (None) from every
+// non-audio receipt via `skip_serializing_if`, so no existing receipt's canonical
+// bytes (and thus the manifest hash chain) change. Adding the fields is replay-safe.
+#[test]
+fn core_06_audio_fields_absent_from_canonical_bytes_when_none() {
+    let receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-neutral".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    assert!(receipt.audio_after_hash.is_none());
+    assert!(receipt.audio_after_blob_ref.is_none());
+    let json = String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap();
+    assert!(
+        !json.contains("audio_after"),
+        "None audio fields must be absent from canonical bytes (hash-neutral); got: {json}"
+    );
+}
+
+// When set (the stop_audio_capture path), the hash serializes into canonical bytes.
+#[test]
+fn core_06_audio_after_hash_serializes_when_set() {
+    let mut receipt = ReceiptBuilder::build_click_receipt(
+        "act-audio-set".to_string(),
+        1_u64,
+        "a".repeat(64),
+        "b".repeat(64),
+    );
+    receipt.audio_after_hash = Some("c".repeat(64));
+    let json = String::from_utf8(receipt.canonical_bytes().unwrap()).unwrap();
+    assert!(
+        json.contains("audio_after_hash"),
+        "a set audio_after_hash must appear in canonical bytes; got: {json}"
+    );
 }
 
 // ---------------------------------------------------------------------------

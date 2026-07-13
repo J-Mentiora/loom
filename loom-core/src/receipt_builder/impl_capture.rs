@@ -65,6 +65,14 @@ impl ReceiptPayload {
             self.screencast_after_blob_ref = None;
         }
 
+        // audio_after_blob_ref → audio_after_hash downgrade (mirror screencast).
+        if !keep_field(scope, profile, CaptureField::AudioAfterBlobRef) {
+            if let Some(ref r) = self.audio_after_blob_ref {
+                self.audio_after_hash = Some(r.sha256.clone());
+            }
+            self.audio_after_blob_ref = None;
+        }
+
         // Before-refs: plain strip.
         if !keep_field(scope, profile, CaptureField::DomBeforeBlobRef) {
             self.dom_before_blob_ref = None;

@@ -24,7 +24,7 @@ use super::types::{
 use loom_core::error::{LoomError, LoomErrorCode};
 use loom_shared::locator::{parse_locator, Segment};
 use loom_shared::navigate_outcome::{
-    AudioInjectOutcome, NavigateOutcome, NetworkLogOutcome, ScreencastOutcome,
+    AudioCaptureOutcome, AudioInjectOutcome, NavigateOutcome, NetworkLogOutcome, ScreencastOutcome,
 };
 use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
 use std::time::Duration;
@@ -335,6 +335,137 @@ impl ShimManager {
                         LoomError::new(
                             LoomErrorCode::ShimFailure,
                             format!("shim {}: screencast outcome decode: {e}", id.0),
+                        )
+                    })
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id, shim_error_class(&code));
+                Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ))
+            }
+            Ok(other) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(e)
+            }
+        }
+    }
+
+    /// voice-call-io (task 06): start capturing inbound audio on the session's
+    /// active page target (`ShimRequest::StartAudioCapture`). Returns `Ok(())` on
+    /// confirmation; audio-not-enabled / double-start surfaces as a typed error.
+    pub async fn send_start_audio_capture(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+        max_duration_ms: u64,
+        max_bytes: u64,
+    ) -> Result<(), LoomError> {
+        self.check_breaker(&id)?;
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(&id, &config).await?;
+        let request = ShimRequest::StartAudioCapture {
+            request_id: 0,
+            session_id,
+            target_id,
+            max_duration_ms,
+            max_bytes,
+        };
+        match send_and_await(
+            &process,
+            request,
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(config.recv_timeout_ms),
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { .. }) => {
+                self.record_success(&id);
+                Ok(())
+            }
+            Ok(ShimResponse::Error { code, detail, .. }) => {
+                self.record_failure(&id, shim_error_class(&code));
+                Err(LoomError::new(
+                    map_shim_code(code),
+                    format!("shim {}: {}", id.0, detail),
+                ))
+            }
+            Ok(other) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(LoomError::new(
+                    LoomErrorCode::ShimFailure,
+                    format!("shim {}: unexpected non-Ok response: {other:?}", id.0),
+                ))
+            }
+            Err(e) => {
+                self.record_failure(&id, FailureClass::Transport);
+                Err(e)
+            }
+        }
+    }
+
+    /// voice-call-io (task 06): stop the active capture (`ShimRequest::StopAudioCapture`)
+    /// and return the decoded [`AudioCaptureOutcome`] (the host then writes the
+    /// `wav_bytes` to CAS). A longer recv timeout covers the synchronous
+    /// drain + resample + WAV-mux the shim runs before responding.
+    pub async fn send_stop_audio_capture(
+        &self,
+        id: ShimId,
+        session_id: u64,
+        target_id: u64,
+    ) -> Result<AudioCaptureOutcome, LoomError> {
+        self.check_breaker(&id)?;
+        let config = self.configs.get(&id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(&id, &config).await?;
+        let request = ShimRequest::StopAudioCapture {
+            request_id: 0,
+            session_id,
+            target_id,
+        };
+        // Drain+resample+mux runs synchronously before the response; give the recv
+        // a generous floor independent of the per-CDP-command budget.
+        let recv_timeout = Duration::from_millis(config.recv_timeout_ms.max(30_000));
+        match send_and_await(
+            &process,
+            request,
+            Duration::from_millis(config.send_timeout_ms),
+            recv_timeout,
+        )
+        .await
+        {
+            Ok(ShimResponse::Ok { payload, .. }) => {
+                self.record_success(&id);
+                let mut bytes = Vec::new();
+                if let Err(e) = ciborium::ser::into_writer(&payload, &mut bytes) {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ShimFailure,
+                        format!("shim {}: stop_audio_capture response re-encode: {e}", id.0),
+                    ));
+                }
+                loom_shared::shim_protocol::ciborium_from_slice::<AudioCaptureOutcome>(&bytes)
+                    .map_err(|e| {
+                        LoomError::new(
+                            LoomErrorCode::ShimFailure,
+                            format!("shim {}: audio capture outcome decode: {e}", id.0),
                         )
                     })
             }

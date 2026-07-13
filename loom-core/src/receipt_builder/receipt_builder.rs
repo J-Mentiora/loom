@@ -170,6 +170,18 @@ pub struct ReceiptPayload {
     pub screencast_after_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screencast_after_blob_ref: Option<ContentRef>,
+    // ---- Captured audio (voice-call-io) ----
+    // Set on a `web.stop_audio_capture` receipt. Captured remote-call audio is
+    // OBSERVATIONAL: content-hashed here but EXCLUDED from the replay hash chain
+    // (WebRTC bytes are non-deterministic — encoder/packet-loss variation makes them
+    // differ run-to-run), exactly like `screencast_after_*`. No `before` variant: a
+    // capture spans a duration. The daemon path carries the real hash on the WIRE
+    // receipt; these manifest fields are the PRD-D6 replay-exclusion safety net (see
+    // `impl_replay::replay_blob_kind` + `EXCLUDED_BLOB_KINDS`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_after_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_after_blob_ref: Option<ContentRef>,
     // ---- LLM cache hit flag (vestigial) ----
     /// Always `None`: loom has no LLM-response cache. Retained only so the
     /// receipt wire shape is unchanged; `skip_serializing_if` keeps it absent
@@ -258,6 +270,8 @@ impl ReceiptBuilder {
             screenshot_before_blob_ref: None,
             screencast_after_hash: None,
             screencast_after_blob_ref: None,
+            audio_after_hash: None,
+            audio_after_blob_ref: None,
             llm_cache_hit: None,
             status: ReceiptStatus::Ok,
             surface: ReceiptSurface::Web,
@@ -301,6 +315,8 @@ impl ReceiptBuilder {
             screenshot_before_blob_ref: None,
             screencast_after_hash: None,
             screencast_after_blob_ref: None,
+            audio_after_hash: None,
+            audio_after_blob_ref: None,
             llm_cache_hit: None,
             status: ReceiptStatus::Ok,
             surface: ReceiptSurface::Web,
@@ -345,6 +361,8 @@ impl ReceiptBuilder {
             screenshot_before_blob_ref: None,
             screencast_after_hash: None,
             screencast_after_blob_ref: None,
+            audio_after_hash: None,
+            audio_after_blob_ref: None,
             llm_cache_hit: None,
             status: ReceiptStatus::Ok,
             surface: ReceiptSurface::Web,
@@ -394,6 +412,8 @@ impl ReceiptBuilder {
             screenshot_before_blob_ref: None,
             screencast_after_hash: None,
             screencast_after_blob_ref: None,
+            audio_after_hash: None,
+            audio_after_blob_ref: None,
             llm_cache_hit: None,
             status: ReceiptStatus::Error,
             surface,

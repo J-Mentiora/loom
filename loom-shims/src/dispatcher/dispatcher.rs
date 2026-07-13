@@ -443,6 +443,45 @@ async fn handle_request(
                 ),
             }
         }
+        ShimRequest::StartAudioCapture {
+            request_id,
+            session_id,
+            target_id,
+            max_duration_ms,
+            max_bytes,
+        } => {
+            // `sanitized` clamps a 0/absent cap to the safe DEFAULT so the public
+            // API can't disable the safety caps (parity with StartRecording).
+            let caps = crate::audio_bridge::Caps::sanitized(max_duration_ms, max_bytes);
+            match action_executor
+                .start_audio_capture(session_id, target_id, caps)
+                .await
+            {
+                Ok(()) => make_ok_response(request_id, Some(session_id), CborValue::Null),
+                Err(detail) => make_error_response(
+                    request_id,
+                    Some(session_id),
+                    ShimErrorCode::CdpProtocolError,
+                    detail,
+                ),
+            }
+        }
+        ShimRequest::StopAudioCapture {
+            request_id,
+            session_id,
+            target_id,
+        } => {
+            // Always returns an outcome (errors embedded). The host inspects
+            // `error`/`stop_reason` and emits an error receipt if needed.
+            let outcome = action_executor
+                .stop_audio_capture(session_id, target_id)
+                .await;
+            make_ok_response(
+                request_id,
+                Some(session_id),
+                audio_capture_outcome_to_cbor(&outcome),
+            )
+        }
         ShimRequest::Shutdown { .. } => unreachable!("Shutdown handled in run loop"),
         ShimRequest::Health { .. } => unreachable!("Health handled in run loop"),
     }
@@ -464,6 +503,18 @@ fn screencast_outcome_to_cbor(
 /// (mirrors `screencast_outcome_to_cbor`).
 fn audio_inject_outcome_to_cbor(
     outcome: &loom_shared::navigate_outcome::AudioInjectOutcome,
+) -> CborValue {
+    let mut bytes = Vec::new();
+    if ciborium::ser::into_writer(outcome, &mut bytes).is_err() {
+        return CborValue::Null;
+    }
+    ciborium::de::from_reader(&bytes[..]).unwrap_or(CborValue::Null)
+}
+
+/// Serialise an `AudioCaptureOutcome` to CBOR for `ShimResponse::Ok.payload`
+/// (mirrors `screencast_outcome_to_cbor`).
+fn audio_capture_outcome_to_cbor(
+    outcome: &loom_shared::navigate_outcome::AudioCaptureOutcome,
 ) -> CborValue {
     let mut bytes = Vec::new();
     if ciborium::ser::into_writer(outcome, &mut bytes).is_err() {
@@ -527,6 +578,16 @@ fn request_correlation(req: &ShimRequest) -> (u64, Option<SessionId>) {
             ..
         }
         | ShimRequest::InjectAudio {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::StartAudioCapture {
+            request_id,
+            session_id,
+            ..
+        }
+        | ShimRequest::StopAudioCapture {
             request_id,
             session_id,
             ..
@@ -647,7 +708,9 @@ pub fn route_target(req: &ShimRequest) -> RouteTarget {
         | ShimRequest::WaitFor { .. }
         | ShimRequest::StartRecording { .. }
         | ShimRequest::StopRecording { .. }
-        | ShimRequest::InjectAudio { .. } => RouteTarget::ActionExecutor,
+        | ShimRequest::InjectAudio { .. }
+        | ShimRequest::StartAudioCapture { .. }
+        | ShimRequest::StopAudioCapture { .. } => RouteTarget::ActionExecutor,
         ShimRequest::Shutdown { .. } => RouteTarget::Shutdown,
         ShimRequest::Health { .. } => RouteTarget::Health,
     }

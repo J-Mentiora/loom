@@ -42,6 +42,7 @@ pub enum CaptureField {
     DomSnapshotHash,
     ScreenshotAfterHash,
     ScreencastAfterHash,
+    AudioAfterHash,
     ConsoleCount,
     ConsoleLines,
     NetworkCount,
@@ -60,6 +61,7 @@ pub enum CaptureField {
     DomAfterBlobRef,
     ScreenshotAfterBlobRef,
     ScreencastAfterBlobRef,
+    AudioAfterBlobRef,
     NetworkEvents,
     NetworkEventBodyRef,
 }
@@ -99,6 +101,7 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Wire, P::Minimal, F::DomSnapshotHash) => false,
         (S::Wire, P::Minimal, F::ScreenshotAfterHash) => false,
         (S::Wire, P::Minimal, F::ScreencastAfterHash) => false,
+        (S::Wire, P::Minimal, F::AudioAfterHash) => false,
         (S::Wire, P::Minimal, F::ConsoleCount) => false,
         (S::Wire, P::Minimal, F::ConsoleLines) => false,
         (S::Wire, P::Minimal, F::NetworkCount) => false,
@@ -118,6 +121,7 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Wire, P::Minimal, F::DomAfterBlobRef) => false,
         (S::Wire, P::Minimal, F::ScreenshotAfterBlobRef) => false,
         (S::Wire, P::Minimal, F::ScreencastAfterBlobRef) => false,
+        (S::Wire, P::Minimal, F::AudioAfterBlobRef) => false,
         (S::Wire, P::Minimal, F::NetworkEvents) => false,
         (S::Wire, P::Minimal, F::NetworkEventBodyRef) => false,
 
@@ -151,6 +155,8 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Manifest, P::Minimal, F::ScreenshotAfterBlobRef) => false,
         // Screencast: Minimal strips the blob_ref (downgrade to hash), keeps the hash.
         (S::Manifest, P::Minimal, F::ScreencastAfterBlobRef) => false,
+        // Audio: same as screencast — Minimal strips the blob_ref (downgrade to hash).
+        (S::Manifest, P::Minimal, F::AudioAfterBlobRef) => false,
         (S::Manifest, P::Minimal, F::ConsoleLines) => false,
         (S::Manifest, P::Minimal, F::NetworkEventBodyRef) => false,
         // Hash-only payloads + per-event metadata (status, url,
@@ -165,6 +171,7 @@ pub fn keep_field(scope: CaptureScope, profile: CaptureProfile, field: CaptureFi
         (S::Manifest, P::Minimal, F::DomSnapshotHash) => true,
         (S::Manifest, P::Minimal, F::ScreenshotAfterHash) => true,
         (S::Manifest, P::Minimal, F::ScreencastAfterHash) => true,
+        (S::Manifest, P::Minimal, F::AudioAfterHash) => true,
         (S::Manifest, P::Minimal, F::ConsoleCount) => true,
         (S::Manifest, P::Minimal, F::NetworkCount) => true,
         (S::Manifest, P::Minimal, F::NetworkSummary) => true,
@@ -205,6 +212,7 @@ mod tests {
             CaptureField::DomSnapshotHash,
             CaptureField::ScreenshotAfterHash,
             CaptureField::ScreencastAfterHash,
+            CaptureField::AudioAfterHash,
             CaptureField::ConsoleCount,
             CaptureField::ConsoleLines,
             CaptureField::NetworkCount,
@@ -220,6 +228,7 @@ mod tests {
             CaptureField::DomAfterBlobRef,
             CaptureField::ScreenshotAfterBlobRef,
             CaptureField::ScreencastAfterBlobRef,
+            CaptureField::AudioAfterBlobRef,
             CaptureField::NetworkEvents,
             CaptureField::NetworkEventBodyRef,
         ];
@@ -335,5 +344,24 @@ mod tests {
                 "Manifest+Minimal should KEEP {field:?}"
             );
         }
+    }
+
+    /// voice-call-io task 06: audio Minimal arms mirror screencast — Manifest keeps
+    /// the hash and strips the blob_ref (downgrade); Wire strips both. Default keeps.
+    #[test]
+    fn audio_minimal_arms_mirror_screencast() {
+        use CaptureField as F;
+        use CaptureProfile as P;
+        use CaptureScope as S;
+        // Manifest+Minimal: keep hash, strip blob_ref (→ downgrade to hash).
+        assert!(keep_field(S::Manifest, P::Minimal, F::AudioAfterHash));
+        assert!(!keep_field(S::Manifest, P::Minimal, F::AudioAfterBlobRef));
+        // Wire+Minimal: strip both (mirror screencast).
+        assert!(!keep_field(S::Wire, P::Minimal, F::AudioAfterHash));
+        assert!(!keep_field(S::Wire, P::Minimal, F::AudioAfterBlobRef));
+        // Default keeps everything that's set.
+        assert!(keep_field(S::Manifest, P::Default, F::AudioAfterHash));
+        assert!(keep_field(S::Manifest, P::Default, F::AudioAfterBlobRef));
+        assert!(keep_field(S::Wire, P::Default, F::AudioAfterHash));
     }
 }

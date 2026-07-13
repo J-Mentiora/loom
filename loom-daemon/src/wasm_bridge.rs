@@ -462,6 +462,91 @@ impl WasmHostBridge for WasmBridge {
             }
         }
 
+        // voice-call-io (task 06): web.start_audio_capture / web.stop_audio_capture
+        // are host/shim side-channels — no WASM guest, no navigate, no hash chain,
+        // exactly like recording. The captured WAV is written to CAS host-side; the
+        // stop receipt carries the observational `audio_after_hash` (which lives
+        // OUTSIDE the manifest chain) plus a CONSTANT per-verb `outcome_hash`. Like
+        // inject, capture hard-errors on a determinism-enabled session BEFORE
+        // touching the shim — a paused virtual clock would freeze the live call
+        // (PRD D5). The capture target is always the session's OWN live target
+        // (resolved host-side via `shim_session_id_for`); the wire action carries no
+        // caller-supplied `target_id`, so a cross-session target cannot be forged.
+        if let Action::WebStartAudioCapture {
+            max_duration_ms,
+            max_bytes,
+            ..
+        } = &action
+        {
+            let action_id = session.allocate_action_id();
+            if !session.no_determinism {
+                return Ok(recording_error_receipt(
+                    action_id,
+                    session_id_str,
+                    "determinism_enabled",
+                    "web.start_audio_capture requires a no-determinism session (a paused \
+                     virtual clock would freeze the live call); create the session \
+                     with no-determinism enabled"
+                        .to_string(),
+                ));
+            }
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            // Resolve optional caps to safe defaults; the shim re-clamps via
+            // `Caps::sanitized`, so the public API can never disable the caps.
+            let dur = max_duration_ms.unwrap_or(300_000);
+            let bytes = max_bytes.unwrap_or(1_048_576);
+            match handle.block_on(host.start_audio_capture(&sid, dur, bytes)) {
+                Ok(()) => {
+                    return Ok(build_audio_capture_started_receipt(
+                        action_id,
+                        session_id_str,
+                    ))
+                }
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "audio_capture_start_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+        if let Action::WebStopAudioCapture { .. } = &action {
+            let action_id = session.allocate_action_id();
+            if !session.no_determinism {
+                return Ok(recording_error_receipt(
+                    action_id,
+                    session_id_str,
+                    "determinism_enabled",
+                    "web.stop_audio_capture requires a no-determinism session (a paused \
+                     virtual clock would freeze the live call); create the session \
+                     with no-determinism enabled"
+                        .to_string(),
+                ));
+            }
+            let host = Arc::clone(&self.host);
+            let sid = session_id_str.to_string();
+            match handle.block_on(host.stop_audio_capture(&sid)) {
+                Ok(result) => {
+                    return Ok(build_stop_audio_capture_receipt(
+                        action_id,
+                        session_id_str,
+                        result,
+                    ))
+                }
+                Err(e) => {
+                    return Ok(recording_error_receipt(
+                        action_id,
+                        session_id_str,
+                        "audio_capture_stop_failed",
+                        e.to_string(),
+                    ))
+                }
+            }
+        }
+
         // cdp-trusted-input: web.click is ALWAYS trusted — host-side CDP
         // `Input.dispatchMouseEvent` at the element hit point (like recording, no
         // guest). web.type `mode:keystrokes` and web.press_key are likewise

@@ -287,6 +287,32 @@ pub enum ShimRequest {
         /// `ended` event (playout complete) rather than on `start()` (PRD D11).
         await_playout: bool,
     },
+    /// voice-call-io (task 06): start capturing the inbound (remote) WebRTC audio on
+    /// the target. The shim's ctor-wrapped `RTCPeerConnection` tap (task 05) routes
+    /// each inbound track into a capped ring buffer. Fire-and-confirm: `ShimResponse::Ok`
+    /// with an empty payload. At most one capture per target (double-start is a typed
+    /// error). Mirrors `StartRecording`.
+    StartAudioCapture {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+        /// Auto-stop once captured audio exceeds this duration (derived from sample
+        /// count, not wall clock — A6). `0` → shim default cap.
+        max_duration_ms: u64,
+        /// Auto-stop once decoded capture bytes exceed this. `0` → shim default cap.
+        max_bytes: u64,
+    },
+    /// voice-call-io (task 06): stop the active capture, drain + resample (native →
+    /// 16 kHz mono i16) + WAV-mux the buffer, and return a CBOR
+    /// [`crate::navigate_outcome::AudioCaptureOutcome`] in `ShimResponse::Ok`. The
+    /// HOST writes `wav_bytes` to the content store and derives `audio_after_hash`;
+    /// the captured audio is observational and excluded from the replay hash chain.
+    /// Mirrors `StopRecording`.
+    StopAudioCapture {
+        request_id: u64,
+        session_id: SessionId,
+        target_id: TargetId,
+    },
     /// Cooperative shutdown. Drains in-flight, then exits.
     Shutdown { request_id: u64 },
     /// Liveness + introspection probe. The shim responds with a
@@ -894,5 +920,30 @@ mod tests {
         };
         let bytes = ciborium_to_vec(&nav).unwrap();
         assert_eq!(nav, ciborium_from_slice::<ShimRequest>(&bytes).unwrap());
+    }
+
+    /// voice-call-io task 06: the new audio-capture wire variants round-trip via
+    /// CBOR. This is the closed-enum coupling guard (A11) — daemon and shim must
+    /// decode each other's `StartAudioCapture`/`StopAudioCapture`, or a mixed-version
+    /// pair is a fatal decode (hence ship-together).
+    #[test]
+    fn audio_capture_variants_round_trip() {
+        let start = ShimRequest::StartAudioCapture {
+            request_id: 7,
+            session_id: 2,
+            target_id: 4,
+            max_duration_ms: 30_000,
+            max_bytes: 1_048_576,
+        };
+        let bytes = ciborium_to_vec(&start).unwrap();
+        assert_eq!(start, ciborium_from_slice::<ShimRequest>(&bytes).unwrap());
+
+        let stop = ShimRequest::StopAudioCapture {
+            request_id: 8,
+            session_id: 2,
+            target_id: 4,
+        };
+        let bytes = ciborium_to_vec(&stop).unwrap();
+        assert_eq!(stop, ciborium_from_slice::<ShimRequest>(&bytes).unwrap());
     }
 }
