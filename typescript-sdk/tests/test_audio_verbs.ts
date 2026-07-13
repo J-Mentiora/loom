@@ -146,6 +146,20 @@ describe("audio verbs + retrieval helpers", () => {
     }
   });
 
+  test("fetchAudioCapture throws a typed error when data_hex is missing", async () => {
+    daemon.registerHandler("content.get", (params) => ({
+      artifact_ref: params["artifact_ref"],
+      size_bytes: 5,
+    }));
+    const s = await Session.create({ socketPath: daemon.socketPath, token: daemon.token });
+    const receipt = await s.stopAudioCapture();
+    await assert.rejects(
+      () => s.fetchAudioCapture(receipt),
+      (err: Error) => err.message.includes("missing data_hex"),
+    );
+    await s.close();
+  });
+
   test("fetchAudioCapture throws on malformed data_hex instead of zero-filling", async () => {
     daemon.registerHandler("content.get", (params) => ({
       artifact_ref: params["artifact_ref"],

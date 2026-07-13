@@ -36,17 +36,20 @@ function buildActionParams(
   };
 }
 
-function hexToBytes(hex: string): Uint8Array {
-  // The daemon always hex-encodes content.get responses; malformed hex means
-  // a broken/foreign endpoint — throw rather than silently zero-fill bytes.
+function hexToBytes(hex: unknown): Uint8Array {
+  // The daemon always hex-encodes content.get responses; a missing field or
+  // malformed hex means a broken/foreign endpoint — throw a typed error
+  // rather than a cryptic TypeError or silently zero-filled bytes.
+  if (typeof hex !== "string") {
+    throw new Error("content.get response missing data_hex");
+  }
   if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
     throw new Error("malformed data_hex in content.get response");
   }
-  const bytes = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < bytes.length; i++) {
-    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
-  }
-  return bytes;
+  // Native decode — a per-byte parseInt loop blocks the event loop on
+  // multi-MB blobs. Validity is guaranteed by the regex above (Buffer.from
+  // truncates silently on bad input, so the guard is load-bearing).
+  return Buffer.from(hex, "hex");
 }
 
 function toSessionInfo(d: Record<string, unknown>): SessionInfo {
@@ -511,7 +514,7 @@ export class Session {
     const content = (await this._transport.call("content.get", {
       artifact_ref: receipt.screencastAfterHash,
     })) as Record<string, unknown>;
-    return hexToBytes(content["data_hex"] as string);
+    return hexToBytes(content["data_hex"]);
   }
 
   /**
@@ -585,7 +588,7 @@ export class Session {
     const content = (await this._transport.call("content.get", {
       artifact_ref: receipt.audioAfterHash,
     })) as Record<string, unknown>;
-    return hexToBytes(content["data_hex"] as string);
+    return hexToBytes(content["data_hex"]);
   }
 
   /**

@@ -37,6 +37,11 @@ pub struct BlobGetArgs {
 }
 
 pub async fn get(rpc: &RpcClient, _cfg: &CliConfig, args: BlobGetArgs) -> Result<(), CliError> {
+    // Resolve the destination FIRST: a bare invocation on a terminal is
+    // refused before any bytes are fetched or decoded.
+    use std::io::IsTerminal as _;
+    let target = resolve_output(args.output, std::io::stdout().is_terminal())?;
+
     // The daemon's ref validation is lowercase-only; normalize the one
     // plausible paste variant instead of bouncing it back to the user.
     let hash = args.hash.trim().to_ascii_lowercase();
@@ -55,14 +60,15 @@ pub async fn get(rpc: &RpcClient, _cfg: &CliConfig, args: BlobGetArgs) -> Result
     let bytes = hex::decode(&content.data_hex)
         .map_err(|e| CliError::Internal(format!("hex decode: {e}")))?;
 
-    use std::io::IsTerminal as _;
-    match resolve_output(args.output, std::io::stdout().is_terminal())? {
+    match target {
         OutputTarget::File(path) => std::fs::write(&path, &bytes)
             .map_err(|e| CliError::Internal(format!("write {}: {e}", path.display()))),
-        OutputTarget::Stdout => std::io::stdout()
-            .lock()
-            .write_all(&bytes)
-            .map_err(|e| CliError::Internal(e.to_string())),
+        OutputTarget::Stdout => match std::io::stdout().lock().write_all(&bytes) {
+            // A consumer that closes early (`… | head -c 100`) is normal
+            // Unix flow, not an internal error — exit quietly.
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            other => other.map_err(|e| CliError::Internal(e.to_string())),
+        },
     }
 }
 

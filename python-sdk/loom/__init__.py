@@ -479,7 +479,9 @@ class Session:
         content = self._transport.call(
             "content.get", {"artifact_ref": receipt.audio_after_hash}
         )
-        data_hex = content["data_hex"] if isinstance(content, dict) else content
+        data_hex = content.get("data_hex") if isinstance(content, dict) else content
+        if not isinstance(data_hex, str):
+            raise ValueError("content.get response missing data_hex")
         return bytes.fromhex(data_hex)
 
     def save_audio_capture(self, receipt: Receipt, path: str) -> None:

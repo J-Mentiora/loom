@@ -162,6 +162,23 @@ def test_fetch_audio_capture_propagates_malformed_data_hex(daemon):
             raise AssertionError("malformed data_hex must raise, not zero-fill")
 
 
+def test_fetch_audio_capture_raises_on_missing_data_hex(daemon):
+    _register_audio(daemon)
+
+    def _no_hex(params: dict) -> dict:
+        return {"artifact_ref": params["artifact_ref"], "size_bytes": 5}
+
+    daemon.register_handler("content.get", _no_hex)
+    with loom.Session.create(socket_path=str(daemon.socket_path), token=daemon.token) as s:
+        receipt = s.stop_audio_capture()
+        try:
+            s.fetch_audio_capture(receipt)
+        except ValueError as exc:
+            assert "data_hex" in str(exc)
+        else:
+            raise AssertionError("missing data_hex must raise ValueError")
+
+
 def test_fetch_audio_capture_without_hash_raises(daemon):
     with loom.Session.create(socket_path=str(daemon.socket_path), token=daemon.token) as s:
         bare = Receipt._from_dict({"action_hash": "a" * 64, "outcome_hash": "b" * 64})
