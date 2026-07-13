@@ -179,9 +179,24 @@ export interface Receipt {
   /**
    * video-capture: SHA-256 of the recorded `.webm` in CAS, set on a
    * `stopRecording()` receipt. Fetch via `loom blob get <hash>` or
-   * `Session.saveRecording(receipt, path)`.
+   * `Session.fetchRecording(receipt)`.
    */
   screencastAfterHash?: string;
+  /**
+   * voice-call-io: SHA-256 of the captured audio WAV (16 kHz mono s16le)
+   * in CAS, set on a `stopAudioCapture()` receipt. Fetch via
+   * `loom blob get <hash>`, `Session.fetchAudioCapture(receipt)`, or
+   * `Session.saveAudioCapture(receipt, path)`.
+   */
+  audioAfterHash?: string;
+  /**
+   * voice-call-io: why the audio capture ended —
+   * `"explicit" | "byte_cap" | "duration_cap" | "no_samples" |
+   * "no_inbound_track" | "session_closed" | "error"`. Set on
+   * `stopAudioCapture()` receipts (success and error branches);
+   * `byte_cap`/`duration_cap` mean the WAV was truncated at a cap.
+   */
+  audioStopReason?: string;
   /**
    * Evaluate tier: JS expression result, canonical-JSON encoded. `undefined`
    * means "not an evaluate action" or "result offloaded to the content
