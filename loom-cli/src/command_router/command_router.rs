@@ -17,6 +17,7 @@ use clap::{Parser, Subcommand};
 use crate::action_commands::ActionArgs;
 use crate::admin_commands::{GcArgs, McpArgs, PostinstallArgs, ServeArgs};
 use crate::benchmark_commands::BenchmarkArgs;
+use crate::blob_commands::BlobCmd;
 use crate::chromium_downloader::{ChromiumDownloader, ChromiumDownloaderConfig};
 use crate::chromium_pin;
 use crate::cli_config::CliConfig;
@@ -88,6 +89,9 @@ pub enum Command {
     /// Session lifecycle commands (RPC).
     #[command(subcommand)]
     Session(SessionCmd),
+    /// Content-store blob retrieval (RPC).
+    #[command(subcommand)]
+    Blob(BlobCmd),
     /// Action invocation (RPC).
     Action(ActionArgs),
     /// Vault commands (RPC). Only `add` may prompt.
@@ -230,6 +234,13 @@ pub async fn dispatch(cli: Cli, config: &CliConfig) -> Result<(), CliError> {
         Command::Gc(a) => {
             let rpc = make_rpc_client(config);
             crate::admin_commands::gc(&rpc, config, a).await
+        }
+
+        Command::Blob(cmd) => {
+            let rpc = make_rpc_client(config);
+            match cmd {
+                BlobCmd::Get(a) => crate::blob_commands::get(&rpc, config, a).await,
+            }
         }
 
         // RPC-free local actions.

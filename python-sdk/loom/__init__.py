@@ -21,6 +21,8 @@ Quick start::
 
 from __future__ import annotations
 
+import logging
+
 from typing import Any
 
 from loom._async_transport import AsyncLoomTransport
@@ -399,6 +401,95 @@ class Session:
         data_hex = content["data_hex"] if isinstance(content, dict) else content
         with open(path, "wb") as f:
             f.write(bytes.fromhex(data_hex))
+
+    def inject_audio(
+        self,
+        *,
+        blob_ref: str | None = None,
+        audio_b64: str | None = None,
+        await_playout: bool = False,
+        deadline_ms: int = 30000,
+    ) -> Receipt:
+        """Inject caller-provided audio into the session's synthetic
+        microphone (``--audio`` sessions only). Provide the payload as
+        ``blob_ref`` (a CAS hash, resolved daemon-side — preferred) or
+        ``audio_b64`` (inline base64 for short clips). Returns when the
+        buffer is enqueued; pass ``await_playout=True`` to return when
+        playout completes."""
+        payload: dict = {}
+        if blob_ref is not None:
+            payload["blob_ref"] = blob_ref
+        if audio_b64 is not None:
+            payload["audio_b64"] = audio_b64
+        if await_playout:
+            payload["await_playout"] = await_playout
+        r = self._transport.call(
+            "action.web.inject_audio",
+            _build_action_params(self.session_id, "inject_audio", payload, deadline_ms),
+        )
+        return Receipt._from_dict(r)
+
+    def start_audio_capture(
+        self,
+        *,
+        max_duration_ms: int | None = None,
+        max_bytes: int | None = None,
+        deadline_ms: int = 5000,
+    ) -> Receipt:
+        """Start capturing the session's inbound WebRTC audio. Caps
+        (optional, safe defaults) truncate rather than error:
+        ``max_duration_ms``, ``max_bytes``."""
+        payload: dict = {}
+        if max_duration_ms is not None:
+            payload["max_duration_ms"] = max_duration_ms
+        if max_bytes is not None:
+            payload["max_bytes"] = max_bytes
+        r = self._transport.call(
+            "action.web.start_audio_capture",
+            _build_action_params(self.session_id, "start_audio_capture", payload, deadline_ms),
+        )
+        return Receipt._from_dict(r)
+
+    def stop_audio_capture(self, *, deadline_ms: int = 30000) -> Receipt:
+        """Stop the active audio capture and return a Receipt whose
+        ``audio_after_hash`` points at the 16 kHz mono WAV in CAS. When
+        ``audio_stop_reason`` is ``byte_cap``/``duration_cap`` the capture
+        was truncated at a cap and a warning is logged — silent truncation
+        is a trust failure."""
+        r = self._transport.call(
+            "action.web.stop_audio_capture",
+            _build_action_params(self.session_id, "stop_audio_capture", {}, deadline_ms),
+        )
+        receipt = Receipt._from_dict(r)
+        if receipt.audio_stop_reason in ("byte_cap", "duration_cap"):
+            logging.getLogger("loom").warning(
+                "audio capture truncated at %s — raise max_bytes/max_duration_ms "
+                "on start_audio_capture to keep more",
+                receipt.audio_stop_reason,
+            )
+        return receipt
+
+    def fetch_audio_capture(self, receipt: Receipt) -> bytes:
+        """Fetch the captured WAV referenced by a ``stop_audio_capture()``
+        receipt and return its bytes. Raises ``ValueError`` if the receipt
+        carries no ``audio_after_hash`` (capture errored or nothing was
+        captured)."""
+        if not receipt.audio_after_hash:
+            raise ValueError("receipt has no audio_after_hash — did stop_audio_capture succeed?")
+        content = self._transport.call(
+            "content.get", {"artifact_ref": receipt.audio_after_hash}
+        )
+        data_hex = content.get("data_hex") if isinstance(content, dict) else content
+        if not isinstance(data_hex, str):
+            raise ValueError("content.get response missing data_hex")
+        return bytes.fromhex(data_hex)
+
+    def save_audio_capture(self, receipt: Receipt, path: str) -> None:
+        """Fetch the captured WAV referenced by a ``stop_audio_capture()``
+        receipt and write it to ``path`` as a playable file (overwrites an
+        existing file)."""
+        with open(path, "wb") as f:
+            f.write(self.fetch_audio_capture(receipt))
 
     def snapshot(self, *, deadline_ms: int = 5000) -> Receipt:
         r = self._transport.call(

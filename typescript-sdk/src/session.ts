@@ -36,6 +36,22 @@ function buildActionParams(
   };
 }
 
+function hexToBytes(hex: unknown): Uint8Array {
+  // The daemon always hex-encodes content.get responses; a missing field or
+  // malformed hex means a broken/foreign endpoint — throw a typed error
+  // rather than a cryptic TypeError or silently zero-filled bytes.
+  if (typeof hex !== "string") {
+    throw new Error("content.get response missing data_hex");
+  }
+  if (hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+    throw new Error("malformed data_hex in content.get response");
+  }
+  // Native decode — a per-byte parseInt loop blocks the event loop on
+  // multi-MB blobs. Validity is guaranteed by the regex above (Buffer.from
+  // truncates silently on bad input, so the guard is load-bearing).
+  return Buffer.from(hex, "hex");
+}
+
 function toSessionInfo(d: Record<string, unknown>): SessionInfo {
   return {
     sessionId: d["session_id"] as string,
@@ -72,6 +88,8 @@ function toReceipt(d: Record<string, unknown>): Receipt {
     domSnapshotHash: d["dom_snapshot_hash"] as string | undefined,
     screenshotAfterHash: d["screenshot_after_hash"] as string | undefined,
     screencastAfterHash: d["screencast_after_hash"] as string | undefined,
+    audioAfterHash: d["audio_after_hash"] as string | undefined,
+    audioStopReason: d["audio_stop_reason"] as string | undefined,
     // evaluate tier fields.
     returnValueJson: d["return_value_json"] as string | undefined,
     returnValueBlobRef: d["return_value_blob_ref"] as string | undefined,
@@ -496,12 +514,92 @@ export class Session {
     const content = (await this._transport.call("content.get", {
       artifact_ref: receipt.screencastAfterHash,
     })) as Record<string, unknown>;
-    const hex = content["data_hex"] as string;
-    const bytes = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return hexToBytes(content["data_hex"]);
+  }
+
+  /**
+   * Inject caller-provided audio into the session's synthetic microphone
+   * (`--audio` sessions only). Provide the payload as `blobRef` (a CAS
+   * hash, resolved daemon-side — preferred) or `audioB64` (inline base64
+   * for short clips). Resolves when the buffer is enqueued; set
+   * `awaitPlayout` to resolve when playout completes.
+   */
+  async injectAudio(
+    opts: { blobRef?: string; audioB64?: string; awaitPlayout?: boolean; deadlineMs?: number } = {},
+  ): Promise<Receipt> {
+    const payload: Record<string, unknown> = {};
+    if (opts.blobRef !== undefined) payload["blob_ref"] = opts.blobRef;
+    if (opts.audioB64 !== undefined) payload["audio_b64"] = opts.audioB64;
+    if (opts.awaitPlayout !== undefined) payload["await_playout"] = opts.awaitPlayout;
+    const result = (await this._transport.call(
+      "action.web.inject_audio",
+      buildActionParams(this.sessionId, "inject_audio", payload, opts.deadlineMs ?? 30000),
+    )) as Record<string, unknown>;
+    return toReceipt(result);
+  }
+
+  /**
+   * Start capturing the session's inbound WebRTC audio. Caps (optional,
+   * safe defaults) truncate rather than error: `maxDurationMs`, `maxBytes`.
+   */
+  async startAudioCapture(
+    opts: { maxDurationMs?: number; maxBytes?: number; deadlineMs?: number } = {},
+  ): Promise<Receipt> {
+    const payload: Record<string, unknown> = {};
+    if (opts.maxDurationMs !== undefined) payload["max_duration_ms"] = opts.maxDurationMs;
+    if (opts.maxBytes !== undefined) payload["max_bytes"] = opts.maxBytes;
+    const result = (await this._transport.call(
+      "action.web.start_audio_capture",
+      buildActionParams(this.sessionId, "start_audio_capture", payload, opts.deadlineMs ?? 5000),
+    )) as Record<string, unknown>;
+    return toReceipt(result);
+  }
+
+  /**
+   * Stop the active audio capture and return a Receipt whose
+   * `audioAfterHash` points at the 16 kHz mono WAV in CAS. When
+   * `audioStopReason` is `byte_cap`/`duration_cap` the capture was
+   * truncated at a cap and a warning is emitted on stderr — silent
+   * truncation is a trust failure.
+   */
+  async stopAudioCapture(opts: { deadlineMs?: number } = {}): Promise<Receipt> {
+    const result = (await this._transport.call(
+      "action.web.stop_audio_capture",
+      buildActionParams(this.sessionId, "stop_audio_capture", {}, opts.deadlineMs ?? 30000),
+    )) as Record<string, unknown>;
+    const receipt = toReceipt(result);
+    if (receipt.audioStopReason === "byte_cap" || receipt.audioStopReason === "duration_cap") {
+      console.warn(
+        `loom: audio capture truncated at ${receipt.audioStopReason} — raise maxBytes/maxDurationMs on startAudioCapture to keep more`,
+      );
     }
-    return bytes;
+    return receipt;
+  }
+
+  /**
+   * Fetch the captured WAV referenced by a `stopAudioCapture()` receipt
+   * and return its bytes. Throws if the receipt carries no
+   * `audioAfterHash` (capture errored or nothing was captured).
+   */
+  async fetchAudioCapture(receipt: Receipt): Promise<Uint8Array> {
+    if (!receipt.audioAfterHash) {
+      throw new Error("receipt has no audioAfterHash — did stopAudioCapture succeed?");
+    }
+    const content = (await this._transport.call("content.get", {
+      artifact_ref: receipt.audioAfterHash,
+    })) as Record<string, unknown>;
+    return hexToBytes(content["data_hex"]);
+  }
+
+  /**
+   * Fetch the captured WAV referenced by a `stopAudioCapture()` receipt
+   * and write it to `path` as a playable file (overwrites an existing
+   * file).
+   */
+  async saveAudioCapture(receipt: Receipt, path: string): Promise<void> {
+    const bytes = await this.fetchAudioCapture(receipt);
+    const fs = await import("node:fs/promises");
+    await fs.writeFile(path, bytes);
   }
 
   async snapshot(opts: { deadlineMs?: number } = {}): Promise<Receipt> {
