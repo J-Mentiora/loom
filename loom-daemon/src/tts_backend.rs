@@ -217,28 +217,48 @@ async fn run_cmd(argv: &[String], text: &str) -> Result<Vec<u8>, TtsError> {
         let _ = stdin.shutdown().await; // EOF so the child stops reading
     });
 
+    // Drain stderr in ITS OWN task so it never gates the stdout read. Content is
+    // intentionally discarded — it can echo the sensitive spoken text, so it is never
+    // logged or surfaced (P-A3 / FND-0012). Draining still matters: without it a child
+    // that writes a lot of stderr would block on a full stderr pipe. (An earlier
+    // version `join!`ed the two reads, which deadlocked the over-cap case — the stdout
+    // reader hit its cap and stopped, the child blocked writing the rest, and the
+    // stderr read then waited for an EOF that never came, hanging until the timeout;
+    // FND-0003.)
+    let stderr_drainer = tokio::spawn(async move {
+        let mut sink = Vec::new();
+        let _ = (&mut stderr).take(8 * 1024).read_to_end(&mut sink).await;
+    });
+
     let run = async move {
         let mut out = Vec::new();
-        let mut err = Vec::new();
         // Cap stdout at the inject bound + 1 so we can detect an over-cap producer.
         let mut out_reader = (&mut stdout).take(MAX_INJECT_BYTES as u64 + 1);
-        let mut err_reader = (&mut stderr).take(8 * 1024);
-        let (ro, _re) = tokio::join!(
-            out_reader.read_to_end(&mut out),
-            err_reader.read_to_end(&mut err),
-        );
-        ro.map_err(|e| TtsError::Failed(format!("reading TTS stdout: {e}")))?;
+        out_reader
+            .read_to_end(&mut out)
+            .await
+            .map_err(|e| TtsError::Failed(format!("reading TTS stdout: {e}")))?;
+        // Fail fast on an over-cap producer: bail as soon as the cap is hit, do NOT
+        // `wait()` — once we stop reading a full stdout pipe the child blocks on write,
+        // so `wait()` would hang until the timeout (FND-0003). Returning drops `child`
+        // → kill_on_drop SIGKILLs it.
+        if out.len() > MAX_INJECT_BYTES {
+            return Err(TtsError::Failed(format!(
+                "TTS output exceeds the {MAX_INJECT_BYTES}-byte cap"
+            )));
+        }
         let status = child
             .wait()
             .await
             .map_err(|e| TtsError::Failed(format!("awaiting TTS command: {e}")))?;
-        Ok::<(std::process::ExitStatus, Vec<u8>, Vec<u8>), TtsError>((status, out, err))
+        Ok::<(std::process::ExitStatus, Vec<u8>), TtsError>((status, out))
     };
 
     let outcome = tokio::time::timeout(tts_timeout(), run).await;
     let _ = writer.await; // best-effort join; on timeout the child is already dead
+    stderr_drainer.abort(); // content discarded; stop draining regardless of outcome
 
-    let (status, out, err) = match outcome {
+    let (status, out) = match outcome {
         Err(_elapsed) => {
             // `run` (owning `child`) was dropped → kill_on_drop SIGKILLed it.
             tracing::warn!(argv0 = %argv[0], "tts.cmd_timeout");
@@ -250,25 +270,15 @@ async fn run_cmd(argv: &[String], text: &str) -> Result<Vec<u8>, TtsError> {
     };
 
     if !status.success() {
-        // stderr may echo the (sensitive) text — log a truncated preview at WARN,
-        // but the receipt carries only the exit class (P-A3).
-        let stderr_preview = String::from_utf8_lossy(&err);
-        tracing::warn!(
-            code = status.code(),
-            stderr_len = err.len(),
-            stderr_preview = %stderr_preview.chars().take(200).collect::<String>(),
-            "tts.cmd_nonzero_exit"
-        );
+        // Log ONLY the exit code + stderr LENGTH — never stderr CONTENT, which can
+        // echo the (sensitive) spoken text (P-A3 / ship-council FND-0012). The receipt
+        // likewise carries only the exit class.
+        tracing::warn!(code = status.code(), "tts.cmd_nonzero_exit");
         let code = status
             .code()
             .map(|c| format!("exit code {c}"))
             .unwrap_or_else(|| "terminated by signal".to_string());
         return Err(TtsError::Failed(format!("TTS command failed ({code})")));
-    }
-    if out.len() > MAX_INJECT_BYTES {
-        return Err(TtsError::Failed(format!(
-            "TTS output exceeds the {MAX_INJECT_BYTES}-byte cap"
-        )));
     }
     if out.is_empty() {
         return Err(TtsError::Failed(
@@ -284,9 +294,26 @@ async fn run_cmd(argv: &[String], text: &str) -> Result<Vec<u8>, TtsError> {
 const TTS_HTTP_ATTEMPTS: usize = 3;
 
 /// `POST text/plain` to the operator URL: SSRF-validate, then transport.
+///
+/// The WHOLE path — DNS resolve + every retry attempt + body read — is bounded by a
+/// SINGLE `tts_timeout()` budget (ship-council FND-0001/0010/0015/0020/0024). The
+/// per-request reqwest timeout caps one hung attempt, but only this outer bound
+/// guarantees the action honors `LOOM_TTS_TIMEOUT_MS` regardless of retry count, and
+/// it is the ONLY timeout covering DNS resolution (`lookup_host` has none of its own).
 async fn post_url(url: &str, text: &str) -> Result<Vec<u8>, TtsError> {
-    let resolved = resolve_and_validate(url).await?;
-    do_post(url, &resolved, text).await
+    let budget = tts_timeout();
+    match tokio::time::timeout(budget, async {
+        let resolved = resolve_and_validate(url).await?;
+        do_post(url, &resolved, text).await
+    })
+    .await
+    {
+        Ok(res) => res,
+        Err(_elapsed) => Err(TtsError::Failed(format!(
+            "TTS URL backend timed out after {} ms",
+            budget.as_millis()
+        ))),
+    }
 }
 
 /// Transport: POST `text` to `url`, pinned to the pre-validated `resolved` addrs,
@@ -307,16 +334,16 @@ async fn do_post(url: &str, resolved: &[SocketAddr], text: &str) -> Result<Vec<u
         .ok_or_else(|| TtsError::ConfigInvalid("LOOM_TTS_URL has no host".to_string()))?
         .to_owned();
 
-    // Pin the connection to EVERY validated addr so reqwest cannot re-resolve DNS
-    // to a different (internal) IP between our check and the connect (TOCTOU, P-A8).
-    let mut builder = reqwest::Client::builder()
+    // Pin the connection to EVERY validated addr so reqwest cannot re-resolve DNS to a
+    // different (internal) IP between our check and the connect (TOCTOU, P-A8).
+    // `resolve_to_addrs` pins the FULL validated set in one call — a `resolve()` loop
+    // would replace the prior override each iteration and pin only the last addr
+    // (ship-council FND-0002).
+    let client = reqwest::Client::builder()
         .use_rustls_tls()
         .redirect(reqwest::redirect::Policy::none())
-        .timeout(tts_timeout());
-    for addr in resolved {
-        builder = builder.resolve(&host, *addr);
-    }
-    let client = builder
+        .timeout(tts_timeout())
+        .resolve_to_addrs(&host, resolved)
         .build()
         .map_err(|e| TtsError::Failed(format!("building TTS client: {e}")))?;
 
@@ -348,6 +375,9 @@ async fn do_post(url: &str, resolved: &[SocketAddr], text: &str) -> Result<Vec<u
             last = format!("HTTP {status}");
             tracing::warn!(attempt, %status, "tts.http_retryable");
             if attempt < TTS_HTTP_ATTEMPTS {
+                // Brief backoff so a flapping backend isn't hammered (FND-0011). The
+                // outer `post_url` budget still bounds the total wall-clock.
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 continue;
             }
             return Err(TtsError::Failed(format!(
@@ -725,6 +755,27 @@ mod tests {
         EnvGuard::clear();
         std::env::set_var("LOOM_TTS_CMD", r#"["/bin/true"]"#);
         assert_eq!(synthesize("hi").await.unwrap_err().kind(), "tts_failed");
+    }
+
+    #[cfg(unix)] // hardcodes /bin/* paths; loom targets Unix (FND-0022)
+    #[tokio::test]
+    async fn cmd_over_cap_fails_fast_not_on_timeout() {
+        // A producer that emits > MAX_INJECT_BYTES must be rejected as soon as the cap
+        // is hit — NOT after the full timeout budget (ship-council FND-0003). ~9 MiB of
+        // "y\n" exceeds the 8 MiB cap.
+        let _g = ENV_LOCK.lock().await;
+        let _restore = EnvGuard::capture();
+        EnvGuard::clear();
+        std::env::set_var(
+            "LOOM_TTS_CMD",
+            r#"["/bin/sh","-c","yes | head -c 9000000"]"#,
+        );
+        let start = std::time::Instant::now();
+        assert_eq!(synthesize("hi").await.unwrap_err().kind(), "tts_failed");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(4),
+            "over-cap output waited for the timeout instead of failing fast"
+        );
     }
 
     #[cfg(unix)] // hardcodes /bin/* paths; loom targets Unix (FND-0022)
