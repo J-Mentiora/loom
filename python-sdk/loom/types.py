@@ -278,6 +278,16 @@ class Receipt:
     # stop_recording() receipt. Fetch the bytes via `loom blob get <hash>` or
     # `Session.save_recording(path)`.
     screencast_after_hash: str | None = None
+    # voice-call-io: SHA-256 of the captured audio WAV (16 kHz mono s16le)
+    # in CAS, set on a stop_audio_capture() receipt. Fetch via
+    # `loom blob get <hash>`, `Session.fetch_audio_capture(receipt)`, or
+    # `Session.save_audio_capture(receipt, path)`.
+    audio_after_hash: str | None = None
+    # voice-call-io: why the audio capture ended — explicit|byte_cap|
+    # duration_cap|no_samples|no_inbound_track|session_closed|error. Set on
+    # stop_audio_capture() receipts (success and error branches); byte_cap/
+    # duration_cap mean the WAV was truncated at a cap.
+    audio_stop_reason: str | None = None
     # ---- evaluate tier fields ----
     # JS expression result, canonical-JSON encoded. None means "not an
     # evaluate action" or "result offloaded to the content store" (in which
@@ -308,6 +318,8 @@ class Receipt:
             dom_snapshot_hash=d.get("dom_snapshot_hash"),
             screenshot_after_hash=d.get("screenshot_after_hash"),
             screencast_after_hash=d.get("screencast_after_hash"),
+            audio_after_hash=d.get("audio_after_hash"),
+            audio_stop_reason=d.get("audio_stop_reason"),
             return_value_json=d.get("return_value_json"),
             return_value_blob_ref=d.get("return_value_blob_ref"),
         )
