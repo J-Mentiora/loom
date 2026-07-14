@@ -102,7 +102,7 @@ libc = "0.2"
 # WebSocket — only as a dev-dep for the stub CDP harness.
 # Not allowed in production code paths (cargo-deny enforced; chromiumoxide
 # transitively pulls async-tungstenite for real CDP).
-tokio-tungstenite = "0.29"
+tokio-tungstenite = "0.30"
 
 # Internal crates. `version = "0.14.0"` matches `[workspace.package].version`
 # above; matters for cargo-deny's `bans.wildcards` check (path-only deps are
