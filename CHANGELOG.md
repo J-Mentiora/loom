@@ -6,6 +6,58 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-07-14 — Browser Voice-Call I/O
+
+A minor release that gives loom **ears and a voice**: an agent can now drive a live
+browser voice call end to end. A session opts in with `loom session create --audio`,
+which installs a **synthetic microphone** in the page (a `getUserMedia` override — the
+real mic is never delegated, so host audio cannot leak). From there, `web.inject_audio`
+pushes caller audio into that mic, `web.start_audio_capture` / `web.stop_audio_capture`
+record the inbound side of the call into a bounded WAV blob, and `web.say` speaks text
+straight into the mic through a configured external TTS backend. Captured audio is
+retrieved with the new `loom blob get`, and both SDKs expose the verbs plus fetch/save
+helpers.
+
+Audio is a **daemon-side side-channel** — intercepted in `wasm_bridge` like
+`web.start_recording` — so there is no WIT change and no vendored-wasm rebuild. The
+audio verbs require `--no-determinism` (a live call cannot run on a frozen virtual
+clock), and audio bytes are excluded from the manifest hash chain: only a constant
+outcome hash and a content hash reach the receipt, so replay stays byte-equal
+(NFR-DET-01 holds). (#243, #249, #251, #252, #253, #254, #255, #262, #263)
+
+### Added
+
+- **`web.inject_audio`** — inject caller-provided audio (a CAS `blob_ref` or inline
+  base64, ≤ 8 MiB) into the page's virtual microphone. Bytes are passed as a CDP
+  `CallArgument`, never string-interpolated into the page. (#252)
+- **`web.start_audio_capture` / `web.stop_audio_capture`** — capture the inbound call
+  audio (the remote party) into a bounded in-page ring buffer, then drain it to a
+  16 kHz mono WAV. Byte and duration caps compose (the tighter one wins), and the stop
+  result carries a typed `audio_stop_reason` (`byte_cap` / `duration_cap` / …) so a
+  truncated capture is never silently mistaken for a complete one. The agent's own
+  injected track is excluded from the capture. (#253, #254)
+- **`web.say`** — synthesize text to speech and inject it into the microphone in one
+  verb. The backend is configured out-of-band via `LOOM_TTS_CMD` (argv-exec: text on
+  stdin → WAV on stdout) or `LOOM_TTS_URL` (https POST, SSRF-guarded — https-only,
+  redirects refused, pinned resolution). (#263)
+- **`loom session create --audio`** — per-session opt-in that installs the synthetic
+  mic and grants microphone permission scoped to the navigated origin (revoked on
+  close). (#251)
+- **`loom blob get <hash>`** — retrieve any stored blob from the content-addressed
+  store to a file (`-o`) or stdout (`-o -` / a pipe); refuses a bare TTY. (#262)
+- **SDK audio verbs (TypeScript + Python).** `injectAudio` / `startAudioCapture` /
+  `stopAudioCapture`, the `audioAfterHash` / `audioStopReason` receipt fields, and the
+  `fetchAudioCapture` / `saveAudioCapture` retrieval helpers. Both SDKs warn when a
+  capture was truncated by a cap. (#262)
+
+### Changed
+
+- **wasmtime / wasmtime-wasi 45 → 46.0.1.** (#250)
+
+### Fixed
+
+- **Toolchain-drift clippy lints and a stale vendored wasm** on `main`. (#244)
+
 ## [0.13.4] — 2026-06-25 — `web.wait` Accepts the Locator Grammar
 
 A patch release that closes the last gap in loom's locator grammar: `web.wait --selector`
