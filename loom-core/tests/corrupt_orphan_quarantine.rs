@@ -53,7 +53,7 @@ fn fixture() -> (
 /// Create an orphaned (non-terminal) session, then tear its final WAL write so the
 /// hash chain is broken — exactly the hard-kill-mid-write failure mode.
 fn make_corrupt_orphan(mw: &LocalManifestWriter, sessions_root: &std::path::Path) -> SessionId {
-    let id = SessionId(ulid::Ulid::new().to_string().to_lowercase());
+    let id = SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     // Valid Header (chain root)…
     mw.open_manifest(id.clone(), None).unwrap();
     // …then a TORN trailing line (partial JSON) — the daemon was hard-killed mid-write.
@@ -170,7 +170,7 @@ fn reap_dry_run_does_not_move() {
 #[test]
 fn healthy_orphan_is_not_quarantined() {
     let (sm, mw, sessions_root, tmp) = fixture();
-    let id = SessionId(ulid::Ulid::new().to_string().to_lowercase());
+    let id = SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(id.clone(), None).unwrap(); // valid Header only, intact chain
 
     let report = sm.perform_recovery_sweep().expect("sweep ok");

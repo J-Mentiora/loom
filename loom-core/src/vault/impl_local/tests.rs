@@ -59,7 +59,7 @@ const TEST_ORIGIN: &str = "api.github.com";
 /// Returns (vault, manifest_writer, session_id, sessions_dir).
 /// Each call gets a unique session + dir so parallel tests don't share a WAL.
 fn fixture() -> (LocalVault, Arc<LocalManifestWriter>, SessionId) {
-    let unique = ulid::Ulid::new().to_string();
+    let unique = ulid::Ulid::generate().to_string();
     let sessions_root = std::env::temp_dir().join(format!("loom-vault-test-{unique}"));
     std::fs::create_dir_all(&sessions_root).ok();
 
@@ -685,7 +685,7 @@ fn list_grants_excludes_revoked() {
 #[test]
 fn list_grants_filters_by_session() {
     let (vault, _mw, sid_a) = fixture();
-    let sid_b = SessionId(ulid::Ulid::new().to_string());
+    let sid_b = SessionId(ulid::Ulid::generate().to_string());
     let _ga = vault.grant(sid_a.clone(), default_opts()).unwrap();
     let _gb = vault.grant(sid_b.clone(), default_opts()).unwrap();
 
@@ -701,7 +701,7 @@ fn list_grants_filters_by_session() {
 #[test]
 fn list_grants_no_session_filter_returns_all() {
     let (vault, _mw, sid_a) = fixture();
-    let sid_b = SessionId(ulid::Ulid::new().to_string());
+    let sid_b = SessionId(ulid::Ulid::generate().to_string());
     let _ga = vault.grant(sid_a.clone(), default_opts()).unwrap();
     let _gb = vault.grant(sid_b.clone(), default_opts()).unwrap();
 
@@ -773,7 +773,7 @@ fn grant_is_reusable_until_revoked() {
 /// fixture used by Grant lifecycle tests.
 fn fixture_mem() -> (LocalVault, Arc<LocalManifestWriter>, SessionId) {
     use loom_keychain::InMemoryKeychain;
-    let unique = ulid::Ulid::new().to_string();
+    let unique = ulid::Ulid::generate().to_string();
     let sessions_root = std::env::temp_dir().join(format!("loom-vault-mem-{unique}"));
     std::fs::create_dir_all(&sessions_root).ok();
 
