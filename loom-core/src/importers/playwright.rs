@@ -108,7 +108,7 @@ impl PlaywrightImporter {
         let k = events.len() as u64;
 
         // --- 3. Generate session_id and create session directory ---
-        let session_id = Ulid::new().to_string().to_lowercase();
+        let session_id = Ulid::generate().to_string().to_lowercase();
         let session_dir = self.sessions_root.join(&session_id);
         std::fs::create_dir_all(&session_dir)?;
 

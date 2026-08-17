@@ -43,7 +43,8 @@ fn now_ms() -> u64 {
 
 #[allow(dead_code)]
 fn make_session(mw: &LocalManifestWriter, _tmp: &TempDir) -> SessionId {
-    let id = loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+    let id =
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(id.clone(), None).unwrap();
     id
 }
@@ -138,7 +139,7 @@ fn nfr_rel_03_1_orphaned_active_session_gets_runtime_crash_receipt() {
 
     // Create a session with Header only (no terminal entry)
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     let wal_path = tmp
@@ -182,7 +183,7 @@ fn nfr_rel_03_1_crashed_session_last_completed_action_id_correct() {
     );
 
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     // Append two ActionReceipt entries (action_id = 1, 2)
@@ -226,7 +227,7 @@ fn nfr_rel_03_1_session_with_session_terminal_not_marked_crashed() {
     );
 
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     // Close it properly
     mw.append(
@@ -261,7 +262,7 @@ fn nfr_rel_03_1_per_session_isolation_one_corrupt_wal_does_not_block_others() {
         Observability::new(tmp.path().join("l.log"), false),
     );
     let good_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(good_id.clone(), None).unwrap();
 
     // Create one session with a corrupt WAL
@@ -290,7 +291,7 @@ fn nfr_rel_03_1_manifest_jsonl_checkpoint_written_after_crash_receipt() {
     );
 
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     sm.sweep_manifests().unwrap();
@@ -316,7 +317,7 @@ fn nfr_rel_03_1_list_sessions_info_shows_crashed_status() {
         Observability::new(tmp.path().join("l2.log"), false),
     );
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
 
     // Run recovery sweep (adds RuntimeCrash entry + checkpoint)
@@ -343,7 +344,7 @@ fn nfr_rel_03_1_list_sessions_info_shows_closed_status() {
         Observability::new(tmp.path().join("l2.log"), false),
     );
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     mw.append(
         session_id.clone(),
@@ -377,7 +378,7 @@ fn list_sessions_info_encodes_abort_reason() {
         Observability::new(tmp.path().join("l2.log"), false),
     );
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     mw.append(
         session_id.clone(),
@@ -412,7 +413,7 @@ fn replay_complete_is_not_aborted() {
         Observability::new(tmp.path().join("l2.log"), false),
     );
     let session_id =
-        loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        loom_core::manifest_writer::SessionId(ulid::Ulid::generate().to_string().to_lowercase());
     mw.open_manifest(session_id.clone(), None).unwrap();
     mw.append(
         session_id.clone(),
@@ -456,8 +457,9 @@ fn parallel_sweep_processes_all_64_orphaned_sessions() {
 
     let mut session_ids = Vec::with_capacity(64);
     for _ in 0..64 {
-        let id =
-            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        let id = loom_core::manifest_writer::SessionId(
+            ulid::Ulid::generate().to_string().to_lowercase(),
+        );
         mw.open_manifest(id.clone(), None).unwrap();
         session_ids.push(id);
     }
@@ -503,8 +505,9 @@ fn parallel_sweep_aggregates_counters_correctly_for_mixed_corpus() {
 
     // 50 healthy (closed) sessions.
     for _ in 0..50 {
-        let id =
-            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        let id = loom_core::manifest_writer::SessionId(
+            ulid::Ulid::generate().to_string().to_lowercase(),
+        );
         mw.open_manifest(id.clone(), None).unwrap();
         mw.append(
             id,
@@ -520,8 +523,9 @@ fn parallel_sweep_aggregates_counters_correctly_for_mixed_corpus() {
 
     // 50 orphaned (no terminal entry) sessions.
     for _ in 0..50 {
-        let id =
-            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        let id = loom_core::manifest_writer::SessionId(
+            ulid::Ulid::generate().to_string().to_lowercase(),
+        );
         mw.open_manifest(id, None).unwrap();
     }
 
@@ -547,8 +551,9 @@ fn parallel_sweep_isolates_failures_per_session() {
 
     // 30 healthy orphaned sessions — should all get RuntimeCrash.
     for _ in 0..30 {
-        let id =
-            loom_core::manifest_writer::SessionId(ulid::Ulid::new().to_string().to_lowercase());
+        let id = loom_core::manifest_writer::SessionId(
+            ulid::Ulid::generate().to_string().to_lowercase(),
+        );
         mw.open_manifest(id, None).unwrap();
     }
 
