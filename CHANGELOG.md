@@ -6,6 +6,36 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1] — 2026-08-17 — Dependency & Security Refresh
+
+A patch release with no feature changes: it clears two Wasmtime security
+advisories and refreshes the dependency tree across the board. **RUSTSEC-2026-0222**
+(store type-index confusion between engines) and **RUSTSEC-2026-0223** (VM-state
+corruption from preemption during bulk operations) are fixed by moving wasmtime
+from 46.0.1 to 46.0.2 and then to **47.0.3** — a major-version engine bump that
+required no code changes and keeps the replay hash chain byte-equal (the full
+determinism suite passes unchanged). The workspace also moves to wit-bindgen 0.60
+(byte-identical guest output), jsonschema 0.49, tokio-tungstenite 0.30, wasmparser
+0.255, base64 0.23, and ulid 3.0 (internal `Ulid::new()` → `Ulid::generate()`
+rename), plus all remaining non-major bumps and updated CI actions.
+(#265, #266, #267, #270, #271, #272, #281)
+
+### Fixed
+
+- **cargo-deny advisories** — RUSTSEC-2026-0222 / RUSTSEC-2026-0223 (Wasmtime)
+  cleared via wasmtime 46.0.2 → 47.0.3. (#271, #281)
+- **Vendored WASM guest staleness** — `loom-cli/vendor/loom_surface_web.wasm`
+  refreshed to match current stable rustc output on Linux CI. (#271)
+
+### Changed
+
+- **Dependency refresh** — wasmtime + wasmtime-wasi 47.0.3, wit-bindgen 0.60,
+  jsonschema 0.49, tokio-tungstenite 0.30, wasmparser 0.255, base64 0.23,
+  ulid 3.0, and workspace-wide non-major `cargo update`. No public API changes.
+  (#271, #281)
+- **CI actions** — setup-node 7, setup-python 7, and non-major actions-group
+  bumps. (#266, #267, #270, #272)
+
 ## [0.14.0] — 2026-07-14 — Browser Voice-Call I/O
 
 A minor release that gives loom **ears and a voice**: an agent can now drive a live
