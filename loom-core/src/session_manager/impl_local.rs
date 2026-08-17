@@ -45,7 +45,7 @@ impl LocalSessionManager {
         // for hash-chain bit-equality, otherwise current time.
         let epoch_ms = EpochMs(started_at_ms_override.unwrap_or_else(now_ms));
 
-        let id = SessionId(Ulid::new().to_string().to_lowercase());
+        let id = SessionId(Ulid::generate().to_string().to_lowercase());
 
         // Under safe profile, create a session-scoped downloads
         // directory. Chromium's
