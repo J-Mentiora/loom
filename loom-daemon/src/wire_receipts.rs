@@ -656,6 +656,22 @@ pub(crate) fn build_input_dispatch_receipt(
     r
 }
 
+/// interactive-settle-bounded: fold the BOUNDED post-action settle verdict onto
+/// an already-built input-dispatch receipt (`web.click` / `web.type`
+/// fill/keystrokes). Stamps ONLY the observational readiness fields
+/// (`settle_until` + `settle_outcome`) and leaves `outcome_hash` / `action_hash`
+/// untouched, so the verdict rides observationally and the manifest hash chain
+/// stays replay-equal (NFR-DET-01) — exactly as navigate/wait_for exclude their
+/// settle diagnostics from the hash. `settle_ms` / `network_count_at_settle` are
+/// wall/virtual-time diagnostics with no receipt field; the caller logs them.
+pub(crate) fn stamp_settle_outcome(
+    receipt: &mut Receipt,
+    outcome: &loom_shared::navigate_outcome::WaitOutcome,
+) {
+    receipt.settle_until = Some(outcome.settle_until.clone());
+    receipt.settle_outcome = Some(outcome.settle_outcome.clone());
+}
+
 /// Build the receipt for the host-intercepted `web.wait` verb. Mirrors
 /// [`build_input_dispatch_receipt`]: a `Resolved` wait reuses the all-None success
 /// template + a constant `outcome_hash` marker; a `PredicateFalse` (deadline

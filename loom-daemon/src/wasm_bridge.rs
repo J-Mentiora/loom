@@ -27,6 +27,89 @@ use std::sync::Arc;
 
 // ─── Bridge: WasmHost → WasmHostBridge ──────────────────────────────────────
 
+/// interactive-settle-bounded: headroom subtracted from a caller's tighter
+/// `deadline_ms` when clamping the interaction settle budget, so the bounded
+/// settle always returns a receipt BEFORE the logical deadline rather than
+/// racing it.
+const SETTLE_HEADROOM_MS: u64 = 1_000;
+
+/// interactive-settle-bounded: floor on the interaction settle budget — even a
+/// pathologically tiny `deadline_ms` gets a real (if short) settle window and a
+/// bounded receipt, never a zero-length wait.
+const MIN_SETTLE_BUDGET_MS: u64 = 500;
+
+/// interactive-settle-bounded: the wall-clock budget for the post-action settle
+/// run after a trusted-input dispatch. Mirrors navigate's budget model
+/// (`LOOM_SHIM_CDP_TIMEOUT_MS` env → 10s default) so the settle is bounded
+/// strictly inside the RPC deadline (the loom-mcp `tools/call` deadline is 15s;
+/// the transport timeout 30s) — a completed click can therefore never surface a
+/// transport `rpc timeout`, only a typed `settle_outcome` receipt. When the
+/// caller passes a tighter `deadline_ms`, clamp to `deadline_ms - headroom`
+/// (floored) so the logical deadline is honored too.
+pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>) -> u64 {
+    let base = std::env::var("LOOM_SHIM_CDP_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(10_000);
+    match deadline_ms {
+        Some(d) => base
+            .min(d.saturating_sub(SETTLE_HEADROOM_MS))
+            .max(MIN_SETTLE_BUDGET_MS),
+        None => base,
+    }
+}
+
+/// interactive-settle-bounded: run the bounded post-action readiness wait after
+/// a SUCCESSFUL trusted-input dispatch and fold the verdict onto `receipt`.
+/// Reuses the proven, wall-clock-bounded `web.wait_for` settle path
+/// (`WasmHost::settle_after_input` → `send_wait_for` → `wait_for_settle`),
+/// arming virtual time under the session determinism toggle. Best-effort: the
+/// input already dispatched, so a settle transport failure logs and leaves the
+/// receipt without a `settle_outcome` rather than failing the verb. The budget
+/// is bounded strictly inside the RPC deadline, so the verb can never surface a
+/// transport `rpc timeout` — only a typed `settle_outcome`.
+fn settle_after_input_dispatch(
+    handle: &tokio::runtime::Handle,
+    host: &Arc<loom_host::WasmHost>,
+    session: &loom_core::session_manager::Session,
+    session_id: &str,
+    until: Option<&str>,
+    deadline_ms: Option<u64>,
+    receipt: &mut Receipt,
+) {
+    let budget = interaction_settle_budget_ms(deadline_ms);
+    let until = until.unwrap_or("settled");
+    match handle.block_on(host.settle_after_input(
+        session_id,
+        until,
+        budget,
+        session.seed,
+        session.epoch_ms,
+        !session.no_determinism,
+        session.audio,
+    )) {
+        Ok(outcome) => {
+            // Redacted diagnostics: readiness verdict + timing, never page content.
+            tracing::debug!(
+                session_id = %session_id,
+                until = %until,
+                settle_outcome = %outcome.settle_outcome,
+                settle_ms = outcome.settle_ms,
+                network_count = outcome.network_count_at_settle,
+                "interactive verb post-action settle complete"
+            );
+            stamp_settle_outcome(receipt, &outcome);
+        }
+        Err(e) => {
+            tracing::warn!(
+                session_id = %session_id,
+                error = %e,
+                "interactive verb post-action settle failed (input still dispatched)"
+            );
+        }
+    }
+}
+
 /// Stub host bridge — returns `SurfaceUnavailable` for every action
 /// dispatch until WASM modules are compiled by `loom postinstall`.
 /// Replaced by a real `WasmHost`-backed impl once modules are present.
@@ -647,19 +730,33 @@ impl WasmHostBridge for WasmBridge {
         // host-side `Input.dispatchKeyEvent` flows. Real input side effects
         // happen at record time only; the receipt's `outcome_hash` is a constant
         // marker so replay stays structural (NFR-DET-01).
-        if let Action::WebClick { selector, .. } = &action {
+        if let Action::WebClick {
+            selector, until, ..
+        } = &action
+        {
             let host = Arc::clone(&self.host);
             let sid = session_id_str.to_string();
             let sel = selector.clone();
+            let settle_until = until.clone();
             let action_id = session.allocate_action_id();
             match handle.block_on(host.trusted_click(&sid, &sel, 0)) {
                 Ok(outcome) => {
-                    return Ok(build_input_dispatch_receipt(
-                        action_id,
-                        session_id_str,
-                        &action,
-                        outcome,
-                    ))
+                    let dispatched =
+                        matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
+                    let mut receipt =
+                        build_input_dispatch_receipt(action_id, session_id_str, &action, outcome);
+                    if dispatched {
+                        settle_after_input_dispatch(
+                            &handle,
+                            &host,
+                            &session,
+                            &sid,
+                            settle_until.as_deref(),
+                            deadline_ms,
+                            &mut receipt,
+                        );
+                    }
+                    return Ok(receipt);
                 }
                 Err(e) => {
                     return Ok(recording_error_receipt(
@@ -675,6 +772,7 @@ impl WasmHostBridge for WasmBridge {
             selector,
             text,
             mode,
+            until,
             ..
         } = &action
         {
@@ -688,6 +786,7 @@ impl WasmHostBridge for WasmBridge {
                 let sid = session_id_str.to_string();
                 let sel = selector.clone();
                 let txt = text.clone();
+                let settle_until = until.clone();
                 let action_id = session.allocate_action_id();
                 let outcome = match dispatch {
                     WebTypeDispatch::Fill => handle.block_on(host.type_fill(&sid, &sel, &txt, 0)),
@@ -698,12 +797,26 @@ impl WasmHostBridge for WasmBridge {
                 };
                 match outcome {
                     Ok(outcome) => {
-                        return Ok(build_input_dispatch_receipt(
+                        let dispatched =
+                            matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
+                        let mut receipt = build_input_dispatch_receipt(
                             action_id,
                             session_id_str,
                             &action,
                             outcome,
-                        ))
+                        );
+                        if dispatched {
+                            settle_after_input_dispatch(
+                                &handle,
+                                &host,
+                                &session,
+                                &sid,
+                                settle_until.as_deref(),
+                                deadline_ms,
+                                &mut receipt,
+                            );
+                        }
+                        return Ok(receipt);
                     }
                     Err(e) => {
                         return Ok(recording_error_receipt(

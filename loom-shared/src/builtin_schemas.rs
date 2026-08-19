@@ -23,14 +23,14 @@ pub const BUILTIN_SCHEMAS: &[(&str, &str)] = &[
     ),
     (
         "web.click",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"dom_after_hash":{"type":"string","description":"sha256 of the normalized post-action DOM; present only under capture-policy=fingerprint"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"until":{"type":"string","enum":["load","networkidle","settled"]}},"required":["session","selector"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"dom_after_hash":{"type":"string","description":"sha256 of the normalized post-action DOM; present only under capture-policy=fingerprint"},"settle_until":{"type":"string"},"settle_outcome":{"type":"string"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
     ),
     // Canonical name `web.type` (was `web.type_text`); the legacy
     // `web.type_text` spelling resolves here via
     // `loom_shared::action_aliases::METHOD_ALIASES`.
     (
         "web.type",
-        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"text":{"type":"string"},"mode":{"type":"string","enum":["value","keystrokes"]}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"dom_after_hash":{"type":"string","description":"sha256 of the normalized post-action DOM; present only under capture-policy=fingerprint"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
+        r#"{"request":{"type":"object","properties":{"session":{"type":"string"},"deadline_ms":{"type":"integer"},"selector":{"type":"string"},"text":{"type":"string"},"mode":{"type":"string","enum":["value","keystrokes"]},"until":{"type":"string","enum":["load","networkidle","settled"]}},"required":["session","selector","text"],"additionalProperties":false},"response":{"type":"object","properties":{"action_hash":{"type":"string"},"outcome_hash":{"type":"string"},"emitted_at_ms":{"type":"integer"},"dom_after_hash":{"type":"string","description":"sha256 of the normalized post-action DOM; present only under capture-policy=fingerprint"},"settle_until":{"type":"string"},"settle_outcome":{"type":"string"}},"required":["action_hash","outcome_hash","emitted_at_ms"]}}"#,
     ),
     // cdp-trusted-input: web.press_key — `key` required; `selector` + `modifiers`
     // optional. Real CDP Input.dispatchKeyEvent (isTrusted:true), host-side.

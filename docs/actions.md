@@ -69,7 +69,7 @@ Resolves a CSS query selector against the active page and dispatches a synthetic
 
 Animations and transitions are forced to 0s under loom's deterministic profile, so click handlers complete synchronously. The receipt's `side_effects` records any DOM mutations triggered by the handler.
 
-When the click triggers a TOP-LEVEL navigation (a form-submit button, an `<a href>` link) or an async re-render, follow it with `web.wait_for` — NOT `web.wait`. loom drives Chromium under a virtual-time clock that is frozen once a navigate drains its budget; `web.wait_for` re-arms a budget so the post-click navigation advances and settles, whereas `web.wait` only polls the CURRENT document for a selector and never drives the navigation.
+After the click dispatches, loom runs a BOUNDED post-action readiness wait (the same settle machine `web.navigate` uses) and records a `settle_outcome` on the receipt. The wait is capped strictly inside the RPC deadline, so a churny SPA whose page never quiesces returns a bounded `settle_outcome: "timeout"|"dom_unstable"` receipt (the click still reported as performed) — never a transport `rpc timeout`. Control the gate with `until` (default `settled`): pass `until: "load"` on a churny SPA to proceed as soon as the load event fires without waiting for full quiescence.
 
 **Parameters**
 
@@ -77,9 +77,10 @@ When the click triggers a TOP-LEVEL navigation (a form-submit button, an `<a hre
 |------|------|----------|-------------|
 | `session_id` | `string` | required | Session created via `loom session create`. 26-char ULID format. |
 | `selector` | `string` | required | Locator for the target element. Plain CSS (Level 3) by default; or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` (case-insensitive substring, first visible match), `role=<role>[name="<accessible name>"]` (ARIA role + a W3C accessible-name subset), and `frame=<css>` to descend into an iframe. `frame=` is REQUIRED to cross an origin boundary — a bare locator never reaches into a cross-origin frame (e.g. `frame=iframe[src*="widget"] >> css=#send`). |
+| `until` | `string` | optional | Post-action readiness state to wait for: `load`, `networkidle`, or `settled` (default). The wait is bounded inside the RPC deadline — a page that never settles yields a `timeout`/`dom_unstable` outcome, not an `rpc timeout`. |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
-**Returns:** Receipt with `status: "ok"` and `side_effects` populated when the click triggered DOM mutations. Selector miss → `kind: "js_throw"`. The `outcome_hash` is `sha256` of the CDP `Runtime.evaluate` response envelope — a per-verb DISPATCH-SUCCESS marker (the evaluate returns `undefined`, so it is CONSTANT per verb), NOT a page-state fingerprint. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain. It captures the synchronous post-action DOM, so insert an explicit `web.wait_for` before reading it when the effect is async (timer/fetch-driven).
+**Returns:** Receipt with `status: "ok"`, `side_effects` populated when the click triggered DOM mutations, and `settle_outcome` (`reached`|`timeout`|`dom_unstable`) from the bounded post-action readiness wait. Selector miss → `kind: "js_throw"`. The `outcome_hash` is a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint; the `settle_outcome` and settle diagnostics ride observationally and are EXCLUDED from the replay hash chain. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain.
 
 **Example**
 
@@ -623,6 +624,8 @@ By default (`mode: "fill"`) loom selects the field's existing content and commit
 
 All three change record-time fidelity only; replay stays structural. Failure mode: in `fill`/`keystrokes` a selector miss → `kind: "selector_not_found"`; in `value` a selector miss → `kind: "js_throw"`.
 
+After a `fill`/`keystrokes` dispatch, loom runs a BOUNDED post-action readiness wait (the settle machine `web.navigate` uses) and records a `settle_outcome` on the receipt, capped inside the RPC deadline so a churny SPA never surfaces a transport `rpc timeout`. Control it with `until` (default `settled`; `until: "load"` proceeds on the load event). `mode: "value"` (legacy guest path) is unaffected and does not settle.
+
 **Parameters**
 
 | Name | Type | Required | Description |
@@ -631,9 +634,10 @@ All three change record-time fidelity only; replay stays structural. Failure mod
 | `selector` | `string` | required | Locator for the target element. Plain CSS (Level 3) by default; or a composable locator joined by ` >> ` segments: `css=<selector>`, `text=<visible text>` (case-insensitive substring, first visible match), `role=<role>[name="<accessible name>"]` (ARIA role + a W3C accessible-name subset), and `frame=<css>` to descend into an iframe. `frame=` is REQUIRED to cross an origin boundary — a bare locator never reaches into a cross-origin frame (e.g. `frame=iframe[src*="widget"] >> css=#send`). |
 | `text` | `string` | required | Text to type into the element. |
 | `mode` | `string` | optional | Dispatch mode: "fill" (default — focus + CDP Input.insertText, Playwright fill() semantics: a genuine isTrusted edit that drives React/react-hook-form onChange and clears on empty text), "value" (legacy — .value via Runtime.evaluate + synthetic events, isTrusted:false; the back-compat escape hatch), or "keystrokes" (real per-character CDP Input.dispatchKeyEvent, isTrusted:true). An unrecognized mode behaves as "value". |
+| `until` | `string` | optional | Post-action readiness state to wait for after a `fill`/`keystrokes` dispatch: `load`, `networkidle`, or `settled` (default). Bounded inside the RPC deadline — a never-settling page yields `timeout`/`dom_unstable`, not an `rpc timeout`. Ignored for `mode: "value"`. |
 | `deadline_ms` | `u64` | optional | Optional per-action deadline in milliseconds. On expiry the daemon kills the action with a typed `request_timeout` receipt (the session is NOT fenced and the next call succeeds). Omit or 0 for no deadline. |
 
-**Returns:** Receipt with `status: "ok"`. A selector miss in `fill`/`keystrokes` → `kind: "selector_not_found"`; in `value` → `kind: "js_throw"`. The `outcome_hash` is a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint: `fill`/`keystrokes` stamp the host-side trusted-input marker, `value` the `Runtime.evaluate` envelope marker — either way the manifest hash chain stays replay-equal. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain (captures the synchronous post-action DOM; use `web.wait_for` first for async effects).
+**Returns:** Receipt with `status: "ok"` and (for `fill`/`keystrokes`) `settle_outcome` (`reached`|`timeout`|`dom_unstable`) from the bounded post-action readiness wait. A selector miss in `fill`/`keystrokes` → `kind: "selector_not_found"`; in `value` → `kind: "js_throw"`. The `outcome_hash` is a per-verb DISPATCH-SUCCESS marker (CONSTANT per verb), NOT a page-state fingerprint; the `settle_outcome` and settle diagnostics ride observationally and are EXCLUDED from the replay hash chain. Under `--capture-policy fingerprint` the receipt also carries `dom_after_hash`: `sha256` of the normalized post-action DOM — content-bearing and in the manifest hash chain.
 
 **Example**
 

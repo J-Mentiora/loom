@@ -845,6 +845,55 @@ impl WasmHost {
         result
     }
 
+    /// interactive-settle-bounded: the BOUNDED post-action readiness wait run
+    /// after a host-side trusted-input dispatch (`web.click` / `web.type`
+    /// fill/keystrokes). Mirrors [`trusted_click`](Self::trusted_click)'s
+    /// registered-target resolution, then reuses the SAME wall-clock-bounded
+    /// settle path `web.wait_for` uses (`send_wait_for` → `wait_for_settle`),
+    /// arming virtual time under the session determinism toggle exactly as
+    /// `web.wait_for` does. `budget_ms` is the caller's bound — kept strictly
+    /// inside the RPC deadline by the daemon — so a page that never settles
+    /// returns a typed `SettleOutcome` (`timeout`/`dom_unstable`), never a hang.
+    /// The session's `seed`/`epoch_ms`/`determinism_enabled`/`audio_enabled`
+    /// are threaded so the idempotent lazy-spawn targets the seeded page.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn settle_after_input(
+        &self,
+        session_id: &str,
+        until: &str,
+        budget_ms: u64,
+        seed: loom_shared::types::Seed,
+        epoch_ms: loom_shared::types::EpochMs,
+        determinism_enabled: bool,
+        audio_enabled: bool,
+    ) -> Result<loom_shared::navigate_outcome::WaitOutcome, LoomError> {
+        use crate::shim_manager::ShimId;
+        let effective_id = ShimId(format!("chromium:{session_id}"));
+        if !self.shim.is_registered(&effective_id) {
+            return Err(LoomError::new(
+                LoomErrorCode::SurfaceTrap,
+                "no active page target — cannot settle after input",
+            ));
+        }
+        let shim_session_id = self.shim.shim_session_id_for(session_id);
+        self.shim
+            .send_wait_for(crate::shim_manager::SendWaitForParams {
+                id: effective_id,
+                // action_id is reserved for receipt correlation and ignored by
+                // send_wait_for; the settle rides the input verb's own receipt.
+                action_id: String::new(),
+                session_id: shim_session_id,
+                target_id: 0,
+                until: until.to_string(),
+                budget_ms,
+                seed,
+                epoch_ms,
+                determinism_enabled,
+                audio_enabled,
+            })
+            .await
+    }
+
     /// `web.wait` — poll the locator until it resolves or `timeout_ms` elapses.
     /// Mirrors [`trusted_click`](Self::trusted_click): a registered-target guard,
     /// then the host-side `send_wait` (which reuses the same locator-grammar

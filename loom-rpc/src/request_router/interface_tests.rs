@@ -166,3 +166,69 @@ fn web_scroll_still_parses_with_selector() {
         other => panic!("expected WebScroll, got {other:?}"),
     }
 }
+
+// interactive-settle-bounded: `until` is honored on web.click.
+#[test]
+fn web_click_parses_until() {
+    let action = super::parse_action(
+        "web.click",
+        serde_json::json!({ "session_id": "01J0000000000000000000000A", "selector": "#go", "until": "load" }),
+    )
+    .expect("web.click with until must parse");
+    match action {
+        super::Action::WebClick { until, .. } => {
+            assert_eq!(
+                until.as_deref(),
+                Some("load"),
+                "until must reach the action"
+            );
+        }
+        other => panic!("expected WebClick, got {other:?}"),
+    }
+}
+
+// Back-compat: web.click without `until` parses as None (daemon default = settled).
+#[test]
+fn web_click_defaults_until_to_none() {
+    let action = super::parse_action(
+        "web.click",
+        serde_json::json!({ "session_id": "01J0000000000000000000000A", "selector": "#go" }),
+    )
+    .expect("web.click without until must still parse");
+    match action {
+        super::Action::WebClick { until, .. } => assert_eq!(until, None),
+        other => panic!("expected WebClick, got {other:?}"),
+    }
+}
+
+// interactive-settle-bounded: `until` is honored on web.type.
+#[test]
+fn web_type_parses_until() {
+    let action = super::parse_action(
+        "web.type",
+        serde_json::json!({ "session_id": "01J0000000000000000000000A", "selector": "#email", "text": "a@example.com", "until": "networkidle" }),
+    )
+    .expect("web.type with until must parse");
+    match action {
+        super::Action::WebType { until, .. } => {
+            assert_eq!(until.as_deref(), Some("networkidle"));
+        }
+        other => panic!("expected WebType, got {other:?}"),
+    }
+}
+
+// interactive-settle-bounded: an invalid `until` is rejected loud (no coercion),
+// same posture as web.navigate — so a churny SPA never gets a silently-wrong gate.
+#[test]
+fn web_click_rejects_invalid_until() {
+    let err = super::parse_action(
+        "web.click",
+        serde_json::json!({ "session_id": "01J0000000000000000000000A", "selector": "#go", "until": "whenever" }),
+    )
+    .expect_err("invalid until must be rejected");
+    assert!(
+        err.message.contains("until"),
+        "error should name the offending param, got: {}",
+        err.message
+    );
+}

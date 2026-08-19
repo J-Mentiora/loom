@@ -644,9 +644,13 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
         "web.click" => {
             let session_id = session_id_from_params(&params)?;
             let selector = required_str(&params, "selector")?;
+            // interactive-settle-bounded: post-action readiness gate (validated
+            // against SETTLE_MODES; fails loud on a bad value, like navigate).
+            let until = optional_settle_until(&params)?;
             Ok(Action::WebClick {
                 session_id,
                 selector,
+                until,
             })
         }
         // Canonical name `web.type` (was `web.type_text`); the legacy
@@ -661,11 +665,15 @@ fn parse_action(method: &str, params: serde_json::Value) -> Result<Action, JsonR
                 .get("mode")
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
+            // interactive-settle-bounded: post-action readiness gate for the
+            // host-side fill/keystrokes paths (ignored for `value`).
+            let until = optional_settle_until(&params)?;
             Ok(Action::WebType {
                 session_id,
                 selector,
                 text,
                 mode,
+                until,
             })
         }
         // cdp-trusted-input: dispatch a real key event via CDP Input.dispatchKeyEvent.

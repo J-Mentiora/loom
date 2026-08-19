@@ -80,6 +80,13 @@ pub enum Action {
     WebClick {
         session_id: String,
         selector: String,
+        // interactive-settle-bounded: post-action readiness gate, mirroring
+        // WebNavigate. `None` == the daemon default (`settled`). One of
+        // `load|networkidle|settled`. The wait is bounded inside the RPC
+        // deadline so a never-settling page returns a `settle_outcome` receipt,
+        // never a transport `rpc timeout`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<String>,
     },
     WebEvaluate {
         session_id: String,
@@ -95,6 +102,11 @@ pub enum Action {
         // `isTrusted:true`). `None` == "value" (back-compat / determinism).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<String>,
+        // interactive-settle-bounded: post-action readiness gate for the
+        // host-side `fill`/`keystrokes` paths (ignored for `value`). Same
+        // semantics as WebClick::until.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until: Option<String>,
     },
     // cdp-trusted-input: dispatch a real key event (`isTrusted:true`) via CDP
     // `Input.dispatchKeyEvent`. `key` is a named key (Enter/Tab/Escape/arrows/…)

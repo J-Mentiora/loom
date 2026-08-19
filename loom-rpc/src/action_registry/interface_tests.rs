@@ -201,3 +201,30 @@ fn paramtype_display_is_canonical() {
     assert_eq!(format!("{}", ParamType::I64), "i64");
     assert_eq!(format!("{}", ParamType::U64), "u64");
 }
+
+// interactive-settle-bounded: the interactive verbs must expose the same
+// post-action readiness knob web.navigate has, so a caller driving a churny SPA
+// can request `until:"load"` and always get a bounded settle_outcome receipt
+// (never an rpc timeout). Mirrors web.navigate's `until` param exactly.
+#[test]
+fn interactive_verbs_declare_until_param() {
+    for verb in ["web.click", "web.type"] {
+        let meta = find(verb).unwrap_or_else(|| panic!("{verb} in registry"));
+        let until = meta
+            .params
+            .iter()
+            .find(|p| p.name == "until")
+            .unwrap_or_else(|| panic!("{verb} must declare an `until` settle-mode param"));
+        assert!(
+            !until.required,
+            "{verb} `until` must be optional (defaults to settled)"
+        );
+        // Same three settle modes web.navigate documents.
+        for mode in ["load", "networkidle", "settled"] {
+            assert!(
+                until.doc.contains(mode),
+                "{verb} `until` doc must mention `{mode}`"
+            );
+        }
+    }
+}
