@@ -43,19 +43,32 @@ const MIN_SETTLE_BUDGET_MS: u64 = 500;
 /// (`LOOM_SHIM_CDP_TIMEOUT_MS` env → 10s default) so the settle is bounded
 /// strictly inside the RPC deadline (the loom-mcp `tools/call` deadline is 15s;
 /// the transport timeout 30s) — a completed click can therefore never surface a
-/// transport `rpc timeout`, only a typed `settle_outcome` receipt. When the
-/// caller passes a tighter `deadline_ms`, clamp to `deadline_ms - headroom`
-/// (floored) so the logical deadline is honored too.
-pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>) -> u64 {
+/// transport `rpc timeout`, only a typed `settle_outcome` receipt.
+///
+/// `deadline_ms` follows loom's session-executor convention: `None` **and
+/// `Some(0)`** both mean "no deadline" (`session_executor.rs`) → the full base
+/// budget. When the caller passes a REAL (non-zero) deadline, clamp to the
+/// budget REMAINING after the input dispatch already consumed `elapsed_ms`,
+/// minus headroom, so the settle finishes before the logical deadline instead
+/// of racing it. Floored at `MIN_SETTLE_BUDGET_MS` so a near-exhausted deadline
+/// still gets a real (short, still << transport-timeout) settle window rather
+/// than a zero-length wait — the input already dispatched, so a brief settle
+/// beats returning no readiness at all. (The budget is a record-time wall-clock
+/// bound, excluded from the hash chain, exactly like navigate's — NFR-DET-01.)
+pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>, elapsed_ms: u64) -> u64 {
     let base = std::env::var("LOOM_SHIM_CDP_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(10_000);
     match deadline_ms {
+        // `None`/`Some(0)` ⇒ no deadline (loom convention) → full base budget.
+        None | Some(0) => base,
         Some(d) => base
-            .min(d.saturating_sub(SETTLE_HEADROOM_MS))
+            .min(
+                d.saturating_sub(elapsed_ms)
+                    .saturating_sub(SETTLE_HEADROOM_MS),
+            )
             .max(MIN_SETTLE_BUDGET_MS),
-        None => base,
     }
 }
 
@@ -68,6 +81,7 @@ pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>) -> u64 {
 /// receipt without a `settle_outcome` rather than failing the verb. The budget
 /// is bounded strictly inside the RPC deadline, so the verb can never surface a
 /// transport `rpc timeout` — only a typed `settle_outcome`.
+#[allow(clippy::too_many_arguments)]
 fn settle_after_input_dispatch(
     handle: &tokio::runtime::Handle,
     host: &Arc<loom_host::WasmHost>,
@@ -75,9 +89,10 @@ fn settle_after_input_dispatch(
     session_id: &str,
     until: Option<&str>,
     deadline_ms: Option<u64>,
+    dispatch_elapsed_ms: u64,
     receipt: &mut Receipt,
 ) {
-    let budget = interaction_settle_budget_ms(deadline_ms);
+    let budget = interaction_settle_budget_ms(deadline_ms, dispatch_elapsed_ms);
     let until = until.unwrap_or("settled");
     match handle.block_on(host.settle_after_input(
         session_id,
@@ -739,8 +754,10 @@ impl WasmHostBridge for WasmBridge {
             let sel = selector.clone();
             let settle_until = until.clone();
             let action_id = session.allocate_action_id();
+            let dispatch_t0 = std::time::Instant::now();
             match handle.block_on(host.trusted_click(&sid, &sel, 0)) {
                 Ok(outcome) => {
+                    let dispatch_elapsed_ms = dispatch_t0.elapsed().as_millis() as u64;
                     let dispatched =
                         matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
                     let mut receipt =
@@ -753,6 +770,7 @@ impl WasmHostBridge for WasmBridge {
                             &sid,
                             settle_until.as_deref(),
                             deadline_ms,
+                            dispatch_elapsed_ms,
                             &mut receipt,
                         );
                     }
@@ -788,6 +806,7 @@ impl WasmHostBridge for WasmBridge {
                 let txt = text.clone();
                 let settle_until = until.clone();
                 let action_id = session.allocate_action_id();
+                let dispatch_t0 = std::time::Instant::now();
                 let outcome = match dispatch {
                     WebTypeDispatch::Fill => handle.block_on(host.type_fill(&sid, &sel, &txt, 0)),
                     WebTypeDispatch::Keystrokes => {
@@ -797,6 +816,7 @@ impl WasmHostBridge for WasmBridge {
                 };
                 match outcome {
                     Ok(outcome) => {
+                        let dispatch_elapsed_ms = dispatch_t0.elapsed().as_millis() as u64;
                         let dispatched =
                             matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
                         let mut receipt = build_input_dispatch_receipt(
@@ -813,6 +833,7 @@ impl WasmHostBridge for WasmBridge {
                                 &sid,
                                 settle_until.as_deref(),
                                 deadline_ms,
+                                dispatch_elapsed_ms,
                                 &mut receipt,
                             );
                         }

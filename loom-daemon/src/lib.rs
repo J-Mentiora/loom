@@ -1255,17 +1255,25 @@ mod tests {
     fn interaction_settle_budget_is_bounded_inside_deadline() {
         use crate::wasm_bridge::interaction_settle_budget_ms;
         // No deadline → fixed default, comfortably under the 15s RPC deadline.
-        assert_eq!(interaction_settle_budget_ms(None), 10_000);
+        assert_eq!(interaction_settle_budget_ms(None, 0), 10_000);
+        // loom convention: `Some(0)` ALSO means "no deadline" → full base budget,
+        // NOT a 0ms deadline (ship-council FND-0005/0007).
+        assert_eq!(interaction_settle_budget_ms(Some(0), 0), 10_000);
         // Typical loom-mcp deadline (15s): budget stays under it.
-        assert!(interaction_settle_budget_ms(Some(15_000)) < 15_000);
+        assert!(interaction_settle_budget_ms(Some(15_000), 0) < 15_000);
         // Caller-tighter-than-default deadline: budget clamps BELOW it.
         assert!(
-            interaction_settle_budget_ms(Some(5_000)) < 5_000,
+            interaction_settle_budget_ms(Some(5_000), 0) < 5_000,
             "budget must clamp below a tight deadline so the receipt beats it"
         );
+        // Elapsed input-dispatch time is subtracted from the remaining budget
+        // (ship-council FND-0006/0001): a 5s deadline with 3s already spent
+        // dispatching leaves ~1s (5000-3000-1000 headroom), not the full clamp.
+        assert_eq!(interaction_settle_budget_ms(Some(5_000), 3_000), 1_000);
         // Pathologically tiny deadline: floored to a real (short) window, never 0.
-        assert_eq!(interaction_settle_budget_ms(Some(200)), 500);
-        assert!(interaction_settle_budget_ms(Some(0)) > 0);
+        assert_eq!(interaction_settle_budget_ms(Some(200), 0), 500);
+        // Deadline already blown by a slow dispatch: still a floored window, never 0.
+        assert_eq!(interaction_settle_budget_ms(Some(1_000), 5_000), 500);
     }
 
     /// interactive-settle-bounded determinism (NFR-DET-01): folding the settle
