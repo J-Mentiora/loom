@@ -59,17 +59,25 @@ fn id_key(id: &serde_json::Value) -> String {
 /// (the prior code only had the 300 s socket idle timeout, which let
 /// individual requests stall for up to 5 minutes before the connection
 /// was reaped). Configurable via `LOOM_REQUEST_TIMEOUT_MS`; default 30 s.
-const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
-fn request_timeout() -> Duration {
-    static CACHED: OnceLock<Duration> = OnceLock::new();
+/// The effective server-side per-call timeout in ms (`LOOM_REQUEST_TIMEOUT_MS`
+/// env or [`DEFAULT_REQUEST_TIMEOUT_MS`]). Exposed so other crates that must not
+/// exceed this cap (e.g. the daemon's post-input settle budget) read the SAME
+/// value the connection-handler deadline race uses, rather than duplicating the
+/// env read + default (which could silently drift out of sync).
+pub fn request_timeout_ms() -> u64 {
+    static CACHED: OnceLock<u64> = OnceLock::new();
     *CACHED.get_or_init(|| {
-        let ms = std::env::var("LOOM_REQUEST_TIMEOUT_MS")
+        std::env::var("LOOM_REQUEST_TIMEOUT_MS")
             .ok()
             .and_then(|s| s.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);
-        Duration::from_millis(ms)
+            .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS)
     })
+}
+
+fn request_timeout() -> Duration {
+    Duration::from_millis(request_timeout_ms())
 }
 
 /// Per-connection cap on concurrently dispatching requests. Frames are

@@ -327,6 +327,7 @@ async fn handle_request(
             session_id,
             target_id,
             until,
+            budget_ms,
         } => {
             // settle-capture: standalone readiness wait on the current page.
             // The host issues an idempotent SpawnTarget before this (mirroring
@@ -334,7 +335,14 @@ async fn handle_request(
             // determinism-injected target. No navigation, no capture.
             let settle_mode =
                 crate::readiness_monitor::SettleMode::parse(&until).unwrap_or_default();
-            match action_executor.wait_for(target_id, settle_mode, None).await {
+            // Honor the daemon's threaded budget so the whole wait shares one
+            // bounded deadline; `None` (old-shape payload) falls back to the env
+            // base inside `wait_for`.
+            let budget = budget_ms.map(std::time::Duration::from_millis);
+            match action_executor
+                .wait_for(target_id, settle_mode, budget)
+                .await
+            {
                 Ok(result) => {
                     make_ok_response(request_id, Some(session_id), action_result_to_cbor(result))
                 }

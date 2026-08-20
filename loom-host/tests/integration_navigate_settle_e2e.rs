@@ -612,3 +612,293 @@ async fn repeated_navigate_no_determinism_does_not_degrade() {
 
     mgr.shutdown_session("nav-degradation").await;
 }
+
+// ── (click-cross-origin-until) cross-origin process-swap settle is BOUNDED ────
+//
+// Regression for the v0.15.0 bug: a `web.click`/`web.wait_for` whose navigation
+// crosses origin (app → checkout.stripe.com) makes the renderer PROCESS SWAP, so
+// the virtual-time budget armed on the stale CDP session never expires and the
+// destination's load event never reaches it. Pre-fix, the shim's standalone
+// `wait_for` runs THREE sequential phases (VT-arm+await, settle_with_reattach,
+// resume) that EACH re-take the full per-phase budget, so a completed cross-origin
+// navigation burns ~2–3× the budget — exceeding the daemon settle budget and the
+// RPC per-call deadline, which the caller sees as a transport `request_timeout`
+// ("the click failed", which is FALSE — the nav succeeded).
+//
+// The fix threads the daemon budget to the shim and puts ALL phases under ONE
+// shared wall-clock deadline, so the wait is bounded by ~1× budget and always
+// returns a TYPED `settle_outcome` (never a transport error / hang).
+//
+// This helper shrinks the per-phase base budget via `LOOM_SHIM_CDP_TIMEOUT_MS`
+// so the pre-fix multi-phase overrun (~2–3×) is cleanly separated from the
+// post-fix single-budget bound by the wall-clock assertion below.
+fn make_manager_with_script_env(
+    session_label: &str,
+    script_json: &str,
+    extra_env: Vec<(String, String)>,
+) -> (std::sync::Arc<ShimManager>, ShimId, tempfile::TempDir) {
+    let user_data_dir = tempfile::tempdir().expect("tempdir");
+    let script_path = user_data_dir.path().join("settle_script.json");
+    std::fs::write(&script_path, script_json).expect("write settle script");
+
+    let obs = HostObservability::new(true);
+    let mgr = ShimManager::new(obs);
+    let id = ShimId(format!("chromium:{session_label}"));
+    let mut env = vec![
+        ("LOOM_SHIM_CHROMIUM_PATH".to_string(), fake_chromium_bin()),
+        (
+            "LOOM_SHIM_USER_DATA_DIR".to_string(),
+            user_data_dir.path().display().to_string(),
+        ),
+        (
+            "LOOM_FAKE_CHROMIUM_USER_DATA_DIR".to_string(),
+            user_data_dir.path().display().to_string(),
+        ),
+        (
+            "LOOM_FAKE_CHROMIUM_SCRIPT".to_string(),
+            script_path.display().to_string(),
+        ),
+    ];
+    env.extend(extra_env);
+    mgr.register(
+        id.clone(),
+        ShimConfig {
+            binary_path: shim_bin().into(),
+            args: vec![],
+            env,
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 30_000,
+            recv_timeout_ms: 60_000,
+        },
+    );
+    (mgr, id, user_data_dir)
+}
+
+/// Drive one `wait_for` with an explicit `until` + `budget_ms`, measuring the
+/// wall-clock the call actually consumed (the load-bearing signal for the
+/// multi-phase-overrun regression).
+async fn wait_for_timed(
+    mgr: &std::sync::Arc<ShimManager>,
+    id: &ShimId,
+    until: &str,
+    budget_ms: u64,
+    outer_timeout: Duration,
+) -> (loom_shared::navigate_outcome::WaitOutcome, Duration) {
+    let start = std::time::Instant::now();
+    let outcome = tokio::time::timeout(
+        outer_timeout,
+        mgr.send_wait_for(loom_host::shim_manager::SendWaitForParams {
+            id: id.clone(),
+            action_id: "test-xorigin".to_string(),
+            session_id: 0,
+            target_id: 0,
+            until: until.to_string(),
+            budget_ms,
+            seed: loom_shared::types::Seed(0),
+            epoch_ms: loom_shared::types::EpochMs(0),
+            determinism_enabled: true,
+            audio_enabled: false,
+        }),
+    )
+    .await
+    .expect(
+        "send_wait_for exceeded the OUTER guard — a cross-origin swap must return a \
+         TYPED verdict inside its budget, never hang (this is the never-hangs guarantee)",
+    )
+    .expect(
+        "send_wait_for returned a transport ERROR for a cross-origin navigation — the \
+         caller would read this as 'the click failed', which is FALSE; it must return a \
+         success WaitOutcome with a typed settle_outcome",
+    );
+    (outcome, start.elapsed())
+}
+
+// (a) THE REGRESSION: a cross-origin process swap with `until:"load"` must return
+// a bounded, typed verdict inside ~1× budget — NOT burn 2–3× the budget nor
+// surface a transport error. `cross_origin_swap_at:[0]` makes the fake suppress
+// the destination's load event + budget expiry on re-arm (they land on a renderer
+// the stale session cannot see) and error the settle probe (destroyed context).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_cross_origin_swap_is_bounded_and_typed() {
+    assert_binaries_built();
+    // idx0: the click's navigation swaps cross-origin; the stale session goes
+    // blind. The trailing probes never get observed (the wedge never clears).
+    let script = r#"{
+        "settle_probe": [
+            [false, "https://app.example.com/", 0],
+            [false, "https://app.example.com/", 0]
+        ],
+        "cross_origin_swap_at": [0]
+    }"#;
+    // Env base 4s, caller requests a 1.5s budget with until:"load". Pre-fix,
+    // budget_ms never reaches the shim, so the executor uses the 4s env base per
+    // phase and overruns to ≥4s regardless of the request. Post-fix, the 1.5s
+    // budget is threaded and shared across all phases → ~1.5s. 3s cleanly
+    // separates them (a ~3× ratio, robust to CI load).
+    let (mgr, id, _udd) = make_manager_with_script_env(
+        "xorigin-bound",
+        script,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (outcome, elapsed) =
+        wait_for_timed(&mgr, &id, "load", 1_500, Duration::from_secs(30)).await;
+
+    // Contract 1 — TYPED outcome (never a transport error; the helper already
+    // panics on Err). A pathological/never-recovering destination is allowed to
+    // end in `timeout`, but it MUST be one of the typed settle verdicts.
+    assert!(
+        matches!(
+            outcome.settle_outcome.as_str(),
+            "reached" | "timeout" | "dom_unstable"
+        ),
+        "cross-origin swap must yield a typed settle_outcome, got {:?}",
+        outcome.settle_outcome
+    );
+    // Contract 2 — the caller asked `until:"load"`; the receipt must record it
+    // (readiness gated at the requested mode, pinned per FND-0025).
+    assert_eq!(
+        outcome.settle_until, "load",
+        "settle_until must echo the requested readiness mode"
+    );
+    // Contract 3 — THE REGRESSION ASSERTION: bounded by ~1× the CALLER budget.
+    // Pre-fix the shim ignored the 1.5s request and burned its 4s env base
+    // across the VT-arm / reattach / resume phases (≥4s); post-fix the threaded
+    // 1.5s budget, shared across all phases, holds it to ~1.5s. 3s separates them.
+    assert!(
+        elapsed < Duration::from_millis(3_000),
+        "cross-origin swap wait must stay within ~1× the settle budget; took {elapsed:?} \
+         — the shim re-took its per-phase budget across the VT-arm / reattach / resume \
+         phases instead of sharing one deadline (the v0.15.0 request_timeout regression)",
+    );
+
+    mgr.shutdown_session("xorigin-bound").await;
+}
+
+// (c) The request_timeout path is unreachable for a completed cross-origin nav:
+// even with a TIGHT caller budget (the shim's per-phase base is larger than the
+// requested budget), the wait returns a typed WaitOutcome inside the budget — it
+// does NOT let the multi-phase overrun blow past the caller's deadline into a
+// transport timeout. (Pre-fix, budget_ms never reached the shim, so the executor
+// used the full 2s env base per phase regardless of this 1s request.)
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_cross_origin_swap_honors_tight_budget() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [
+            [false, "https://app.example.com/", 0],
+            [false, "https://app.example.com/", 0]
+        ],
+        "cross_origin_swap_at": [0]
+    }"#;
+    // Env base 4s, but the caller requests a 1s budget: post-fix the shim honors
+    // the threaded 1s and returns ~1s; pre-fix it ignored the request, used the
+    // 4s env base per phase, and overran to ≥8s.
+    let (mgr, id, _udd) = make_manager_with_script_env(
+        "xorigin-tight",
+        script,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (outcome, elapsed) =
+        wait_for_timed(&mgr, &id, "load", 1_000, Duration::from_secs(30)).await;
+
+    assert!(
+        matches!(
+            outcome.settle_outcome.as_str(),
+            "reached" | "timeout" | "dom_unstable"
+        ),
+        "tight-budget cross-origin swap must yield a typed settle_outcome, got {:?}",
+        outcome.settle_outcome
+    );
+    // The caller's 1s budget must bound the whole wait — proving budget_ms now
+    // reaches the shim AND all phases share it. 3s ceiling separates the fixed
+    // ~1s from the pre-fix ≥8s (4s env base × the multi-phase overrun).
+    assert!(
+        elapsed < Duration::from_millis(3_000),
+        "a tight caller budget must bound the cross-origin settle (budget_ms must reach \
+         the shim and be shared across phases); took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("xorigin-tight").await;
+}
+
+// until:"load" returns `reached` as soon as the destination's load completes —
+// the readiness semantics the acceptance criterion requires. Uses a same-process
+// renavigation (the recovering case: the CDP session survives and observes the
+// new document, exactly like a real top-level cross-origin nav whose target
+// survives the process swap). Proves `until:"load"` is honored end-to-end WITHOUT
+// an explicit Page.loadEventFired subscription — the `load` settle mode already
+// resolves on the load-driven `readyState:"complete"` within one tick.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_until_load_reaches_on_navigated_document() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [
+            [false, "http://fake.test/destination", 0],
+            [true,  "http://fake.test/destination", 0],
+            [true,  "http://fake.test/destination", 0]
+        ],
+        "renavigate_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script_env(
+        "until-load-reached",
+        script,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (outcome, elapsed) =
+        wait_for_timed(&mgr, &id, "load", 4_000, Duration::from_secs(30)).await;
+
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "until:load must resolve on the destination's completed load (got {:?}, {}ms)",
+        outcome.settle_outcome, outcome.settle_ms
+    );
+    assert_eq!(outcome.settle_until, "load");
+    // Returns promptly once loaded — nowhere near the 4s budget.
+    assert!(
+        elapsed < Duration::from_millis(3_000),
+        "until:load must return on load, not wait out the budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("until-load-reached").await;
+}
+
+// A zero settle budget (the daemon computed it is already out of its per-call
+// deadline) must return an IMMEDIATE typed `timeout` — never hang, never send a
+// zero-duration CDP command (ship FND-0014/0020). The ShimManager passes
+// budget_ms straight through, so budget_ms:0 exercises the shim's zero guard.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_zero_budget_returns_immediate_typed_timeout() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[false, "https://app.example.com/", 0]],
+        "cross_origin_swap_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script_env(
+        "zero-budget",
+        script,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (outcome, elapsed) = wait_for_timed(&mgr, &id, "load", 0, Duration::from_secs(30)).await;
+
+    assert_eq!(
+        outcome.settle_outcome, "timeout",
+        "a zero budget must return a typed timeout verdict"
+    );
+    assert_eq!(outcome.settle_until, "load");
+    assert!(
+        elapsed < Duration::from_millis(1_000),
+        "zero budget must return immediately (no CDP, no resume); took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("zero-budget").await;
+}
