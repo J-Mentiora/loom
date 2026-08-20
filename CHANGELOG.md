@@ -6,6 +6,47 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-08-21 — Cross-origin click settle bounded
+
+v0.15.0 (#285) bounded the post-click settle for **same-origin** navigations, but a
+click that triggered a **cross-origin top-level navigation** (e.g. a "Start my free
+trial" button that redirects to `checkout.stripe.com`) still surfaced a transport
+`request_timeout` — even with `until: "load"` and a generous `deadlineMs` — although
+the navigation actually succeeded. The caller (an LLM agent) read the transport error
+as "the click failed" and abandoned the flow. Root cause: the shim's standalone
+`wait_for` ran three sequential phases (virtual-time arm, settle-with-reattach,
+resume) that **each** re-took the full per-phase budget, and a cross-origin renderer
+**process swap** means the stale CDP session never observes `virtualTimeBudgetExpired`
+or the destination's load event — so every phase dead-waited its full budget (~2–3×)
+and blew past the RPC per-call deadline. Compounding it, the daemon's carefully
+clamped settle budget never actually reached the shim. Now the whole shim `wait_for`
+runs under **one shared wall-clock deadline** and the budget is threaded end-to-end,
+so a completed cross-origin navigation returns a bounded, typed `settle_outcome`
+(`reached` | `timeout` | `dom_unstable`) inside the deadline — never a transport
+error. Determinism (NFR-DET-01) is preserved: `settle_outcome` stays off the manifest
+hash chain and replay remains bit-equal. (#288)
+
+Also unbreaks `main` CI: a newer-stable clippy lint (`as_chunks`) and a stale vendored
+WASM guest that had left CI red since before v0.15.0. (#289)
+
+### Fixed
+
+- **`web.click` / `web.type` / `web.wait_for` on a cross-origin top-level navigation
+  no longer surface a transport `request_timeout`.** The shim's post-action settle now
+  shares ONE wall-clock deadline across its virtual-time-arm, reattach, and resume
+  phases (previously each re-took the full budget), and the daemon's settle budget is
+  threaded to the shim via a new internal `budget_ms` on the wait-for request. A
+  completed cross-origin navigation returns a bounded, typed `settle_outcome` receipt;
+  `until: "load"` resolves as soon as the destination's load completes. (#288)
+- **The settle budget is clamped strictly inside the effective per-call deadline**
+  (`min(caller deadline_ms, server per-call timeout)`) with headroom reserved for the
+  post-settle virtual-time resume, so a caller `deadline_ms` larger than the server cap
+  — or a near-exhausted deadline — can never hand the shim a budget the RPC race would
+  beat. Overflow- and zero-budget-guarded. (#288)
+- **`main` CI restored to green** — a latest-stable clippy `as_chunks` lint on
+  pre-existing audio code and a stale `loom-cli/vendor/loom_surface_web.wasm` (both
+  independent of any recent feature work) had left CI red since before v0.15.0. (#289)
+
 ## [0.15.0] — 2026-08-20 — Bounded interactive-verb settle
 
 `web.click` and `web.type` now run a **bounded** post-action readiness wait — the
