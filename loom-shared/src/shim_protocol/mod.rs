@@ -226,6 +226,17 @@ pub enum ShimRequest {
         /// so an old-shape payload decodes to the strict default.
         #[serde(default = "default_settle_until")]
         until: String,
+        /// Wall-clock budget (ms) the SHIM must bound the whole settle wait by —
+        /// arm + reattach + resume all share this one deadline. Threaded from the
+        /// daemon's per-call settle budget (see `interaction_settle_budget_ms`).
+        /// `None` (serde-default, and every old-shape payload) ⇒ the shim falls
+        /// back to its `navigate_budget()` env base. Before this field existed
+        /// the daemon's clamped budget never reached the shim, so a cross-origin
+        /// process swap let the shim's multi-phase wait run to ~2–3× the env base
+        /// and blow past the RPC per-call deadline (the v0.15.0 `request_timeout`
+        /// on a click whose navigation actually succeeded).
+        #[serde(default)]
+        budget_ms: Option<u64>,
     },
     /// Close the target and drop its `TargetState`.
     PageClose {

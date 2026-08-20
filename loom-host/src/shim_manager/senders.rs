@@ -636,8 +636,16 @@ impl ShimManager {
             session_id,
             target_id,
             until,
+            // Thread the daemon's per-call settle budget to the shim so its whole
+            // multi-phase wait (arm + reattach + resume) shares ONE bounded
+            // deadline. Without this the shim used its env base per phase and a
+            // cross-origin process swap overran the RPC deadline (v0.15.0 bug).
+            budget_ms: Some(budget_ms),
         };
 
+        // The transport recv MUST stay a superset of the shim's own budget — the
+        // shim returns a typed verdict at `budget_ms`; the host must not cut the
+        // connection first.
         let recv_ms = budget_ms.max(config.recv_timeout_ms);
 
         match send_and_await(

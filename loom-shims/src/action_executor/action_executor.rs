@@ -1288,6 +1288,22 @@ impl ActionExecutor for ChromiumActionExecutor {
         // replays identically; the tick ceiling (from `budget`) bounds it to a
         // typed `timeout`/`dom_unstable` instead of hanging.
         let timeout = budget.unwrap_or_else(navigate_budget);
+        // ONE shared wall-clock deadline for the WHOLE wait — arm, settle,
+        // reattach, and resume all draw from it (click-cross-origin-until).
+        // Before this, each phase re-took the full `timeout`: the initial VT arm
+        // + await, then a FRESH `reattach_start` captured AFTER that arm gave
+        // `settle_with_reattach` another full window, then resume. On a
+        // cross-origin top-level navigation the renderer PROCESS SWAPS, so the
+        // budget armed on the stale session never expires and the destination's
+        // load never reaches it — every phase dead-waited its full budget, so the
+        // shim spent ~2–3× `timeout` and blew past the RPC per-call deadline (the
+        // v0.15.0 `request_timeout` on a click whose navigation actually
+        // succeeded). Sharing one deadline bounds the whole wait to ~1× `timeout`
+        // and guarantees a TYPED verdict, never a transport error. The `remaining`
+        // closure is the single source of the per-phase bound below.
+        let start = tokio::time::Instant::now();
+        let deadline = start + timeout;
+        let remaining = || deadline.saturating_duration_since(tokio::time::Instant::now());
         // Gate the virtual-time arm+await on whether this session actually pinned
         // the clock at inject. A `--no-determinism` session never pinned it, so
         // arming a budget here would await a `virtualTimeBudgetExpired` that never
@@ -1333,26 +1349,40 @@ impl ActionExecutor for ChromiumActionExecutor {
                     crate::determinism_injector::determinism_injector::build_virtual_time_budget_params(
                     ),
             };
-            if let Err(e) = self.cdp.command(target_id, vt_budget, Some(timeout)).await {
+            // Bound the arm + await by the SHARED remaining budget, not a fresh
+            // full `timeout`. A cross-origin swap that eats the whole remaining
+            // here leaves the phases below with ~zero budget, so they return a
+            // typed verdict immediately instead of each re-taking a full window.
+            if let Err(e) = self
+                .cdp
+                .command(target_id, vt_budget, Some(remaining()))
+                .await
+            {
                 tracing::warn!(target_id, error = %e, "wait_for: virtual-time budget arm failed");
                 initial_budget_drained = false;
             } else {
-                initial_budget_drained = tokio::time::timeout(timeout, vt_expired_rx).await.is_ok();
+                initial_budget_drained = tokio::time::timeout(remaining(), vt_expired_rx)
+                    .await
+                    .is_ok();
             }
         }
 
-        let reattach_start = tokio::time::Instant::now();
+        // Reattach measures its remaining window from the TRUE `start` (shared
+        // deadline), NOT a fresh instant captured after the arm above — that reset
+        // was the multi-phase overrun. `settle_with_reattach` computes
+        // `timeout.saturating_sub(reattach_start.elapsed())`, so passing `start`
+        // makes its window the same shared remaining.
         let mut settle = crate::readiness_monitor::wait_for_settle(
             &self.cdp,
             target_id,
             settle_mode,
-            crate::readiness_monitor::settle_driver::config_for_timeout(timeout),
+            crate::readiness_monitor::settle_driver::config_for_timeout(remaining()),
             true,
             // the caller asserts the page already loaded, so a `loading`
             // observation here means the page renavigated (e.g. a form-POST
             // submitted just before this wait_for) — detect + re-attach.
             true,
-            timeout,
+            remaining(),
         )
         .await;
 
@@ -1365,7 +1395,7 @@ impl ActionExecutor for ChromiumActionExecutor {
                 target_id,
                 settle_mode,
                 timeout,
-                reattach_start,
+                start,
                 settle,
                 ReattachKind::WaitFor,
             )
@@ -1379,7 +1409,10 @@ impl ActionExecutor for ChromiumActionExecutor {
         // read stays replay-equal.
         let needs_resume = !initial_budget_drained || matches!(outcome.last_drained, Some(false));
         if clock_pinned && needs_resume {
-            self.resume_virtual_time(target_id, timeout).await;
+            // Draw resume from the SAME shared deadline (it also caps internally at
+            // RESUME_CDP_TIMEOUT). After a swap has consumed the budget this is
+            // ~zero, so cleanup can't extend the wait past the one deadline.
+            self.resume_virtual_time(target_id, remaining()).await;
         }
 
         Ok(ActionResult::Waited {

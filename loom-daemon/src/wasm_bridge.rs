@@ -59,17 +59,60 @@ pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>, elapsed_ms:
     let base = std::env::var("LOOM_SHIM_CDP_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(10_000);
-    match deadline_ms {
-        // `None`/`Some(0)` ⇒ no deadline (loom convention) → full base budget.
-        None | Some(0) => base,
+        .unwrap_or(DEFAULT_SETTLE_BASE_MS);
+    // `server_cap` mirrors loom-rpc `connection_handler::request_timeout()`
+    // (`LOOM_REQUEST_TIMEOUT_MS`, default 30_000); the two MUST agree — see the
+    // `default_server_cap_matches_connection_handler` test.
+    let server_cap = std::env::var("LOOM_REQUEST_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_REQUEST_TIMEOUT_MS);
+    clamp_settle_budget(base, server_cap, deadline_ms, elapsed_ms)
+}
+
+/// interactive-settle-bounded default base (`LOOM_SHIM_CDP_TIMEOUT_MS` unset).
+const DEFAULT_SETTLE_BASE_MS: u64 = 10_000;
+
+/// Mirrors loom-rpc `connection_handler::request_timeout()`'s default. If that
+/// changes, change this too (the `default_server_cap_matches_connection_handler`
+/// test fails loudly otherwise).
+const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
+
+/// Pure core of [`interaction_settle_budget_ms`] — env resolved by the caller so
+/// this is deterministically unit-testable without process-global env races.
+///
+/// Defense-in-depth server-cap clamp (click-cross-origin-until FND-0011): the
+/// connection handler abandons the RPC at `min(deadline_ms, server_cap)` and
+/// returns a transport `request_timeout`. Clamp the settle strictly inside that
+/// server cap too, so even a caller `deadline_ms` LARGER than the cap (the
+/// reported 45s-vs-30s case) — or an over-large `LOOM_SHIM_CDP_TIMEOUT_MS` — can
+/// never hand the shim a budget the RPC race would beat. All math `saturating_*`
+/// (FND-0006), so no underflow near the cap.
+fn clamp_settle_budget(
+    base: u64,
+    server_cap: u64,
+    deadline_ms: Option<u64>,
+    elapsed_ms: u64,
+) -> u64 {
+    let hard = server_cap
+        .saturating_sub(elapsed_ms)
+        .saturating_sub(SETTLE_HEADROOM_MS);
+    let unfloored = match deadline_ms {
+        // `None`/`Some(0)` ⇒ no deadline (loom convention) → base, still capped.
+        None | Some(0) => base.min(hard),
         Some(d) => base
             .min(
                 d.saturating_sub(elapsed_ms)
                     .saturating_sub(SETTLE_HEADROOM_MS),
             )
-            .max(MIN_SETTLE_BUDGET_MS),
-    }
+            .min(hard),
+    };
+    // Floor at MIN_SETTLE_BUDGET_MS, but NEVER above `hard` (FND-0011): when the
+    // server-cap headroom is already below the floor we are out of deadline, so
+    // flooring UP to MIN would push the settle past the RPC deadline. Clamp the
+    // floor itself to `hard` so `budget <= hard` always holds.
+    let floor = MIN_SETTLE_BUDGET_MS.min(hard);
+    unfloored.max(floor)
 }
 
 /// interactive-settle-bounded: run the bounded post-action readiness wait after
@@ -1328,6 +1371,85 @@ fn resolve_inject_payload(
             }
             Ok(bytes)
         }
+    }
+}
+
+#[cfg(test)]
+mod settle_budget_tests {
+    use super::*;
+
+    // Pure-function tests (no env): the base + server_cap are passed in, so these
+    // are deterministic and race-free (no LOOM_* env mutation, no ENV_LOCK needed).
+    const BASE: u64 = DEFAULT_SETTLE_BASE_MS; // 10_000
+    const CAP: u64 = DEFAULT_REQUEST_TIMEOUT_MS; // 30_000
+
+    #[test]
+    fn no_deadline_uses_base_when_under_cap() {
+        // None / Some(0) ⇒ no deadline ⇒ full base (base < cap headroom).
+        assert_eq!(clamp_settle_budget(BASE, CAP, None, 0), BASE);
+        assert_eq!(clamp_settle_budget(BASE, CAP, Some(0), 0), BASE);
+    }
+
+    #[test]
+    fn caller_deadline_clamps_to_remaining_minus_headroom() {
+        // deadline 5s, 200ms already elapsed ⇒ 5000-200-1000 = 3800, under base.
+        assert_eq!(clamp_settle_budget(BASE, CAP, Some(5_000), 200), 3_800);
+    }
+
+    #[test]
+    fn deadline_larger_than_server_cap_is_clamped_to_cap() {
+        // THE REPORTED CASE: caller sends 45s, server cap 30s. Budget must clamp
+        // to cap-headroom (29_000), never 45s — else the RPC race beats the settle
+        // and the caller sees a transport request_timeout (v0.15.0 bug).
+        assert_eq!(clamp_settle_budget(BASE, CAP, Some(45_000), 0), BASE); // base < cap wins here
+                                                                           // With a large base (LOOM_SHIM_CDP_TIMEOUT_MS raised past the cap) the
+                                                                           // server cap is what bounds it.
+        assert_eq!(
+            clamp_settle_budget(50_000, CAP, Some(45_000), 0),
+            CAP - SETTLE_HEADROOM_MS
+        );
+        assert_eq!(
+            clamp_settle_budget(50_000, CAP, None, 0),
+            CAP - SETTLE_HEADROOM_MS
+        );
+    }
+
+    #[test]
+    fn floor_never_exceeds_server_cap_headroom() {
+        // Near the cap: only 300ms of headroom left (elapsed 29_200, cap 30_000,
+        // headroom 1_000 ⇒ hard = 30_000-29_200-1_000 saturates to 0). Budget must
+        // be 0 (out of deadline) — NOT floored UP to MIN_SETTLE_BUDGET_MS, which
+        // would push the settle past the RPC deadline (FND-0011).
+        assert_eq!(clamp_settle_budget(BASE, CAP, None, 29_200), 0);
+        // Just enough headroom for a sub-MIN window: hard = 30_000-29_400-1_000
+        // saturates to 0 as well; still 0, never MIN.
+        assert!(clamp_settle_budget(BASE, CAP, Some(45_000), 29_400) <= MIN_SETTLE_BUDGET_MS);
+    }
+
+    #[test]
+    fn tiny_deadline_floored_to_min_when_cap_allows() {
+        // Tiny deadline but plenty of server-cap headroom ⇒ floor to MIN (a real,
+        // short settle window, not zero) — the original floor behavior preserved
+        // whenever it does not violate the server cap.
+        assert_eq!(
+            clamp_settle_budget(BASE, CAP, Some(1_100), 0),
+            MIN_SETTLE_BUDGET_MS
+        );
+    }
+
+    #[test]
+    fn saturating_math_no_underflow_past_cap() {
+        // elapsed > server_cap must saturate to 0, never panic/underflow (FND-0006).
+        assert_eq!(clamp_settle_budget(BASE, CAP, None, 40_000), 0);
+        assert_eq!(clamp_settle_budget(BASE, CAP, Some(45_000), 40_000), 0);
+    }
+
+    #[test]
+    fn default_server_cap_matches_connection_handler() {
+        // SSOT guard: this const mirrors loom-rpc connection_handler's default
+        // (LOOM_REQUEST_TIMEOUT_MS, 30s). If loom-rpc changes its default, this
+        // must change too — the clamp is only correct while they agree.
+        assert_eq!(DEFAULT_REQUEST_TIMEOUT_MS, 30_000);
     }
 }
 

@@ -192,6 +192,13 @@ async fn handle_connection(
     // in-flight document reports until then.
     let mut awaiting_rearm = false;
     let mut renav_href = String::new();
+    // Cross-origin process-swap gate: set when the current `awaiting_rearm`
+    // wedge was triggered by `cross_origin_swap_at` (not `renavigate_at`). While
+    // true, the re-arm handler SUPPRESSES the deferred load-flush + budget-expiry
+    // (the swapped-away renderer's events never reach this stale session), so a
+    // buggy multi-phase executor dead-waits each phase and a correct one returns
+    // a bounded typed `timeout`.
+    let mut cross_origin_swap_active = false;
     // voice-call-io task 07: per-connection echo buffer for the audio harness
     // (`LOOM_FAKE_CHROMIUM_AUDIO_ECHO`). Set from the `enqueue` argument, taken on the
     // first `drain`. See `audio_call_function_on`.
@@ -332,8 +339,14 @@ async fn handle_connection(
                 // self-initiated top-level navigation at this tick, queue a NEW
                 // load event held on the next budget arm and pin the probe to
                 // "loading" until the executor re-arms (see `renavigate_at`).
-                if !awaiting_rearm && script.renavigate_at.contains(&settle_idx) {
+                // A `cross_origin_swap_at` tick enters the SAME wedge but marks
+                // `cross_origin_swap_active` so the re-arm handler suppresses the
+                // flush + expiry (the swapped renderer's events never reach this
+                // stale session).
+                let swap_tick = script.cross_origin_swap_at.contains(&settle_idx);
+                if !awaiting_rearm && (script.renavigate_at.contains(&settle_idx) || swap_tick) {
                     awaiting_rearm = true;
+                    cross_origin_swap_active = swap_tick;
                     renav_href = script
                         .probe
                         .get(settle_idx)
@@ -348,15 +361,32 @@ async fn handle_connection(
                     }
                     // The new document's load is held until the clock advances,
                     // exactly like the shell's was. The clock is already paused
-                    // again (it re-pauses after each budget drains).
+                    // again (it re-pauses after each budget drains). For a
+                    // cross-origin swap this held event is NEVER flushed (see the
+                    // re-arm handler) — it models the load landing on a renderer
+                    // the stale session cannot see.
                     deferred_load_event = Some(evt.to_string());
                     vt_clock_paused = true;
                 }
                 if awaiting_rearm {
-                    // Wedged on the blank in-flight document: readyState stays
-                    // "loading" until a re-arm flushes the held load event.
-                    let encoded = json!([false, renav_href, 0]).to_string();
-                    Some(json!({ "result": { "type": "string", "value": encoded } }))
+                    if cross_origin_swap_active {
+                        // Cross-origin swap: the OLD execution context is
+                        // destroyed, so `Runtime.evaluate` for the settle probe
+                        // fails. Real Chromium returns a "Cannot find context
+                        // with specified id" error; the shim's `probe_page` maps
+                        // any CDP error to "not settled". Use the `__cdp_error__`
+                        // sentinel so the response path emits a JSON-RPC error
+                        // envelope (not a `result`).
+                        Some(json!({ "__cdp_error__": {
+                            "code": -32000,
+                            "message": "Cannot find context with specified id"
+                        }}))
+                    } else {
+                        // Same-process wedge: readyState stays "loading" until a
+                        // re-arm flushes the held load event.
+                        let encoded = json!([false, renav_href, 0]).to_string();
+                        Some(json!({ "result": { "type": "string", "value": encoded } }))
+                    }
                 } else {
                     let resp = script.probe_response(settle_idx);
                     settle_idx += 1;
@@ -604,6 +634,17 @@ async fn handle_connection(
                 // gate answers. The continueRequest/failRequest handler
                 // below emits the budget expiry once the pause resolves.
                 vt_budget_pending_on_pause = true;
+            } else if cross_origin_swap_active {
+                // Cross-origin process swap: the destination's load event and
+                // the virtual-time budget expiry both land on a NEW renderer
+                // this stale session cannot observe. Suppress BOTH — do NOT
+                // flush `deferred_load_event`, do NOT emit
+                // `virtualTimeBudgetExpired`. The re-arm command still gets its
+                // ack (sent by the generic response path above), so the
+                // executor's arm succeeds but then dead-waits the event that
+                // never comes — bounded only by its own deadline. The wedge is
+                // never cleared (never-recovering).
+                vt_clock_paused = true;
             } else {
                 if let Some(load_evt) = deferred_load_event.take() {
                     if write.send(Message::Text(load_evt.into())).await.is_err() {
@@ -1723,6 +1764,20 @@ struct SettleScript {
     /// re-arms + re-settles reaches the final page. The href reported while
     /// loading is taken from `probe[idx]`.
     renavigate_at: Vec<usize>,
+    /// Probe-tick indices at which the click/nav triggers a CROSS-ORIGIN
+    /// top-level navigation whose renderer PROCESS SWAPS. Unlike
+    /// `renavigate_at` (a same-process client redirect the stale CDP session
+    /// keeps observing), a cross-process swap means the virtual-time budget
+    /// armed on the OLD session never produces `virtualTimeBudgetExpired` and
+    /// the deferred `Page.loadEventFired` never flushes on the stale
+    /// connection — both events land on a new renderer the shim is not
+    /// watching. Modeled by entering the `awaiting_rearm`/"loading" gate like
+    /// `renavigate_at`, but then SUPPRESSING the load-flush + budget-expiry on
+    /// the subsequent re-arm (never-recovering: the stale session stays blind).
+    /// This is the adversarial case that reproduces the multi-phase dead-wait;
+    /// a correct executor still returns a bounded, typed `timeout` inside its
+    /// single shared deadline.
+    cross_origin_swap_at: Vec<usize>,
 }
 
 impl SettleScript {
@@ -1746,6 +1801,7 @@ fn default_settle_script() -> SettleScript {
         probe: vec![(true, "https://fake.test/".to_string(), 0)],
         perpetual_inflight: 0,
         renavigate_at: Vec::new(),
+        cross_origin_swap_at: Vec::new(),
     }
 }
 
@@ -1804,10 +1860,20 @@ fn load_settle_script() -> SettleScript {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let cross_origin_swap_at: Vec<usize> = v
+        .get("cross_origin_swap_at")
+        .and_then(|p| p.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.as_u64().map(|n| n as usize))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     SettleScript {
         probe,
         perpetual_inflight,
         renavigate_at,
+        cross_origin_swap_at,
     }
 }
 
