@@ -1017,6 +1017,7 @@ mod tests {
                     selector: s("input"),
                     text: s("hello"),
                     mode: Some(s("value")),
+                    until: None,
                 },
                 "Runtime.evaluate",
             ),
@@ -1195,6 +1196,7 @@ mod tests {
         let action = Action::WebClick {
             session_id: s("sess"),
             selector: s("a"),
+            until: None,
         };
         assert!(
             decode_cdp(&action).is_none(),
@@ -1213,10 +1215,12 @@ mod tests {
         let a_sess_a = Action::WebClick {
             session_id: s("sess-A"),
             selector: s("#ok-button"),
+            until: None,
         };
         let a_sess_b = Action::WebClick {
             session_id: s("sess-B"),
             selector: s("#ok-button"),
+            until: None,
         };
         let r_a = build_input_dispatch_receipt(1, "sess-A", &a_sess_a, InputDispatchOutcome::Ok);
         let r_b = build_input_dispatch_receipt(2, "sess-B", &a_sess_b, InputDispatchOutcome::Ok);
@@ -1236,9 +1240,79 @@ mod tests {
         let a_other = Action::WebClick {
             session_id: s("sess-A"),
             selector: s("#other"),
+            until: None,
         };
         let r_other = build_input_dispatch_receipt(3, "sess-A", &a_other, InputDispatchOutcome::Ok);
         assert_ne!(r_a.action_hash, r_other.action_hash);
+    }
+
+    /// interactive-settle-bounded: the interaction settle budget is ALWAYS bounded
+    /// strictly inside the caller's `deadline_ms` (minus headroom) — this is the
+    /// "a completed click never surfaces an rpc timeout" guarantee at the budget
+    /// level. Also: no deadline → the fixed navigate-style default (10s), itself
+    /// well inside the 15s tools/call deadline.
+    #[test]
+    fn interaction_settle_budget_is_bounded_inside_deadline() {
+        use crate::wasm_bridge::interaction_settle_budget_ms;
+        // No deadline → fixed default, comfortably under the 15s RPC deadline.
+        assert_eq!(interaction_settle_budget_ms(None, 0), 10_000);
+        // loom convention: `Some(0)` ALSO means "no deadline" → full base budget,
+        // NOT a 0ms deadline (ship-council FND-0005/0007).
+        assert_eq!(interaction_settle_budget_ms(Some(0), 0), 10_000);
+        // Typical loom-mcp deadline (15s): budget stays under it.
+        assert!(interaction_settle_budget_ms(Some(15_000), 0) < 15_000);
+        // Caller-tighter-than-default deadline: budget clamps BELOW it.
+        assert!(
+            interaction_settle_budget_ms(Some(5_000), 0) < 5_000,
+            "budget must clamp below a tight deadline so the receipt beats it"
+        );
+        // Elapsed input-dispatch time is subtracted from the remaining budget
+        // (ship-council FND-0006/0001): a 5s deadline with 3s already spent
+        // dispatching leaves ~1s (5000-3000-1000 headroom), not the full clamp.
+        assert_eq!(interaction_settle_budget_ms(Some(5_000), 3_000), 1_000);
+        // Pathologically tiny deadline: floored to a real (short) window, never 0.
+        assert_eq!(interaction_settle_budget_ms(Some(200), 0), 500);
+        // Deadline already blown by a slow dispatch: still a floored window, never 0.
+        assert_eq!(interaction_settle_budget_ms(Some(1_000), 5_000), 500);
+    }
+
+    /// interactive-settle-bounded determinism (NFR-DET-01): folding the settle
+    /// verdict onto an input receipt stamps ONLY the observational
+    /// `settle_until`/`settle_outcome` fields and leaves `outcome_hash` /
+    /// `action_hash` byte-identical — so replay stays structural.
+    #[test]
+    fn stamp_settle_outcome_leaves_hashes_untouched() {
+        use crate::wire_receipts::{build_input_dispatch_receipt, stamp_settle_outcome};
+        use loom_host::shim_manager::InputDispatchOutcome;
+        let action = Action::WebClick {
+            session_id: s("sess"),
+            selector: s("#go"),
+            until: Some(s("settled")),
+        };
+        let mut receipt =
+            build_input_dispatch_receipt(7, "sess", &action, InputDispatchOutcome::Ok);
+        let hash_before = receipt.outcome_hash.clone();
+        let action_hash_before = receipt.action_hash.clone();
+        assert!(receipt.settle_outcome.is_none(), "no settle stamped yet");
+
+        let verdict = loom_shared::navigate_outcome::WaitOutcome {
+            settle_until: s("settled"),
+            settle_outcome: s("dom_unstable"),
+            settle_ms: 10_000,
+            network_count_at_settle: 1,
+        };
+        stamp_settle_outcome(&mut receipt, &verdict);
+
+        assert_eq!(receipt.settle_until.as_deref(), Some("settled"));
+        assert_eq!(receipt.settle_outcome.as_deref(), Some("dom_unstable"));
+        assert_eq!(
+            receipt.outcome_hash, hash_before,
+            "settle verdict must NOT change the constant outcome_hash marker"
+        );
+        assert_eq!(
+            receipt.action_hash, action_hash_before,
+            "settle verdict must NOT change the session-independent action_hash"
+        );
     }
 
     /// web.wait is now host-intercepted (poll `host.wait` → `send_wait`, reusing the
@@ -1317,6 +1391,7 @@ mod tests {
             selector: s("input"),
             text: s("hello"),
             mode: Some(s("value")),
+            until: None,
         };
         let msg = decode_cdp(&action).expect("Some");
         assert_eq!(msg.method, "Runtime.evaluate");
@@ -1440,6 +1515,7 @@ mod tests {
             selector: selector.clone(),
             text: s("v"),
             mode: Some(s("value")),
+            until: None,
         };
         let msg = decode_cdp(&action).expect("Some");
         let expr = expr_of(&msg);
@@ -1486,6 +1562,7 @@ mod tests {
                 selector: s("input"),
                 text: s("hello"),
                 mode: mode.clone(),
+                until: None,
             };
             assert!(
                 decode_cdp(&action).is_none(),
@@ -1499,6 +1576,7 @@ mod tests {
                 selector: s("input"),
                 text: s("hello"),
                 mode,
+                until: None,
             };
             let msg = decode_cdp(&action).expect("value/unknown mode builds guest args");
             assert_eq!(msg.method, "Runtime.evaluate");
