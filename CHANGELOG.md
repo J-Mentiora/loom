@@ -6,6 +6,47 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-08-20 — Bounded interactive-verb settle
+
+`web.click` and `web.type` now run a **bounded** post-action readiness wait — the
+same settle machine `web.navigate` uses — and expose an `until` knob to control it.
+Driving a live single-page app whose post-click page never quiesces (a button that
+POSTs then redirects to a third-party checkout, a client-route change that keeps a
+request in flight) previously could exceed the loom-mcp `tools/call` deadline and
+surface as a transport `rpc timeout`, leaving the caller with an error instead of a
+receipt. The interaction now always returns a bounded `settle_outcome` receipt
+(`reached` | `networkidle` | `timeout` | `dom_unstable`) inside the RPC deadline —
+never an `rpc timeout` — with the input dispatch always reported as performed; only
+the readiness is degraded. Determinism is preserved: the settle verdict rides
+observationally on the receipt and is excluded from the manifest hash chain
+(NFR-DET-01), so replay stays structural. Implemented entirely host-side — no WIT
+interface change and no vendored-WASM rebuild. (#285)
+
+### Added
+
+- **`until` on `web.click` / `web.type`** — `load` | `networkidle` | `settled`
+  (default `settled`), mirroring `web.navigate`. A caller driving a churny SPA can
+  request `until: "load"` to proceed as soon as the load event fires without waiting
+  for full quiescence. The receipt carries `settle_until` + `settle_outcome`. (#285)
+
+### Fixed
+
+- **Interactive verbs no longer surface a transport `rpc timeout` on unsettleable
+  pages** — the post-action settle wait is bounded strictly inside the RPC deadline
+  (reusing the wall-clock-bounded `wait_for_settle` path), so a never-settling SPA
+  returns a degraded `settle_outcome` receipt instead of failing the whole call. The
+  budget honors a caller's `deadline_ms` (subtracting elapsed input-dispatch time;
+  `deadline_ms: 0` means "no deadline" per convention) and can never approach the
+  transport timeout. (#285)
+
+### Changed
+
+- **`web.click` / `web.type` now settle by default** — previously they returned
+  immediately after the input dispatch; they now perform a bounded `settled` wait so
+  the readiness contract matches `web.navigate`. Pass `until: "load"` to opt out of
+  full quiescence. `web.type mode:"value"` (legacy guest path) is unaffected and does
+  not settle. (#285)
+
 ## [0.14.1] — 2026-08-17 — Dependency & Security Refresh
 
 A patch release with no feature changes: it clears two Wasmtime security
