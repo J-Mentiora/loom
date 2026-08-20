@@ -826,3 +826,79 @@ async fn wait_for_cross_origin_swap_honors_tight_budget() {
 
     mgr.shutdown_session("xorigin-tight").await;
 }
+
+// until:"load" returns `reached` as soon as the destination's load completes —
+// the readiness semantics the acceptance criterion requires. Uses a same-process
+// renavigation (the recovering case: the CDP session survives and observes the
+// new document, exactly like a real top-level cross-origin nav whose target
+// survives the process swap). Proves `until:"load"` is honored end-to-end WITHOUT
+// an explicit Page.loadEventFired subscription — the `load` settle mode already
+// resolves on the load-driven `readyState:"complete"` within one tick.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_until_load_reaches_on_navigated_document() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [
+            [false, "http://fake.test/destination", 0],
+            [true,  "http://fake.test/destination", 0],
+            [true,  "http://fake.test/destination", 0]
+        ],
+        "renavigate_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script_env(
+        "until-load-reached",
+        script,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (outcome, elapsed) =
+        wait_for_timed(&mgr, &id, "load", 4_000, Duration::from_secs(30)).await;
+
+    assert_eq!(
+        outcome.settle_outcome, "reached",
+        "until:load must resolve on the destination's completed load (got {:?}, {}ms)",
+        outcome.settle_outcome, outcome.settle_ms
+    );
+    assert_eq!(outcome.settle_until, "load");
+    // Returns promptly once loaded — nowhere near the 4s budget.
+    assert!(
+        elapsed < Duration::from_millis(3_000),
+        "until:load must return on load, not wait out the budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("until-load-reached").await;
+}
+
+// A zero settle budget (the daemon computed it is already out of its per-call
+// deadline) must return an IMMEDIATE typed `timeout` — never hang, never send a
+// zero-duration CDP command (ship FND-0014/0020). The ShimManager passes
+// budget_ms straight through, so budget_ms:0 exercises the shim's zero guard.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn wait_for_zero_budget_returns_immediate_typed_timeout() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[false, "https://app.example.com/", 0]],
+        "cross_origin_swap_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_script_env(
+        "zero-budget",
+        script,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (outcome, elapsed) = wait_for_timed(&mgr, &id, "load", 0, Duration::from_secs(30)).await;
+
+    assert_eq!(
+        outcome.settle_outcome, "timeout",
+        "a zero budget must return a typed timeout verdict"
+    );
+    assert_eq!(outcome.settle_until, "load");
+    assert!(
+        elapsed < Duration::from_millis(1_000),
+        "zero budget must return immediately (no CDP, no resume); took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("zero-budget").await;
+}

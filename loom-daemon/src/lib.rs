@@ -1266,14 +1266,21 @@ mod tests {
             interaction_settle_budget_ms(Some(5_000), 0) < 5_000,
             "budget must clamp below a tight deadline so the receipt beats it"
         );
-        // Elapsed input-dispatch time is subtracted from the remaining budget
-        // (ship-council FND-0006/0001): a 5s deadline with 3s already spent
-        // dispatching leaves ~1s (5000-3000-1000 headroom), not the full clamp.
-        assert_eq!(interaction_settle_budget_ms(Some(5_000), 3_000), 1_000);
-        // Pathologically tiny deadline: floored to a real (short) window, never 0.
-        assert_eq!(interaction_settle_budget_ms(Some(200), 0), 500);
-        // Deadline already blown by a slow dispatch: still a floored window, never 0.
-        assert_eq!(interaction_settle_budget_ms(Some(1_000), 5_000), 500);
+        // Elapsed input-dispatch time is subtracted from the remaining budget.
+        // Headroom is now 3s (reserves room for the shim's post-settle resume
+        // cleanup, click-cross-origin-until ship FND-0001), so a 5s deadline with
+        // 3s already spent dispatching leaves 0 (5000-3000-3000 saturates) — out
+        // of time, an immediate typed timeout, NOT a floored window that would
+        // overrun the deadline (ship FND-0009).
+        assert_eq!(interaction_settle_budget_ms(Some(5_000), 3_000), 0);
+        // Pathologically tiny deadline: no lower floor — a deadline smaller than
+        // the headroom yields 0 (return fast) rather than being floored UP past
+        // the caller's own deadline (ship FND-0009).
+        assert_eq!(interaction_settle_budget_ms(Some(200), 0), 0);
+        // Deadline already blown by a slow dispatch: 0, never a floored window.
+        assert_eq!(interaction_settle_budget_ms(Some(1_000), 5_000), 0);
+        // A deadline with room to spare past the headroom yields a real window.
+        assert_eq!(interaction_settle_budget_ms(Some(6_000), 0), 3_000); // 6000-3000
     }
 
     /// interactive-settle-bounded determinism (NFR-DET-01): folding the settle

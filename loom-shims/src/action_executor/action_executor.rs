@@ -67,6 +67,13 @@ const NAVIGATE_BUDGET_ENV: &str = "LOOM_SHIM_CDP_TIMEOUT_MS";
 /// (which can be 10s+) and guarantees the cleanup can never itself wedge.
 const RESUME_CDP_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// Hard ceiling on a settle `timeout`, so computing the shared deadline
+/// (`Instant::now() + timeout`) can never overflow the monotonic clock even if a
+/// misconfigured/hostile budget arrives over the wire (click-cross-origin-until
+/// ship FND-0006). Five minutes is far beyond any legitimate per-call settle
+/// (the RPC per-call deadline is ~30s); a value above this is pinned here.
+const MAX_SETTLE_TIMEOUT: Duration = Duration::from_secs(300);
+
 /// Maximum number of unsolicited top-level navigations (client-side redirects)
 /// the settle path will FOLLOW within a single navigate/wait_for before giving
 /// up and returning the bounded `timeout` outcome (client-nav-reattach D4). A
@@ -1287,20 +1294,40 @@ impl ActionExecutor for ChromiumActionExecutor {
         // the per-tick observation sequence in virtual ticks (DET-CORE), so it
         // replays identically; the tick ceiling (from `budget`) bounds it to a
         // typed `timeout`/`dom_unstable` instead of hanging.
-        let timeout = budget.unwrap_or_else(navigate_budget);
-        // ONE shared wall-clock deadline for the WHOLE wait — arm, settle,
-        // reattach, and resume all draw from it (click-cross-origin-until).
-        // Before this, each phase re-took the full `timeout`: the initial VT arm
-        // + await, then a FRESH `reattach_start` captured AFTER that arm gave
-        // `settle_with_reattach` another full window, then resume. On a
-        // cross-origin top-level navigation the renderer PROCESS SWAPS, so the
-        // budget armed on the stale session never expires and the destination's
-        // load never reaches it — every phase dead-waited its full budget, so the
-        // shim spent ~2–3× `timeout` and blew past the RPC per-call deadline (the
-        // v0.15.0 `request_timeout` on a click whose navigation actually
-        // succeeded). Sharing one deadline bounds the whole wait to ~1× `timeout`
-        // and guarantees a TYPED verdict, never a transport error. The `remaining`
-        // closure is the single source of the per-phase bound below.
+        // Clamp the requested budget to a sane ceiling so `start + timeout` cannot
+        // overflow the monotonic clock on a misconfigured/hostile budget (ship
+        // FND-0006). A `None` budget (old-shape payload) falls back to the env base.
+        let timeout = budget
+            .unwrap_or_else(navigate_budget)
+            .min(MAX_SETTLE_TIMEOUT);
+        // Zero budget = the daemon is already out of its per-call deadline (the
+        // effective-deadline clamp returned 0). Return an immediate typed `timeout`
+        // — no CDP with a zero-duration deadline, no resume (ship FND-0014/0020).
+        if timeout.is_zero() {
+            return Ok(ActionResult::Waited {
+                settle_until: settle_mode.as_str().to_string(),
+                settle_outcome: crate::readiness_monitor::SettleOutcome::Timeout
+                    .as_str()
+                    .to_string(),
+                settle_ms: 0,
+                network_count_at_settle: 0,
+            });
+        }
+        // ONE shared wall-clock deadline for the WHOLE wait — arm, settle, and
+        // reattach all draw from it (click-cross-origin-until). Before this, each
+        // phase re-took the full `timeout`: the initial VT arm + await, then a
+        // FRESH `reattach_start` captured AFTER that arm gave `settle_with_reattach`
+        // another full window. On a cross-origin top-level navigation the renderer
+        // PROCESS SWAPS, so the budget armed on the stale session never expires and
+        // the destination's load never reaches it — every phase dead-waited its
+        // full budget, so the shim spent ~2–3× `timeout` and blew past the RPC
+        // per-call deadline (the v0.15.0 `request_timeout` on a click whose
+        // navigation actually succeeded). Sharing one deadline bounds these phases
+        // to ~1× `timeout` and guarantees a TYPED verdict, never a transport error.
+        // The post-settle RESUME cleanup below is deliberately NOT drawn from this
+        // deadline — it gets its own bounded slice so it can always run (ship
+        // FND-0001); the daemon's settle budget reserves headroom for it. The
+        // `remaining` closure is the single source of the per-phase bound below.
         let start = tokio::time::Instant::now();
         let deadline = start + timeout;
         let remaining = || deadline.saturating_duration_since(tokio::time::Instant::now());
@@ -1371,18 +1398,20 @@ impl ActionExecutor for ChromiumActionExecutor {
         // deadline), NOT a fresh instant captured after the arm above — that reset
         // was the multi-phase overrun. `settle_with_reattach` computes
         // `timeout.saturating_sub(reattach_start.elapsed())`, so passing `start`
-        // makes its window the same shared remaining.
+        // makes its window the same shared remaining. Evaluate `remaining()` ONCE
+        // so the config ceiling and the timeout arg agree (ship FND-0003).
+        let rem = remaining();
         let mut settle = crate::readiness_monitor::wait_for_settle(
             &self.cdp,
             target_id,
             settle_mode,
-            crate::readiness_monitor::settle_driver::config_for_timeout(remaining()),
+            crate::readiness_monitor::settle_driver::config_for_timeout(rem),
             true,
             // the caller asserts the page already loaded, so a `loading`
             // observation here means the page renavigated (e.g. a form-POST
             // submitted just before this wait_for) — detect + re-attach.
             true,
-            remaining(),
+            rem,
         )
         .await;
 
@@ -1409,10 +1438,17 @@ impl ActionExecutor for ChromiumActionExecutor {
         // read stays replay-equal.
         let needs_resume = !initial_budget_drained || matches!(outcome.last_drained, Some(false));
         if clock_pinned && needs_resume {
-            // Draw resume from the SAME shared deadline (it also caps internally at
-            // RESUME_CDP_TIMEOUT). After a swap has consumed the budget this is
-            // ~zero, so cleanup can't extend the wait past the one deadline.
-            self.resume_virtual_time(target_id, remaining()).await;
+            // Give resume its OWN bounded slice (RESUME_CDP_TIMEOUT), NOT the
+            // leftover `remaining()`. A cross-origin swap consumes the whole settle
+            // budget, so `remaining()` is ~zero here — drawing resume from it would
+            // STARVE the cleanup, leaving the virtual clock paused and wedging the
+            // NEXT command (ship FND-0001). The daemon's settle budget reserves
+            // headroom for this slice (SETTLE_HEADROOM_MS ≥ RESUME_CDP_TIMEOUT), so
+            // `settle + resume` still lands inside the RPC deadline. On a healthy
+            // renderer the resume is a single sub-ms round-trip; the cap only bites
+            // if the ack never comes.
+            self.resume_virtual_time(target_id, RESUME_CDP_TIMEOUT)
+                .await;
         }
 
         Ok(ActionResult::Waited {
