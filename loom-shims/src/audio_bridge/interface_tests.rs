@@ -353,8 +353,8 @@ fn parse_wav(wav: &[u8]) -> (u32, u16, u16, usize, Vec<i16>) {
     let bits = u16::from_le_bytes([wav[34], wav[35]]);
     let data_len = u32::from_le_bytes([wav[40], wav[41], wav[42], wav[43]]) as usize;
     let mut body = Vec::with_capacity(data_len / 2);
-    for c in wav[44..44 + data_len].chunks_exact(2) {
-        body.push(i16::from_le_bytes([c[0], c[1]]));
+    for c in wav[44..44 + data_len].as_chunks::<2>().0 {
+        body.push(i16::from_le_bytes(*c));
     }
     (rate, channels, bits, data_len / 2, body)
 }

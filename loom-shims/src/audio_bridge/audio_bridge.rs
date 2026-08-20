@@ -556,9 +556,8 @@ impl AudioBridge {
                                 Some("capture_drain_failed: misaligned sample payload".to_string());
                             break;
                         }
-                        for chunk in raw.chunks_exact(4) {
-                            native
-                                .push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+                        for chunk in raw.as_chunks::<4>().0 {
+                            native.push(f32::from_le_bytes(*chunk));
                         }
                     }
                     Err(e) => {
