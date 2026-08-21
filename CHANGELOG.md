@@ -6,6 +6,43 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.3] — 2026-08-21 — web.click tolerates a navigation racing the trusted-input commit ack
+
+v0.15.2 (#291) bounded the trusted-input **dispatch** and rescued an ack lost on the
+**committing** frame (`mousePressed`) of a `web.click` whose cross-origin navigation swaps
+the renderer. But a real renderer **process swap** can open at/before the **`mouseMoved`**
+frame and swallow the **pre-commit** ack too — which still hit the eager `input dispatch ack
+timeout before commit` arm and surfaced a hard `shim_timeout` (a false `click_failed`) even
+though the click and its navigation actually happened. The dispatch decision was a pure
+frame-index heuristic with no navigation observation. Now a pre-commit ack loss no longer
+aborts: the committing frames are still dispatched (so the click is genuinely performed) and
+a swap-induced ack loss returns the typed *dispatched* outcome, so the daemon proceeds to the
+already-bounded settle and returns a typed `settle_outcome` receipt for the destination — the
+click is reported performed, only readiness is degraded when the destination is genuinely
+slow. Determinism (NFR-DET-01) is preserved: the dispatched-ack-pending outcome hashes
+identically to a normal dispatch, so record-time ack timing never perturbs the manifest hash
+chain and replay stays bit-equal. Host-only change. (#293)
+
+### Fixed
+
+- **`web.click` whose handler triggers an immediate top-level (incl. cross-origin)
+  navigation no longer surfaces `shim_timeout: input dispatch ack timeout before commit`.**
+  The trusted-input dispatch loop no longer treats a **pre-commit** (`mouseMoved`) ack lost
+  to a renderer process swap as a hard failure: it keeps dispatching the committing frames
+  (so the click is genuinely performed) and reports the swap-induced ack loss as the typed
+  "dispatched" outcome, exactly as the committing-frame case already did. A dropped
+  `mouseMoved` ack with clean committing acks stays a clean success (`Ok`), so a fully
+  committed click is never mislabeled degraded. Genuine dispatch failures — a CDP
+  application error, or an unresolvable / unhittable selector — still report failure. The
+  per-frame dispatch budget is unchanged for every caller (`web.click` / `web.type` /
+  `web.press_key`), so non-click input timeout semantics are untouched. (#293)
+
+### Changed
+
+- The per-frame trusted-input dispatch decision is factored into a pure, exhaustively
+  unit-tested classifier (`dispatch_frame_step`), giving the ack-tolerance logic default-CI
+  coverage independent of the `#[ignore]`d real-shim e2e. (#293)
+
 ## [0.15.2] — 2026-08-21 — web.click dispatch bounded under the per-call deadline
 
 v0.15.1 (#288) bounded the post-action **settle** (the `web.wait_for` path), but the
