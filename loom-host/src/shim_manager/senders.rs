@@ -12,7 +12,8 @@
 
 use super::helpers::{cbor_get, cbor_u64, map_shim_code, parse_evaluate_payload, shim_error_class};
 use super::input_dispatch::{
-    fill_events, keystroke_events_for_text, mouse_event, press_key_events,
+    dispatch_frame_step, fill_events, keystroke_events_for_text, mouse_event, press_key_events,
+    FrameAck, FrameStep,
 };
 use super::process::{send_and_await, send_and_await_dispatch, DispatchAck};
 use super::shim_manager::ShimManager;
@@ -27,7 +28,7 @@ use loom_shared::navigate_outcome::{
     AudioCaptureOutcome, AudioInjectOutcome, NavigateOutcome, NetworkLogOutcome, ScreencastOutcome,
 };
 use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// Result of [`ShimManager::dispatch_input_events`]: all input frames were acked
 /// (`Acked`), or the committing frame was written but its ack was lost to a
@@ -1164,27 +1165,30 @@ impl ShimManager {
         }
     }
 
-    /// Dispatch a prebuilt sequence of `Input.*` frames, bounding the WHOLE
-    /// sequence by ONE shared `budget_ms` deadline (mirrors the settle path's
-    /// single-deadline model — so tolerating a timed-out frame can never multiply
-    /// the wall-clock past the caller's deadline). A CDP app error aborts (no
-    /// partial "ok"). A recv timeout on the frame at or after `commit_from_index`
-    /// — the COMMITTING input (`mousePressed` for a click; index 0 for a key/text
-    /// frame) — returns [`InputAck::Dispatched`]: the input was written but its
-    /// ack was lost, the cross-origin process-swap case, so the caller reports it
-    /// as performed.
+    /// Dispatch a prebuilt sequence of `Input.*` frames. The per-frame ack decision
+    /// is the pure [`dispatch_frame_step`] classifier (exhaustively unit-tested):
+    /// a CDP app error aborts (`ReturnError`); a recv timeout on the frame at or
+    /// after `commit_from_index` — the COMMITTING input (`mousePressed` for a click;
+    /// index 0 for a key/text frame) — returns [`InputAck::Dispatched`] (the input
+    /// was written but its ack was lost, the cross-origin process-swap case).
     ///
     /// A recv timeout BEFORE the committing frame (e.g. `mouseMoved`) no longer
     /// aborts eagerly: a cross-origin swap can open at/before the move and swallow
     /// that ack too, so we KEEP DISPATCHING the committing frames (the click is
     /// genuinely written) rather than mislabel a performed-but-swapped click a
-    /// transport `shim_timeout`. The committing frames that follow confirm the
-    /// swap — their acks are lost to the same dead session → `Dispatched`. If they
-    /// instead ACK, the session is alive and the click committed cleanly, so a
-    /// dropped `mouseMoved` ack ALONE does not degrade the outcome → `Acked`.
-    /// Genuine dispatch failures remain failures via the CDP-app-error arm and the
-    /// upstream resolve / hittable checks. Used by the keystroke / fill / press-key
-    /// / trusted-click paths.
+    /// transport `shim_timeout`. If the committing frames instead ACK, the session
+    /// is alive and the click committed cleanly, so a dropped `mouseMoved` ack ALONE
+    /// does not degrade the outcome → `Acked`.
+    ///
+    /// **Wall-clock bounding.** Each frame is bounded by the per-frame `budget_ms`
+    /// (unchanged from v0.15.2 — every caller, incl. the keystroke / fill / press-key
+    /// paths, keeps identical timeout semantics). Tolerating the pre-commit frame
+    /// adds AT MOST one extra timed-out frame (the `mouseMoved`) before the committing
+    /// frame, so a swapped click's dispatch is bounded by ~2× `budget_ms` in the worst
+    /// case — still bounded, never a dead-wait, and it fits inside the daemon's
+    /// elapsed-aware settle budget under the per-call deadline. `budget_ms == 0` (a
+    /// direct in-crate caller with no deadline) keeps the `config.recv_timeout_ms`
+    /// fallback in `cdp_send_dispatch`.
     async fn dispatch_input_events(
         &self,
         id: &ShimId,
@@ -1194,58 +1198,62 @@ impl ShimManager {
         budget_ms: u64,
         commit_from_index: usize,
     ) -> Result<InputAck, LoomError> {
-        // One shared deadline across all frames. `budget_ms == 0` (a direct
-        // in-crate caller with no deadline) keeps the per-frame
-        // `config.recv_timeout_ms` behavior — see `cdp_send_dispatch`.
-        let deadline = (budget_ms > 0).then(|| Instant::now() + Duration::from_millis(budget_ms));
+        debug_assert!(
+            commit_from_index == 0 || commit_from_index < events.len(),
+            "dispatch_input_events: commit_from_index {commit_from_index} out of range for {} frames \
+             (a committing frame must be reachable, else a swapped click can't be reported dispatched)",
+            events.len()
+        );
         for (i, ev) in events.into_iter().enumerate() {
-            // Per-frame recv budget = time left to the shared deadline. Floored to
-            // 1ms so an exhausted deadline still SENDS the frame (keeping the click
-            // performed) with an immediate recv timeout — never 0, which
-            // `cdp_send_dispatch` maps to the ~30-60s recv floor (the dead-wait).
-            let frame_budget_ms = match deadline {
-                None => 0,
-                Some(dl) => {
-                    (dl.saturating_duration_since(Instant::now()).as_millis() as u64).max(1)
-                }
-            };
-            match self
-                .cdp_send_dispatch(id, session_id, target_id, ev, frame_budget_ms)
+            let (ack, app_err) = match self
+                .cdp_send_dispatch(id, session_id, target_id, ev, budget_ms)
                 .await?
             {
-                Some(Ok(_)) => {}
-                Some(Err((code, detail))) => {
-                    return Err(LoomError::new(
-                        map_shim_code(code),
-                        format!("shim {}: input dispatch: {detail}", id.0),
-                    ));
+                Some(Ok(_)) => (FrameAck::Acked, None),
+                Some(Err((code, detail))) => (FrameAck::AppError, Some((code, detail))),
+                None => (FrameAck::AckLost, None),
+            };
+            match dispatch_frame_step(i, commit_from_index, ack) {
+                FrameStep::Advance => {
+                    // The only non-clean advance is a tolerated pre-commit ack loss;
+                    // log it (off-chain) so on-call can correlate a later swap.
+                    if ack == FrameAck::AckLost {
+                        tracing::debug!(
+                            shim = %id.0,
+                            target_id,
+                            session_id,
+                            frame_index = i,
+                            commit_from_index,
+                            "trusted-input pre-commit ack lost — continuing to the committing frames"
+                        );
+                    }
                 }
-                // The committing input (or anything after it) was written but its
-                // ack was lost — the cross-origin process-swap case → performed.
-                // Off-chain debug signal so on-call can correlate a `dispatched`
-                // click whose destination later fails to settle (the loud
+                // The committing input was written but its ack was lost — the
+                // cross-origin process-swap case. Off-chain debug signal so on-call
+                // can correlate a `dispatched` click whose destination later fails to
+                // settle (the primary production signal is the receipt's
+                // `DispatchedAckPending` outcome + `settle_outcome`; the loud
                 // `shim_timeout` this replaces is gone).
-                None if i >= commit_from_index => {
+                FrameStep::ReturnDispatched => {
                     tracing::debug!(
                         shim = %id.0,
+                        target_id,
+                        session_id,
                         frame_index = i,
+                        commit_from_index,
                         "trusted-input committing-frame ack lost (likely cross-origin \
                          renderer swap) — reporting dispatched"
                     );
                     return Ok(InputAck::Dispatched);
                 }
-                // A PRE-COMMIT frame's ack was lost. A swap that opens at/before it
-                // swallows this ack too, so keep dispatching the committing frames
-                // rather than mislabel a performed-but-swapped click a transport
-                // failure — the committing frames confirm it (their acks are lost to
-                // the same dead session → the arm above). If they instead ACK, the
-                // session is alive and the click landed cleanly → `Acked` below (a
-                // dropped MOVE ack alone does not degrade a fully-committed click).
-                None => tracing::debug!(
-                    shim = %id.0,
-                    frame_index = i,
-                    "trusted-input pre-commit ack lost — continuing to the committing frames"
-                ),
+                FrameStep::ReturnError => {
+                    let (code, detail) =
+                        app_err.expect("AppError frame ack carries the CDP error detail");
+                    return Err(LoomError::new(
+                        map_shim_code(code),
+                        format!("shim {}: input dispatch: {detail}", id.0),
+                    ));
+                }
             }
         }
         // Every committing frame ACKed (a committing-frame timeout early-returns
