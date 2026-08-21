@@ -249,9 +249,179 @@ pub(crate) fn press_key_events(key: &str, modifiers: &[String]) -> Option<Vec<Cd
     Some(out)
 }
 
+/// The per-ack outcome of ONE dispatched trusted-input frame, as the classifier
+/// sees it. Decouples the dispatch DECISION (pure, exhaustively unit-tested) from
+/// the async CDP round-trip in `senders::dispatch_input_events`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameAck {
+    /// The shim acked the frame within its budget.
+    Acked,
+    /// The frame was written but its ack never returned within the budget (a recv
+    /// timeout) — the cross-origin renderer-swap signature.
+    AckLost,
+    /// The shim / CDP rejected the frame with an application error.
+    AppError,
+}
+
+/// What `dispatch_input_events` does after one frame's [`FrameAck`], given the
+/// frame index and the sequence's `commit_from_index`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameStep {
+    /// Keep dispatching the remaining frames.
+    Advance,
+    /// Stop: the committing input was written but its ack was lost (a likely
+    /// cross-origin renderer swap) → report the input performed (`Dispatched`).
+    ReturnDispatched,
+    /// Stop: a genuine CDP application error → hard failure.
+    ReturnError,
+}
+
+/// Classify one dispatched frame's ack. This is the whole trusted-input
+/// dispatch-tolerance decision, factored out pure so it has default-CI coverage the
+/// `#[ignore]`d fake-chromium e2e cannot give.
+///
+/// - An app error is always a hard failure (`ReturnError`).
+/// - A committing-frame (`i >= commit_from_index`) ack loss is the process-swap case
+///   → `ReturnDispatched` (the input was written; the swap swallowed the ack).
+/// - A PRE-COMMIT (`i < commit_from_index`) ack loss is tolerated (`Advance`): a swap
+///   opening at/before that frame swallows its ack too, so keep dispatching the
+///   committing frames — they confirm the swap (their acks are also lost →
+///   `ReturnDispatched`) or ack cleanly (the loop ends → the caller returns `Acked`,
+///   so a dropped pre-commit ack ALONE never degrades a fully-committed click).
+/// - A clean ack advances.
+pub(crate) fn dispatch_frame_step(
+    frame_index: usize,
+    commit_from_index: usize,
+    ack: FrameAck,
+) -> FrameStep {
+    match ack {
+        FrameAck::Acked => FrameStep::Advance,
+        FrameAck::AppError => FrameStep::ReturnError,
+        FrameAck::AckLost if frame_index >= commit_from_index => FrameStep::ReturnDispatched,
+        FrameAck::AckLost => FrameStep::Advance,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Terminal outcome of driving a whole frame sequence through
+    /// [`dispatch_frame_step`] — mirrors `dispatch_input_events`' control flow
+    /// (early-return on the first `ReturnDispatched`/`ReturnError`, else `Acked` at
+    /// loop end) so the pure classifier is tested exactly as the loop uses it.
+    #[derive(Debug, PartialEq, Eq)]
+    enum SimOutcome {
+        Acked,
+        Dispatched,
+        Error,
+    }
+
+    fn simulate(commit_from_index: usize, acks: &[FrameAck]) -> SimOutcome {
+        for (i, &ack) in acks.iter().enumerate() {
+            match dispatch_frame_step(i, commit_from_index, ack) {
+                FrameStep::Advance => {}
+                FrameStep::ReturnDispatched => return SimOutcome::Dispatched,
+                FrameStep::ReturnError => return SimOutcome::Error,
+            }
+        }
+        SimOutcome::Acked
+    }
+
+    use FrameAck::{AckLost, Acked, AppError};
+
+    // ── click sequence (commit_from_index = 1: [mouseMoved, mousePressed, mouseReleased]) ──
+
+    #[test]
+    fn click_all_acked_is_acked() {
+        assert_eq!(simulate(1, &[Acked, Acked, Acked]), SimOutcome::Acked);
+    }
+
+    #[test]
+    fn click_swap_at_move_swallows_all_acks_is_dispatched() {
+        // Move ack lost (pre-commit, tolerated → advance), then mousePressed ack lost
+        // (committing) → Dispatched. THE core regression this feature fixes.
+        assert_eq!(
+            simulate(1, &[AckLost, AckLost, AckLost]),
+            SimOutcome::Dispatched
+        );
+    }
+
+    #[test]
+    fn click_move_ack_dropped_but_commit_acks_is_acked() {
+        // A dropped mouseMoved ack with clean committing acks must NOT degrade a
+        // fully-committed click (FND-0001) — it stays a clean Acked.
+        assert_eq!(simulate(1, &[AckLost, Acked, Acked]), SimOutcome::Acked);
+    }
+
+    #[test]
+    fn click_commit_frame_ack_lost_is_dispatched() {
+        assert_eq!(
+            simulate(1, &[Acked, AckLost, Acked]),
+            SimOutcome::Dispatched
+        );
+        assert_eq!(
+            simulate(1, &[Acked, Acked, AckLost]),
+            SimOutcome::Dispatched
+        );
+    }
+
+    #[test]
+    fn click_app_error_is_hard_failure_at_any_frame() {
+        assert_eq!(simulate(1, &[AppError, Acked, Acked]), SimOutcome::Error);
+        assert_eq!(simulate(1, &[Acked, AppError, Acked]), SimOutcome::Error);
+    }
+
+    // ── type / fill / press-key sequence (commit_from_index = 0) ──
+
+    #[test]
+    fn keystroke_all_acked_is_acked() {
+        assert_eq!(
+            simulate(0, &[Acked, Acked, Acked, Acked]),
+            SimOutcome::Acked
+        );
+    }
+
+    #[test]
+    fn keystroke_first_frame_ack_lost_is_dispatched() {
+        // commit_from_index == 0: the very first frame is a committing frame, so its
+        // ack loss is Dispatched (there is no pre-commit region to tolerate).
+        assert_eq!(simulate(0, &[AckLost, Acked]), SimOutcome::Dispatched);
+    }
+
+    #[test]
+    fn keystroke_app_error_is_hard_failure() {
+        assert_eq!(simulate(0, &[AppError]), SimOutcome::Error);
+    }
+
+    #[test]
+    fn per_frame_step_matrix() {
+        // Exhaustive single-frame contract.
+        assert_eq!(dispatch_frame_step(0, 1, Acked), FrameStep::Advance);
+        assert_eq!(dispatch_frame_step(0, 1, AckLost), FrameStep::Advance); // pre-commit tolerated
+        assert_eq!(
+            dispatch_frame_step(1, 1, AckLost),
+            FrameStep::ReturnDispatched
+        ); // committing
+        assert_eq!(
+            dispatch_frame_step(2, 1, AckLost),
+            FrameStep::ReturnDispatched
+        );
+        assert_eq!(
+            dispatch_frame_step(0, 0, AckLost),
+            FrameStep::ReturnDispatched
+        );
+        assert_eq!(dispatch_frame_step(0, 1, AppError), FrameStep::ReturnError);
+        assert_eq!(dispatch_frame_step(5, 1, AppError), FrameStep::ReturnError);
+    }
+
+    #[test]
+    fn short_sequence_that_never_reaches_commit_index_stays_acked() {
+        // Documents the invariant the caller's debug_assert guards: if a sequence is
+        // shorter than commit_from_index+1 (a caller bug), no frame is a committing
+        // frame, so an all-acked short run ends Acked (never a false Dispatched).
+        assert_eq!(simulate(5, &[Acked, Acked]), SimOutcome::Acked);
+    }
 
     fn method_of(m: &CdpMessage) -> &str {
         &m.method

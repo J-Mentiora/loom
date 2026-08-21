@@ -290,6 +290,45 @@ async fn handle_connection(
             continue;
         }
 
+        // Cross-origin swap whose window opens at/before the move: the stale CDP
+        // session goes blind before even the PRE-COMMIT (`mouseMoved`) ack, so
+        // withhold the ack for EVERY trusted-click mouse frame. This exercises the
+        // surviving "input dispatch ack timeout before commit" arm that
+        // `swallow_dispatch_ack` (commit-frame only) cannot reach.
+        if settle_script().swallow_dispatch_ack_from_move && method == "Input.dispatchMouseEvent" {
+            continue;
+        }
+
+        // Withhold ONLY the PRE-COMMIT (`mouseMoved`) ack; the committing frames
+        // still ack. Models a transient move-ack drop on a LIVE session — the click
+        // still commits cleanly, so the host must return `Ok` (a dropped move ack
+        // alone must NOT degrade a fully-committed click to `DispatchedAckPending`).
+        if settle_script().swallow_dispatch_ack_move_only
+            && method == "Input.dispatchMouseEvent"
+            && params.get("type").and_then(|t| t.as_str()) == Some("mouseMoved")
+        {
+            continue;
+        }
+
+        // Genuine CDP application error on the committing frame (renderer rejects
+        // the input, e.g. a detached/invalid node) — distinct from a swap ack loss.
+        // The host MUST surface this as a hard failure (the `Some(Err)` arm of
+        // `dispatch_input_events`), never mask it as a performed click.
+        if settle_script().dispatch_cdp_error
+            && method == "Input.dispatchMouseEvent"
+            && params.get("type").and_then(|t| t.as_str()) == Some("mousePressed")
+        {
+            let mut err = json!({
+                "id": id,
+                "error": { "code": -32000, "message": "Could not dispatch mouse event" },
+            });
+            if let Some(sid) = &session_id {
+                err["sessionId"] = json!(sid);
+            }
+            let _ = write.send(Message::Text(err.to_string().into())).await;
+            continue;
+        }
+
         // Model real Chrome's browser-process ack latency for the trusted-click
         // commit event: delay (but still WRITE) the `mousePressed` ack. A correct
         // dispatch budget clears this latency → the ack arrives → `Ok`; a budget
@@ -1817,6 +1856,27 @@ struct SettleScript {
     /// full recv timeout. `mouseMoved`/`mouseReleased` are still acked so only
     /// the commit event's ack is lost.
     swallow_dispatch_ack: bool,
+    /// When true, the fake WITHHOLDS the CDP response for EVERY trusted-click
+    /// mouse frame from `mouseMoved` onward (`mouseMoved` + `mousePressed` +
+    /// `mouseReleased`) — modelling a cross-origin renderer PROCESS SWAP whose
+    /// window opens at/before the move, so the stale CDP session goes blind before
+    /// even the PRE-COMMIT (`mouseMoved`, index 0) ack is written. This exercises
+    /// the surviving `input dispatch ack timeout before commit` arm that
+    /// `swallow_dispatch_ack` (commit-frame only) cannot reach: a correct host must
+    /// keep dispatching the committing frames and report a typed "dispatched"
+    /// outcome, never a transport `shim_timeout`.
+    swallow_dispatch_ack_from_move: bool,
+    /// When true, withhold ONLY the PRE-COMMIT (`mouseMoved`) ack; the committing
+    /// frames still ack. Models a transient move-ack drop on a LIVE session — the
+    /// click still commits, so a correct host returns `Ok` (a dropped move ack
+    /// alone must not degrade a fully-committed click to `DispatchedAckPending`).
+    swallow_dispatch_ack_move_only: bool,
+    /// When true, the committing frame (`Input.dispatchMouseEvent
+    /// type:"mousePressed"`) responds with a CDP application ERROR envelope rather
+    /// than an ack — a GENUINE dispatch failure (renderer rejects the input),
+    /// distinct from a swap ack loss. A correct host surfaces it as a hard failure
+    /// (`Some(Err)` arm of `dispatch_input_events`), never a performed click.
+    dispatch_cdp_error: bool,
     /// Delay (ms) before acking the trusted-click commit event
     /// (`Input.dispatchMouseEvent type:"mousePressed"`), modelling real Chrome's
     /// browser-process ack round-trip (tens of ms) rather than the fake's usual
@@ -1850,6 +1910,9 @@ fn default_settle_script() -> SettleScript {
         renavigate_at: Vec::new(),
         cross_origin_swap_at: Vec::new(),
         swallow_dispatch_ack: false,
+        swallow_dispatch_ack_from_move: false,
+        swallow_dispatch_ack_move_only: false,
+        dispatch_cdp_error: false,
         dispatch_ack_delay_ms: 0,
     }
 }
@@ -1922,6 +1985,18 @@ fn load_settle_script() -> SettleScript {
         .get("swallow_dispatch_ack")
         .and_then(|b| b.as_bool())
         .unwrap_or(false);
+    let swallow_dispatch_ack_from_move = v
+        .get("swallow_dispatch_ack_from_move")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    let swallow_dispatch_ack_move_only = v
+        .get("swallow_dispatch_ack_move_only")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    let dispatch_cdp_error = v
+        .get("dispatch_cdp_error")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
     let dispatch_ack_delay_ms = v
         .get("dispatch_ack_delay_ms")
         .and_then(|n| n.as_u64())
@@ -1932,6 +2007,9 @@ fn load_settle_script() -> SettleScript {
         renavigate_at,
         cross_origin_swap_at,
         swallow_dispatch_ack,
+        swallow_dispatch_ack_from_move,
+        swallow_dispatch_ack_move_only,
+        dispatch_cdp_error,
         dispatch_ack_delay_ms,
     }
 }
