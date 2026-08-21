@@ -1211,3 +1211,206 @@ async fn trusted_click_delayed_ack_within_budget_is_ok() {
 
     mgr.shutdown_session("click-delayed-ack").await;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// web.click DISPATCH bounding — PRE-COMMIT ack loss (swap opens at/before move).
+//
+// The surviving v0.15.2 defect (this feature): `swallow_dispatch_ack` above models
+// a swap that swallows only the COMMITTING (`mousePressed`) ack, which the
+// commit-index heuristic already tolerates. But a real cross-origin process swap
+// can open at/before the `mouseMoved` frame and drop the PRE-COMMIT ack too. On
+// v0.15.2 that lands in `dispatch_input_events`' eager `input dispatch ack timeout
+// before commit` arm → a hard `shim_timeout` → a FALSE `click_failed`, even though
+// the click's navigation actually started. The `swallow_dispatch_ack_from_move`
+// knob withholds EVERY trusted-click mouse-frame ack, exercising that arm.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// THE REGRESSION (pre-commit ack loss): a trusted click whose cross-origin swap
+// opens at/before the move swallows the `mouseMoved` ack. Pre-fix → the "before
+// commit" hard error (the helper panics on the resulting `Err`). Post-fix → the
+// host keeps dispatching the committing frames and returns a typed "dispatched"
+// outcome (the click WAS performed), bounded by ~1× budget.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_swap_at_move_dispatch_is_dispatched_not_before_commit() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[true, "https://checkout.example.com/", 0]],
+        "swallow_dispatch_ack_from_move": true
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-swap-at-move", script, CLICK_FIXTURE, vec![]);
+
+    // Caller budget 1.5s, outer guard 15s. Pre-fix returns Err("…before commit")
+    // → the helper panics. Post-fix returns DispatchedAckPending inside ~1×budget.
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+
+    // The WHOLE sequence is bounded by ONE shared deadline even though it now
+    // traverses the timed-out pre-commit frame — NOT 2×/3× the budget.
+    assert!(
+        elapsed < Duration::from_millis(6_000),
+        "pre-commit swap click must stay within ~1× its budget (one shared deadline \
+         across all mouse frames), not multiply per timed-out frame; took {elapsed:?}",
+    );
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending,
+        "a click whose cross-origin swap swallowed even the PRE-COMMIT (mouseMoved) ack \
+         must report the typed 'dispatched' outcome (the committing frames were still \
+         dispatched — the click WAS performed), never a transport shim_timeout, got {outcome:?}",
+    );
+
+    mgr.shutdown_session("click-swap-at-move").await;
+}
+
+// The FULL web.click across a pre-commit swap: the dispatch loses even the move
+// ack (→ DispatchedAckPending) AND the post-action settle observes the swap. The
+// whole verb stays bounded and every leg typed — never a transport error. This is
+// the acceptance shape: click performed + bounded destination settle_outcome.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_swap_at_move_then_settle_is_bounded_and_typed() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[false, "https://checkout.example.com/", 0]],
+        "swallow_dispatch_ack_from_move": true,
+        "cross_origin_swap_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_click_fixture(
+        "click-swap-at-move-settle",
+        script,
+        CLICK_FIXTURE,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (dispatch_outcome, d_elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+    assert_eq!(
+        dispatch_outcome,
+        loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending,
+    );
+
+    let (settle, s_elapsed) =
+        wait_for_timed(&mgr, &id, "load", 1_500, Duration::from_secs(30)).await;
+    assert!(
+        matches!(
+            settle.settle_outcome.as_str(),
+            "reached" | "timeout" | "dom_unstable"
+        ),
+        "the post-click settle must yield a typed verdict, got {:?}",
+        settle.settle_outcome
+    );
+    assert_eq!(settle.settle_until, "load");
+    assert!(
+        d_elapsed + s_elapsed < Duration::from_secs(10),
+        "the full pre-commit-swap click sequence must stay bounded; dispatch {d_elapsed:?} \
+         + settle {s_elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-swap-at-move-settle").await;
+}
+
+// REGRESSION GUARD (c): a click that genuinely fails to dispatch still reports a
+// typed FAILURE — the pre-commit tolerance must NOT mask a never-resolved target.
+// An unresolvable selector (no node) short-circuits to `SelectorNotFound` BEFORE
+// any mouse frame is sent, so it can never be mislabeled `DispatchedAckPending`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_unresolvable_selector_still_reports_failure() {
+    assert_binaries_built();
+    // Swap-at-move is armed, but it is irrelevant: the selector never resolves, so
+    // the dispatch loop is never entered. Proves genuine failures stay typed
+    // failures even under the pre-commit-tolerant path.
+    let script = r#"{
+        "settle_probe": [[true, "https://app.example.com/", 0]],
+        "swallow_dispatch_ack_from_move": true
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-unresolvable", script, CLICK_FIXTURE, vec![]);
+
+    // `#missing` has no box in CLICK_FIXTURE → resolve returns no node.
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#missing", 1_500, Duration::from_secs(15)).await;
+
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::SelectorNotFound,
+        "an unresolvable selector must report SelectorNotFound, never a false \
+         DispatchedAckPending, got {outcome:?}",
+    );
+    assert!(
+        elapsed < Duration::from_millis(5_000),
+        "a never-resolved selector must return promptly, not wait out the budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-unresolvable").await;
+}
+
+// A dropped PRE-COMMIT (`mouseMoved`) ack on a LIVE session (the committing frames
+// still ack) must NOT degrade the outcome: the click committed and its commit ack
+// arrived, so the result is a clean `Ok`, never a spurious `DispatchedAckPending`.
+// (Guards against reporting a fully-committed click as ack-pending just because an
+// irrelevant earlier move ack was dropped.)
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_move_ack_dropped_but_committed_is_ok() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[true, "https://app.example.com/", 0]],
+        "swallow_dispatch_ack_move_only": true
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-move-ack-dropped", script, CLICK_FIXTURE, vec![]);
+
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 2_000, Duration::from_secs(15)).await;
+
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::Ok,
+        "a dropped mouseMoved ack with clean committing acks must report Ok (the click \
+         committed), not a spurious DispatchedAckPending, got {outcome:?}",
+    );
+    // The move ack is lost (waits out its slice), but press/release ack promptly;
+    // the whole sequence stays within the shared 2s budget.
+    assert!(
+        elapsed < Duration::from_millis(4_000),
+        "one dropped move ack must not blow the shared dispatch budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-move-ack-dropped").await;
+}
+
+// REGRESSION GUARD (c, in-loop): a GENUINE CDP application error on the committing
+// frame (renderer rejects the input) must stay a hard FAILURE — the pre-commit
+// tolerance must not swallow the `Some(Err)` arm of `dispatch_input_events`. Unlike
+// an ack loss (swap), a CDP error means the input was rejected, not merely un-acked.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_cdp_error_on_commit_still_fails() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[true, "https://app.example.com/", 0]],
+        "dispatch_cdp_error": true
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-cdp-error", script, CLICK_FIXTURE, vec![]);
+
+    // Call send_trusted_click directly — a genuine CDP dispatch error is an `Err`,
+    // so the `trusted_click_timed` helper (which panics on Err) can't be used here.
+    let result = tokio::time::timeout(
+        Duration::from_secs(15),
+        mgr.send_trusted_click(id.clone(), 0, 0, "#go".to_string(), 1_500),
+    )
+    .await
+    .expect("send_trusted_click must return (bounded) even on a CDP error, not hang");
+
+    assert!(
+        result.is_err(),
+        "a genuine CDP application error on the committing frame must be a hard failure, \
+         got {result:?}",
+    );
+
+    mgr.shutdown_session("click-cdp-error").await;
+}
