@@ -474,13 +474,18 @@ fn mark_transport_dead(
     pending.clear();
 }
 
-/// Send a request and await the matching response with timeout.
-pub async fn send_and_await(
+/// Register a pending-response slot and write `req` to the shim, returning the
+/// `request_id` (for pending-cleanup on a later recv timeout) and the receiver
+/// to await. An `Err` means the frame NEVER left the host (shim already
+/// crashed, or the write failed/timed out) — the pending slot is cleaned up
+/// before returning. Shared by [`send_and_await`] and
+/// [`send_and_await_dispatch`] so both alloc the same unique, demux-routable
+/// `request_id`.
+async fn register_and_send(
     process: &ShimProcess,
     mut req: ShimRequest,
     send_timeout: Duration,
-    recv_timeout: Duration,
-) -> Result<ShimResponse, LoomError> {
+) -> Result<(u64, oneshot::Receiver<ShimResponse>), LoomError> {
     // Fast-fail if the watcher has already detected the shim's death.
     // Without this check we'd write to a dead socket, park a oneshot,
     // and time out at recv_timeout (~30s) — exactly the previously
@@ -504,22 +509,32 @@ pub async fn send_and_await(
     process.pending.insert(request_id, resp_tx);
 
     match tokio::time::timeout(send_timeout, process.request_tx.send(req)).await {
-        Ok(Ok(())) => {}
+        Ok(Ok(())) => Ok((request_id, resp_rx)),
         Ok(Err(_)) => {
             process.pending.remove(&request_id);
-            return Err(LoomError::new(
+            Err(LoomError::new(
                 LoomErrorCode::ShimFailure,
                 "shim request channel closed".to_string(),
-            ));
+            ))
         }
         Err(_) => {
             process.pending.remove(&request_id);
-            return Err(LoomError::new(
+            Err(LoomError::new(
                 LoomErrorCode::ShimTimeout,
                 format!("shim send timeout after {} ms", send_timeout.as_millis()),
-            ));
+            ))
         }
     }
+}
+
+/// Send a request and await the matching response with timeout.
+pub async fn send_and_await(
+    process: &ShimProcess,
+    req: ShimRequest,
+    send_timeout: Duration,
+    recv_timeout: Duration,
+) -> Result<ShimResponse, LoomError> {
+    let (request_id, resp_rx) = register_and_send(process, req, send_timeout).await?;
 
     match tokio::time::timeout(recv_timeout, resp_rx).await {
         Ok(Ok(resp)) => Ok(resp),
@@ -533,6 +548,47 @@ pub async fn send_and_await(
                 LoomErrorCode::ShimTimeout,
                 format!("shim recv timeout after {} ms", recv_timeout.as_millis()),
             ))
+        }
+    }
+}
+
+/// Outcome of a budget-bounded trusted-input dispatch send. Unlike
+/// [`send_and_await`], a recv timeout is NOT an error: it means the frame was
+/// written to the shim but its CDP ack never arrived within the budget — the
+/// committing input most likely triggered a cross-origin renderer PROCESS SWAP
+/// that tore the stale session down, so the ack lands on a renderer the host
+/// isn't watching. The caller reports the input as performed-but-ack-pending.
+/// A SEND failure/timeout (the frame never left the host) is still `Err`, so a
+/// never-dispatched input is never mistaken for a performed one. Leak-safe: the
+/// recv-timeout path removes its own `pending` entry (a late ack for the
+/// abandoned id is dropped by the demux, `run_read_loop`).
+pub enum DispatchAck {
+    /// The shim answered within the budget.
+    Response(ShimResponse),
+    /// The frame was written but no ack returned within the budget.
+    RecvTimeout,
+}
+
+/// Send a trusted-input frame and await its ack, but bound the wait by
+/// `recv_budget` and report a recv timeout as [`DispatchAck::RecvTimeout`]
+/// (input dispatched, ack lost) rather than a transport error. See [`DispatchAck`].
+pub async fn send_and_await_dispatch(
+    process: &ShimProcess,
+    req: ShimRequest,
+    send_timeout: Duration,
+    recv_budget: Duration,
+) -> Result<DispatchAck, LoomError> {
+    let (request_id, resp_rx) = register_and_send(process, req, send_timeout).await?;
+
+    match tokio::time::timeout(recv_budget, resp_rx).await {
+        Ok(Ok(resp)) => Ok(DispatchAck::Response(resp)),
+        Ok(Err(_)) => Err(LoomError::new(
+            LoomErrorCode::ShimFailure,
+            "shim response oneshot dropped (subprocess gone)".to_string(),
+        )),
+        Err(_) => {
+            process.pending.remove(&request_id);
+            Ok(DispatchAck::RecvTimeout)
         }
     }
 }

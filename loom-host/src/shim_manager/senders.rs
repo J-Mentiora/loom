@@ -14,7 +14,7 @@ use super::helpers::{cbor_get, cbor_u64, map_shim_code, parse_evaluate_payload, 
 use super::input_dispatch::{
     fill_events, keystroke_events_for_text, mouse_event, press_key_events,
 };
-use super::process::send_and_await;
+use super::process::{send_and_await, send_and_await_dispatch, DispatchAck};
 use super::shim_manager::ShimManager;
 use super::types::{
     EvaluateOutcome, FailureClass, InputDispatchOutcome, SendEvaluateParams, SendNavigateParams,
@@ -28,6 +28,24 @@ use loom_shared::navigate_outcome::{
 };
 use loom_shared::shim_protocol::{CdpMessage, ShimErrorCode, ShimRequest, ShimResponse};
 use std::time::Duration;
+
+/// Result of [`ShimManager::dispatch_input_events`]: all input frames were acked
+/// (`Acked`), or the committing frame was written but its ack was lost to a
+/// likely cross-origin renderer swap (`Dispatched`). Maps to the trusted-input
+/// verb's `InputDispatchOutcome`.
+enum InputAck {
+    Acked,
+    Dispatched,
+}
+
+impl InputAck {
+    fn into_outcome(self) -> InputDispatchOutcome {
+        match self {
+            InputAck::Acked => InputDispatchOutcome::Ok,
+            InputAck::Dispatched => InputDispatchOutcome::DispatchedAckPending,
+        }
+    }
+}
 
 /// `web.wait` deadline when the caller omits `timeout_ms` (the action_registry
 /// docs already promise "typically 30 s").
@@ -1085,8 +1103,74 @@ impl ShimManager {
         Ok(true)
     }
 
-    /// Dispatch a prebuilt sequence of `Input.*` frames; any CDP/transport error
-    /// aborts (no partial "ok"). Used by the keystroke + press-key paths.
+    /// One trusted-INPUT CDP round-trip whose ack may be lost to a cross-origin
+    /// renderer swap. Unlike [`cdp_send_one`], the recv is BOUNDED by `budget_ms`
+    /// (falling back to the config `recv_timeout_ms` floor when the caller passed
+    /// `0` — which keeps `web.press_key`/`web.wait`, both of which pass `0`, on
+    /// their existing bound), and a recv timeout is reported as `Ok(None)` (the
+    /// frame was written, its ack never came) instead of a full-`recv_timeout`
+    /// dead-wait. `Ok(Some(Ok(v)))` = CDP success; `Ok(Some(Err(..)))` = CDP app
+    /// error; `Ok(None)` = ack timed out within budget; `Err` = the frame never
+    /// left the host.
+    async fn cdp_send_dispatch(
+        &self,
+        id: &ShimId,
+        session_id: u64,
+        target_id: u64,
+        message: CdpMessage,
+        budget_ms: u64,
+    ) -> Result<Option<Result<ciborium::value::Value, (ShimErrorCode, String)>>, LoomError> {
+        let config = self.configs.get(id).map(|c| c.clone()).ok_or_else(|| {
+            LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {} not registered", id.0),
+            )
+        })?;
+        let process = self.get_or_spawn(id, &config).await?;
+        // A normal `Input.*` ack returns in tens of ms, so bounding the recv at
+        // the caller's budget only ever bites when the ack is genuinely lost (a
+        // process swap). `budget_ms == 0` (no caller deadline) falls back to the
+        // config floor so verbs that pass `0` are unaffected.
+        let recv_ms = if budget_ms > 0 {
+            budget_ms
+        } else {
+            config.recv_timeout_ms
+        };
+        match send_and_await_dispatch(
+            &process,
+            ShimRequest::CdpSend {
+                request_id: 0,
+                session_id,
+                target_id,
+                message,
+            },
+            Duration::from_millis(config.send_timeout_ms),
+            Duration::from_millis(recv_ms),
+        )
+        .await?
+        {
+            DispatchAck::Response(ShimResponse::Ok { payload, .. }) => Ok(Some(Ok(payload))),
+            DispatchAck::Response(ShimResponse::Error { code, detail, .. }) => {
+                Ok(Some(Err((code, detail))))
+            }
+            DispatchAck::Response(other) => Err(LoomError::new(
+                LoomErrorCode::ShimFailure,
+                format!("shim {}: unexpected CDP response: {other:?}", id.0),
+            )),
+            DispatchAck::RecvTimeout => Ok(None),
+        }
+    }
+
+    /// Dispatch a prebuilt sequence of `Input.*` frames, bounding each ack wait
+    /// by `budget_ms`. A CDP app error or a send failure aborts (no partial
+    /// "ok"). A recv timeout on the frame at or after `commit_from_index` — the
+    /// COMMITTING input (`mousePressed` for a click; index 0 for a key/text
+    /// frame) — returns [`InputAck::Dispatched`]: the input was written but its
+    /// ack was lost, the cross-origin process-swap case, so the caller reports it
+    /// as performed. A recv timeout BEFORE the committing frame (e.g. a lone
+    /// `mouseMoved`, which never navigates) is anomalous and stays an error, so a
+    /// never-clicked element is never mislabelled "dispatched". Used by the
+    /// keystroke / fill / press-key / trusted-click paths.
     async fn dispatch_input_events(
         &self,
         id: &ShimId,
@@ -1094,18 +1178,30 @@ impl ShimManager {
         target_id: u64,
         events: Vec<CdpMessage>,
         budget_ms: u64,
-    ) -> Result<(), LoomError> {
-        for ev in events {
-            self.cdp_send_one(id, session_id, target_id, ev, budget_ms)
+        commit_from_index: usize,
+    ) -> Result<InputAck, LoomError> {
+        for (i, ev) in events.into_iter().enumerate() {
+            match self
+                .cdp_send_dispatch(id, session_id, target_id, ev, budget_ms)
                 .await?
-                .map_err(|(code, detail)| {
-                    LoomError::new(
+            {
+                Some(Ok(_)) => {}
+                Some(Err((code, detail))) => {
+                    return Err(LoomError::new(
                         map_shim_code(code),
                         format!("shim {}: input dispatch: {detail}", id.0),
-                    )
-                })?;
+                    ));
+                }
+                None if i >= commit_from_index => return Ok(InputAck::Dispatched),
+                None => {
+                    return Err(LoomError::new(
+                        LoomErrorCode::ShimTimeout,
+                        format!("shim {}: input dispatch ack timeout before commit", id.0),
+                    ));
+                }
+            }
         }
-        Ok(())
+        Ok(InputAck::Acked)
     }
 
     /// `web.type mode:keystrokes` — focus `selector`, then send a real per-char
@@ -1135,12 +1231,13 @@ impl ShimManager {
                 target_id,
                 keystroke_events_for_text(&text),
                 budget_ms,
+                0,
             )
             .await
         {
-            Ok(()) => {
+            Ok(ack) => {
                 self.record_success(&id);
-                Ok(InputDispatchOutcome::Ok)
+                Ok(ack.into_outcome())
             }
             Err(e) => {
                 self.record_failure(&id, FailureClass::Application);
@@ -1180,12 +1277,13 @@ impl ShimManager {
                 target_id,
                 fill_events(&selector, &text),
                 budget_ms,
+                0,
             )
             .await
         {
-            Ok(()) => {
+            Ok(ack) => {
                 self.record_success(&id);
-                Ok(InputDispatchOutcome::Ok)
+                Ok(ack.into_outcome())
             }
             Err(e) => {
                 self.record_failure(&id, FailureClass::Application);
@@ -1229,12 +1327,12 @@ impl ShimManager {
             }
         };
         match self
-            .dispatch_input_events(&id, session_id, target_id, events, budget_ms)
+            .dispatch_input_events(&id, session_id, target_id, events, budget_ms, 0)
             .await
         {
-            Ok(()) => {
+            Ok(ack) => {
                 self.record_success(&id);
-                Ok(InputDispatchOutcome::Ok)
+                Ok(ack.into_outcome())
             }
             Err(e) => {
                 self.record_failure(&id, FailureClass::Application);
@@ -1633,13 +1731,18 @@ impl ShimManager {
             mouse_event("mousePressed", cx, cy, "left", 1),
             mouse_event("mouseReleased", cx, cy, "left", 1),
         ];
+        // commit_from_index = 1: `mousePressed` (index 1, after `mouseMoved`) is
+        // the event that commits the click + can trigger the navigation whose
+        // swap swallows the ack. A recv timeout there ⇒ the click WAS performed
+        // (`DispatchedAckPending`); a lone `mouseMoved` (index 0) timeout stays an
+        // error (a move never navigates).
         match self
-            .dispatch_input_events(&id, session_id, target_id, events, budget_ms)
+            .dispatch_input_events(&id, session_id, target_id, events, budget_ms, 1)
             .await
         {
-            Ok(()) => {
+            Ok(ack) => {
                 self.record_success(&id);
-                Ok(InputDispatchOutcome::Ok)
+                Ok(ack.into_outcome())
             }
             Err(e) => {
                 self.record_failure(&id, FailureClass::Application);

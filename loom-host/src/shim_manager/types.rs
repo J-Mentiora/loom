@@ -145,12 +145,23 @@ pub enum SetInputFilesOutcome {
 /// - `NotHittable` — the element resolved but has no box model (display:none /
 ///   detached / zero-size), so a trusted click point can't be computed.
 /// - `UnknownKey` — `web.press_key` got an unknown key name or modifier.
+/// - `DispatchedAckPending` — the element resolved and the trusted input's
+///   COMMIT event (`mousePressed` for click; the key/text frame for type/
+///   press_key) was written to the shim, but its CDP ack never returned within
+///   the dispatch budget. This is the cross-origin renderer-process-SWAP case:
+///   the committing input triggered a top-level navigation that tore the stale
+///   CDP session down, so the ack lands on a renderer the host isn't watching.
+///   The input WAS performed (best-effort) — the daemon treats this like `Ok`
+///   (same constant `outcome_hash` marker, replay-equal) and proceeds to the
+///   bounded post-action settle, rather than surfacing a transport error.
+///   Distinct from `Err(LoomError)`, which means the frame never left the host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputDispatchOutcome {
     Ok,
     SelectorNotFound,
     NotHittable,
     UnknownKey,
+    DispatchedAckPending,
 }
 
 /// Outcome of a `web.wait` locator poll (`send_wait`). An application outcome the

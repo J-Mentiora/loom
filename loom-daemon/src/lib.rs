@@ -1246,6 +1246,60 @@ mod tests {
         assert_ne!(r_a.action_hash, r_other.action_hash);
     }
 
+    /// NFR-DET-01: `DispatchedAckPending` — a click whose cross-origin navigation
+    /// swallowed the mouse-dispatch ack (the input WAS performed) — MUST hash
+    /// IDENTICALLY to `Ok`. Whether the record-time ack arrived or was lost to a
+    /// renderer swap must NEVER perturb the manifest hash chain, or replay would
+    /// diverge. The degraded readiness rides on `settle_outcome`, off the chain.
+    #[test]
+    fn dispatched_ack_pending_hashes_identically_to_ok() {
+        use crate::wire_receipts::build_input_dispatch_receipt;
+        use loom_host::shim_manager::InputDispatchOutcome;
+        let action = Action::WebClick {
+            session_id: s("sess"),
+            selector: s("#go"),
+            until: None,
+        };
+        let r_ok = build_input_dispatch_receipt(1, "sess", &action, InputDispatchOutcome::Ok);
+        let r_pending = build_input_dispatch_receipt(
+            1,
+            "sess",
+            &action,
+            InputDispatchOutcome::DispatchedAckPending,
+        );
+        assert_eq!(
+            r_ok.outcome_hash, r_pending.outcome_hash,
+            "DispatchedAckPending must carry the SAME constant dispatch marker as Ok \
+             (ack timing off the hash chain — replay-equal, NFR-DET-01)"
+        );
+        assert_eq!(
+            r_ok.action_hash, r_pending.action_hash,
+            "action_hash must be identical regardless of ack timing"
+        );
+    }
+
+    /// The trusted-input DISPATCH budget is bounded inside the effective deadline
+    /// (like the settle) and is NEVER 0 — a 0 budget would collapse the shim's
+    /// dispatch recv back to its ~30s floor, the exact pre-fix dead-wait bug.
+    #[test]
+    fn interaction_dispatch_budget_is_bounded_and_never_zero() {
+        use crate::wasm_bridge::{interaction_dispatch_budget_ms, interaction_settle_budget_ms};
+        // No deadline (and the loom `Some(0)` == no-deadline convention) → base.
+        assert_eq!(interaction_dispatch_budget_ms(None), 10_000);
+        assert_eq!(interaction_dispatch_budget_ms(Some(0)), 10_000);
+        // A real deadline bounds it inside the deadline.
+        assert!(interaction_dispatch_budget_ms(Some(5_000)) <= 5_000);
+        // A pathologically tight deadline still yields a NON-ZERO budget (never the
+        // 0 that re-collapses the dispatch recv to the floor).
+        assert!(interaction_dispatch_budget_ms(Some(100)) >= 1);
+        assert!(interaction_dispatch_budget_ms(Some(1)) >= 1);
+        // Mirrors the settle budget (floored to >=1) when that is non-zero.
+        assert_eq!(
+            interaction_dispatch_budget_ms(Some(20_000)),
+            interaction_settle_budget_ms(Some(20_000), 0).max(1)
+        );
+    }
+
     /// interactive-settle-bounded: the interaction settle budget is ALWAYS bounded
     /// strictly inside the caller's `deadline_ms` (minus headroom) — this is the
     /// "a completed click never surfaces an rpc timeout" guarantee at the budget

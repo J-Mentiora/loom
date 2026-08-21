@@ -74,6 +74,25 @@ pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>, elapsed_ms:
     clamp_settle_budget(base, server_cap, deadline_ms, elapsed_ms)
 }
 
+/// interactive-settle-bounded: the wall-clock budget for the trusted-input
+/// DISPATCH itself (the `Input.*` frames), so a click/type/press whose committing
+/// event triggers a cross-origin top-level navigation can never dead-wait the
+/// shim's recv floor (~30s) waiting for an ack the swapped-away renderer will
+/// never send — the pre-fix bug where the dispatch passed `budget_ms=0`. Bounded
+/// inside the same effective per-call deadline as the settle (mirrors
+/// [`interaction_settle_budget_ms`] with `elapsed_ms=0`); the settle then
+/// re-computes with the ACTUAL `dispatch_elapsed_ms`, so `dispatch + settle`
+/// always fits the deadline (the settle formula is elapsed-aware).
+///
+/// Floored to `max(1)` so it is never exactly `0`: the shim send treats a `0`
+/// budget as "use the recv floor" (preserving direct callers that pass `0`), and
+/// a real — if tight — deadline must still BOUND the dispatch, not fall back to
+/// the floor. A record-time wall-clock bound, excluded from the hash chain
+/// exactly like the settle budget (NFR-DET-01).
+pub(crate) fn interaction_dispatch_budget_ms(deadline_ms: Option<u64>) -> u64 {
+    interaction_settle_budget_ms(deadline_ms, 0).max(1)
+}
+
 /// interactive-settle-bounded default base (`LOOM_SHIM_CDP_TIMEOUT_MS` unset).
 const DEFAULT_SETTLE_BASE_MS: u64 = 10_000;
 
@@ -796,11 +815,18 @@ impl WasmHostBridge for WasmBridge {
             let settle_until = until.clone();
             let action_id = session.allocate_action_id();
             let dispatch_t0 = std::time::Instant::now();
-            match handle.block_on(host.trusted_click(&sid, &sel, 0)) {
+            match handle.block_on(host.trusted_click(
+                &sid,
+                &sel,
+                interaction_dispatch_budget_ms(deadline_ms),
+            )) {
                 Ok(outcome) => {
                     let dispatch_elapsed_ms = dispatch_t0.elapsed().as_millis() as u64;
-                    let dispatched =
-                        matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
+                    let dispatched = matches!(
+                        outcome,
+                        loom_host::shim_manager::InputDispatchOutcome::Ok
+                            | loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending
+                    );
                     let mut receipt =
                         build_input_dispatch_receipt(action_id, session_id_str, &action, outcome);
                     if dispatched {
@@ -848,18 +874,24 @@ impl WasmHostBridge for WasmBridge {
                 let settle_until = until.clone();
                 let action_id = session.allocate_action_id();
                 let dispatch_t0 = std::time::Instant::now();
+                let dispatch_budget = interaction_dispatch_budget_ms(deadline_ms);
                 let outcome = match dispatch {
-                    WebTypeDispatch::Fill => handle.block_on(host.type_fill(&sid, &sel, &txt, 0)),
+                    WebTypeDispatch::Fill => {
+                        handle.block_on(host.type_fill(&sid, &sel, &txt, dispatch_budget))
+                    }
                     WebTypeDispatch::Keystrokes => {
-                        handle.block_on(host.type_keystrokes(&sid, &sel, &txt, 0))
+                        handle.block_on(host.type_keystrokes(&sid, &sel, &txt, dispatch_budget))
                     }
                     WebTypeDispatch::ValueGuest => unreachable!("guarded above"),
                 };
                 match outcome {
                     Ok(outcome) => {
                         let dispatch_elapsed_ms = dispatch_t0.elapsed().as_millis() as u64;
-                        let dispatched =
-                            matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
+                        let dispatched = matches!(
+                            outcome,
+                            loom_host::shim_manager::InputDispatchOutcome::Ok
+                                | loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending
+                        );
                         let mut receipt = build_input_dispatch_receipt(
                             action_id,
                             session_id_str,
@@ -904,7 +936,13 @@ impl WasmHostBridge for WasmBridge {
             let sel = selector.clone();
             let mods = modifiers.clone().unwrap_or_default();
             let action_id = session.allocate_action_id();
-            match handle.block_on(host.press_key(&sid, &k, sel, mods, 0)) {
+            match handle.block_on(host.press_key(
+                &sid,
+                &k,
+                sel,
+                mods,
+                interaction_dispatch_budget_ms(deadline_ms),
+            )) {
                 Ok(outcome) => {
                     return Ok(build_input_dispatch_receipt(
                         action_id,
