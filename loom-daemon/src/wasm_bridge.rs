@@ -74,6 +74,50 @@ pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>, elapsed_ms:
     clamp_settle_budget(base, server_cap, deadline_ms, elapsed_ms)
 }
 
+/// interactive-settle-bounded: floor/margin for the trusted-input DISPATCH
+/// budget. A real CDP `Input.*` ack is a browser-process round-trip (several to
+/// tens of ms), so the dispatch budget MUST sit comfortably above that — a
+/// sub-ms budget loses the mouse-ack race on every normal click and reports
+/// `click_failed`. This is also the margin the bound leaves under the effective
+/// deadline, so a genuinely swapped dispatch's typed return still beats the RPC
+/// abandon. A swapped click therefore returns `DispatchedAckPending` after ~1×
+/// budget (≥ this margin) — bounded, far under the 30s recv floor.
+const DISPATCH_ACK_MARGIN_MS: u64 = 1_000;
+
+/// interactive-settle-bounded: the wall-clock budget for the trusted-input
+/// DISPATCH itself (the `Input.*` frames), so a click/type/press whose committing
+/// event triggers a cross-origin top-level navigation can never dead-wait the
+/// shim's recv floor (~30s) waiting for an ack the swapped-away renderer will
+/// never send — the pre-fix bug where the dispatch passed `budget_ms=0`.
+///
+/// Bounded inside the effective per-call deadline (`min(deadline_ms, server_cap)`;
+/// `None`/`Some(0)` ⇒ no caller deadline ⇒ the base budget), capped at the base.
+/// **It does NOT reuse [`interaction_settle_budget_ms`]:** the settle formula
+/// subtracts a 3s *resume* headroom (for the post-settle virtual-time resume, not
+/// the input ack), which would collapse the dispatch budget to ~1ms for any
+/// `deadline_ms ≤ 3s` — and a 1ms recv loses the ack race on real Chrome, so a
+/// normal same-origin click with a common 1–3s deadline would fail `click_failed`.
+/// Instead the dispatch budget is floored to [`DISPATCH_ACK_MARGIN_MS`] (above
+/// real ack latency) and leaves only that margin under the deadline. The settle
+/// budget IS elapsed-aware, so `dispatch + settle` still fits the deadline. A
+/// record-time wall-clock bound, excluded from the hash chain like the settle
+/// budget (NFR-DET-01).
+pub(crate) fn interaction_dispatch_budget_ms(deadline_ms: Option<u64>) -> u64 {
+    let base = std::env::var("LOOM_SHIM_CDP_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SETTLE_BASE_MS);
+    let server_cap = loom_rpc::connection_handler::request_timeout_ms();
+    let effective_deadline = match deadline_ms {
+        None | Some(0) => server_cap,
+        Some(d) => d.min(server_cap),
+    };
+    effective_deadline
+        .saturating_sub(DISPATCH_ACK_MARGIN_MS)
+        .min(base)
+        .max(DISPATCH_ACK_MARGIN_MS)
+}
+
 /// interactive-settle-bounded default base (`LOOM_SHIM_CDP_TIMEOUT_MS` unset).
 const DEFAULT_SETTLE_BASE_MS: u64 = 10_000;
 
@@ -796,11 +840,18 @@ impl WasmHostBridge for WasmBridge {
             let settle_until = until.clone();
             let action_id = session.allocate_action_id();
             let dispatch_t0 = std::time::Instant::now();
-            match handle.block_on(host.trusted_click(&sid, &sel, 0)) {
+            match handle.block_on(host.trusted_click(
+                &sid,
+                &sel,
+                interaction_dispatch_budget_ms(deadline_ms),
+            )) {
                 Ok(outcome) => {
                     let dispatch_elapsed_ms = dispatch_t0.elapsed().as_millis() as u64;
-                    let dispatched =
-                        matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
+                    let dispatched = matches!(
+                        outcome,
+                        loom_host::shim_manager::InputDispatchOutcome::Ok
+                            | loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending
+                    );
                     let mut receipt =
                         build_input_dispatch_receipt(action_id, session_id_str, &action, outcome);
                     if dispatched {
@@ -848,18 +899,24 @@ impl WasmHostBridge for WasmBridge {
                 let settle_until = until.clone();
                 let action_id = session.allocate_action_id();
                 let dispatch_t0 = std::time::Instant::now();
+                let dispatch_budget = interaction_dispatch_budget_ms(deadline_ms);
                 let outcome = match dispatch {
-                    WebTypeDispatch::Fill => handle.block_on(host.type_fill(&sid, &sel, &txt, 0)),
+                    WebTypeDispatch::Fill => {
+                        handle.block_on(host.type_fill(&sid, &sel, &txt, dispatch_budget))
+                    }
                     WebTypeDispatch::Keystrokes => {
-                        handle.block_on(host.type_keystrokes(&sid, &sel, &txt, 0))
+                        handle.block_on(host.type_keystrokes(&sid, &sel, &txt, dispatch_budget))
                     }
                     WebTypeDispatch::ValueGuest => unreachable!("guarded above"),
                 };
                 match outcome {
                     Ok(outcome) => {
                         let dispatch_elapsed_ms = dispatch_t0.elapsed().as_millis() as u64;
-                        let dispatched =
-                            matches!(outcome, loom_host::shim_manager::InputDispatchOutcome::Ok);
+                        let dispatched = matches!(
+                            outcome,
+                            loom_host::shim_manager::InputDispatchOutcome::Ok
+                                | loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending
+                        );
                         let mut receipt = build_input_dispatch_receipt(
                             action_id,
                             session_id_str,
@@ -904,7 +961,13 @@ impl WasmHostBridge for WasmBridge {
             let sel = selector.clone();
             let mods = modifiers.clone().unwrap_or_default();
             let action_id = session.allocate_action_id();
-            match handle.block_on(host.press_key(&sid, &k, sel, mods, 0)) {
+            match handle.block_on(host.press_key(
+                &sid,
+                &k,
+                sel,
+                mods,
+                interaction_dispatch_budget_ms(deadline_ms),
+            )) {
                 Ok(outcome) => {
                     return Ok(build_input_dispatch_receipt(
                         action_id,

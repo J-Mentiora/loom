@@ -902,3 +902,312 @@ async fn wait_for_zero_budget_returns_immediate_typed_timeout() {
 
     mgr.shutdown_session("zero-budget").await;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// web.click DISPATCH bounding (cross-origin process-swap ack-loss).
+//
+// #288 bounded the post-action SETTLE (`wait_for`), but the trusted-click
+// DISPATCH still passes `budget_ms=0`, so its CDP recv floors to
+// `config.recv_timeout_ms`. When a click commits a cross-origin top-level
+// navigation, the renderer process swaps and the stale session never gets the
+// `Input.dispatchMouseEvent` ack — so the DISPATCH dead-waits the full recv
+// timeout and the caller sees a transport `shim_timeout` ("the click failed",
+// FALSE — the nav succeeded). These tests drive `send_trusted_click` (the
+// dispatch path, distinct from the `send_wait_for` settle path above) with the
+// fake's `swallow_dispatch_ack` mode.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Like `make_manager_with_script_env`, but ALSO writes a DOM fixture
+/// (`LOOM_FAKE_CHROMIUM_FIXTURE`) so `DOM.querySelector`/`getBoxModel` resolve a
+/// hittable node — required for any trusted-click test. Without a fixture the
+/// fake returns nodeId 0 → `SelectorNotFound`, short-circuiting before the mouse
+/// dispatch is ever reached.
+fn make_manager_with_click_fixture(
+    session_label: &str,
+    script_json: &str,
+    fixture_json: &str,
+    extra_env: Vec<(String, String)>,
+) -> (std::sync::Arc<ShimManager>, ShimId, tempfile::TempDir) {
+    let user_data_dir = tempfile::tempdir().expect("tempdir");
+    let script_path = user_data_dir.path().join("settle_script.json");
+    std::fs::write(&script_path, script_json).expect("write settle script");
+    let fixture_path = user_data_dir.path().join("dom_fixture.json");
+    std::fs::write(&fixture_path, fixture_json).expect("write dom fixture");
+
+    let obs = HostObservability::new(true);
+    let mgr = ShimManager::new(obs);
+    let id = ShimId(format!("chromium:{session_label}"));
+    let mut env = vec![
+        ("LOOM_SHIM_CHROMIUM_PATH".to_string(), fake_chromium_bin()),
+        (
+            "LOOM_SHIM_USER_DATA_DIR".to_string(),
+            user_data_dir.path().display().to_string(),
+        ),
+        (
+            "LOOM_FAKE_CHROMIUM_USER_DATA_DIR".to_string(),
+            user_data_dir.path().display().to_string(),
+        ),
+        (
+            "LOOM_FAKE_CHROMIUM_SCRIPT".to_string(),
+            script_path.display().to_string(),
+        ),
+        (
+            "LOOM_FAKE_CHROMIUM_FIXTURE".to_string(),
+            fixture_path.display().to_string(),
+        ),
+    ];
+    env.extend(extra_env);
+    mgr.register(
+        id.clone(),
+        ShimConfig {
+            binary_path: shim_bin().into(),
+            args: vec![],
+            env,
+            spawn_retry: 1,
+            breaker_threshold: 3,
+            breaker_open_ms: 5_000,
+            send_timeout_ms: 30_000,
+            recv_timeout_ms: 60_000,
+        },
+    );
+    (mgr, id, user_data_dir)
+}
+
+/// Drive one trusted click, measuring the wall-clock it consumed. The OUTER
+/// guard panics if the dispatch hangs past it — the never-hangs guarantee for
+/// the click path. An `Err` (transport shim_timeout) also panics: a click whose
+/// navigation succeeded must never surface a transport error.
+async fn trusted_click_timed(
+    mgr: &std::sync::Arc<ShimManager>,
+    id: &ShimId,
+    selector: &str,
+    budget_ms: u64,
+    outer_timeout: Duration,
+) -> (loom_host::shim_manager::InputDispatchOutcome, Duration) {
+    let start = std::time::Instant::now();
+    let outcome = tokio::time::timeout(
+        outer_timeout,
+        mgr.send_trusted_click(id.clone(), 0, 0, selector.to_string(), budget_ms),
+    )
+    .await
+    .expect(
+        "send_trusted_click exceeded the OUTER guard — a click whose cross-origin \
+         navigation swallowed the dispatch ack must return a bounded TYPED outcome \
+         inside its budget, never dead-wait the recv timeout (never-hangs guarantee)",
+    )
+    .expect(
+        "send_trusted_click returned a transport ERROR for a click whose navigation \
+         succeeded — the caller would read this as 'the click failed', which is FALSE; \
+         a dispatched click must return a typed InputDispatchOutcome, never Err",
+    );
+    (outcome, start.elapsed())
+}
+
+// A hittable node for the click selector `#go`.
+const CLICK_FIXTURE: &str =
+    r##"{ "boxes": { "#go": [10.0, 10.0, 110.0, 40.0] }, "viewport": [1024, 768] }"##;
+
+// THE REGRESSION (dispatch path): a trusted click whose cross-origin navigation
+// swaps the renderer swallows the mouse-dispatch ack. Pre-fix, the dispatch's
+// `budget_ms=0` floors the recv to `recv_timeout_ms` (60s here) → dead-wait →
+// the OUTER guard fires = RED. Post-fix, the threaded budget bounds the dispatch
+// to ~1x budget and it returns a typed "dispatched" outcome (the mouse event WAS
+// sent), never a transport error.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_cross_origin_swap_dispatch_is_bounded_and_typed() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[true, "https://checkout.example.com/", 0]],
+        "swallow_dispatch_ack": true
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-xorigin-dispatch", script, CLICK_FIXTURE, vec![]);
+
+    // Caller budget 1.5s, outer guard 15s. Pre-fix the dispatch ignores the
+    // budget and floors recv to 60s → the guard fires. Post-fix the 1.5s budget
+    // bounds it → ~1.5s.
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+
+    // Bounded near the 1.5s dispatch budget — NOT the 60s recv floor / 15s guard.
+    // The 6s bound leaves margin for parallel-test load while still proving the
+    // dead-wait is gone (pre-fix hit the 15s outer guard).
+    assert!(
+        elapsed < Duration::from_millis(6_000),
+        "cross-origin click dispatch must return within ~1x its budget, not dead-wait \
+         the recv timeout; took {elapsed:?}",
+    );
+    // The element resolved + was hittable and the mouse event WAS sent; only the
+    // ack was lost to the swap — a performed-but-ack-pending click, NOT a resolve/
+    // hit failure and NOT a transport error (the helper already panics on `Err`).
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending,
+        "a click whose cross-origin nav swallowed the dispatch ack must report a typed \
+         'dispatched' outcome (the click WAS performed), got {outcome:?}",
+    );
+
+    mgr.shutdown_session("click-xorigin-dispatch").await;
+}
+
+// Same-origin fast-return: a click that does NOT navigate acks normally, so the
+// dispatch returns `Ok` promptly — v0.15.0 parity, no 30s hang. Guards against
+// the bounded-dispatch change slowing the common case.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_same_origin_acks_promptly() {
+    assert_binaries_built();
+    // No swallow_dispatch_ack → the fake acks every mouse event immediately.
+    let script = r#"{ "settle_probe": [[true, "https://app.example.com/", 0]] }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-same-origin", script, CLICK_FIXTURE, vec![]);
+
+    // Generous budget so the (fast, always-acked) events never hit the bound
+    // under parallel test load — the point is `Ok`, returned promptly.
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 10_000, Duration::from_secs(15)).await;
+
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::Ok,
+        "a normal same-origin click must report Ok (ack received), got {outcome:?}",
+    );
+    assert!(
+        elapsed < Duration::from_millis(5_000),
+        "a normal click must return promptly (ack in tens of ms), nowhere near the 10s \
+         budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-same-origin").await;
+}
+
+// THE FULL web.click SEQUENCE across a cross-origin swap: the dispatch loses its
+// ack (bounded → DispatchedAckPending) AND the post-action settle observes the
+// swap. Composing `send_trusted_click` + `send_wait_for` mirrors the daemon's
+// dispatch-then-settle. The WHOLE verb must stay bounded and every leg typed —
+// never a transport error (the "request_timeout unreachable for a completed
+// click" acceptance).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_swap_then_settle_is_bounded_and_typed() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[false, "https://checkout.example.com/", 0]],
+        "swallow_dispatch_ack": true,
+        "cross_origin_swap_at": [0]
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_click_fixture(
+        "click-swap-settle",
+        script,
+        CLICK_FIXTURE,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    // Dispatch: bounded, typed "dispatched" (ack lost to the swap).
+    let (dispatch_outcome, d_elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+    assert_eq!(
+        dispatch_outcome,
+        loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending,
+    );
+
+    // Settle: bounded, typed verdict for the (never-recovering) destination.
+    let (settle, s_elapsed) =
+        wait_for_timed(&mgr, &id, "load", 1_500, Duration::from_secs(30)).await;
+    assert!(
+        matches!(
+            settle.settle_outcome.as_str(),
+            "reached" | "timeout" | "dom_unstable"
+        ),
+        "the post-click settle must yield a typed verdict, got {:?}",
+        settle.settle_outcome
+    );
+    assert_eq!(settle.settle_until, "load");
+
+    // The WHOLE verb (dispatch + settle) stays well inside a bounded window — the
+    // caller never sees a transport request_timeout for a completed click.
+    // dispatch (~1.5s budget) + settle (~1.5s budget) + parallel-load overhead —
+    // 10s bound proves the whole verb is bounded (pre-fix: a 60s dispatch dead-wait).
+    assert!(
+        d_elapsed + s_elapsed < Duration::from_secs(10),
+        "the full click sequence must stay bounded; dispatch {d_elapsed:?} + settle {s_elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-swap-settle").await;
+}
+
+// Destination REACHABLE: the dispatch ack is lost (bounded → DispatchedAckPending)
+// but the destination is observable (no process swap for the settle), so the
+// post-action settle reaches `load`. Demonstrates "destination reachable" when a
+// re-attach succeeds — the click is performed AND readiness confirmed.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_swap_then_settle_reaches_recoverable_destination() {
+    assert_binaries_built();
+    // swallow the dispatch ack, but the settle probe reports ready (the
+    // destination is observable — no cross_origin_swap_at gating the settle).
+    let script = r#"{
+        "settle_probe": [[true, "https://checkout.example.com/", 0]],
+        "swallow_dispatch_ack": true
+    }"#;
+    let (mgr, id, _udd) = make_manager_with_click_fixture(
+        "click-swap-reachable",
+        script,
+        CLICK_FIXTURE,
+        vec![("LOOM_SHIM_CDP_TIMEOUT_MS".to_string(), "4000".to_string())],
+    );
+
+    let (dispatch_outcome, _d) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+    assert_eq!(
+        dispatch_outcome,
+        loom_host::shim_manager::InputDispatchOutcome::DispatchedAckPending,
+    );
+
+    let (settle, _s) = wait_for_timed(&mgr, &id, "load", 2_000, Duration::from_secs(30)).await;
+    assert_eq!(
+        settle.settle_outcome, "reached",
+        "an observable destination must settle to 'reached', got {:?}",
+        settle.settle_outcome
+    );
+
+    mgr.shutdown_session("click-swap-reachable").await;
+}
+
+// REGRESSION GUARD (ship-review): a delayed-but-ARRIVING mouse-ack (realistic
+// real-Chrome browser-process latency) that lands WITHIN the dispatch budget must
+// return `Ok` — NOT a spurious `DispatchedAckPending`. The fake usually acks
+// in-process instantly, masking a budget collapsed below real ack latency; this
+// injects a 150ms ack delay against a 1.5s budget so the ack wins the race, as a
+// correctly-sized dispatch budget must allow. (The daemon's budget formula is
+// unit-guarded separately in `interaction_dispatch_budget_leaves_room_for_a_real_ack`.)
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_delayed_ack_within_budget_is_ok() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[true, "https://app.example.com/", 0]],
+        "dispatch_ack_delay_ms": 150
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-delayed-ack", script, CLICK_FIXTURE, vec![]);
+
+    // 1.5s budget ≫ the 150ms ack delay → the ack arrives → Ok.
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::Ok,
+        "an ack that arrives within the dispatch budget must be Ok, not a spurious \
+         DispatchedAckPending, got {outcome:?}",
+    );
+    // Returned around the 150ms ack, nowhere near the 1.5s budget.
+    assert!(
+        elapsed < Duration::from_millis(1_500),
+        "must return when the ack arrives (~150ms), not wait out the budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-delayed-ack").await;
+}

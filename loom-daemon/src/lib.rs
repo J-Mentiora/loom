@@ -1246,6 +1246,68 @@ mod tests {
         assert_ne!(r_a.action_hash, r_other.action_hash);
     }
 
+    /// NFR-DET-01: `DispatchedAckPending` — a click whose cross-origin navigation
+    /// swallowed the mouse-dispatch ack (the input WAS performed) — MUST hash
+    /// IDENTICALLY to `Ok`. Whether the record-time ack arrived or was lost to a
+    /// renderer swap must NEVER perturb the manifest hash chain, or replay would
+    /// diverge. The degraded readiness rides on `settle_outcome`, off the chain.
+    #[test]
+    fn dispatched_ack_pending_hashes_identically_to_ok() {
+        use crate::wire_receipts::build_input_dispatch_receipt;
+        use loom_host::shim_manager::InputDispatchOutcome;
+        let action = Action::WebClick {
+            session_id: s("sess"),
+            selector: s("#go"),
+            until: None,
+        };
+        let r_ok = build_input_dispatch_receipt(1, "sess", &action, InputDispatchOutcome::Ok);
+        let r_pending = build_input_dispatch_receipt(
+            1,
+            "sess",
+            &action,
+            InputDispatchOutcome::DispatchedAckPending,
+        );
+        assert_eq!(
+            r_ok.outcome_hash, r_pending.outcome_hash,
+            "DispatchedAckPending must carry the SAME constant dispatch marker as Ok \
+             (ack timing off the hash chain — replay-equal, NFR-DET-01)"
+        );
+        assert_eq!(
+            r_ok.action_hash, r_pending.action_hash,
+            "action_hash must be identical regardless of ack timing"
+        );
+    }
+
+    /// The trusted-input DISPATCH budget is bounded inside the effective deadline
+    /// AND stays above real CDP ack latency (tens of ms). The load-bearing
+    /// regression guard: a common tight deadline (1–3s) must NOT collapse the
+    /// dispatch recv to ~1ms — that loses the mouse-ack race on real Chrome and
+    /// reports a normal click as `click_failed`. (It must also never be 0, which
+    /// would re-collapse the recv to the ~30s floor.)
+    #[test]
+    fn interaction_dispatch_budget_leaves_room_for_a_real_ack() {
+        use crate::wasm_bridge::interaction_dispatch_budget_ms;
+        // No deadline (and the loom `Some(0)` == no-deadline convention) → base.
+        assert_eq!(interaction_dispatch_budget_ms(None), 10_000);
+        assert_eq!(interaction_dispatch_budget_ms(Some(0)), 10_000);
+        // A common tight deadline must leave a REALISTIC ack budget (≫ tens of ms),
+        // not collapse toward 1ms — the ship-review regression. A real CDP ack is
+        // several to tens of ms, so require comfortably ≥ several hundred ms.
+        for dl in [3_000_u64, 5_000, 10_000] {
+            let b = interaction_dispatch_budget_ms(Some(dl));
+            assert!(
+                b >= 500,
+                "deadline_ms={dl} gave dispatch budget {b}ms — too tight for a real \
+                 CDP ack; a normal click would fail its mouse-ack race"
+            );
+            assert!(b <= dl, "dispatch budget must stay inside the deadline");
+        }
+        // Bounded by the base for large deadlines.
+        assert!(interaction_dispatch_budget_ms(Some(50_000)) <= 10_000);
+        // Never 0 (would re-collapse the dispatch recv to the ~30s floor).
+        assert!(interaction_dispatch_budget_ms(Some(1)) >= 1);
+    }
+
     /// interactive-settle-bounded: the interaction settle budget is ALWAYS bounded
     /// strictly inside the caller's `deadline_ms` (minus headroom) — this is the
     /// "a completed click never surfaces an rpc timeout" guarantee at the budget

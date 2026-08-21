@@ -179,3 +179,36 @@ fn load_at_startup_precompiles_validators() {
         .validate(&serde_json::json!({"selector": "#go"}))
         .is_ok());
 }
+
+/// web.click's PUBLISHED (embedded `BUILTIN_SCHEMAS`) request schema MUST expose
+/// `deadline_ms` (integer) and `until` (enum load|networkidle|settled), matching
+/// web.navigate — so an MCP caller can thread the per-call budget + readiness
+/// explicitly without the arg being schema-stripped. Regression guard for the
+/// web.click settle-deadline fix (both are already present; this pins them).
+#[test]
+fn embedded_web_click_schema_publishes_deadline_ms_and_until() {
+    let provider = SchemaProvider::load_embedded().expect("embedded schemas load");
+    let schema = provider
+        .lookup_request_schema("web.click")
+        .expect("web.click must be registered in the embedded schemas");
+    // A caller CAN thread deadline_ms + until:load explicitly (not stripped).
+    assert!(
+        schema
+            .validator
+            .validate(&serde_json::json!({
+                "session": "s", "selector": "#go", "deadline_ms": 5000, "until": "load"
+            }))
+            .is_ok(),
+        "web.click must accept deadline_ms + until:load (published, matching web.navigate)"
+    );
+    // `until` is a bounded enum — a bogus readiness mode is rejected.
+    assert!(
+        schema
+            .validator
+            .validate(&serde_json::json!({
+                "session": "s", "selector": "#go", "until": "whenever"
+            }))
+            .is_err(),
+        "until must be the load|networkidle|settled enum"
+    );
+}

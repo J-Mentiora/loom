@@ -277,6 +277,34 @@ async fn handle_connection(
             continue;
         }
 
+        // Cross-origin process-swap of the trusted-click DISPATCH: withhold the
+        // ack for the commit event (`Input.dispatchMouseEvent type:"mousePressed"`)
+        // so the stale CDP session never observes it — the renderer swapped away.
+        // The host must bound the dispatch by its budget and return a typed
+        // "dispatched" outcome, never dead-wait the full recv timeout. `mouseMoved`
+        // / `mouseReleased` are still acked so ONLY the commit event's ack is lost.
+        if settle_script().swallow_dispatch_ack
+            && method == "Input.dispatchMouseEvent"
+            && params.get("type").and_then(|t| t.as_str()) == Some("mousePressed")
+        {
+            continue;
+        }
+
+        // Model real Chrome's browser-process ack latency for the trusted-click
+        // commit event: delay (but still WRITE) the `mousePressed` ack. A correct
+        // dispatch budget clears this latency → the ack arrives → `Ok`; a budget
+        // collapsed below it would spuriously time out. Falls through to the
+        // normal response path after the delay.
+        if settle_script().dispatch_ack_delay_ms > 0
+            && method == "Input.dispatchMouseEvent"
+            && params.get("type").and_then(|t| t.as_str()) == Some("mousePressed")
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                settle_script().dispatch_ack_delay_ms,
+            ))
+            .await;
+        }
+
         // For Page.navigate, derive a per-URL response shape so integration
         // tests can drive the receipt across success / 4xx / 5xx /
         // transport-error branches without touching real Chromium.
@@ -1778,6 +1806,25 @@ struct SettleScript {
     /// a correct executor still returns a bounded, typed `timeout` inside its
     /// single shared deadline.
     cross_origin_swap_at: Vec<usize>,
+    /// When true, the fake WITHHOLDS the CDP response for the trusted-click
+    /// commit event (`Input.dispatchMouseEvent` with `type:"mousePressed"`) —
+    /// modelling a cross-origin renderer PROCESS SWAP that tears the stale CDP
+    /// session down before the mouse-dispatch ack is written, so the ack never
+    /// reaches the host. Reproduces the click-DISPATCH dead-wait (distinct from
+    /// `cross_origin_swap_at`, which only gates the later settle probe). A
+    /// correct host bounds the dispatch by its budget and returns a typed
+    /// "dispatched" outcome (the event WAS sent) instead of dead-waiting the
+    /// full recv timeout. `mouseMoved`/`mouseReleased` are still acked so only
+    /// the commit event's ack is lost.
+    swallow_dispatch_ack: bool,
+    /// Delay (ms) before acking the trusted-click commit event
+    /// (`Input.dispatchMouseEvent type:"mousePressed"`), modelling real Chrome's
+    /// browser-process ack round-trip (tens of ms) rather than the fake's usual
+    /// in-process instant ack. `0` = instant. Lets a test exercise a
+    /// delayed-but-ARRIVING ack: it lands within the dispatch budget → `Ok`, NOT
+    /// `DispatchedAckPending` — the regression guard for a dispatch budget
+    /// collapsed below real ack latency.
+    dispatch_ack_delay_ms: u64,
 }
 
 impl SettleScript {
@@ -1802,6 +1849,8 @@ fn default_settle_script() -> SettleScript {
         perpetual_inflight: 0,
         renavigate_at: Vec::new(),
         cross_origin_swap_at: Vec::new(),
+        swallow_dispatch_ack: false,
+        dispatch_ack_delay_ms: 0,
     }
 }
 
@@ -1869,11 +1918,21 @@ fn load_settle_script() -> SettleScript {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let swallow_dispatch_ack = v
+        .get("swallow_dispatch_ack")
+        .and_then(|b| b.as_bool())
+        .unwrap_or(false);
+    let dispatch_ack_delay_ms = v
+        .get("dispatch_ack_delay_ms")
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
     SettleScript {
         probe,
         perpetual_inflight,
         renavigate_at,
         cross_origin_swap_at,
+        swallow_dispatch_ack,
+        dispatch_ack_delay_ms,
     }
 }
 

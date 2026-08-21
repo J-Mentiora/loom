@@ -622,7 +622,14 @@ pub(crate) fn build_input_dispatch_receipt(
 ) -> Receipt {
     use loom_host::shim_manager::InputDispatchOutcome as O;
     let mut r = match outcome {
-        O::Ok => {
+        // `DispatchedAckPending` (the committing input was sent but its ack was
+        // lost to a cross-origin renderer swap) is a PERFORMED dispatch — it maps
+        // to the SAME success template + SAME constant `outcome_hash` marker as
+        // `Ok`, so the hashed receipt bytes are IDENTICAL whether the ack arrived
+        // or was lost. Record-time ack timing therefore never perturbs the
+        // manifest hash chain → replay stays bit-equal (NFR-DET-01). The degraded
+        // readiness rides observationally on `settle_outcome` (off the chain).
+        O::Ok | O::DispatchedAckPending => {
             // Reuse the all-None success template, then stamp the constant marker.
             let mut r = build_recording_started_receipt(action_id, session_id);
             r.outcome_hash = Some(loom_core::content_store::sha256_hex(
