@@ -6,6 +6,38 @@ follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-08-21 — web.click dispatch bounded under the per-call deadline
+
+v0.15.1 (#288) bounded the post-action **settle** (the `web.wait_for` path), but the
+trusted-input **dispatch** — the `Input.*` frames of `web.click` / `web.type` /
+`web.press_key` — still ran with an unbounded CDP recv (it passed `budget_ms = 0`, so
+the recv floored to the ~30s shim timeout). When a click's committing event triggered a
+**cross-origin top-level navigation**, the renderer **process swap** tore the stale CDP
+session down before the mouse-dispatch ack was delivered, so the *dispatch itself*
+dead-waited ~30s and surfaced a transport `shim_timeout` / `request_timeout` — **before**
+the already-bounded settle ever ran. The caller (an LLM agent) read it as "the click
+failed" even though the navigation succeeded. Now the dispatch is bounded by the per-call
+deadline and, on an ack lost to a swap, returns a typed *dispatched* outcome so the daemon
+proceeds to the bounded settle and returns a typed `settle_outcome` receipt — never a
+transport error. `deadline_ms` and `until` remain first-class on `web.click`'s published
+schema. Determinism (NFR-DET-01) is preserved: the dispatched-ack-pending outcome hashes
+identically to a normal dispatch, so record-time ack timing never perturbs the manifest
+hash chain and replay stays bit-equal. (#291)
+
+### Fixed
+
+- **`web.click` / `web.type` / `web.press_key` whose committing input triggers a
+  cross-origin top-level navigation no longer surface a transport `request_timeout` /
+  `shim_timeout`.** The trusted-input dispatch is now bounded by a per-call budget
+  (derived from `deadline_ms`, else the server per-call timeout, and floored above real
+  CDP ack latency); a mouse/key ack lost to a renderer process swap yields a typed
+  "dispatched" outcome, so the verb proceeds to the bounded post-action settle and returns
+  a typed `settle_outcome` receipt for the destination. The click is reported performed;
+  only readiness is degraded when the destination is genuinely slow. Host-only change —
+  the shim request/response channel is id-multiplexed, so no wire-protocol change was
+  needed. (#291)
+
+
 ## [0.15.1] — 2026-08-21 — Cross-origin click settle bounded
 
 v0.15.0 (#285) bounded the post-click settle for **same-origin** navigations, but a
