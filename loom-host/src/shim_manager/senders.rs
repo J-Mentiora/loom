@@ -1104,13 +1104,16 @@ impl ShimManager {
     }
 
     /// One trusted-INPUT CDP round-trip whose ack may be lost to a cross-origin
-    /// renderer swap. Unlike [`cdp_send_one`], the recv is BOUNDED by `budget_ms`
-    /// (falling back to the config `recv_timeout_ms` floor when the caller passed
-    /// `0` — which keeps `web.press_key`/`web.wait`, both of which pass `0`, on
-    /// their existing bound), and a recv timeout is reported as `Ok(None)` (the
-    /// frame was written, its ack never came) instead of a full-`recv_timeout`
-    /// dead-wait. `Ok(Some(Ok(v)))` = CDP success; `Ok(Some(Err(..)))` = CDP app
-    /// error; `Ok(None)` = ack timed out within budget; `Err` = the frame never
+    /// renderer swap. Unlike [`cdp_send_one`] (whose `budget_ms.max(recv_timeout_ms)`
+    /// floor is unchanged, so selector resolution and `web.wait`'s `budget=0`
+    /// probes keep their ~30s bound), the recv here is BOUNDED by `budget_ms`, and
+    /// a recv timeout is reported as `Ok(None)` (the frame was written, its ack
+    /// never came) instead of a full-`recv_timeout` dead-wait. The daemon threads a
+    /// real (non-zero) budget to every trusted-input verb; the `budget_ms == 0`
+    /// fallback to the config `recv_timeout_ms` floor is a safety for any DIRECT
+    /// caller that passes `0` (e.g. an in-crate test), so `0` never means a
+    /// zero-length recv. `Ok(Some(Ok(v)))` = CDP success; `Ok(Some(Err(..)))` = CDP
+    /// app error; `Ok(None)` = ack timed out within budget; `Err` = the frame never
     /// left the host.
     async fn cdp_send_dispatch(
         &self,

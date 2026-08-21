@@ -1279,25 +1279,33 @@ mod tests {
     }
 
     /// The trusted-input DISPATCH budget is bounded inside the effective deadline
-    /// (like the settle) and is NEVER 0 — a 0 budget would collapse the shim's
-    /// dispatch recv back to its ~30s floor, the exact pre-fix dead-wait bug.
+    /// AND stays above real CDP ack latency (tens of ms). The load-bearing
+    /// regression guard: a common tight deadline (1–3s) must NOT collapse the
+    /// dispatch recv to ~1ms — that loses the mouse-ack race on real Chrome and
+    /// reports a normal click as `click_failed`. (It must also never be 0, which
+    /// would re-collapse the recv to the ~30s floor.)
     #[test]
-    fn interaction_dispatch_budget_is_bounded_and_never_zero() {
-        use crate::wasm_bridge::{interaction_dispatch_budget_ms, interaction_settle_budget_ms};
+    fn interaction_dispatch_budget_leaves_room_for_a_real_ack() {
+        use crate::wasm_bridge::interaction_dispatch_budget_ms;
         // No deadline (and the loom `Some(0)` == no-deadline convention) → base.
         assert_eq!(interaction_dispatch_budget_ms(None), 10_000);
         assert_eq!(interaction_dispatch_budget_ms(Some(0)), 10_000);
-        // A real deadline bounds it inside the deadline.
-        assert!(interaction_dispatch_budget_ms(Some(5_000)) <= 5_000);
-        // A pathologically tight deadline still yields a NON-ZERO budget (never the
-        // 0 that re-collapses the dispatch recv to the floor).
-        assert!(interaction_dispatch_budget_ms(Some(100)) >= 1);
+        // A common tight deadline must leave a REALISTIC ack budget (≫ tens of ms),
+        // not collapse toward 1ms — the ship-review regression. A real CDP ack is
+        // several to tens of ms, so require comfortably ≥ several hundred ms.
+        for dl in [3_000_u64, 5_000, 10_000] {
+            let b = interaction_dispatch_budget_ms(Some(dl));
+            assert!(
+                b >= 500,
+                "deadline_ms={dl} gave dispatch budget {b}ms — too tight for a real \
+                 CDP ack; a normal click would fail its mouse-ack race"
+            );
+            assert!(b <= dl, "dispatch budget must stay inside the deadline");
+        }
+        // Bounded by the base for large deadlines.
+        assert!(interaction_dispatch_budget_ms(Some(50_000)) <= 10_000);
+        // Never 0 (would re-collapse the dispatch recv to the ~30s floor).
         assert!(interaction_dispatch_budget_ms(Some(1)) >= 1);
-        // Mirrors the settle budget (floored to >=1) when that is non-zero.
-        assert_eq!(
-            interaction_dispatch_budget_ms(Some(20_000)),
-            interaction_settle_budget_ms(Some(20_000), 0).max(1)
-        );
     }
 
     /// interactive-settle-bounded: the interaction settle budget is ALWAYS bounded

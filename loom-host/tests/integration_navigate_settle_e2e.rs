@@ -1174,3 +1174,40 @@ async fn trusted_click_swap_then_settle_reaches_recoverable_destination() {
 
     mgr.shutdown_session("click-swap-reachable").await;
 }
+
+// REGRESSION GUARD (ship-review): a delayed-but-ARRIVING mouse-ack (realistic
+// real-Chrome browser-process latency) that lands WITHIN the dispatch budget must
+// return `Ok` — NOT a spurious `DispatchedAckPending`. The fake usually acks
+// in-process instantly, masking a budget collapsed below real ack latency; this
+// injects a 150ms ack delay against a 1.5s budget so the ack wins the race, as a
+// correctly-sized dispatch budget must allow. (The daemon's budget formula is
+// unit-guarded separately in `interaction_dispatch_budget_leaves_room_for_a_real_ack`.)
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "requires fake-chromium binary; see file header for build commands"]
+async fn trusted_click_delayed_ack_within_budget_is_ok() {
+    assert_binaries_built();
+    let script = r#"{
+        "settle_probe": [[true, "https://app.example.com/", 0]],
+        "dispatch_ack_delay_ms": 150
+    }"#;
+    let (mgr, id, _udd) =
+        make_manager_with_click_fixture("click-delayed-ack", script, CLICK_FIXTURE, vec![]);
+
+    // 1.5s budget ≫ the 150ms ack delay → the ack arrives → Ok.
+    let (outcome, elapsed) =
+        trusted_click_timed(&mgr, &id, "#go", 1_500, Duration::from_secs(15)).await;
+
+    assert_eq!(
+        outcome,
+        loom_host::shim_manager::InputDispatchOutcome::Ok,
+        "an ack that arrives within the dispatch budget must be Ok, not a spurious \
+         DispatchedAckPending, got {outcome:?}",
+    );
+    // Returned around the 150ms ack, nowhere near the 1.5s budget.
+    assert!(
+        elapsed < Duration::from_millis(1_500),
+        "must return when the ack arrives (~150ms), not wait out the budget; took {elapsed:?}",
+    );
+
+    mgr.shutdown_session("click-delayed-ack").await;
+}

@@ -290,6 +290,21 @@ async fn handle_connection(
             continue;
         }
 
+        // Model real Chrome's browser-process ack latency for the trusted-click
+        // commit event: delay (but still WRITE) the `mousePressed` ack. A correct
+        // dispatch budget clears this latency → the ack arrives → `Ok`; a budget
+        // collapsed below it would spuriously time out. Falls through to the
+        // normal response path after the delay.
+        if settle_script().dispatch_ack_delay_ms > 0
+            && method == "Input.dispatchMouseEvent"
+            && params.get("type").and_then(|t| t.as_str()) == Some("mousePressed")
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                settle_script().dispatch_ack_delay_ms,
+            ))
+            .await;
+        }
+
         // For Page.navigate, derive a per-URL response shape so integration
         // tests can drive the receipt across success / 4xx / 5xx /
         // transport-error branches without touching real Chromium.
@@ -1802,6 +1817,14 @@ struct SettleScript {
     /// full recv timeout. `mouseMoved`/`mouseReleased` are still acked so only
     /// the commit event's ack is lost.
     swallow_dispatch_ack: bool,
+    /// Delay (ms) before acking the trusted-click commit event
+    /// (`Input.dispatchMouseEvent type:"mousePressed"`), modelling real Chrome's
+    /// browser-process ack round-trip (tens of ms) rather than the fake's usual
+    /// in-process instant ack. `0` = instant. Lets a test exercise a
+    /// delayed-but-ARRIVING ack: it lands within the dispatch budget → `Ok`, NOT
+    /// `DispatchedAckPending` — the regression guard for a dispatch budget
+    /// collapsed below real ack latency.
+    dispatch_ack_delay_ms: u64,
 }
 
 impl SettleScript {
@@ -1827,6 +1850,7 @@ fn default_settle_script() -> SettleScript {
         renavigate_at: Vec::new(),
         cross_origin_swap_at: Vec::new(),
         swallow_dispatch_ack: false,
+        dispatch_ack_delay_ms: 0,
     }
 }
 
@@ -1898,12 +1922,17 @@ fn load_settle_script() -> SettleScript {
         .get("swallow_dispatch_ack")
         .and_then(|b| b.as_bool())
         .unwrap_or(false);
+    let dispatch_ack_delay_ms = v
+        .get("dispatch_ack_delay_ms")
+        .and_then(|n| n.as_u64())
+        .unwrap_or(0);
     SettleScript {
         probe,
         perpetual_inflight,
         renavigate_at,
         cross_origin_swap_at,
         swallow_dispatch_ack,
+        dispatch_ack_delay_ms,
     }
 }
 

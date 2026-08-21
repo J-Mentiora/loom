@@ -74,23 +74,48 @@ pub(crate) fn interaction_settle_budget_ms(deadline_ms: Option<u64>, elapsed_ms:
     clamp_settle_budget(base, server_cap, deadline_ms, elapsed_ms)
 }
 
+/// interactive-settle-bounded: floor/margin for the trusted-input DISPATCH
+/// budget. A real CDP `Input.*` ack is a browser-process round-trip (several to
+/// tens of ms), so the dispatch budget MUST sit comfortably above that — a
+/// sub-ms budget loses the mouse-ack race on every normal click and reports
+/// `click_failed`. This is also the margin the bound leaves under the effective
+/// deadline, so a genuinely swapped dispatch's typed return still beats the RPC
+/// abandon. A swapped click therefore returns `DispatchedAckPending` after ~1×
+/// budget (≥ this margin) — bounded, far under the 30s recv floor.
+const DISPATCH_ACK_MARGIN_MS: u64 = 1_000;
+
 /// interactive-settle-bounded: the wall-clock budget for the trusted-input
 /// DISPATCH itself (the `Input.*` frames), so a click/type/press whose committing
 /// event triggers a cross-origin top-level navigation can never dead-wait the
 /// shim's recv floor (~30s) waiting for an ack the swapped-away renderer will
-/// never send — the pre-fix bug where the dispatch passed `budget_ms=0`. Bounded
-/// inside the same effective per-call deadline as the settle (mirrors
-/// [`interaction_settle_budget_ms`] with `elapsed_ms=0`); the settle then
-/// re-computes with the ACTUAL `dispatch_elapsed_ms`, so `dispatch + settle`
-/// always fits the deadline (the settle formula is elapsed-aware).
+/// never send — the pre-fix bug where the dispatch passed `budget_ms=0`.
 ///
-/// Floored to `max(1)` so it is never exactly `0`: the shim send treats a `0`
-/// budget as "use the recv floor" (preserving direct callers that pass `0`), and
-/// a real — if tight — deadline must still BOUND the dispatch, not fall back to
-/// the floor. A record-time wall-clock bound, excluded from the hash chain
-/// exactly like the settle budget (NFR-DET-01).
+/// Bounded inside the effective per-call deadline (`min(deadline_ms, server_cap)`;
+/// `None`/`Some(0)` ⇒ no caller deadline ⇒ the base budget), capped at the base.
+/// **It does NOT reuse [`interaction_settle_budget_ms`]:** the settle formula
+/// subtracts a 3s *resume* headroom (for the post-settle virtual-time resume, not
+/// the input ack), which would collapse the dispatch budget to ~1ms for any
+/// `deadline_ms ≤ 3s` — and a 1ms recv loses the ack race on real Chrome, so a
+/// normal same-origin click with a common 1–3s deadline would fail `click_failed`.
+/// Instead the dispatch budget is floored to [`DISPATCH_ACK_MARGIN_MS`] (above
+/// real ack latency) and leaves only that margin under the deadline. The settle
+/// budget IS elapsed-aware, so `dispatch + settle` still fits the deadline. A
+/// record-time wall-clock bound, excluded from the hash chain like the settle
+/// budget (NFR-DET-01).
 pub(crate) fn interaction_dispatch_budget_ms(deadline_ms: Option<u64>) -> u64 {
-    interaction_settle_budget_ms(deadline_ms, 0).max(1)
+    let base = std::env::var("LOOM_SHIM_CDP_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_SETTLE_BASE_MS);
+    let server_cap = loom_rpc::connection_handler::request_timeout_ms();
+    let effective_deadline = match deadline_ms {
+        None | Some(0) => server_cap,
+        Some(d) => d.min(server_cap),
+    };
+    effective_deadline
+        .saturating_sub(DISPATCH_ACK_MARGIN_MS)
+        .min(base)
+        .max(DISPATCH_ACK_MARGIN_MS)
 }
 
 /// interactive-settle-bounded default base (`LOOM_SHIM_CDP_TIMEOUT_MS` unset).
